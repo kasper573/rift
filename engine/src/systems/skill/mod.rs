@@ -171,6 +171,9 @@ impl ContentFile for SkillDef {
             if !self.cost.is_empty() {
                 check.error("/cost", "passive with a cost", "a cost", passive);
             }
+            if self.takes_mana() {
+                check.error("/levels", "passive that takes mana", "mana", passive);
+            }
             if self.basic_attack {
                 check.error(
                     "/basic_attack",
@@ -184,6 +187,9 @@ impl ContentFile for SkillDef {
             let answers = "nothing: a click on an enemy must always answer";
             if !self.cost.is_empty() {
                 check.error("/cost", "basic attack with a cost", "a cost", answers);
+            }
+            if self.takes_mana() {
+                check.error("/levels", "basic attack that takes mana", "mana", answers);
             }
             if self.cooldown.0 > 0.0 {
                 check.error(
@@ -382,6 +388,8 @@ pub enum SkillStat {
     Range,
     Radius,
     Duration,
+    /// How much mana a use takes.
+    Mana,
 }
 
 impl SkillStat {
@@ -393,7 +401,7 @@ impl SkillStat {
         match self {
             SkillStat::Cooldown | SkillStat::Duration => Some("s"),
             SkillStat::Range | SkillStat::Radius => Some("m"),
-            SkillStat::Power => None,
+            SkillStat::Power | SkillStat::Mana => None,
         }
     }
 }
@@ -579,6 +587,17 @@ impl SkillDef {
 
     pub fn cooldown_at(&self, rank: Rank) -> Seconds {
         Seconds((self.cooldown.0 + self.stat(rank, SkillStat::Cooldown)).max(0.0))
+    }
+
+    /// How much mana a use at `rank` takes.
+    pub fn mana_at(&self, rank: Rank) -> f32 {
+        self.stat(rank, SkillStat::Mana).max(0.0)
+    }
+
+    fn takes_mana(&self) -> bool {
+        self.levels
+            .iter()
+            .any(|level| level.stats.contains_key(&SkillStat::Mana))
     }
 
     pub fn area_at(&self, rank: Rank) -> Option<Shape> {

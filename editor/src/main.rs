@@ -13,9 +13,9 @@ use editor::scenes::SceneStep;
 use engine::core::assets::SyncedAssetReader;
 use engine::core::audio::playback::SfxPlugin;
 use engine::core::babble::BabblePlugin;
-use engine::core::card::stage::CardStagePlugin;
 use engine::core::math::Rng;
 use engine::core::render::world::WorldScenePlugin;
+use engine::core::stage::StagePlugin;
 use engine::core::text::StyledTextPlugin;
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::area::scenery::SceneryPlugin;
@@ -98,7 +98,7 @@ fn main() {
         )
         .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
         .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
-        .add_plugins(CardStagePlugin)
+        .add_plugins(StagePlugin)
         .add_plugins(EditorPlugin { launch })
         .run();
 }

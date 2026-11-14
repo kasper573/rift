@@ -445,7 +445,7 @@ fn clinic() -> (Sim, Entity) {
             script::RunFlows::default(),
             movement::AdvanceWalks::default(),
         ))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);

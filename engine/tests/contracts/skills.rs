@@ -14,7 +14,7 @@ use engine::systems::skill::{
     Hotbar, HotbarEntry, HotbarSlot, LearnSkillsRequest, Learned, Rank, ResetAnswerRequest,
     ResetPrompt, SkillDef, SkillId, UseSkillRequest,
 };
-use engine::systems::stat::{self, StatKind};
+use engine::systems::stat::{self, StatKind, Vital};
 use engine::systems::{actor, reach, script, vfx};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
@@ -306,17 +306,19 @@ fn an_area_skill_walks_into_range_lands_at_the_point_and_cools_down() {
 }
 
 #[test]
-fn a_resource_skill_needs_its_cost_and_eats_it_on_use() {
+fn a_skill_needs_its_cost_in_items_and_in_mana_and_takes_both_on_use() {
     let (mut sim, player) = yard();
     request(&mut sim, learn(&[("throw_knife", 1)]));
     let dummy = dummy(&mut sim, player, Offset::new(2.0, 0.0));
-    let full = stat::effective(&sim.world, dummy, StatKind::Health);
+    let health = |sim: &Sim| stat::effective(&sim.world, dummy, StatKind::Health);
+    let mana = |sim: &Sim| stat::current(&sim.world, player, Vital::Mana);
+    let full = health(&sim);
     let throw = sim.id::<SkillDef>("throw_knife");
 
     cast(&mut sim, throw, CastAim::Actor(dummy));
     sim.run(0.5);
     assert!(sim.errors(1).iter().any(|text| text.contains("knife")));
-    assert_eq!(stat::effective(&sim.world, dummy, StatKind::Health), full);
+    assert_eq!(health(&sim), full);
 
     sim.give(player, "knife", 2);
     cast(&mut sim, throw, CastAim::Actor(dummy));
@@ -324,6 +326,29 @@ fn a_resource_skill_needs_its_cost_and_eats_it_on_use() {
         stat::effective(world, dummy, StatKind::Health) < full
     }));
     assert_eq!(sim.count(player, "knife"), 1);
+    assert_eq!(mana(&sim), 0.0, "the mana a use takes goes with the knife");
+    assert!(
+        stat::stands(&sim.world, player),
+        "and running out of mana fells no one"
+    );
+
+    let struck = health(&sim);
+    sim.run(2.5);
+    cast(&mut sim, throw, CastAim::Actor(dummy));
+    sim.run(0.5);
+    assert!(sim.errors(1).iter().any(|text| text.contains("mana")));
+    assert_eq!(health(&sim), struck, "no mana, no throw");
+    assert_eq!(sim.count(player, "knife"), 1, "and nothing spent on it");
+
+    sim.give(player, "potion", 1);
+    let slot = sim.slot_of(player, "potion");
+    request(&mut sim, UseItemRequest { slot });
+    assert_eq!(mana(&sim), 6.0, "mana is restored up to its maximum");
+    cast(&mut sim, throw, CastAim::Actor(dummy));
+    assert!(sim.run_until(10.0, |world| {
+        stat::effective(world, dummy, StatKind::Health) < struck
+    }));
+    assert_eq!(mana(&sim), 2.0);
 }
 
 #[test]
@@ -386,6 +411,10 @@ fn yard() -> (Sim, Entity) {
         .area("yard", &Map::open(15, 9), json!([]))
         .hero("yard", 4.0, 4.0)
         .sword()
+        .edit("player", "hero", |hero| {
+            hero["stats"]["mana"] = json!(4.0);
+            hero["stats"]["max_mana"] = json!(6.0);
+        })
         .edit("class", "hero", |hero| {
             hero["levels"] = json!([
                 { "xp": 0, "skill_points": 1 },
@@ -427,7 +456,7 @@ fn yard() -> (Sim, Entity) {
                     "range": 4.0,
                     "cooldown": 2.0,
                     "cost": [{ "item": "knife.item.json" }],
-                    "levels": [{ "cost": 1, "stats": {} }],
+                    "levels": [{ "cost": 1, "stats": { "mana": 4.0 } }],
                 }),
                 "throw_knife_strike",
             ),
@@ -450,7 +479,8 @@ fn yard() -> (Sim, Entity) {
             "item",
             json!({
                 "used": { "type": "on", "event": "used", "next": "drink" },
-                "drink": { "type": "items", "take": [{ "item": "potion.item.json" }] },
+                "drink": { "type": "items", "take": [{ "item": "potion.item.json" }], "done": "refresh" },
+                "refresh": { "type": "heal", "restores": "mana", "by": 10.0 },
             }),
         )
         .item("knife", json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 20 }] }))
@@ -505,7 +535,7 @@ fn yard() -> (Sim, Entity) {
             script::RunFlows::default(),
             movement::AdvanceWalks::default(),
         ))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);

@@ -61,7 +61,6 @@ use crate::core::audio::Hearing;
 use crate::core::audio::playback::{SfxDef, SfxPlugin};
 use crate::core::audio::soundscape::SoundscapePlugin;
 use crate::core::babble::{BabblePlugin, Speech};
-use crate::core::card::stage::CardStagePlugin;
 use crate::core::card::{CardHandling, CardStyleDef, CardStyleFixture};
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
@@ -76,6 +75,7 @@ use crate::core::net::transport::ClientTransportPlugin;
 use crate::core::os::{Http, Profile, SignIn, StartParams};
 use crate::core::render::Look;
 use crate::core::render::WorldRenderPlugin;
+use crate::core::stage::StagePlugin;
 use crate::core::text::{Lettering, StyledTextPlugin, Typing};
 use crate::core::tick::{self, Tick};
 use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
@@ -547,7 +547,7 @@ fn tick_planners() -> Tick {
         script::RunFlows::default(),
         npc::body::DriveBodies::default(),
         movement::AdvanceWalks::default(),
-        stat::SettleHealth::default(),
+        stat::SettleVitals::default(),
         actor::SettleActions::default(),
         attention::MarkAttention::default(),
         quest::AnnounceQuests::default(),
@@ -615,7 +615,7 @@ pub fn client_app(
         .insert_resource(http)
         .add_plugins((
             GuiPlugin,
-            CardStagePlugin,
+            StagePlugin,
             StyledTextPlugin,
             ClientTransportPlugin,
             SnapshotPlugin {

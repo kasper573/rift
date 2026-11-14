@@ -10,7 +10,6 @@ use ui::panel;
 use ui::sheet;
 use ui::theme;
 
-use engine::core::card::stage::StagedCard;
 use engine::core::content::AssetKind;
 use engine::core::content::SchemaMark;
 use engine::core::content::fixture::FixtureLock;
@@ -19,6 +18,7 @@ use engine::core::content::{
     Content, ContentFile, LoadReport, fields_file, parent_of, with_content,
 };
 use engine::core::script::{Assignment, Target, VariableType};
+use engine::core::stage::card::StagedCard;
 use engine::systems::area::AreaDef;
 use engine::systems::script::{Condition, RiftScripting, RunnerKind};
 use schemars::JsonSchema;

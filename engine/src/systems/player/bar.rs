@@ -2,26 +2,29 @@ use bevy::prelude::*;
 use ui::egui::{self, Align, Align2, Id, Order, Pos2, Rect, Sense, Ui, UiBuilder, Vec2};
 use ui::face::{Face, TextRole};
 use ui::glyph::{self, Halo};
-use ui::vial::{self, Vial};
-use ui::{controls, ink, paint, slip, words};
+use ui::{controls, globe, ink, paint, slip, words};
 
 use crate::core::content::Content;
 use crate::core::gui::{self, Tier};
+use crate::core::stage::globe::{self as lit_globe, Globe};
 use crate::systems::dialogue::stage;
 use crate::systems::hud::menu::{self, MenuTabName};
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::player::session;
+use crate::systems::settings::UserSettings;
 use crate::systems::skill::bar::{self, BarSlots};
-use crate::systems::{class, stat, status};
+use crate::systems::stat::{self, Vital};
+use crate::systems::{class, status};
 
 pub const PLAYER_BAR: &str = "player_bar";
 
 pub struct PlayerBarWidget;
 
 impl HudWidget for PlayerBarWidget {
-    fn fallback(&self, _world: &World, screen: Rect) -> Pos2 {
-        let size = Layout::of(Pos2::ZERO, BarSlots::resting_size())
-            .vial_and_paper
+    fn fallback(&self, world: &World, screen: Rect) -> Pos2 {
+        let mana = character_sheet(world).is_some_and(|sheet| sheet.mana.is_some());
+        let size = Layout::of(Pos2::ZERO, BarSlots::resting_size(), mana)
+            .whole
             .size();
         Pos2::new(
             screen.center().x - size.x / 2.0,
@@ -38,8 +41,8 @@ impl HudWidget for PlayerBarWidget {
         let now = ui.input(|input| input.time);
         let sheet = current_sheet(world, now)?;
         let slots = BarSlots::shown(world, ui.ctx());
-        let layout = Layout::of(ui.cursor().min, slots.size());
-        ui.allocate_rect(layout.vial_and_paper, Sense::hover());
+        let layout = Layout::of(ui.cursor().min, slots.size(), sheet.mana.is_some());
+        ui.allocate_rect(layout.whole, Sense::hover());
         slip::paint(ui.painter(), layout.paper);
         if let Some(experience) = &sheet.experience {
             experience_row(ui, world, layout.experience, experience);
@@ -47,8 +50,11 @@ impl HudWidget for PlayerBarWidget {
         ui.scope_builder(UiBuilder::new().max_rect(layout.slots), |ui| {
             slots.show(ui, world);
         });
-        bar::reshape_grip(ui, world, layout.paper);
-        health_vial(ui, world, layout.vial, &sheet, now);
+        bar::reshape_grip(ui, world, layout.held);
+        vital_globe(ui, world, layout.health, Vital::Health, sheet.health, now);
+        if let (Some(at), Some(mana)) = (layout.mana, sheet.mana) {
+            vital_globe(ui, world, at, Vital::Mana, mana, now);
+        }
         let outside = RowOutside::of(ui.ctx(), &layout);
         if let Some(gain) = sheet.gain {
             gain_float(
@@ -74,8 +80,8 @@ impl HudWidget for PlayerBarWidget {
 }
 
 const BOTTOM: f32 = 8.0;
-const VIAL_OVER_PAPER: f32 = 14.0;
-const BESIDE_VIAL: f32 = 6.0;
+const GLOBE_OVER_PAPER: f32 = 14.0;
+const BESIDE_GLOBE: f32 = 6.0;
 const PADDING: Vec2 = Vec2::new(12.0, 6.0);
 const EXPERIENCE_ROW: f32 = 12.0;
 const EXPERIENCE_BAR: f32 = 7.0;
@@ -91,28 +97,44 @@ const POINTS_ROOM: f32 = 170.0;
 const GAIN_SECONDS: f64 = 1.8;
 const GAIN_RISE: f32 = 14.0;
 
+/// Where the bar's parts lie: the globe of health to the left of the paper, the globe of mana,
+/// for a character that has any, to its right, and what the paper holds between them.
 struct Layout {
-    vial_and_paper: Rect,
-    vial: Pos2,
+    whole: Rect,
+    health: Pos2,
+    mana: Option<Pos2>,
     paper: Rect,
+    /// The paper as far as what it holds reaches: under a globe to its right it runs on.
+    held: Rect,
     experience: Rect,
     slots: Rect,
 }
 
 impl Layout {
-    fn of(origin: Pos2, slots: Vec2) -> Layout {
+    fn of(origin: Pos2, slots: Vec2, mana: bool) -> Layout {
         let one_row = 2.0 * PADDING.y + EXPERIENCE_ROW + ROW_GAP + controls::SLOT;
-        let rise = ((vial::SIZE - one_row) / 2.0).max(0.0);
-        let paper_at = origin + Vec2::new(vial::SIZE - VIAL_OVER_PAPER, rise);
-        let held_at = paper_at + Vec2::new(VIAL_OVER_PAPER + BESIDE_VIAL, PADDING.y);
+        let rise = ((globe::SIZE - one_row) / 2.0).max(0.0);
+        let paper_at = origin + Vec2::new(globe::SIZE - GLOBE_OVER_PAPER, rise);
+        let held_at = paper_at + Vec2::new(GLOBE_OVER_PAPER + BESIDE_GLOBE, PADDING.y);
         let experience = Rect::from_min_size(held_at, Vec2::new(slots.x, EXPERIENCE_ROW));
         let slots = Rect::from_min_size(held_at + Vec2::new(0.0, EXPERIENCE_ROW + ROW_GAP), slots);
-        let paper = Rect::from_min_max(paper_at, slots.max + PADDING);
-        let vial = Pos2::new(origin.x + vial::SIZE / 2.0, paper_at.y + one_row / 2.0);
+        let held = Rect::from_min_max(paper_at, slots.max + PADDING);
+        let middle = paper_at.y + one_row / 2.0;
+        let health = Pos2::new(origin.x + globe::SIZE / 2.0, middle);
+        let mana = mana.then(|| Pos2::new(slots.max.x + BESIDE_GLOBE + globe::SIZE / 2.0, middle));
+        let paper = match mana {
+            Some(mana) => held.with_max_x(mana.x - globe::SIZE / 2.0 + GLOBE_OVER_PAPER),
+            None => held,
+        };
+        let seat = |at: Pos2| Rect::from_center_size(at, Vec2::splat(globe::SIZE));
         Layout {
-            vial_and_paper: paper.union(Rect::from_center_size(vial, Vec2::splat(vial::SIZE))),
-            vial,
+            whole: mana
+                .map_or(paper, |mana| paper.union(seat(mana)))
+                .union(seat(health)),
+            health,
+            mana,
             paper,
+            held,
             experience,
             slots,
         }
@@ -129,7 +151,7 @@ struct RowOutside {
 
 impl RowOutside {
     fn of(gui: &egui::Context, layout: &Layout) -> RowOutside {
-        let (left, right) = (layout.slots.min.x, layout.paper.max.x);
+        let (left, right) = (layout.slots.min.x, layout.held.max.x);
         let over = layout.paper.min.y - OUTSIDE_GAP;
         if over - OUTSIDE_ROW >= gui.content_rect().top() {
             RowOutside {
@@ -145,7 +167,7 @@ impl RowOutside {
                 right,
                 stands_on: layout.paper.max.y + OUTSIDE_GAP,
                 side: Align::Min,
-                notice_foot: layout.vial_and_paper.min.y,
+                notice_foot: layout.whole.min.y,
             }
         }
     }
@@ -173,12 +195,29 @@ struct LastSheet(Option<CharacterSheet>);
 #[derive(Clone)]
 struct CharacterSheet {
     who: Entity,
-    health: f32,
-    max_health: f32,
+    health: Held,
+    /// None for a character that has no mana to its name.
+    mana: Option<Held>,
     xp: u32,
     experience: Option<Experience>,
     points: u32,
     gain: Option<Gain>,
+}
+
+/// How much of a vital a character holds, and how much it holds at most.
+#[derive(Clone, Copy)]
+struct Held {
+    now: f32,
+    most: f32,
+}
+
+impl Held {
+    fn of(world: &World, who: Entity, vital: Vital) -> Held {
+        Held {
+            now: stat::current(world, who, vital),
+            most: stat::most(world, who, vital),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -235,8 +274,8 @@ fn character_sheet(world: &World) -> Option<CharacterSheet> {
     });
     Some(CharacterSheet {
         who: me,
-        health: stat::current_health(world, me),
-        max_health: stat::max_health(world, me),
+        health: Held::of(world, me, Vital::Health),
+        mana: Some(Held::of(world, me, Vital::Mana)).filter(|mana| mana.most > 0.0),
         xp,
         experience,
         points: class::points_to_spend(world, me).0,
@@ -244,36 +283,44 @@ fn character_sheet(world: &World) -> Option<CharacterSheet> {
     })
 }
 
-fn health_vial(ui: &mut Ui, world: &World, center: Pos2, sheet: &CharacterSheet, now: f64) {
-    let share = if sheet.max_health > 0.0 {
-        (sheet.health / sheet.max_health).clamp(0.0, 1.0)
+/// The globe of one of the character's vitals, as full as the character is of it. It says how
+/// much it holds in numbers under the pointer, or always when the player's settings ask for it.
+fn vital_globe(ui: &mut Ui, world: &mut World, center: Pos2, vital: Vital, held: Held, now: f64) {
+    let full = if held.most > 0.0 {
+        (held.now / held.most).clamp(0.0, 1.0)
     } else {
         0.0
     };
-    let amount = format!("{:.0}", sheet.health.max(0.0).ceil());
-    let of = format!("of {:.0}", sheet.max_health);
-    let rect = Rect::from_center_size(center, Vec2::splat(vial::SIZE));
-    let response = ui.interact(rect, ui.id().with("health"), Sense::hover());
-    let said = format!("Health {amount} {of}");
+    let (name, liquid, warns) = match vital {
+        Vital::Health => ("Health", ink::WAX, full > 0.0 && full < LOW_HEALTH),
+        Vital::Mana => ("Mana", ink::AZURE, false),
+    };
+    let amount = format!("{:.0}/{:.0}", held.now.max(0.0).ceil(), held.most);
+    let rect = Rect::from_center_size(center, Vec2::splat(globe::SIZE));
+    let response = ui.interact(rect, ui.id().with(name), Sense::hover());
+    let said = format!("{name} {amount}");
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
-    vial::paint(
-        ui.painter(),
-        center,
-        &Vial {
-            full: share,
-            amount: &amount,
-            of: &of,
-            low: share > 0.0 && share < LOW_HEALTH,
-        },
-        now,
-    );
-    hud::tooltip(
-        &response,
+    let painter = ui.painter();
+    globe::socket(painter, center);
+    let lit = lit_globe::show(
         world,
-        "Health",
-        &[format!("{amount} {of}")],
-        None,
+        painter,
+        &Globe {
+            key: response.id,
+            center,
+            radius: globe::GLASS,
+            full,
+            liquid,
+        },
     );
+    if !lit {
+        globe::flat(painter, center, full, liquid);
+    }
+    globe::rim(painter, center, warns, now);
+    if response.hovered() || world.resource::<UserSettings>().globe_amounts_shown() {
+        globe::amount(painter, center, &amount);
+    }
+    hud::tooltip(&response, world, name, &[], None);
 }
 
 fn experience_row(ui: &mut Ui, world: &World, row: Rect, experience: &Experience) {

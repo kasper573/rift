@@ -657,7 +657,7 @@ fn harbour() -> Sim {
             shop::refresh,
         ))
         .plan(quest::AnnounceQuests::default())
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add(combat::defeats);
     script::spawn_stateless(&mut sim.world);
     region::hold_whole(&mut sim.world);

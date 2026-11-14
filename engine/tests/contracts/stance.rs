@@ -529,7 +529,7 @@ fn armed(game: Game) -> (Sim, Entity) {
         ))
         .plan((
             status::aspect::SettleAspects::default(),
-            stat::SettleHealth::default(),
+            stat::SettleVitals::default(),
         ))
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());

@@ -9,7 +9,6 @@ use bevy::prelude::*;
 use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
 use super::{AreaId, AreaObject, AreaTag, PropDef};
 use crate::core::assets;
-use crate::core::card::stage::{CardSkyLight, SkyLampLight};
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::render::transition::WorldViewSystems;
@@ -17,6 +16,7 @@ use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::sky::{Daylight, shining, sun_at};
 use crate::core::render::{CameraFraming, CameraRig, Look, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
+use crate::core::stage::{SkyLampLight, StageSkyLight};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::render::SiteExtent;
@@ -34,7 +34,7 @@ impl Plugin for AreaRenderPlugin {
         app.add_plugins(SceneryPlugin)
             .init_resource::<ShownArea>()
             .init_resource::<Daylight>()
-            .init_resource::<CardSkyLight>()
+            .init_resource::<StageSkyLight>()
             .add_systems(
                 Update,
                 (
@@ -241,7 +241,7 @@ fn light_cards(world: &mut World, area: &super::Area, daylight: Daylight) {
             noon: noon.azimuth,
         }
     });
-    let mut told = world.resource_mut::<CardSkyLight>();
+    let mut told = world.resource_mut::<StageSkyLight>();
     let changed = match (told.0, light) {
         (Some(was), Some(now)) => now.noon != was.noon || now.shining.far_from(&was.shining),
         (None, None) => false,
@@ -326,7 +326,7 @@ fn play_prop_effects(world: &mut World) {
 
 fn leave_area(world: &mut World) {
     tear_down(world);
-    world.resource_mut::<CardSkyLight>().0 = None;
+    world.resource_mut::<StageSkyLight>().0 = None;
 }
 
 fn tear_down(world: &mut World) {

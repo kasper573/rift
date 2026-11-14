@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use rayon::prelude::*;
 
-use super::{StatKind, Stats, base, effective};
+use super::{StatKind, Stats, Vital, base, effective};
 use crate::core::par;
 use crate::core::tick::{Cached, Planner};
 use crate::core::vfx::VfxSite;
@@ -16,11 +16,21 @@ use crate::systems::vfx::{VfxFixture, VfxShaderFixture, fixture};
 pub struct Immortal;
 
 pub fn current_health(world: &World, entity: Entity) -> f32 {
-    base(world, entity, StatKind::Health)
+    current(world, entity, Vital::Health)
 }
 
 pub fn max_health(world: &World, entity: Entity) -> f32 {
-    effective(world, entity, StatKind::MaxHealth)
+    most(world, entity, Vital::Health)
+}
+
+/// How much of `vital` the entity holds.
+pub fn current(world: &World, entity: Entity, vital: Vital) -> f32 {
+    base(world, entity, vital.held())
+}
+
+/// How much of `vital` the entity holds at most.
+pub fn most(world: &World, entity: Entity, vital: Vital) -> f32 {
+    effective(world, entity, vital.most())
 }
 
 pub fn is_dead(world: &World, entity: Entity) -> bool {
@@ -41,9 +51,11 @@ pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
         return;
     }
     let immortal = world.get::<Immortal>(entity).is_some();
-    set_health(world, entity, |health, _| match health - amount {
-        left if left <= 0.0 && immortal => health,
-        left => left.max(0.0),
+    set(world, entity, Vital::Health, |health, _| {
+        match health - amount {
+            left if left <= 0.0 && immortal => health,
+            left => left.max(0.0),
+        }
     });
     if amount > 0.0 {
         let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
@@ -55,13 +67,13 @@ pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
 }
 
 /// A heal that lands as an event, shown where it lands; the slow trickle of regeneration is
-/// `regenerate`.
+/// `restore`.
 pub fn heal(world: &mut World, entity: Entity, amount: f32) {
     if is_dead(world, entity) || amount <= 0.0 {
         return;
     }
     let before = current_health(world, entity);
-    regenerate(world, entity, amount);
+    restore(world, entity, Vital::Health, amount);
     if current_health(world, entity) > before {
         fixture::play(world, VfxFixture::Healed, VfxSite::Actor(entity));
         let shown = format!("+{}", whole(amount));
@@ -69,36 +81,47 @@ pub fn heal(world: &mut World, entity: Entity, amount: f32) {
     }
 }
 
-pub fn regenerate(world: &mut World, entity: Entity, amount: f32) {
+/// Gives the entity `amount` of `vital` back, up to its maximum. The fallen regain nothing.
+pub fn restore(world: &mut World, entity: Entity, vital: Vital, amount: f32) {
     if !is_dead(world, entity) {
-        set_health(world, entity, |health, max| (health + amount).min(max));
+        set(world, entity, vital, |held, most| (held + amount).min(most));
     }
 }
 
-pub fn refill(world: &mut World, entity: Entity) {
+pub fn refill(world: &mut World, entity: Entity, vital: Vital) {
     if !is_dead(world, entity) {
-        set_health(world, entity, |_, max| max);
+        set(world, entity, vital, |_, most| most);
+    }
+}
+
+/// Takes `amount` of `vital` from the entity, down to none of it. Health taken this way is not
+/// a blow: nobody is to blame for it, and it shows nowhere but in what is left.
+pub fn drain(world: &mut World, entity: Entity, vital: Vital, amount: f32) {
+    if !is_dead(world, entity) {
+        set(world, entity, vital, |held, _| (held - amount).max(0.0));
     }
 }
 
 pub fn revive(world: &mut World, entity: Entity) {
-    set_health(world, entity, |_, max| max);
+    for vital in Vital::BOTH {
+        set(world, entity, vital, |_, most| most);
+    }
 }
 
-/// Holds every actor's health within its maximum: found on every core among the actors whose
-/// health could have risen past it, written in the order the actors were found. Health passes
-/// its maximum when it changes or when a boost comes or goes; what else feeds the maximum only
-/// ever raises it.
+/// Holds every actor's health and mana within their maximums: found on every core among the
+/// actors whose share of either could have risen past it, written in the order the actors were
+/// found. A vital passes its maximum when it changes or when a boost comes or goes; what else
+/// feeds the maximum only ever raises it.
 #[derive(Default)]
-pub struct SettleHealth {
+pub struct SettleVitals {
     living: Cached<Entity, MaximumMoved>,
-    settled: Vec<(Entity, f32)>,
+    settled: Vec<(Entity, Vital, f32)>,
 }
 
-/// Actors whose health or maximum may have changed.
+/// Actors whose health or mana, or the maximum of either, may have changed.
 type MaximumMoved = Or<(Changed<Stats>, Changed<Boosts>)>;
 
-impl Planner for SettleHealth {
+impl Planner for SettleVitals {
     fn prepare(&mut self, world: &mut World) {
         self.living.ready(world);
     }
@@ -108,37 +131,40 @@ impl Planner for SettleHealth {
         self.settled = entities
             .par_iter()
             .with_min_len(par::grain(entities.len()))
-            .filter_map(|&entity| {
-                let max = max_health(world, entity);
-                let &health = world.get::<Stats>(entity)?.0.get(&StatKind::Health)?;
-                let settled = health.min(max);
-                (settled != health).then_some((entity, settled))
+            .flat_map_iter(|&entity| {
+                Vital::BOTH.into_iter().filter_map(move |vital| {
+                    let &held = world.get::<Stats>(entity)?.0.get(&vital.held())?;
+                    let settled = held.min(most(world, entity, vital));
+                    (settled != held).then_some((entity, vital, settled))
+                })
             })
             .collect();
     }
 
     fn apply(&mut self, world: &mut World) {
-        for (entity, settled) in self.settled.drain(..) {
+        for (entity, vital, settled) in self.settled.drain(..) {
             if let Some(mut stats) = world.get_mut::<Stats>(entity) {
-                stats.0.insert(StatKind::Health, settled);
+                stats.0.insert(vital.held(), settled);
             }
         }
     }
 }
 
-fn set_health(world: &mut World, entity: Entity, f: impl Fn(f32, f32) -> f32) {
-    let max = max_health(world, entity);
-    let Some(&health) = world
+/// Sets how much of `vital` the entity holds, from what it holds and what it holds at most. An
+/// entity that has none of the vital to its name keeps none.
+fn set(world: &mut World, entity: Entity, vital: Vital, f: impl Fn(f32, f32) -> f32) {
+    let most = most(world, entity, vital);
+    let Some(&held) = world
         .get::<Stats>(entity)
-        .and_then(|stats| stats.0.get(&StatKind::Health))
+        .and_then(|stats| stats.0.get(&vital.held()))
     else {
         return;
     };
-    let settled = f(health.min(max), max);
-    if settled != health
+    let settled = f(held.min(most), most);
+    if settled != held
         && let Some(mut stats) = world.get_mut::<Stats>(entity)
     {
-        stats.0.insert(StatKind::Health, settled);
+        stats.0.insert(vital.held(), settled);
     }
 }
 

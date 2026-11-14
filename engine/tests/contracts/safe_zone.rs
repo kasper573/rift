@@ -194,7 +194,7 @@ fn border(modules: Value) -> Sim {
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
     region::hold_whole(&mut sim.world);

@@ -42,7 +42,6 @@ use crate::core::audio::Hearing;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::Listener;
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
-use crate::core::card::stage::HungCardLamp;
 use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
 use crate::core::geometry::Capsule;
@@ -62,6 +61,7 @@ use crate::core::render::world::outline::Outline;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::world::{OnItsWay, missing_drawn};
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
+use crate::core::stage::card::HungCardLamp;
 use crate::core::time;
 use crate::core::units::{
     Bytes, Degrees, MeterSize, Meters, Millis, Percent, PlaybackRate, Radians, Seconds, WindowPx,
@@ -517,6 +517,8 @@ pub struct ProbeBody {
     pub head: Option<Pos<WindowPx>>,
     pub health: f32,
     pub max_health: f32,
+    pub mana: f32,
+    pub max_mana: f32,
     pub npc: Option<NpcId>,
     pub role: Option<String>,
     pub friendly: bool,
@@ -1718,6 +1720,8 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         head: view.and_then(|view| view.window_point(drawn, ground + capsule.height)),
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
+        mana: stat(StatKind::Mana),
+        max_mana: stat(StatKind::MaxMana),
         npc,
         role: npc
             .and_then(|npc| npc.get(world.resource::<Content>()).nameplate())

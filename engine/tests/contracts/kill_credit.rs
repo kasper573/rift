@@ -46,7 +46,7 @@ fn field() -> (Sim, Entity) {
     let mut sim = Sim::new(content);
     sim.serve("field")
         .add(rewards::grant)
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add(combat::defeats);
     let player = sim.join(1);
     (sim, player)

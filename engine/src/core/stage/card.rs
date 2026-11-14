@@ -1,50 +1,33 @@
-//! The stage every card is shown on. A card paints in the interface as ever; its triangles are
-//! then taken off its layer and made a mesh in a small scene of its own, lit by one lamp and
-//! turned toward the pointer, and the interface shows the lit picture where the card was painted.
+//! Cards on the stage. A card paints in the interface as ever; its triangles are then taken off
+//! its layer and made a mesh on the stage, lit by its lamp and turned toward the pointer, and the
+//! interface shows the lit picture where the card was painted.
 
 use std::collections::{HashMap, HashSet};
-use std::f32::consts::PI;
 use std::mem::Discriminant;
 
 use bevy::asset::{AssetPath, RenderAssetUsages, embedded_path};
+use bevy::camera::SubCameraView;
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
-use bevy::camera::{CameraUpdateSystems, Exposure, RenderTarget, SubCameraView};
-use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::{ImageAddressMode, ImageLoaderSettings, ImageSampler, ImageSamplerDescriptor};
-use bevy::light::{AmbientLight, NotShadowCaster};
+use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology, UvChannel};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderType, TextureFormat};
+use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 use bevy::transform::TransformSystems;
 use bevy::window::PrimaryWindow;
-use bevy_egui::{EguiPostUpdateSet, EguiTextureHandle, EguiUserTextures};
+use bevy_egui::EguiPostUpdateSet;
 use ui::card::CardTilt;
 use ui::egui::{self, LayerId, Pos2, Rect};
 use ui::motion::{CardPose, LiftedRun};
 
-use super::{CardHandling, CardLamp, CardMaterial};
+use super::{
+    DUE_AFTER_A_CHANGE, Lamp, Picture, PictureLook, Scene, on_stage, rendered, view_about,
+};
+use crate::core::card::{CardHandling, CardMaterial};
 use crate::core::content::ImageRef;
 use crate::core::gui;
-use crate::core::render::Look;
-use crate::core::render::world::sky::{Daylight, SunLight, adaptation};
-use crate::core::render::world::{DRAWN_FRAMES_AFTER, RenderProgress, lights};
-use crate::core::units::Degrees;
-
-/// The light of the sky over the player, where one stands. Whatever shows the sky tells it, and
-/// tells it anew only once the light has changed to the eye; a lamp that follows the sky is hung
-/// by it.
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct CardSkyLight(pub Option<SkyLampLight>);
-
-/// A sky's light for the cards: its sun, or by night its moon, as it shines under a clear sky,
-/// and the bearing its sun stands at at noon.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SkyLampLight {
-    pub shining: SunLight,
-    pub noon: Degrees,
-}
 
 /// The lamp a card on the stage is lit by, as it hangs this pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -119,23 +102,13 @@ impl MaterialExtension for CardPrint {
     }
 }
 
-pub struct CardStagePlugin;
+pub(super) struct CardStagePlugin;
 
 impl Plugin for CardStagePlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "print.wesl");
         app.add_plugins(MaterialPlugin::<CardSurface>::default())
             .init_resource::<CardStage>()
-            .init_resource::<CardSkyLight>()
-            // A staged card's camera and meshes are set as the interface draws, and must be
-            // where the card is in the frame that shows it: a pass later, a dragged card's
-            // picture would trail the place the interface shows it at.
-            .configure_sets(
-                PostUpdate,
-                EguiPostUpdateSet::EndPass
-                    .before(TransformSystems::Propagate)
-                    .before(CameraUpdateSystems),
-            )
             .add_systems(
                 PostUpdate,
                 strike
@@ -183,12 +156,7 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
     let side = reach_of(shows, card.flat).length();
     let side = 2.0 * side * pose.scale.max(1.0) * SLACK * pixels;
     let side = ((side / GRAIN).ceil() * GRAIN).max(GRAIN) as u32;
-    let corner = (pose.center.to_vec2() * pixels - egui::Vec2::splat(side as f32 / 2.0)).round();
-    let view = SubCameraView {
-        full_size: window,
-        offset: Vec2::new(corner.x, corner.y),
-        size: UVec2::splat(side),
-    };
+    let (view, corner) = view_about(pose.center, side, pixels, window);
     let scene = Scene {
         eye: handling.eye * screen.height(),
         lamp: Lamp::over(world, &handling.lamp, screen),
@@ -209,8 +177,7 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
         handling.settles_in.0,
         frame,
     );
-    let layer = staged.layer.unwrap_or_else(|| free_layer(world));
-    staged.layer = Some(layer);
+    let layer = staged.picture.layer(world);
     let placed = Transform {
         translation: on_stage(pose.center, screen),
         rotation: Quat::from_rotation_z(-pose.angle)
@@ -226,7 +193,7 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
     };
     let reframed = staged.shot != Some(shot);
     if reframed {
-        frame_picture(world, &mut staged, layer, &shot);
+        staged.picture.frame(world, &view, &scene, PICTURE_LOOK);
         staged.shot = Some(shot);
     }
     let laid = Laid {
@@ -248,15 +215,8 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
     } else {
         staged.due.saturating_sub(1)
     };
-    let draws = staged.due > 0 || !staged.drawn;
-    if let Some(mut camera) = staged
-        .camera
-        .and_then(|camera| world.get_mut::<Camera>(camera))
-        && camera.is_active != draws
-    {
-        camera.is_active = draws;
-    }
-    let shown = match staged.texture {
+    staged.picture.take(world, staged.due > 0 || !staged.drawn);
+    let shown = match staged.picture.texture() {
         Some(texture) if staged.drawn => {
             let lies = Rect::from_min_size(
                 Pos2::new(corner.x, corner.y) / pixels,
@@ -335,12 +295,7 @@ struct Staged {
     shot: Option<Shot>,
     due: u8,
     tilt: CardTilt,
-    layer: Option<usize>,
-    side: u32,
-    picture: Option<Handle<Image>>,
-    texture: Option<egui::TextureId>,
-    camera: Option<Entity>,
-    lamp: Option<Entity>,
+    picture: Picture,
     runs: Vec<StagedRun>,
 }
 
@@ -365,63 +320,6 @@ struct Shot {
     scene: Scene,
     screen: Rect,
     placed: Transform,
-}
-
-/// Where the stage's eye and lamp stand over the window, in the points the interface is drawn
-/// in, and how many of them the window is high.
-#[derive(Clone, Copy, PartialEq)]
-struct Scene {
-    eye: f32,
-    lamp: Lamp,
-    height: f32,
-}
-
-/// The stage's lamp: where it hangs, its colour, how much of a card's light is its at its
-/// fullest, and how much of that it shines with now.
-#[derive(Clone, Copy, PartialEq)]
-struct Lamp {
-    at: Vec3,
-    color: Color,
-    share: f32,
-    shines: f32,
-}
-
-impl Lamp {
-    /// The lamp as the game's settings hang it, or the light of the sky where the lamp follows
-    /// one and one stands.
-    fn over(world: &World, hung: &CardLamp, screen: Rect) -> Lamp {
-        let at = lamp_at(hung, screen);
-        let written = Lamp {
-            at,
-            color: hung.color.color(),
-            share: hung.strength,
-            shines: 1.0,
-        };
-        let sky = world
-            .get_resource::<CardSkyLight>()
-            .and_then(|light| light.0)
-            .filter(|_| hung.follows_sky);
-        let (Some(sky), Some(look)) = (sky, world.get_resource::<Look>()) else {
-            return written;
-        };
-        let light = sky.shining;
-        let daylight = world
-            .get_resource::<Daylight>()
-            .copied()
-            .unwrap_or_default();
-        let opened = adaptation(daylight, light, look);
-        let shines = light.illuminance / look.light.sun_lux * 2f32.powf(opened.0);
-        let toward = lights::toward(light.elevation, light.azimuth);
-        let ahead = lights::toward(Degrees(0.0), sky.noon);
-        let aside = lights::toward(Degrees(0.0), Degrees(sky.noon.0 + 90.0));
-        let away = at.length();
-        Lamp {
-            at: Vec3::new(toward.dot(aside), toward.y, toward.dot(ahead)) * away,
-            color: light.color,
-            shines: shines.clamp(0.0, 1.0),
-            ..written
-        }
-    }
 }
 
 /// Where a card's runs of triangles are laid this pass, and what they are drawn with.
@@ -453,7 +351,7 @@ struct SurfaceLook {
 
 impl SurfaceLook {
     fn of(world: &mut World, material: &CardMaterial, lamp: &Lamp) -> SurfaceLook {
-        let even = 1.0 - lamp.share;
+        let even = lamp.even();
         let plain = SurfaceLook {
             roughness: 1.0,
             reflectance: 0.0,
@@ -551,23 +449,14 @@ const SLACK: f32 = 1.1;
 /// The step a card's picture grows by, in pixels, so it keeps its size as the card's own
 /// changes a little.
 const GRAIN: f32 = 32.0;
-/// The exposure under which Bevy's lighting comes out as it went in.
-const PLAIN_EXPOSURE: f32 = -0.263_034_4;
-/// The first render layer the stage's cards are drawn on, one each.
-const FIRST_LAYER: usize = 8;
-/// How much nearer and farther than the window's plane the stage's camera draws, as shares of
-/// its distance from it.
-const DEPTH: (f32, f32) = (0.1, 10.0);
-/// How many passes a card's picture is taken anew once the card has changed: the pass of the
-/// change, and those it takes to reach the screen.
-const DUE_AFTER_A_CHANGE: u8 = DRAWN_FRAMES_AFTER as u8 + 1;
 /// How many seconds a card's picture is kept once the card is off the stage.
 const LINGER: f64 = 1.0;
-/// How wide the lamp is, in window heights: a point would leave a polished card a highlight a
-/// pixel wide.
-const LAMP_WIDTH: f32 = 0.04;
-/// How far the lamp's light carries, in window heights: past every card.
-const LAMP_RANGE: f32 = 20.0;
+/// A card's own shader spreads its even light, and its edges are the interface's, smoothed
+/// already.
+const PICTURE_LOOK: PictureLook = PictureLook {
+    smoothing: Msaa::Off,
+    even: 0.0,
+};
 
 fn lerp((from, to): (f32, f32), share: f32) -> f32 {
     from + (to - from) * share.clamp(0.0, 1.0)
@@ -598,17 +487,6 @@ fn measure(world: &mut World, image: &ImageRef) -> Handle<Image> {
     read
 }
 
-/// A point of the interface on the stage: the window's middle at the origin, up being up.
-fn on_stage(at: Pos2, screen: Rect) -> Vec3 {
-    let middle = screen.center();
-    Vec3::new(at.x - middle.x, middle.y - at.y, 0.0)
-}
-
-fn lamp_at(lamp: &CardLamp, screen: Rect) -> Vec3 {
-    let at = screen.min + screen.size() * egui::vec2(lamp.across, lamp.down);
-    on_stage(at, screen) + Vec3::Z * lamp.height * screen.height()
-}
-
 /// How far from the middle of `flat` a card reaches, aside and above, that lies there and is
 /// painted in `painted` besides.
 fn reach_of(painted: impl Iterator<Item = Rect>, flat: Rect) -> egui::Vec2 {
@@ -630,9 +508,6 @@ fn drawn(
     material: &CardMaterial,
     look: &SurfaceLook,
 ) -> bool {
-    let Some(progress) = world.get_resource::<RenderProgress>().cloned() else {
-        return false;
-    };
     let kind = std::mem::discriminant(material);
     let assets = world.resource::<AssetServer>();
     let at_hand = [
@@ -646,126 +521,14 @@ fn drawn(
         staged.at_hand = None;
         return false;
     }
-    let mut stage = world.resource_mut::<CardStage>();
-    if stage.drawn.contains(&kind) {
+    if world.resource::<CardStage>().drawn.contains(&kind) {
         return true;
     }
-    let since = *staged.at_hand.get_or_insert(progress.drawn());
-    let drawn = progress.compiling() == 0 && progress.drawn() >= since + DRAWN_FRAMES_AFTER;
+    let drawn = rendered(world, &mut staged.at_hand);
     if drawn {
-        stage.drawn.insert(kind);
+        world.resource_mut::<CardStage>().drawn.insert(kind);
     }
     drawn
-}
-
-fn free_layer(world: &World) -> usize {
-    let taken: Vec<usize> = world
-        .resource::<CardStage>()
-        .cards
-        .values()
-        .filter_map(|staged| staged.layer)
-        .collect();
-    (FIRST_LAYER..)
-        .find(|layer| !taken.contains(layer))
-        .unwrap_or(FIRST_LAYER)
-}
-
-/// Points the card's camera at the part of the window the card is drawn in, into a picture of
-/// that size, with the lamp where it hangs.
-fn frame_picture(world: &mut World, staged: &mut Staged, layer: usize, shot: &Shot) {
-    let Shot { view, scene, .. } = shot;
-    let lamp = scene.lamp;
-    let side = view.size.x;
-    if staged.side != side || staged.picture.is_none() {
-        if let Some(old) = staged.picture.take() {
-            world.resource_mut::<EguiUserTextures>().remove_image(&old);
-        }
-        let mut picture =
-            Image::new_target_texture(side, side, TextureFormat::Rgba8UnormSrgb, None);
-        picture.sampler = ImageSampler::nearest();
-        let picture = world.resource_mut::<Assets<Image>>().add(picture);
-        staged.texture = Some(
-            world
-                .resource_mut::<EguiUserTextures>()
-                .add_image(EguiTextureHandle::Strong(picture.clone())),
-        );
-        staged.picture = Some(picture);
-        staged.side = side;
-    }
-    let Some(picture) = staged.picture.clone() else {
-        return;
-    };
-    let lens = Projection::Perspective(PerspectiveProjection {
-        fov: 2.0 * (0.5 * scene.height / scene.eye).atan(),
-        near: scene.eye * DEPTH.0,
-        far: scene.eye * DEPTH.1,
-        ..default()
-    });
-    let stands = Transform::from_xyz(0.0, 0.0, scene.eye);
-    let camera = *staged.camera.get_or_insert_with(|| {
-        world
-            .spawn((
-                Camera3d::default(),
-                Camera {
-                    order: -1,
-                    clear_color: ClearColorConfig::Custom(Color::NONE),
-                    ..default()
-                },
-                Tonemapping::None,
-                DebandDither::Disabled,
-                Msaa::Off,
-                Exposure {
-                    ev100: PLAIN_EXPOSURE,
-                },
-                AmbientLight {
-                    brightness: 0.0,
-                    ..default()
-                },
-                RenderLayers::layer(layer),
-            ))
-            .id()
-    });
-    let mut camera = world.entity_mut(camera);
-    camera.insert((
-        RenderTarget::Image(picture.into()),
-        lens,
-        stands,
-        GlobalTransform::from(stands),
-    ));
-    if let Some(mut drawn) = camera.get_mut::<Camera>()
-        && drawn.sub_camera_view != Some(*view)
-    {
-        drawn.sub_camera_view = Some(*view);
-    }
-    let hangs = Transform::from_translation(lamp.at);
-    let light = PointLight {
-        color: lamp.color,
-        // What lights a matte face squarely under the lamp to the lamp's share of its colour.
-        intensity: lamp.share * lamp.shines * 4.0 * PI * PI * lamp.at.z * lamp.at.z,
-        range: LAMP_RANGE * scene.height,
-        radius: LAMP_WIDTH * scene.height,
-        shadow_maps_enabled: false,
-        ..default()
-    };
-    match staged.lamp {
-        Some(lit) => {
-            world
-                .entity_mut(lit)
-                .insert((light, hangs, GlobalTransform::from(hangs)));
-        }
-        None => {
-            staged.lamp = Some(
-                world
-                    .spawn((
-                        light,
-                        hangs,
-                        GlobalTransform::from(hangs),
-                        RenderLayers::layer(layer),
-                    ))
-                    .id(),
-            );
-        }
-    }
 }
 
 /// Makes the card's runs of triangles its meshes, each drawn over the one before it, and lays
@@ -935,32 +698,35 @@ fn clip_of(clip: Rect, flat: Rect, pixels: f32) -> Vec4 {
 fn strike(world: &mut World) {
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
     let mut gone: Vec<Entity> = Vec::new();
-    let mut forgotten: Vec<Handle<Image>> = Vec::new();
+    let mut struck: Vec<egui::Id> = Vec::new();
+    let mut forgotten: Vec<egui::Id> = Vec::new();
     {
         let mut stage = world.resource_mut::<CardStage>();
-        for staged in stage.cards.values_mut() {
+        for (key, staged) in &mut stage.cards {
             if !std::mem::take(&mut staged.kept) && staged.struck.is_none() {
                 staged.struck = Some(now);
                 gone.extend(staged.runs.drain(..).map(|run| run.entity));
-                gone.extend(staged.camera.take());
-                gone.extend(staged.lamp.take());
                 staged.shot = None;
+                struck.push(*key);
+            }
+            if staged.struck.is_some_and(|at| now - at >= LINGER) {
+                forgotten.push(*key);
             }
         }
-        stage.cards.retain(|_, staged| {
-            let lingers = staged.struck.is_none_or(|at| now - at < LINGER);
-            if !lingers {
-                forgotten.extend(staged.picture.take());
-            }
-            lingers
-        });
     }
     for entity in gone {
         world.despawn(entity);
     }
-    for picture in forgotten {
-        world
-            .resource_mut::<EguiUserTextures>()
-            .remove_image(&picture);
-    }
+    world.resource_scope(|world, mut stage: Mut<CardStage>| {
+        for key in struck {
+            if let Some(staged) = stage.cards.get_mut(&key) {
+                staged.picture.strike(world);
+            }
+        }
+        for key in forgotten {
+            if let Some(mut staged) = stage.cards.remove(&key) {
+                staged.picture.forget(world);
+            }
+        }
+    });
 }

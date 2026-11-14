@@ -7,7 +7,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::Content;
+use crate::core::content::{Content, serial};
 use crate::core::math::Pos;
 use crate::core::render::Pointed;
 use crate::core::time;
@@ -20,7 +20,7 @@ use crate::systems::npc::Pack;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
 use crate::systems::reach;
 use crate::systems::skill::{self, BasicAttack, CastAim, Targeting};
-use crate::systems::stat::{self, Stats};
+use crate::systems::stat::{self, Stats, Vital};
 use crate::systems::vfx::{self, VfxFixture};
 use crate::systems::visibility;
 
@@ -146,10 +146,13 @@ pub struct Dead {
     pub at: Seconds,
 }
 
+/// How much health and mana every player regains, and how often.
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
-pub struct HealthRegen {
+pub struct VitalRegen {
     pub every: Seconds,
     pub health: f32,
+    #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
+    pub mana: f32,
 }
 
 #[derive(Resource, Default)]
@@ -172,7 +175,8 @@ pub fn regen(world: &mut World) {
         .iter(world)
         .collect();
     for player in players {
-        stat::regenerate(world, player, regen.health);
+        stat::restore(world, player, Vital::Health, regen.health);
+        stat::restore(world, player, Vital::Mana, regen.mana);
     }
 }
 

@@ -26,7 +26,7 @@ use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::weather::ServerSky;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::class::{Class, ClassId};
-use crate::systems::combat::{self, HealthRegen};
+use crate::systems::combat::{self, VitalRegen};
 use crate::systems::crafting::RecipeMasteries;
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::Equipment;
@@ -194,11 +194,11 @@ impl ModuleSet for PlayerDef {
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PlayerModule {
-    Regen(HealthRegen),
+    Regen(VitalRegen),
 }
 
 impl PlayerDef {
-    pub fn regen(&self) -> Option<HealthRegen> {
+    pub fn regen(&self) -> Option<VitalRegen> {
         self.modules
             .iter()
             .map(|module| match module {

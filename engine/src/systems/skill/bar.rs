@@ -37,7 +37,8 @@ use crate::systems::reach::Engaged;
 use crate::systems::script::condition;
 use crate::systems::settings::{BarKey, BarShape, UserSettings};
 use crate::systems::skill::{CastAim, aim};
-use crate::systems::{GameSettings, notification, stat};
+use crate::systems::stat::{self, Vital};
+use crate::systems::{GameSettings, notification};
 use ui::paint;
 use ui::panel::{self, GripCorner};
 
@@ -459,10 +460,11 @@ fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> SlotFill
         return SlotFill::Blocked(Glyph::Lock);
     }
     let bag = world.get::<Inventory>(me);
-    if def
-        .cost
-        .iter()
-        .any(|stack| bag.map_or(0, |bag| bag.count(stack.item)) < stack.count)
+    if stat::current(world, me, Vital::Mana) < def.mana_at(rank)
+        || def
+            .cost
+            .iter()
+            .any(|stack| bag.map_or(0, |bag| bag.count(stack.item)) < stack.count)
     {
         return SlotFill::Blocked(Glyph::Zero);
     }

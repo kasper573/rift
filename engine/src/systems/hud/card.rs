@@ -7,8 +7,8 @@ use ui::sheet::Depth;
 
 use super::panel;
 use crate::core::card::CardMaterial;
-use crate::core::card::stage::{self, HungCardLamp, StagedCard};
 use crate::core::gui::{self, Band, GuiContext};
+use crate::core::stage::card::{self as stage, HungCardLamp, StagedCard};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::settings::UserSettings;
 

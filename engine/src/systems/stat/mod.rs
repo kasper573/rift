@@ -1,9 +1,9 @@
-mod health;
+mod vital;
 pub mod widget;
 
-pub use health::{
-    Immortal, SettleHealth, apply_damage, current_health, dead, heal, is_dead, max_health, refill,
-    regenerate, revive, stands,
+pub use vital::{
+    Immortal, SettleVitals, apply_damage, current, current_health, dead, drain, heal, is_dead,
+    max_health, most, refill, restore, revive, stands,
 };
 
 use crate::core::content::SchemaMark;
@@ -34,6 +34,8 @@ use strum::{IntoStaticStr, VariantArray};
 pub enum StatKind {
     Health,
     MaxHealth,
+    Mana,
+    MaxMana,
     Damage,
     AttackSpeed,
     AttackDelay,
@@ -61,9 +63,45 @@ impl StatKind {
             StatKind::GatheringEfficiency | StatKind::CraftingSpeed => Some("%"),
             StatKind::Health
             | StatKind::MaxHealth
+            | StatKind::Mana
+            | StatKind::MaxMana
             | StatKind::Damage
             | StatKind::AttackSpeed
             | StatKind::GatheringSpeed => None,
+        }
+    }
+}
+
+/// What an actor spends and regains, each held within a maximum of its own. Out of health an
+/// actor falls; out of mana it only goes without.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Vital {
+    #[default]
+    Health,
+    Mana,
+}
+
+impl Vital {
+    pub const BOTH: [Vital; 2] = [Vital::Health, Vital::Mana];
+
+    pub fn is_health(&self) -> bool {
+        *self == Vital::Health
+    }
+
+    /// The stat that says how much of it an actor holds.
+    pub const fn held(self) -> StatKind {
+        match self {
+            Vital::Health => StatKind::Health,
+            Vital::Mana => StatKind::Mana,
+        }
+    }
+
+    /// The stat that says how much of it an actor holds at most.
+    pub const fn most(self) -> StatKind {
+        match self {
+            Vital::Health => StatKind::MaxHealth,
+            Vital::Mana => StatKind::MaxMana,
         }
     }
 }

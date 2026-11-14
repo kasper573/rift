@@ -4,13 +4,13 @@ use bevy_ecs::prelude::*;
 use engine::systems::actor::skeleton::EquipmentSlot;
 use engine::systems::equipment::{self, Equipment, EquipmentPlace, UnequipRequest};
 use engine::systems::item::{ItemDef, ItemId};
-use engine::systems::stat::{self, StatKind, Stats};
+use engine::systems::stat::{self, StatKind, Stats, Vital};
 use engine::systems::{script, status};
 use serde_json::json;
 use testkit::{BODY, Game, Map, Sim};
 
 #[test]
-fn a_lowered_maximum_pulls_health_down_to_it() {
+fn a_lowered_maximum_pulls_health_and_mana_down_to_it() {
     let (mut sim, player) = wardrobe();
     set_vitals(&mut sim, player, 30.0, 30.0);
     sim.give(player, "rock", 1);
@@ -19,8 +19,10 @@ fn a_lowered_maximum_pulls_health_down_to_it() {
     equipment::equip_from_bag(&mut sim.world, player, rock).expect("the rock is worn");
     sim.run(0.1);
 
-    assert_eq!(stat::max_health(&sim.world, player), 20.0);
-    assert_eq!(stat::current_health(&sim.world, player), 20.0);
+    for vital in Vital::BOTH {
+        assert_eq!(stat::most(&sim.world, player, vital), 20.0);
+        assert_eq!(stat::current(&sim.world, player, vital), 20.0);
+    }
 }
 
 #[test]
@@ -29,7 +31,7 @@ fn healing_does_not_bring_the_dead_back() {
     set_vitals(&mut sim, player, 0.0, 30.0);
 
     stat::heal(&mut sim.world, player, 10.0);
-    stat::refill(&mut sim.world, player);
+    stat::refill(&mut sim.world, player, Vital::Health);
 
     assert!(stat::is_dead(&sim.world, player));
 }
@@ -96,7 +98,8 @@ fn wardrobe() -> (Sim, Entity) {
             "item",
             json!({
                 "activated": { "type": "on", "event": "activated", "next": "lower" },
-                "lower": { "type": "boost", "stat": "max_health", "by": -10.0 },
+                "lower": { "type": "boost", "stat": "max_health", "by": -10.0, "next": "drain" },
+                "drain": { "type": "boost", "stat": "max_mana", "by": -10.0 },
             }),
         )
         .load();
@@ -110,7 +113,7 @@ fn wardrobe() -> (Sim, Entity) {
             status::aspect::TickAspects::default(),
         ))
         .plan(script::RunFlows::default())
-        .plan(stat::SettleHealth::default());
+        .plan(stat::SettleVitals::default());
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
     (sim, player)
@@ -124,6 +127,8 @@ fn set_vitals(sim: &mut Sim, player: Entity, health: f32, max: f32) {
     *sim.world.get_mut::<Stats>(player).expect("stats") = Stats(BTreeMap::from([
         (StatKind::Health, health),
         (StatKind::MaxHealth, max),
+        (StatKind::Mana, health),
+        (StatKind::MaxMana, max),
     ]));
 }
 

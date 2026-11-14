@@ -1,11 +1,11 @@
 //! A rarity and a card style as the game draws them, beside their forms: on a real item, quest
 //! or skill that uses them, or on a plain stand-in while nothing does.
 
-use engine::core::card::stage::StagedCard;
 use engine::core::card::{CardMaterial, CardStyleDef, CardStyleFixture, CardStyleId};
 use engine::core::content::{Content, Fixture};
 use engine::core::gui::ImageSource;
 use engine::core::math::ColorGradient;
+use engine::core::stage::card::StagedCard;
 use engine::systems::GameSettings;
 use engine::systems::item::card::{self as item_card, CardLook};
 use engine::systems::item::rarity::ItemRarityDef;

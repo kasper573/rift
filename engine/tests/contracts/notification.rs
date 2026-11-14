@@ -598,7 +598,7 @@ fn area(game: &Content, key: &str) -> Sim {
             dialogue::refresh,
             chat::overhear,
         ))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default())
         .add(belongings::notify_changes);

@@ -4,18 +4,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, FlowCx, NEXT, ScriptFault};
+use crate::systems::combat;
 use crate::systems::npc::Npc;
 use crate::systems::script::effect::{self as effects, AimedAll, Reaching};
 use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting};
-use crate::systems::{combat, stat};
+use crate::systems::stat::{self, Vital};
 
-/// Restores health up to the maximum.
+/// Restores health, or mana, up to its maximum.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("stat"))]
 pub struct Heal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
+    #[serde(default, skip_serializing_if = "Vital::is_health")]
+    pub restores: Vital,
     pub by: HealBy,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
@@ -35,13 +38,15 @@ pub enum Fully {
     Full,
 }
 
-/// Takes health, credited to an npc owner.
+/// Takes health, credited to an npc owner, or mana, which is a blow to nobody.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("stat"))]
 pub struct Damage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
+    #[serde(default, skip_serializing_if = "Vital::is_health")]
+    pub takes: Vital,
     #[schemars(extend("default" = 5.0))]
     pub by: Condition,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -62,13 +67,14 @@ impl EffectDef<RiftScripting> for Heal {
             HealBy::Amount(amount) => Some(effects::number(cx, amount)?),
             HealBy::Full(_) => None,
         };
+        let restores = self.restores;
         Ok(Box::new(move |world, flow, cx| {
             let amount = |world: &World| by.as_ref().map(|by| by(world, cx).as_num() as f32);
             match effects::aimed_all_anywhere(world, cx, &who) {
                 AimedAll::Here(actors) => {
                     for actor in actors {
                         let amount = amount(world);
-                        mend(world, actor, amount);
+                        mend(world, actor, restores, amount);
                     }
                     EffectStep::Done
                 }
@@ -81,7 +87,7 @@ impl EffectDef<RiftScripting> for Heal {
                         client,
                         Reaching::quietly(NEXT),
                         move |world, actor| {
-                            mend(world, actor, amount);
+                            mend(world, actor, restores, amount);
                             Ok(())
                         },
                     )
@@ -105,13 +111,14 @@ impl EffectDef<RiftScripting> for Damage {
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_all_anywhere(cx, &self.who)?;
         let by = effects::number(cx, &self.by)?;
+        let takes = self.takes;
         Ok(Box::new(move |world, flow, cx| {
             match effects::aimed_all_anywhere(world, cx, &who) {
                 AimedAll::Here(actors) => {
                     for actor in actors {
                         let amount = by(world, cx).as_num() as f32;
                         let attacker = attacker(world, cx, actor);
-                        combat::inflict(world, actor, attacker, amount);
+                        take(world, actor, takes, attacker, amount);
                     }
                     EffectStep::Done
                 }
@@ -126,7 +133,7 @@ impl EffectDef<RiftScripting> for Damage {
                         client,
                         Reaching::quietly(NEXT),
                         move |world, actor| {
-                            combat::inflict(world, actor, None, amount);
+                            take(world, actor, takes, None, amount);
                             Ok(())
                         },
                     )
@@ -139,11 +146,21 @@ impl EffectDef<RiftScripting> for Damage {
     }
 }
 
-/// Heals `actor` by `amount`, or in full when none is given.
-fn mend(world: &mut World, actor: Entity, amount: Option<f32>) {
-    match amount {
-        Some(amount) => stat::heal(world, actor, amount),
-        None => stat::refill(world, actor),
+/// Gives `actor` `amount` of a vital back, or all of it when none is given. Health restored
+/// this way is a heal, shown where it lands.
+fn mend(world: &mut World, actor: Entity, restores: Vital, amount: Option<f32>) {
+    match (restores, amount) {
+        (Vital::Health, Some(amount)) => stat::heal(world, actor, amount),
+        (Vital::Mana, Some(amount)) => stat::restore(world, actor, Vital::Mana, amount),
+        (_, None) => stat::refill(world, actor, restores),
+    }
+}
+
+/// Takes `amount` of a vital from `actor`: health as a blow of `attacker`'s, mana quietly.
+fn take(world: &mut World, actor: Entity, takes: Vital, attacker: Option<Entity>, amount: f32) {
+    match takes {
+        Vital::Health => combat::inflict(world, actor, attacker, amount),
+        Vital::Mana => stat::drain(world, actor, Vital::Mana, amount),
     }
 }
 

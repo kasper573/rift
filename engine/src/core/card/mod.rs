@@ -13,7 +13,6 @@ use crate::core::math::{ColorGradient, Rgb};
 use crate::core::units::{Degrees, Seconds};
 
 pub mod dress;
-pub mod stage;
 
 pub type CardStyleId = ContentId<CardStyleDef>;
 

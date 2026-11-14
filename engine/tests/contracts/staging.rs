@@ -341,7 +341,7 @@ fn sim() -> Sim {
             movement::AdvanceWalks::default(),
         ))
         .add((interact::interactions, dialogue::hold, dialogue::refresh))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);

@@ -213,7 +213,7 @@ fn field(width: usize, pack: Value, hour: f32) -> Sim {
         .load();
     let mut sim = Sim::new(content);
     sim.serve("wilds")
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add((
             area::weather::turn_sky,
             combat::defeats,

@@ -10,9 +10,9 @@ use ui::ink;
 
 use super::{Rank, SkillDef, SkillId, SkillKind, SkillStat};
 use crate::core::card::CardStyleDef;
-use crate::core::card::stage::HungCardLamp;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
+use crate::core::stage::card::HungCardLamp;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::class::{self, ClassId, NodeKey};
 use crate::systems::crafting;
@@ -24,6 +24,7 @@ use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::condition;
 use crate::systems::skill::Learned;
+use crate::systems::stat::{self, Vital};
 use ui::words;
 use ui::words::counted;
 
@@ -207,7 +208,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
             }
         }
         card::heading(ui, plate, "to use");
-        let needs = use_lines(world, &content, def);
+        let needs = use_lines(world, &content, def, card.rank);
         if needs.is_empty() {
             card::fact(ui, "Nothing needed");
         }
@@ -338,7 +339,7 @@ fn access_lines(world: &World, content: &Content, access: &NodeAccess) -> Vec<(S
         .collect()
 }
 
-fn use_lines(world: &World, content: &Content, def: &SkillDef) -> Vec<(String, bool)> {
+fn use_lines(world: &World, content: &Content, def: &SkillDef, rank: Rank) -> Vec<(String, bool)> {
     let me = session::me(world);
     let mut lines: Vec<(String, bool)> = def
         .requires
@@ -349,6 +350,11 @@ fn use_lines(world: &World, content: &Content, def: &SkillDef) -> Vec<(String, b
             (condition::describe(content, part).to_string(), met)
         })
         .collect();
+    let mana = def.mana_at(rank.max(Rank::FIRST));
+    if mana > 0.0 {
+        let held = me.map_or(0.0, |me| stat::current(world, me, Vital::Mana));
+        lines.push((format!("Spends {mana} mana"), held >= mana));
+    }
     let bag = me.and_then(|me| world.get::<Inventory>(me));
     for stack in &def.cost {
         let held = bag.map_or(0, |bag| bag.count(stack.item));

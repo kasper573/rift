@@ -429,7 +429,7 @@ fn inn() -> Sim {
             movement::AdvanceWalks::default(),
         ))
         .add((interact::interactions, dialogue::hold, dialogue::refresh))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan((
             actor::SettleActions::default(),

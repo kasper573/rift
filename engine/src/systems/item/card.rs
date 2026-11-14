@@ -14,10 +14,10 @@ use ui::ink;
 use ui::sheet::Depth;
 
 use crate::core::card::CardStyleDef;
-use crate::core::card::stage::HungCardLamp;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, ImageSource};
 use crate::core::math::ColorGradient;
+use crate::core::stage::card::HungCardLamp;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Carried};

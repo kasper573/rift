@@ -16,6 +16,7 @@ pub mod par;
 pub mod render;
 pub mod script;
 pub mod spatial;
+pub mod stage;
 pub mod text;
 pub mod tick;
 pub mod time;

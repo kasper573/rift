@@ -256,6 +256,14 @@ fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<
             settings.toggle_day_clock();
         }
         ui.end_row();
+        let mut amounts = settings.globe_amounts_shown();
+        if controls::toggle(ui, "Show health and mana in numbers", &mut amounts)
+            .hinted("A globe under the pointer says how much it holds either way")
+            .changed()
+        {
+            settings.toggle_globe_amounts();
+        }
+        ui.end_row();
         let mut quick_cast = settings.quick_cast();
         if controls::toggle(ui, "Quick cast skills", &mut quick_cast)
             .hinted("A skill is cast the moment it is used, at what the pointer rests on")
@@ -591,6 +599,14 @@ impl UserSettings {
         self.screen.day_clock_hidden = !self.screen.day_clock_hidden;
     }
 
+    pub(crate) fn globe_amounts_shown(&self) -> bool {
+        self.screen.globe_amounts
+    }
+
+    pub(crate) fn toggle_globe_amounts(&mut self) {
+        self.screen.globe_amounts = !self.screen.globe_amounts;
+    }
+
     pub(crate) fn item_naming(&self) -> ItemNaming {
         self.items.naming
     }
@@ -893,6 +909,8 @@ struct ScreenSettings {
     frame_rate: bool,
     #[serde(default)]
     day_clock_hidden: bool,
+    #[serde(default)]
+    globe_amounts: bool,
 }
 
 /// Saved on change rather than at each place that changes a setting. The initial load counts as a

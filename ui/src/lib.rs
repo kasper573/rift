@@ -15,6 +15,7 @@ pub mod face;
 pub mod float;
 mod fonts;
 pub mod form;
+pub mod globe;
 pub mod glyph;
 pub mod ink;
 pub mod input;
@@ -31,7 +32,6 @@ pub mod suggest;
 pub mod theme;
 pub mod timespans;
 pub mod tree;
-pub mod vial;
 pub mod wheel;
 pub mod words;
 

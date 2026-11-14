@@ -12,7 +12,7 @@ use engine::systems::combat::{self, Attitude};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::skill::{self, CastAim, Rank, SkillDef, UseSkillRequest};
-use engine::systems::stat::{self, StatKind};
+use engine::systems::stat::{self, StatKind, Vital};
 use engine::systems::visibility::Presence;
 use engine::systems::{actor, script, vfx};
 use serde_json::{Value, json};
@@ -40,7 +40,7 @@ fn healing_shows_but_regeneration_does_not() {
     stat::apply_damage(&mut sim.world, player, 6.0);
     sim.tick();
 
-    stat::regenerate(&mut sim.world, player, 1.0);
+    stat::restore(&mut sim.world, player, Vital::Health, 1.0);
     sim.tick();
     assert!(instances(&mut sim, "healed").is_empty());
 
@@ -284,7 +284,7 @@ fn arena() -> (Sim, Entity) {
             script::RunFlows::default(),
             movement::AdvanceWalks::default(),
         ))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);

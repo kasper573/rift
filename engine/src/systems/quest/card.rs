@@ -12,9 +12,9 @@ use super::{
     resets_label,
 };
 use crate::core::card::CardStyleDef;
-use crate::core::card::stage::{self as card_stage, StagedCard};
 use crate::core::content::Content;
 use crate::core::gui::ImageSource;
+use crate::core::stage::card::{self as card_stage, StagedCard};
 use crate::core::time::UnixMillis;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
 use crate::systems::dialogue::{ChoiceReveal, Conversation, ConversationPanel};

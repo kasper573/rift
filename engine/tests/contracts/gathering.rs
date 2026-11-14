@@ -311,7 +311,7 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
         ))
         .plan(movement::AdvanceWalks::default())
         .add((resource::gathering, resource::work))
-        .plan(stat::SettleHealth::default())
+        .plan(stat::SettleVitals::default())
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     let area = sim.id::<AreaDef>("meadow");

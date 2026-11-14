@@ -27,7 +27,8 @@ use crate::systems::script::{
     Condition, EffectCall, EffectReach, EventKind, Owner, RiftInstances, RiftScripting, RunnerKind,
     condition, event,
 };
-use crate::systems::{notification, stat, visibility};
+use crate::systems::stat::{self, Vital};
+use crate::systems::{notification, visibility};
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct UseSkillRequest {
@@ -113,7 +114,7 @@ pub fn cast(
 }
 
 /// Whether a skill may be used now by someone who knows it: not cooling down, its requirements
-/// holding and its cost in the bag.
+/// holding, its mana held and its cost in the bag.
 pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), String> {
     let content = world.resource::<Content>();
     let def = skill.get(content);
@@ -139,6 +140,10 @@ pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), String
                 stack.item.get(content).name
             ));
         }
+    }
+    let mana = def.mana_at(super::rank_of(world, caster, skill));
+    if stat::current(world, caster, Vital::Mana) < mana {
+        return Err(format!("{} needs {mana} mana", def.name));
     }
     Ok(())
 }
@@ -282,12 +287,17 @@ fn perform(world: &mut World, caster: Entity, skill: SkillId, rank: Rank, target
     if let Some(toward) = target.position(world) {
         actor::face_toward(world, caster, toward);
     }
+    let mana = def.mana_at(rank);
+    if stat::current(world, caster, Vital::Mana) < mana {
+        return;
+    }
     if !def.cost.is_empty()
         && let Some(mut inventory) = world.get_mut::<Inventory>(caster)
         && inventory.exchange(&content, &def.cost, &[]).is_err()
     {
         return;
     }
+    stat::drain(world, caster, Vital::Mana, mana);
     let cooldown = def.cooldown_at(rank);
     if cooldown.0 > 0.0 {
         let ready_at = now.after(cooldown);
