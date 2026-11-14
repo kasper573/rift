@@ -1,14 +1,16 @@
 use bevy::prelude::*;
-use ui::card::{self, CardResponse};
+use ui::card::{self, CardResponse, CardTilt};
 use ui::egui;
-use ui::egui::epaint::Mesh;
-use ui::egui::{Id, LayerId, Pos2, Rect, Shape, Ui, Vec2};
+use ui::egui::{Id, LayerId, Pos2, Rect, Ui, Vec2};
 use ui::motion::{self, CardPose};
 use ui::sheet::Depth;
 
 use super::panel;
+use crate::core::card::CardMaterial;
+use crate::core::card::stage::{self, StagedCard};
 use crate::core::gui::{self, Band, GuiContext};
 use crate::systems::interface::InterfaceSound;
+use crate::systems::settings::UserSettings;
 
 const CARD_TOP: f32 = 96.0;
 const CARD_MARGIN: f32 = 72.0;
@@ -90,9 +92,12 @@ pub(crate) fn pinned_rect<T: Send + Sync + 'static>(world: &World) -> Option<Rec
     world.resource::<Pinned<T>>().drawn
 }
 
+/// Draws the pinned card of its kind, and the one it replaced or that was closed on its way
+/// out, each on the card stage in the material `material` says it is made of.
 pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     world: &mut World,
     key: &'static str,
+    material: impl Fn(&World, &T) -> CardMaterial,
     draw: impl Fn(&mut Ui, &mut World, &T, Depth) -> CardResponse,
 ) {
     let Some(gui) = gui::context(world) else {
@@ -103,17 +108,34 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     let leaving = leaving_pose(world, now);
     let main = panel::layer(key);
     let scratch = LayerId::new(Band::Hud.order(), Id::new(("leaving card", key)));
-    let old = leaving.map(|(card, at, pose, way)| {
-        let meshes = posed_card(world, &gui, scratch, at, pose, |ui, world| {
-            draw(ui, world, &card, Depth::Behind);
-        });
-        (meshes, way)
-    });
-    let Some(card) = pinned::<T>(world) else {
+    let pinned = pinned::<T>(world);
+    if let Some((card, at, pose, way)) = leaving {
+        let since = motion::mark(&gui, scratch);
+        egui::Area::new(scratch.id)
+            .order(scratch.order)
+            .fixed_pos(at.min)
+            .constrain(false)
+            .fade_in(false)
+            .interactable(false)
+            .show(&gui, |ui| draw(ui, world, &card, Depth::Behind));
+        let staged = StagedCard {
+            key: scratch.id,
+            runs: motion::lifted(&gui, scratch, since),
+            flat: at,
+            pose: Some(pose),
+            turns: false,
+            material: material(world, &card),
+        };
+        // The card a new one replaces sinks away under it, on its layer; one closed leaves on
+        // its own.
+        let onto = match way {
+            Way::Replaced if pinned.is_some() => main,
+            Way::Replaced | Way::Flick => scratch,
+        };
+        stage::stage(world, &gui, staged, onto);
+    }
+    let Some(card) = pinned else {
         world.resource_mut::<Pinned<T>>().drawn = None;
-        if let Some((meshes, _)) = old {
-            add_meshes(&gui, scratch, meshes);
-        }
         return;
     };
     let start = Pos2::new(
@@ -124,6 +146,7 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     let deal = dealing::<T>(world, now, rest, screen);
     let front = panel::front_sheet(world, &gui) == Some(key);
     let depth = if front { Depth::Front } else { Depth::Behind };
+    let since = motion::mark(&gui, main);
     let shown = egui::Area::new(panel::panel_id(key))
         .order(Band::Hud.order())
         .fixed_pos(rest.min)
@@ -139,15 +162,18 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     } else {
         open = true;
     }
-    if let Some(pose) = deal {
-        let new = motion::posed(&gui, main, drawn, pose);
-        if let Some((meshes, Way::Replaced)) = old {
-            add_meshes(&gui, main, meshes);
-        }
-        add_meshes(&gui, main, new);
-    } else if let Some((meshes, way)) = old {
-        let onto = if way == Way::Replaced { main } else { scratch };
-        add_meshes(&gui, onto, meshes);
+    let staged = StagedCard {
+        key: main.id,
+        runs: motion::lifted(&gui, main, since),
+        flat: drawn,
+        pose: deal,
+        turns: world.resource::<UserSettings>().cards_tilt(),
+        material: material(world, &card),
+    };
+    if !stage::stage(world, &gui, staged, main)
+        && let Some(dealt) = world.resource_mut::<Pinned<T>>().dealt.as_mut()
+    {
+        dealt.since = None;
     }
     panel::mark_drawn(world, key);
     world
@@ -158,6 +184,11 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     if !open {
         unpin::<T>(world);
     }
+}
+
+/// How far the pinned card of `key` is turned toward the pointer.
+pub(crate) fn pinned_tilt(world: &World, key: &'static str) -> CardTilt {
+    stage::tilt_of(world, panel::layer(key).id)
 }
 
 // A press brings the area it lands on to the front as its pass ends, and areas brought to the front
@@ -252,27 +283,4 @@ fn edge_origin(rest: Rect, screen: Rect) -> Rect {
         screen.left() + EDGE_ORIGIN
     };
     Rect::from_center_size(Pos2::new(x, centre.y), Vec2::splat(2.0 * EDGE_ORIGIN))
-}
-
-fn posed_card(
-    world: &mut World,
-    gui: &egui::Context,
-    layer: LayerId,
-    at: Rect,
-    pose: CardPose,
-    draw: impl FnOnce(&mut Ui, &mut World),
-) -> Vec<Mesh> {
-    egui::Area::new(layer.id)
-        .order(layer.order)
-        .fixed_pos(at.min)
-        .constrain(false)
-        .fade_in(false)
-        .interactable(false)
-        .show(gui, |ui| draw(ui, world));
-    motion::posed(gui, layer, at, pose)
-}
-
-fn add_meshes(gui: &egui::Context, layer: LayerId, meshes: Vec<Mesh>) {
-    gui.layer_painter(layer)
-        .extend(meshes.into_iter().map(Shape::mesh));
 }

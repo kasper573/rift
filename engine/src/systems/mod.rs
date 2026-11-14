@@ -61,7 +61,8 @@ use crate::core::audio::Hearing;
 use crate::core::audio::playback::{SfxDef, SfxPlugin};
 use crate::core::audio::soundscape::SoundscapePlugin;
 use crate::core::babble::{BabblePlugin, Speech};
-use crate::core::card::{CardStyleDef, CardStyleFixture};
+use crate::core::card::stage::CardStagePlugin;
+use crate::core::card::{CardHandling, CardStyleDef, CardStyleFixture};
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
     Content, ContentFile, ContentFolder, ContentProblem, ContentRegistry, ContentVersion,
@@ -182,6 +183,7 @@ pub fn area_state(world: &mut World, content: &Content) {
 fn insert_content(world: &mut World, content: &Content) {
     let settings = content.built::<GameSettings>();
     world.insert_resource(settings.look);
+    world.insert_resource(settings.cards);
     world.insert_resource(settings.typing);
     world.insert_resource(settings.lettering);
     world.insert_resource(settings.speech);
@@ -232,6 +234,7 @@ pub struct GameSettings {
     pub drops: DroppedItems,
     /// The colour behind the picture on an item's card, by the item's type.
     pub item_type_art_colors: item::card::ItemTypeArtColors,
+    pub cards: CardHandling,
     pub reading: ReadingPace,
     pub notices: NoticeTimes,
     pub words: GameWords,
@@ -612,6 +615,7 @@ pub fn client_app(
         .insert_resource(http)
         .add_plugins((
             GuiPlugin,
+            CardStagePlugin,
             StyledTextPlugin,
             ClientTransportPlugin,
             SnapshotPlugin {
@@ -893,6 +897,7 @@ fn check_settings(loading: &mut Loading) {
     check.at_least("/drops/least_size", drops.least_size.0, 0.0, "meters");
     check.at_least("/drops/fades_for", drops.fades_for.0, 0.0, "seconds");
     check.at_least("/drops/names_reach", drops.names_reach.0, 0.0, "meters");
+    settings.cards.check("/cards", &mut check);
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
         ("decline_quest", &settings.words.decline_quest),

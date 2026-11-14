@@ -1,6 +1,7 @@
+use egui::emath::TSTransform;
 use egui::emath::easing;
-use egui::emath::{Rot2, TSTransform};
 use egui::epaint::{ClippedShape, Mesh, Primitive, Shadow};
+use egui::layers::ShapeIdx;
 use egui::{Color32, Context, LayerId, Pos2, Rect, Vec2};
 
 use crate::sheet;
@@ -146,34 +147,40 @@ pub fn replaced(t: f32, at: Rect) -> CardPose {
     }
 }
 
-pub fn posed(ctx: &Context, layer: LayerId, rest: Rect, pose: CardPose) -> Vec<Mesh> {
+/// A run of triangles taken off a layer: what the interface would have drawn there with one
+/// texture, inside one clip rectangle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LiftedRun {
+    pub clip: Rect,
+    pub mesh: Mesh,
+}
+
+/// Where the paint on `layer` stands this pass: what is painted from here on can be taken off
+/// again.
+pub fn mark(ctx: &Context, layer: LayerId) -> ShapeIdx {
+    ctx.graphics_mut(|graphics| graphics.entry(layer).next_idx())
+}
+
+/// Takes what was painted on `layer` since `mark` off it, as the triangles the interface would
+/// have drawn, in the order it would have drawn them: whoever takes them draws them instead.
+pub fn lifted(ctx: &Context, layer: LayerId, mark: ShapeIdx) -> Vec<LiftedRun> {
     let shapes: Vec<ClippedShape> = ctx.graphics_mut(|graphics| {
-        std::mem::take(graphics.entry(layer))
-            .all_entries()
-            .cloned()
-            .collect()
+        let painted = graphics.entry(layer);
+        let mut kept: Vec<ClippedShape> = std::mem::take(painted).all_entries().cloned().collect();
+        let taken = kept.split_off(mark.0.min(kept.len()));
+        for shape in kept {
+            painted.add(shape.clip_rect, shape.shape);
+        }
+        taken
     });
-    let centre = rest.center().to_vec2();
-    let scale = TSTransform::from_translation(centre)
-        * TSTransform::from_scaling(pose.scale)
-        * TSTransform::from_translation(-centre);
-    let travel = TSTransform::from_translation(pose.center - rest.center());
     ctx.tessellate(shapes, ctx.pixels_per_point())
         .into_iter()
         .filter_map(|primitive| match primitive.primitive {
-            Primitive::Mesh(mesh) => Some(mesh),
+            Primitive::Mesh(mesh) => Some(LiftedRun {
+                clip: primitive.clip_rect,
+                mesh,
+            }),
             Primitive::Callback(_) => None,
-        })
-        .map(|mut mesh| {
-            mesh.transform(scale);
-            mesh.rotate(Rot2::from_angle(pose.angle), rest.center());
-            mesh.transform(travel);
-            if pose.opacity < 1.0 {
-                for vertex in &mut mesh.vertices {
-                    vertex.color = vertex.color.gamma_multiply(pose.opacity);
-                }
-            }
-            mesh
         })
         .collect()
 }

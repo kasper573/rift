@@ -8,8 +8,9 @@ use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy_egui::{
-    EguiContext, EguiGlobalSettings, EguiOutput, EguiPlugin, EguiPostUpdateSet,
-    EguiPrimaryContextPass, EguiTextureHandle, EguiUserTextures, PrimaryEguiContext,
+    EguiContext, EguiGlobalSettings, EguiManagedTextures, EguiOutput, EguiPlugin,
+    EguiPostUpdateSet, EguiPrimaryContextPass, EguiTextureHandle, EguiUserTextures,
+    PrimaryEguiContext,
 };
 use image::imageops::{self, FilterType};
 use strum::VariantArray;
@@ -227,6 +228,23 @@ fn finished(world: &mut World, file: &str, finish: Finish) -> Option<GuiImage> {
     Some(image)
 }
 
+/// The image the interface draws as `texture`: one of its own, such as its glyphs, or a picture
+/// kept here. For what draws the interface's triangles itself.
+pub fn texture_image(world: &World, texture: egui::TextureId) -> Option<Handle<Image>> {
+    match texture {
+        egui::TextureId::Managed(id) => world
+            .resource::<EguiManagedTextures>()
+            .iter()
+            .find(|((_, managed), _)| *managed == id)
+            .map(|(_, managed)| managed.handle.clone()),
+        egui::TextureId::User(_) => world
+            .resource::<GuiImages>()
+            .uploaded
+            .get(&texture)
+            .cloned(),
+    }
+}
+
 pub fn pointer_claimed(world: &World) -> bool {
     let Some(gui) = context(world) else {
         return false;
@@ -264,6 +282,7 @@ pub fn cursor(world: &World) -> egui::CursorIcon {
 struct GuiImages {
     kept: HashMap<(String, Finish), GuiTexture>,
     asked: Mutex<BTreeSet<String>>,
+    uploaded: HashMap<egui::TextureId, Handle<Image>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -385,7 +404,11 @@ fn upload(
     let handle = world.resource_mut::<Assets<Image>>().add(image);
     let texture = world
         .resource_mut::<EguiUserTextures>()
-        .add_image(EguiTextureHandle::Strong(handle));
+        .add_image(EguiTextureHandle::Strong(handle.clone()));
+    world
+        .resource_mut::<GuiImages>()
+        .uploaded
+        .insert(texture, handle);
     Some(GuiImage {
         texture,
         size,

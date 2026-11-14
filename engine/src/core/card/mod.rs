@@ -1,15 +1,19 @@
 //! Card styles: the content that says how a card looks, apart from its picture and its words.
 
+use bevy::prelude::Resource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
+use ui::{card, sheet};
 
 use crate::core::content::{
     Content, ContentFile, ContentId, Fixture, ImageRef, Nearby, RowCheck, serial,
 };
 use crate::core::math::{ColorGradient, Rgb};
+use crate::core::units::{Degrees, Seconds};
 
 pub mod dress;
+pub mod stage;
 
 pub type CardStyleId = ContentId<CardStyleDef>;
 
@@ -42,6 +46,8 @@ pub struct CardStyleDef {
     pub label_line: CardLabelLine,
     #[serde(default, skip_serializing_if = "serial::is_default")]
     pub art: CardArt,
+    #[serde(default, skip_serializing_if = "serial::is_default")]
+    pub material: CardMaterial,
     #[serde(default, skip_serializing_if = "serial::is_default")]
     pub paper: CardPaper,
     #[serde(default, skip_serializing_if = "serial::is_default")]
@@ -187,6 +193,28 @@ impl Default for CardArt {
     }
 }
 
+/// What a card is made of, and so what it does with the lamp's light. Each measure is a share
+/// of one.
+#[derive(JsonSchema, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CardMaterial {
+    /// Takes no shine, and only shades a little as it turns.
+    #[default]
+    Matte,
+    /// A wide, soft glow, the tighter the higher its gloss.
+    Satin { gloss: f32 },
+    /// A clear coat over the print: a small, bright highlight, the sharper the higher its gloss.
+    Lacquer { gloss: f32 },
+    /// The print itself is metal, the more mirror-like the higher its polish.
+    Metal { polish: f32 },
+    /// Splits the lamp's light into colours over `strength` of the print. The image shapes how
+    /// the colours break up.
+    Foil { pattern: ImageRef, strength: f32 },
+    /// Raised as the image says, a normal map of which way each point of the face leans. Its
+    /// ridges catch the lamp the brighter the higher its gloss.
+    Embossed { relief: ImageRef, gloss: f32 },
+}
+
 /// What lies under a card's text.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -239,6 +267,7 @@ impl ContentFile for CardStyleDef {
             name_band: CardNameBand::default(),
             label_line: CardLabelLine::default(),
             art: CardArt::default(),
+            material: CardMaterial::default(),
             paper: CardPaper::default(),
             dividers: CardDividers::default(),
             halo: CardHalo::default(),
@@ -275,6 +304,90 @@ impl ContentFile for CardStyleDef {
     }
 }
 
+/// How every card answers the pointer, and the lamp that lights it.
+#[derive(Resource, JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardHandling {
+    /// How far a card is turned when the pointer is at its edge.
+    pub tilt: Degrees,
+    /// How long a card takes to follow the pointer, and to lie flat again once it has left.
+    pub settles_in: Seconds,
+    /// How far in front of the window the eye is, in window heights. The nearer, the more a
+    /// tilted card's far edge shrinks.
+    pub eye: f32,
+    pub lamp: CardLamp,
+}
+
+/// The light every card is lit by. It hangs still: a highlight moves only as a card does.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardLamp {
+    /// Where over the window it hangs, as shares of the window's width and height from its top
+    /// left corner.
+    pub across: f32,
+    pub down: f32,
+    /// How far in front of the window it hangs, in window heights.
+    pub height: f32,
+    pub color: Rgb,
+    /// How much of a card's light is the lamp's. The rest falls evenly, so at nought a matte
+    /// card takes no shading at all.
+    pub strength: f32,
+}
+
+impl CardHandling {
+    pub fn check(&self, at: &str, check: &mut RowCheck) {
+        check.range(format!("{at}/tilt"), self.tilt.0, 0.0, MOST_TILT, "degrees");
+        let shift = self.corner_shift();
+        if shift > sheet::CROSS / 2.0 {
+            check.error(
+                format!("{at}/tilt"),
+                "tilt too steep",
+                format!(
+                    "{} degrees, drawing a card's corner {shift:.0} points from where it is clicked",
+                    self.tilt.0
+                ),
+                "a tilt, with the eye's distance, that keeps a card's close button under the pointer",
+            );
+        }
+        check.at_least(
+            format!("{at}/settles_in"),
+            self.settles_in.0,
+            0.0,
+            "seconds",
+        );
+        check.above_up_to(
+            format!("{at}/eye"),
+            self.eye,
+            0.0,
+            FARTHEST_EYE,
+            "window heights",
+        );
+        let lamp = &self.lamp;
+        check.range(
+            format!("{at}/lamp/across"),
+            lamp.across,
+            0.0,
+            1.0,
+            "a share",
+        );
+        check.range(format!("{at}/lamp/down"), lamp.down, 0.0, 1.0, "a share");
+        check.above_up_to(
+            format!("{at}/lamp/height"),
+            lamp.height,
+            0.0,
+            FARTHEST_EYE,
+            "window heights",
+        );
+        check.range(
+            format!("{at}/lamp/strength"),
+            lamp.strength,
+            0.0,
+            1.0,
+            "a share",
+        );
+    }
+}
+
 /// The style of every card whose file names none: `fixtures/default.card_style.json`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, IntoStaticStr, VariantArray)]
 #[strum(serialize_all = "snake_case")]
@@ -293,6 +406,21 @@ const MOST_OVERHANG: f32 = 24.0;
 const ART_HEIGHT: (f32, f32) = (40.0, 320.0);
 const MOST_ART_MARGIN: f32 = 24.0;
 const MOST_GLOW: f32 = 48.0;
+impl CardHandling {
+    /// How far from where it lies flat a card's corner is drawn with the pointer on it, where
+    /// the card is turned the most both ways, in the smallest window the tallest card fits in:
+    /// there the eye stands nearest, and the far corner shrinks the most.
+    fn corner_shift(&self) -> f32 {
+        let (across, down) = (card::WIDTH / 2.0, card::MAX_HEIGHT / 2.0);
+        let turn = self.tilt.0.to_radians();
+        let eye = self.eye * card::MAX_HEIGHT;
+        let sunk = (across + down) * turn.sin();
+        across.hypot(down) * (1.0 - turn.cos() * eye / (eye + sunk))
+    }
+}
+
+const MOST_TILT: f32 = 12.0;
+const FARTHEST_EYE: f32 = 10.0;
 
 enum StyleNeed {
     Gradient,
@@ -364,6 +492,14 @@ impl CardStyleDef {
         }
         if let CardArt::Inset { margin, .. } = self.art {
             check.above_up_to("/art/margin", margin.0, 0.0, MOST_ART_MARGIN, "points");
+        }
+        match &self.material {
+            CardMaterial::Matte => {}
+            CardMaterial::Satin { gloss }
+            | CardMaterial::Lacquer { gloss }
+            | CardMaterial::Embossed { gloss, .. } => share(check, "/material/gloss", *gloss),
+            CardMaterial::Metal { polish } => share(check, "/material/polish", *polish),
+            CardMaterial::Foil { strength, .. } => share(check, "/material/strength", *strength),
         }
         if let CardPaper::Tinted { strength } | CardPaper::Watermarked { strength } = self.paper {
             share(check, "/paper/strength", strength);

@@ -16,6 +16,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy_egui::{
     EguiContext, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, PrimaryEguiContext,
 };
+use engine::core::card::stage as card_stage;
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
 use engine::core::render::camera;
 use engine::core::render::video::VideoPreferences;
@@ -1218,6 +1219,7 @@ fn editor_ui(world: &mut World) {
     let (ui_ms, tab, camera) = world.resource_scope(|world, mut editor: Mut<Editor>| {
         let started = Instant::now();
         shell::show(&mut editor, &ctx);
+        stage_cards(world, &mut editor, &ctx);
         if editor.settings.frame_rate {
             frame_rate::show_meter(
                 &ctx,
@@ -1248,6 +1250,19 @@ fn editor_ui(world: &mut World) {
     });
     if world.resource::<Editor>().quit {
         world.write_message(bevy::app::AppExit::Success);
+    }
+}
+
+/// Puts the cards the previews painted this pass on the game's card stage, under the lamp the
+/// project's settings hang.
+fn stage_cards(world: &mut World, editor: &mut Editor, ctx: &egui::Context) {
+    let staged = std::mem::take(&mut editor.form.staged);
+    let Some(content) = editor.loaded() else {
+        return;
+    };
+    world.insert_resource(content.built::<systems::GameSettings>().cards);
+    for (card, onto) in staged {
+        card_stage::stage(world, ctx, card, onto);
     }
 }
 

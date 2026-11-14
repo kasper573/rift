@@ -1,8 +1,8 @@
 use egui::{Context, Pos2, Rect, Vec2};
 use strum::VariantArray;
 use ui::card::{
-    self, ArtLook, BorderLook, Card, CardDress, CardPane, CornerLook, CrestLook, DividerLook,
-    HaloLook, LabelLineLook, NameBandLook, PaperLook,
+    self, ArtLook, BorderLook, Card, CardDress, CardPane, CardTilt, CornerLook, CrestLook,
+    DividerLook, HaloLook, LabelLineLook, NameBandLook, PaperLook,
 };
 use ui::controls::{RowHover, RowLook};
 use ui::face::{self, Face};
@@ -163,27 +163,30 @@ fn a_flicked_card_lifts_away_unseen_and_a_replaced_one_drops_and_dims() {
 }
 
 #[test]
-fn a_posed_layer_comes_back_as_meshes_moved_into_the_pose() {
+fn what_a_layer_was_painted_since_a_mark_is_lifted_off_it_as_the_triangles_it_would_draw() {
     let ctx = context();
-    let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::new("card in motion"));
-    let rest = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(300.0, 380.0));
-    let mut meshes = Vec::new();
+    let layer = egui::LayerId::new(egui::Order::Middle, egui::Id::new("card on its layer"));
+    let under = Rect::from_min_size(Pos2::new(20.0, 20.0), Vec2::new(60.0, 60.0));
+    let card = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(300.0, 380.0));
+    let mut lifted = Vec::new();
+    let mut left = 0;
     pass(&ctx, |ui| {
-        ui.ctx()
-            .layer_painter(layer)
-            .rect_filled(rest, 0.0, ink::CREAM);
-        let pose = motion::CardPose {
-            center: rest.center() + Vec2::new(200.0, 0.0),
-            scale: 1.0,
-            angle: 0.0,
-            opacity: 0.5,
-        };
-        meshes = motion::posed(ui.ctx(), layer, rest, pose);
+        let painter = ui.ctx().layer_painter(layer);
+        painter.rect_filled(under, 0.0, ink::CREAM);
+        let mark = motion::mark(ui.ctx(), layer);
+        painter.rect_filled(card, 0.0, ink::CREAM);
+        lifted = motion::lifted(ui.ctx(), layer, mark);
+        left = ui
+            .ctx()
+            .graphics_mut(|graphics| graphics.entry(layer).all_entries().count());
     });
-    assert!(!meshes.is_empty());
-    let moved = meshes[0].calc_bounds();
-    assert!((moved.center().x - (rest.center().x + 200.0)).abs() < 1.0);
-    assert!(meshes[0].vertices[0].color.a() < 200);
+    assert_eq!(left, 1, "what was painted before the mark stays");
+    assert_eq!(lifted.len(), 1);
+    let taken = lifted[0].mesh.calc_bounds();
+    assert!(
+        (taken.min - card.min).length() < 2.0 && (taken.max - card.max).length() < 2.0,
+        "{taken:?}"
+    );
 }
 
 #[test]
@@ -267,6 +270,34 @@ fn a_dressed_card_keeps_its_width_and_makes_room_for_what_its_dress_adds() {
         plain.height()
     );
     assert!(dressed.contains_rect(frame));
+}
+
+#[test]
+fn a_card_turns_toward_the_pointer_by_degrees_and_lies_flat_again_once_it_leaves() {
+    let flat = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(300.0, 400.0));
+    let (most, settles_in, frame) = (4.0, 0.25, 1.0 / 60.0);
+    let settled = |from: CardTilt, pointer: Option<Pos2>| {
+        (0..60).fold(from, |tilt, _| {
+            tilt.toward(pointer, flat, most, settles_in, frame)
+        })
+    };
+    let near = |tilt: CardTilt, aside: f32, above: f32| {
+        (tilt.aside - aside).abs() < 0.01 && (tilt.above - above).abs() < 0.01
+    };
+
+    let first = CardTilt::FLAT.toward(Some(flat.right_center()), flat, most, settles_in, frame);
+    assert!(first.aside > 0.0 && first.aside < most / 2.0, "{first:?}");
+
+    let right = settled(CardTilt::FLAT, Some(flat.right_center()));
+    assert!(near(right, most, 0.0), "{right:?}");
+    let corner = settled(right, Some(flat.left_top()));
+    assert!(near(corner, -most, -most), "{corner:?}");
+    let middle = settled(corner, Some(flat.center()));
+    assert!(near(middle, 0.0, 0.0), "{middle:?}");
+    for gone in [None, Some(flat.right_center() + Vec2::new(40.0, 0.0))] {
+        let left = settled(right, gone);
+        assert!(near(left, 0.0, 0.0), "{left:?}");
+    }
 }
 
 #[test]

@@ -254,6 +254,18 @@ impl Game {
                     "usable": { "from": [128, 128, 128], "to": [96, 96, 96] },
                     "resource": { "from": [128, 128, 128], "to": [96, 96, 96] },
                 },
+                "cards": {
+                    "tilt": 4.0,
+                    "settles_in": 0.25,
+                    "eye": 1.5,
+                    "lamp": {
+                        "across": 0.7,
+                        "down": 0.1,
+                        "height": 0.6,
+                        "color": [255, 255, 255],
+                        "strength": 0.25,
+                    },
+                },
                 "reading": { "glance": 2.0, "per_word": 0.3 },
                 "notices": { "pops_last": 1.0, "intro_after": 0.3 },
                 "words": {

@@ -4,7 +4,7 @@ pub mod menu;
 mod panel;
 
 pub(crate) use card::{
-    Pinned, draw_pinned, forget_pinned, pin, pinned, pinned_rect, raise_pinned, unpin,
+    Pinned, draw_pinned, forget_pinned, pin, pinned, pinned_rect, pinned_tilt, raise_pinned, unpin,
 };
 pub(crate) use panel::{SizedPiece, grab_sized, grab_spot, sheet_pose, sized_rect, widget};
 

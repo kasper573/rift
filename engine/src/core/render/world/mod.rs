@@ -97,6 +97,9 @@ impl Plugin for WorldScenePlugin {
             layers::JointLayersPlugin,
         ))
         .add_plugins(outline::OutlineScenePlugin)
+        // Every camera draws clear glass over a copy of what it has drawn behind the pane, which
+        // the pane bends.
+        .register_required_components::<Camera3d, ScreenSpaceTransmission>()
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
@@ -136,7 +139,6 @@ impl Plugin for WorldScenePlugin {
             PostUpdate,
             (
                 let_depth_be_read,
-                show_through_glass,
                 opacity::thin,
                 plumb::hang
                     .after(layers::run)
@@ -146,16 +148,6 @@ impl Plugin for WorldScenePlugin {
                     .after(bevy::asset::AssetEventSystems),
             ),
         );
-    }
-}
-
-/// Every camera draws clear glass over a copy of what it has drawn behind the pane, which the
-/// pane bends.
-fn show_through_glass(mut commands: Commands, cameras: Query<Entity, Added<Camera3d>>) {
-    for camera in &cameras {
-        commands
-            .entity(camera)
-            .insert(ScreenSpaceTransmission::default());
     }
 }
 

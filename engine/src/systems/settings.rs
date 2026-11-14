@@ -272,6 +272,14 @@ fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<
             settings.toggle_risky_craft_confirm();
         }
         ui.end_row();
+        let mut tilts = settings.cards_tilt();
+        if controls::toggle(ui, "Tilt cards", &mut tilts)
+            .hinted("A card turns toward the pointer while it rests on it")
+            .changed()
+        {
+            settings.toggle_card_tilt();
+        }
+        ui.end_row();
         if let Some(typing) = typing {
             let label = ui.label("Text speed");
             text_speed_slider(ui, settings, typing, label.id);
@@ -651,6 +659,14 @@ impl UserSettings {
         self.ui.menu.opens_on
     }
 
+    pub(crate) fn cards_tilt(&self) -> bool {
+        !self.ui.flat_cards
+    }
+
+    pub(crate) fn toggle_card_tilt(&mut self) {
+        self.ui.flat_cards = !self.ui.flat_cards;
+    }
+
     pub(crate) fn minimap_turns(&self) -> bool {
         self.ui.minimap.turns_with_camera
     }
@@ -747,6 +763,9 @@ struct UiSettings {
     minimap: MinimapSettings,
     #[serde(default)]
     tracker_backing: Percent,
+    /// Whether cards lie flat rather than turn toward the pointer.
+    #[serde(default)]
+    flat_cards: bool,
 }
 
 impl Default for UiSettings {
@@ -759,6 +778,7 @@ impl Default for UiSettings {
             chat: ChatSettings::default(),
             minimap: MinimapSettings::default(),
             tracker_backing: Percent::default(),
+            flat_cards: false,
         }
     }
 }

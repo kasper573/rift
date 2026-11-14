@@ -10,6 +10,7 @@ use ui::panel;
 use ui::sheet;
 use ui::theme;
 
+use engine::core::card::stage::StagedCard;
 use engine::core::content::AssetKind;
 use engine::core::content::SchemaMark;
 use engine::core::content::fixture::FixtureLock;
@@ -24,7 +25,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
-use ui::egui::Ui;
+use ui::egui::{LayerId, Ui};
 use ui::glyph::{self, Mark};
 
 use crate::body_names::{self, NameChoice, NameKind};
@@ -206,6 +207,10 @@ pub struct FormState {
     pub set_to_default: HashSet<(Option<String>, String)>,
     pub status: Vec<String>,
     pub thumbnails: thumbs::Thumbnails,
+    /// The cards the previews painted this pass, each with the layer it belongs on: a preview
+    /// has no world to put its card on the game's card stage in, so they wait here for the pass
+    /// to be drawn.
+    pub staged: Vec<(StagedCard, LayerId)>,
     pub prop_thumbnails: thumbs::props::PropThumbnails,
     pub audio: audio::WaveformCache,
 }

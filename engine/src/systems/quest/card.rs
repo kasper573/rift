@@ -5,12 +5,14 @@ use ui::egui::{Align, Label, Layout, Response, Sense, Ui};
 use ui::face::{self, TextRole};
 use ui::glyph::{self, CardKind, Mark};
 use ui::ink;
+use ui::motion;
 
 use super::{
     ActiveQuest, Objective, ObjectiveProgress, Parties, QuestDef, QuestId, QuestLog, clock_label,
     resets_label,
 };
 use crate::core::card::CardStyleDef;
+use crate::core::card::stage::{self as card_stage, StagedCard};
 use crate::core::content::Content;
 use crate::core::gui::ImageSource;
 use crate::core::time::UnixMillis;
@@ -20,6 +22,7 @@ use crate::systems::hud;
 use crate::systems::item::widget::{SlotLook, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemStack};
 use crate::systems::player::session;
+use crate::systems::settings::UserSettings;
 
 const ICON: f32 = 20.0;
 const MARK: f32 = 13.0;
@@ -166,7 +169,9 @@ fn show_docked(ui: &mut Ui, world: &mut World, width: f32, most: f32) {
     };
     let content = world.resource::<Content>().clone();
     let parties = world.resource::<Parties>().clone();
-    show(ui, world, &content, quest, look, |ui, world, plate| {
+    let painted = ui.layer_id();
+    let since = motion::mark(ui.ctx(), painted);
+    let shown = show(ui, world, &content, quest, look, |ui, world, plate| {
         let shown = match moment {
             QuestMoment::Offer => offer(
                 ui,
@@ -185,6 +190,17 @@ fn show_docked(ui: &mut Ui, world: &mut World, width: f32, most: f32) {
         };
         inspectable(world, shown);
     });
+    let staged = StagedCard {
+        key: ui.id().with("docked quest card"),
+        runs: motion::lifted(ui.ctx(), painted, since),
+        flat: shown.rect,
+        pose: None,
+        turns: world.resource::<UserSettings>().cards_tilt(),
+        material: CardStyleDef::of(&content, quest.get(&content).card_style)
+            .material
+            .clone(),
+    };
+    card_stage::stage(world, ui.ctx(), staged, painted);
 }
 
 /// Lets the reader inspect each item a card shows.

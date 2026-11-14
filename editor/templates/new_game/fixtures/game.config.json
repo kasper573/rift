@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "1e3a7e73",
+  "content_version": "5de70224",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -74,6 +74,22 @@
         146,
         30
       ]
+    }
+  },
+  "cards": {
+    "tilt": 4.0,
+    "settles_in": 0.25,
+    "eye": 1.5,
+    "lamp": {
+      "across": 0.7,
+      "down": 0.1,
+      "height": 0.6,
+      "color": [
+        255,
+        244,
+        224
+      ],
+      "strength": 0.25
     }
   },
   "reading": {

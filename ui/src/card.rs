@@ -37,6 +37,9 @@ const CROSS_AT: Vec2 = Vec2::new(8.0, 7.0);
 const BAND_TEXT_INSET: f32 = 28.0;
 const PANE_GAP: f32 = 10.0;
 const STRIP: f32 = 18.0;
+/// How far in from the frame's lower right corner a seal is stamped, clear of the kind's mark
+/// there.
+const SEAL_IN: Vec2 = Vec2::new(80.0, 26.0);
 const BANNER: f32 = 16.0;
 const CREST_SUNK: f32 = 4.0;
 const BAND_ICON: f32 = 16.0;
@@ -46,6 +49,9 @@ const ARC_STEPS: usize = 6;
 const WATERMARK: f32 = 96.0;
 const RULE_ICON: f32 = 10.0;
 const RULE_ROW: f32 = 10.0;
+/// How many times over a tilt closes all but a third of what is left within its settling time:
+/// after it, under a fiftieth remains.
+const SETTLING: f32 = 4.0;
 const RULE_FADE: f32 = 0.25;
 
 pub const SHADOW: Shadow = Shadow {
@@ -211,6 +217,54 @@ pub struct Card<'a> {
     pub stamp: Option<&'a str>,
     pub depth: Depth,
     pub dress: CardDress<'a>,
+}
+
+/// How far a card is turned toward the pointer, in degrees: `aside` about its upright axis and
+/// `above` about its level one, so the part under the pointer sinks back. Eased from frame to
+/// frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CardTilt {
+    pub aside: f32,
+    pub above: f32,
+}
+
+impl CardTilt {
+    pub const FLAT: CardTilt = CardTilt {
+        aside: 0.0,
+        above: 0.0,
+    };
+
+    /// A step of `dt` seconds toward facing `pointer`, or toward lying flat when it is not on
+    /// the card. The card faces the pointer flat at the middle of `flat`, where it lies when it
+    /// is not turned, and turned by `most` at its edge, and is as good as there after
+    /// `settles_in` seconds.
+    pub fn toward(
+        self,
+        pointer: Option<Pos2>,
+        flat: Rect,
+        most: f32,
+        settles_in: f32,
+        dt: f32,
+    ) -> CardTilt {
+        let goal = pointer
+            .filter(|pointer| flat.contains(*pointer) && flat.is_positive())
+            .map_or(CardTilt::FLAT, |pointer| {
+                let off = (pointer - flat.center()) / (flat.size() / 2.0);
+                CardTilt {
+                    aside: off.x * most,
+                    above: off.y * most,
+                }
+            });
+        let covered = if settles_in > 0.0 {
+            1.0 - (-SETTLING * dt / settles_in).exp()
+        } else {
+            1.0
+        };
+        CardTilt {
+            aside: self.aside + (goal.aside - self.aside) * covered,
+            above: self.above + (goal.above - self.above) * covered,
+        }
+    }
 }
 
 /// What a card hands the text written on it.
@@ -763,12 +817,7 @@ impl<'a> Card<'a> {
             );
         }
         if let (LabelLineLook::Seal, Some(label)) = (self.dress.label_line, self.dress.label) {
-            controls::stamp(
-                painter,
-                Pos2::new(frame.max.x - 48.0, frame.max.y - 24.0),
-                label,
-                self.dress.gradient[1],
-            );
+            controls::stamp(painter, frame.max - SEAL_IN, label, self.dress.gradient[1]);
         }
     }
 }

@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::card::{self, Art, Card, CardResponse, Plate};
+use ui::card::{self, Art, Card, CardResponse, CardTilt, Plate};
 use ui::controls::{self, Pill};
 use ui::drag;
 use ui::egui;
@@ -78,6 +78,11 @@ pub fn showing(world: &World) -> bool {
 
 pub fn layer() -> egui::LayerId {
     hud::window_layer(WINDOW_KEY)
+}
+
+/// How far the pinned card is turned toward the pointer.
+pub fn tilt(world: &World) -> CardTilt {
+    hud::pinned_tilt(world, WINDOW_KEY)
 }
 
 pub fn shown(world: &World) -> Option<(ItemId, Rect)> {
@@ -424,7 +429,14 @@ pub fn foot(ui: &mut Ui, world: &World, hint: &StyledLine) {
 }
 
 fn draw_card(world: &mut World) {
-    hud::draw_pinned::<ItemId>(world, WINDOW_KEY, |ui, world, item, depth| {
+    let material = |world: &World, item: &ItemId| {
+        let content = world.resource::<Content>();
+        let rarity = item.get(content).rarity.get(content);
+        CardStyleDef::of(content, rarity.card_style)
+            .material
+            .clone()
+    };
+    hud::draw_pinned::<ItemId>(world, WINDOW_KEY, material, |ui, world, item, depth| {
         let look = CardLook {
             depth,
             ..CardLook::PINNED

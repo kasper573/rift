@@ -41,6 +41,7 @@ use ui::{chip, controls};
 use super::quests::quest_parties_sections;
 use super::styles;
 use crate::app::Editor;
+use crate::forms::FormState;
 use crate::rows;
 use crate::stage::{self, Scenario, Scene};
 use crate::tabs::shown_path;
@@ -497,12 +498,21 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
     };
     if table == QuestDef::TABLE {
         let Editor { project, form, .. } = &mut *editor;
+        let FormState {
+            thumbnails, staged, ..
+        } = form;
         let mut images = ProjectImages {
             ctx: &ctx,
             files: &project.as_ref().expect("a project").files,
-            thumbnails: &mut form.thumbnails,
+            thumbnails,
         };
-        quest_card(ui, &mut images, &content, key);
+        let style = content
+            .by_path::<QuestDef>(key)
+            .and_then(|quest| quest.get(&content).card_style);
+        let material = &CardStyleDef::of(&content, style).material;
+        styles::on_stage(staged, ui, material, |ui| {
+            quest_card(ui, &mut images, &content, key);
+        });
         return;
     }
     let Some(dressed) = dressed(&content, table, key) else {

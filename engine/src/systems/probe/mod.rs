@@ -63,7 +63,7 @@ use crate::core::render::world::{OnItsWay, missing_drawn};
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time;
 use crate::core::units::{
-    Bytes, MeterSize, Meters, Millis, Percent, PlaybackRate, Radians, Seconds, WindowPx,
+    Bytes, Degrees, MeterSize, Meters, Millis, Percent, PlaybackRate, Radians, Seconds, WindowPx,
 };
 use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::rain::{RainField, Shelter};
@@ -801,6 +801,7 @@ pub struct ProbeItemCard {
     pub item: ItemId,
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
+    pub tilt: ProbeCardTilt,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
@@ -808,6 +809,24 @@ pub struct ProbeSkillCard {
     pub skill: SkillId,
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
+    pub tilt: ProbeCardTilt,
+}
+
+/// How far a card is turned toward the pointer: `aside` about its upright axis and `above` about
+/// its level one, so the part under the pointer sinks back.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+pub struct ProbeCardTilt {
+    pub aside: Degrees,
+    pub above: Degrees,
+}
+
+impl From<ui::card::CardTilt> for ProbeCardTilt {
+    fn from(tilt: ui::card::CardTilt) -> ProbeCardTilt {
+        ProbeCardTilt {
+            aside: Degrees(tilt.aside),
+            above: Degrees(tilt.above),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -1182,12 +1201,14 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         item_card: item::card::shown(world).map(|(item, rect)| ProbeItemCard {
             item,
             rect: gui::window_rect(rect),
+            tilt: item::card::tilt(world).into(),
         }),
         skill_card: skill::card::shown(world)
             .zip(hud::pinned_rect::<SkillId>(world))
             .map(|(skill, rect)| ProbeSkillCard {
                 skill,
                 rect: gui::window_rect(rect),
+                tilt: skill::card::tilt(world).into(),
             }),
         prompt: prompt::tray::view(world).map(|view| ProbePrompt {
             title: view.title.clone(),

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use ui::card::{self, Art, Card, CardResponse};
+use ui::card::{self, Art, Card, CardResponse, CardTilt};
 use ui::egui;
 use ui::egui::{Rect, Response, Ui};
 use ui::face::{self, TextRole};
@@ -67,6 +67,11 @@ impl Plugin for SkillCardPlugin {
 
 pub fn open(world: &mut World, skill: SkillId, from: Option<Rect>) {
     hud::pin(world, skill, from);
+}
+
+/// How far the pinned card is turned toward the pointer.
+pub fn tilt(world: &World) -> CardTilt {
+    hud::pinned_tilt(world, WINDOW_KEY)
 }
 
 pub fn shown(world: &World) -> Option<SkillId> {
@@ -242,7 +247,13 @@ fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) 
 }
 
 fn draw_card(world: &mut World) {
-    hud::draw_pinned::<SkillId>(world, WINDOW_KEY, |ui, world, skill, depth| {
+    let material = |world: &World, skill: &SkillId| {
+        let content = world.resource::<Content>();
+        CardStyleDef::of(content, skill.get(content).card_style)
+            .material
+            .clone()
+    };
+    hud::draw_pinned::<SkillId>(world, WINDOW_KEY, material, |ui, world, skill, depth| {
         let card = of(world, *skill);
         let look = CardLook {
             depth,
