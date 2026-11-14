@@ -31,15 +31,15 @@ ctrlc = { version = "3", features = ["termination"] }
 tikv-jemallocator = { version = "0.7", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
 tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
 jemalloc_pprof = { version = "0.9", features = ["symbolize"] }
-bevy_app = { version = "0.20.0", default-features = false }
-bevy_ecs = { version = "0.20.0", default-features = false, features = ["std", "serialize"] }
-bevy_platform = { version = "0.20.0", default-features = false, features = ["std"] }
+bevy_app = { version = "0.20.1", default-features = false }
+bevy_ecs = { version = "0.20.1", default-features = false, features = ["std", "serialize"] }
+bevy_platform = { version = "0.20.1", default-features = false, features = ["std"] }
 slotmap = "1.1"
 smallvec = "1.16"
-bevy_input = { version = "0.20.0", default-features = false }
-bevy_math = { version = "0.20.0", default-features = false }
-bevy_time = { version = "0.20.0", default-features = false }
-bevy = { version = "0.20.0", default-features = false }
+bevy_input = { version = "0.20.1", default-features = false }
+bevy_math = { version = "0.20.1", default-features = false }
+bevy_time = { version = "0.20.1", default-features = false }
+bevy = { version = "0.20.1", default-features = false }
 # Only to enable what bevy leaves off; the version must be the one bevy renders with.
 wgpu = { version = "30.0.1", default-features = false }
 syn = { version = "3", features = ["full"] }
