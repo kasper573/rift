@@ -214,7 +214,11 @@ pub struct Spawned {
 
 /// The entries of every spawner and resident the world has reached.
 #[derive(Resource, Default)]
-pub struct SpawnerEntries(HashMap<SpawnerAt, Entries>);
+pub struct SpawnerEntries {
+    kept: HashMap<SpawnerAt, Entries>,
+    /// Those of them whose entries come and go with the sky, in their order in the scene.
+    under_sky: Vec<SpawnerAt>,
+}
 
 struct Entries {
     pack: Pack,
@@ -240,13 +244,20 @@ enum Entry {
 impl SpawnerEntries {
     /// How many of the spawner's entries stand filled.
     pub fn filled(&self, spawner: SpawnerAt) -> usize {
-        self.0.get(&spawner).map_or(0, |entries| {
+        self.kept.get(&spawner).map_or(0, |entries| {
             entries
                 .entries
                 .iter()
                 .filter(|entry| matches!(entry, Entry::Filled(_)))
                 .count()
         })
+    }
+
+    fn keep(&mut self, at: SpawnerAt, entries: Entries, under_sky: bool) {
+        self.kept.insert(at, entries);
+        if under_sky && let Err(place) = self.under_sky.binary_search(&at) {
+            self.under_sky.insert(place, at);
+        }
     }
 }
 
@@ -257,20 +268,22 @@ pub fn fill(world: &mut World, tile: TileAt) {
     let area = area::load(&content, area_id);
     let placed = area::placed(&content, area_id);
     for &index in area.modules_in(tile) {
-        let count = match &placed[index as usize].module {
+        let module = &placed[index as usize].module;
+        let count = match module {
             AreaModule::Spawner(spawner) => spawner.count,
             AreaModule::Resident(_) => 1,
             _ => continue,
         };
         let pack = npc::next_pack(world);
         let at = SpawnerAt(index);
-        world.resource_mut::<SpawnerEntries>().0.insert(
+        world.resource_mut::<SpawnerEntries>().keep(
             at,
             Entries {
                 pack,
                 entries: vec![Entry::Idle; count as usize],
                 sign: None,
             },
+            comes_and_goes(&content, module),
         );
         for entry in 0..count {
             spawn_entry(world, &content, area, area_id, at, entry, &[]);
@@ -288,16 +301,18 @@ pub fn retire(
     characters: &mut QueryState<&'static Position, With<PlayedBy>>,
     sessions: &mut dialogue::Sessions,
 ) {
-    if world.resource::<SpawnerEntries>().0.is_empty() {
+    let under_sky = world.resource::<SpawnerEntries>().under_sky.clone();
+    if under_sky.is_empty() {
         return;
     }
     let content = world.resource::<Content>().clone();
     let placed = area::placed(&content, world.resource::<WorldArea>().0);
     let standing: Vec<(Entity, Spawned, Pos<Meters>)> = spawned
         .iter(world)
+        .filter(|(_, spawned, _)| under_sky.binary_search(&spawned.spawner).is_ok())
         .map(|(entity, &spawned, position)| (entity, spawned, position.pos))
         .collect();
-    keep_residents(world, placed, &standing, sessions);
+    keep_residents(world, placed, &under_sky, &standing, sessions);
     let entries = world.resource::<SpawnerEntries>();
     let over: Vec<(Entity, Spawned, Pos<Meters>, Seconds)> = standing
         .into_iter()
@@ -306,7 +321,7 @@ pub fn retire(
                 return None;
             };
             let Entry::Filled(Some(share)) =
-                entries.0.get(&spawned.spawner)?.entries[spawned.entry as usize]
+                entries.kept.get(&spawned.spawner)?.entries[spawned.entry as usize]
             else {
                 return None;
             };
@@ -333,7 +348,7 @@ pub fn retire(
         let wait = Seconds(world.resource_mut::<Rng>().rand_float() * respawn.0);
         world
             .resource_mut::<SpawnerEntries>()
-            .0
+            .kept
             .get_mut(&spawned.spawner)
             .expect("its spawner keeps the entry")
             .entries[spawned.entry as usize] = Entry::Freed {
@@ -354,23 +369,14 @@ pub fn refill(world: &mut World, characters: &mut QueryState<&'static Position, 
     let now = time::uptime(world);
     let mut due: Vec<(SpawnerAt, u32)> = Vec::new();
     let mut woken: Vec<(SpawnerAt, u32, Seconds)> = Vec::new();
-    for (&at, entries) in &world.resource::<SpawnerEntries>().0 {
-        let (respawn, holds, eases_in) = match &placed[at.0 as usize].module {
-            AreaModule::Spawner(spawner) => (
-                spawner.respawn,
-                spawner
-                    .spawns
-                    .iter()
-                    .any(|share| holding(world, share) > 0.0),
-                true,
-            ),
-            AreaModule::Resident(resident) => (
-                resident.respawn,
-                absence::away(world, resident.npc).is_none(),
-                false,
-            ),
+    for (&at, entries) in &world.resource::<SpawnerEntries>().kept {
+        let module = &placed[at.0 as usize].module;
+        let (respawn, eases_in) = match module {
+            AreaModule::Spawner(spawner) => (spawner.respawn, true),
+            AreaModule::Resident(resident) => (resident.respawn, false),
             _ => continue,
         };
+        let mut holds = None;
         for (entry, state) in entries.entries.iter().enumerate() {
             match (*state, respawn) {
                 (Entry::Freed { since, wait }, Some(respawn))
@@ -378,10 +384,14 @@ pub fn refill(world: &mut World, characters: &mut QueryState<&'static Position, 
                 {
                     due.push((at, entry as u32));
                 }
-                (Entry::Idle, Some(respawn)) if holds && eases_in => {
-                    woken.push((at, entry as u32, respawn));
+                (Entry::Idle, respawn)
+                    if *holds.get_or_insert_with(|| holds_any(world, module)) =>
+                {
+                    match respawn {
+                        Some(respawn) if eases_in => woken.push((at, entry as u32, respawn)),
+                        _ => due.push((at, entry as u32)),
+                    }
                 }
-                (Entry::Idle, _) if holds => due.push((at, entry as u32)),
                 _ => {}
             }
         }
@@ -392,7 +402,7 @@ pub fn refill(world: &mut World, characters: &mut QueryState<&'static Position, 
     woken.sort_unstable_by_key(|&(at, entry, _)| (at, entry));
     for (at, entry, respawn) in woken {
         let wait = Seconds(world.resource_mut::<Rng>().rand_float() * respawn.0);
-        if let Some(entries) = world.resource_mut::<SpawnerEntries>().0.get_mut(&at) {
+        if let Some(entries) = world.resource_mut::<SpawnerEntries>().kept.get_mut(&at) {
             entries.entries[entry as usize] = Entry::Freed {
                 since: now,
                 wait: Some(wait),
@@ -418,7 +428,7 @@ fn spawn_entry(
     entry: u32,
     watching: &[Pos<Meters>],
 ) {
-    let pack = world.resource::<SpawnerEntries>().0[&at].pack;
+    let pack = world.resource::<SpawnerEntries>().kept[&at].pack;
     let (spawned, state) = match &area::placed(content, area_id)[at.0 as usize].module {
         AreaModule::Spawner(spawner) => {
             let drawn = world.resource_scope(|world, mut rng: Mut<Rng>| {
@@ -444,7 +454,7 @@ fn spawn_entry(
     };
     world
         .resource_mut::<SpawnerEntries>()
-        .0
+        .kept
         .get_mut(&at)
         .expect("its spawner keeps the entry")
         .entries[entry as usize] = state;
@@ -463,28 +473,47 @@ fn holding(world: &World, share: &SpawnShare) -> f32 {
     }
 }
 
-/// Sees every resident that is away out of the world, but for whoever is in the middle of
-/// something with it, and its sign into it where it lives; and the sign out again once the
-/// resident is back.
+/// Whether anything `module` keeps standing is there under the world's sky.
+fn holds_any(world: &World, module: &AreaModule) -> bool {
+    match module {
+        AreaModule::Spawner(spawner) => spawner
+            .spawns
+            .iter()
+            .any(|share| holding(world, share) > 0.0),
+        AreaModule::Resident(resident) => absence::away(world, resident.npc).is_none(),
+        _ => false,
+    }
+}
+
+/// Whether what `module` keeps standing comes and goes with the sky: by the `when` of a share,
+/// or the absence of an npc.
+fn comes_and_goes(content: &Content, module: &AreaModule) -> bool {
+    let absent = |npc: NpcId| npc.get(content).absence().is_some();
+    match module {
+        AreaModule::Spawner(spawner) => spawner.spawns.iter().any(|share| {
+            share.when.is_some() || matches!(share.what, Spawns::Npc { npc } if absent(npc))
+        }),
+        AreaModule::Resident(resident) => absent(resident.npc),
+        _ => false,
+    }
+}
+
+/// Sees every resident of `homes` that is away out of the world, but for whoever is in the
+/// middle of something with it, and its sign into it where it lives; and the sign out again once
+/// the resident is back.
 fn keep_residents(
     world: &mut World,
     placed: &[area::Flattened],
+    homes: &[SpawnerAt],
     standing: &[(Entity, Spawned, Pos<Meters>)],
     sessions: &mut dialogue::Sessions,
 ) {
-    let mut homes: Vec<SpawnerAt> = world
-        .resource::<SpawnerEntries>()
-        .0
-        .keys()
-        .copied()
-        .collect();
-    homes.sort_unstable();
-    for at in homes {
+    for &at in homes {
         let AreaModule::Resident(resident) = &placed[at.0 as usize].module else {
             continue;
         };
         let away = absence::away(world, resident.npc);
-        let sign = world.resource::<SpawnerEntries>().0[&at].sign;
+        let sign = world.resource::<SpawnerEntries>().kept[&at].sign;
         if away.is_none() && sign.is_none() {
             continue;
         }
@@ -532,7 +561,7 @@ fn keep_residents(
             }
         }
         let mut entries = world.resource_mut::<SpawnerEntries>();
-        let entries = entries.0.get_mut(&at).expect("its home keeps the entry");
+        let entries = entries.kept.get_mut(&at).expect("its home keeps the entry");
         entries.sign = left;
         if away.is_some() && body.is_some() && matches!(entries.entries[0], Entry::Freed { .. }) {
             entries.entries[0] = Entry::Idle;
@@ -614,7 +643,7 @@ fn free_entry(mut world: DeferredWorld, context: HookContext) {
         return;
     };
     if let Some(state) = entries
-        .0
+        .kept
         .get_mut(&spawner)
         .and_then(|entries| entries.entries.get_mut(entry as usize))
     {
