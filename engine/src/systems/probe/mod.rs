@@ -42,13 +42,14 @@ use crate::core::audio::Hearing;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::Listener;
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
+use crate::core::card::stage::HungCardLamp;
 use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
 use crate::core::geometry::Capsule;
 use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::interpolate::Jumps;
 use crate::core::math::{
-    MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Size, SizeSchema,
+    MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Rgb, Size, SizeSchema,
 };
 use crate::core::render::sample::{
     self, FrameSamplingPlugin, FrameWork, GpuReportsRead, RenderReports,
@@ -802,6 +803,7 @@ pub struct ProbeItemCard {
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
     pub tilt: ProbeCardTilt,
+    pub lamp: Option<ProbeCardLamp>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
@@ -810,6 +812,7 @@ pub struct ProbeSkillCard {
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
     pub tilt: ProbeCardTilt,
+    pub lamp: Option<ProbeCardLamp>,
 }
 
 /// How far a card is turned toward the pointer: `aside` about its upright axis and `above` about
@@ -818,6 +821,30 @@ pub struct ProbeSkillCard {
 pub struct ProbeCardTilt {
     pub aside: Degrees,
     pub above: Degrees,
+}
+
+/// The lamp a card is lit by, once it is: where over the window it hangs, as shares of the
+/// window's width and height from its top left corner, how far in front of the window, in window
+/// heights, its colour, and how much of the card's light is its.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+pub struct ProbeCardLamp {
+    pub across: f32,
+    pub down: f32,
+    pub height: f32,
+    pub color: Rgb,
+    pub strength: f32,
+}
+
+impl From<HungCardLamp> for ProbeCardLamp {
+    fn from(lamp: HungCardLamp) -> ProbeCardLamp {
+        ProbeCardLamp {
+            across: lamp.across,
+            down: lamp.down,
+            height: lamp.height,
+            color: Rgb::nearest(lamp.color),
+            strength: lamp.strength,
+        }
+    }
 }
 
 impl From<ui::card::CardTilt> for ProbeCardTilt {
@@ -1202,6 +1229,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             item,
             rect: gui::window_rect(rect),
             tilt: item::card::tilt(world).into(),
+            lamp: item::card::lamp(world).map(Into::into),
         }),
         skill_card: skill::card::shown(world)
             .zip(hud::pinned_rect::<SkillId>(world))
@@ -1209,6 +1237,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 skill,
                 rect: gui::window_rect(rect),
                 tilt: skill::card::tilt(world).into(),
+                lamp: skill::card::lamp(world).map(Into::into),
             }),
         prompt: prompt::tray::view(world).map(|view| ProbePrompt {
             title: view.title.clone(),

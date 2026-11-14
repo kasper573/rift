@@ -5,7 +5,7 @@ use std::f32::consts::TAU;
 
 use bevy::prelude::*;
 use ui::egui::emath::TSTransform;
-use ui::egui::{self, Align2, Color32, Pos2, Sense, Stroke, Ui, Vec2};
+use ui::egui::{self, Align2, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use ui::face::{Face, TextRole};
 use ui::paint::TextShadow;
 use ui::{chip, dusk, ink};
@@ -70,9 +70,14 @@ pub(crate) fn face(ui: &mut Ui, world: &mut World, center: Pos2, disc: f32) {
             continue;
         }
         if let Some(icon) = gui::image(world, &time.icon) {
-            egui::Image::new((icon.texture, mark.size()))
-                .tint(Color32::WHITE.gamma_multiply(share))
-                .paint_at(ui, mark);
+            // As a mesh, which is drawn where it stands: an image's rect is rounded to whole
+            // pixels, and so steps about inside the badge as the two go round.
+            ui.painter().add(Shape::image(
+                icon.texture,
+                mark,
+                egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE.gamma_multiply(share),
+            ));
         }
     }
     let said = match cycle.time_at(hour) {

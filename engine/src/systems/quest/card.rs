@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use ui::card::{self, Art, Card, CardResponse, Plate};
+use ui::card::{self, Card, CardResponse, Plate};
 use ui::controls::{self, Pill};
 use ui::egui::{Align, Label, Layout, Response, Sense, Ui};
 use ui::face::{self, TextRole};
@@ -42,23 +42,17 @@ impl Plugin for QuestCardPlugin {
     }
 }
 
-pub struct QuestCardLook {
-    pub width: f32,
-    pub max_height: f32,
-    pub moment: Option<QuestMoment>,
-}
-
 /// A quest's card: its face, and whatever `plate` writes under the overview.
 pub fn show<I: ImageSource + ?Sized>(
     ui: &mut Ui,
     images: &mut I,
     content: &Content,
     quest: QuestId,
-    look: QuestCardLook,
+    moment: Option<QuestMoment>,
     plate: impl FnOnce(&mut Ui, &mut I, Plate),
 ) -> CardResponse {
     let def = quest.get(content);
-    let band = match look.moment {
+    let band = match moment {
         Some(moment) => format!("{} · {}", moment.band(), def.category.to_lowercase()),
         None => def.category.to_lowercase(),
     };
@@ -66,12 +60,7 @@ pub fn show<I: ImageSource + ?Sized>(
     let mut shown = Card::new(CardKind::Quest, &def.title);
     shown.dress = CardStyleDef::of(content, def.card_style).dress(images, None);
     shown.band = &band;
-    shown.art = Art {
-        icon,
-        height: card::ART_QUEST,
-    };
-    shown.width = look.width;
-    shown.max_height = look.max_height;
+    shown.picture = icon;
     shown.show(ui, |ui, written| {
         if written.name_cut {
             card::full_name(ui, &def.title);
@@ -149,12 +138,12 @@ fn moment(world: &World) -> Option<(QuestId, QuestMoment)> {
 fn card_head(world: &World) -> Option<PanelHead> {
     moment(world)?;
     Some(PanelHead {
-        width: card::DOCKED_WIDTH,
+        width: card::WIDTH,
         chrome: PanelChrome::Card,
     })
 }
 
-fn show_docked(ui: &mut Ui, world: &mut World, width: f32, most: f32) {
+fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
     let Some((quest, moment)) = moment(world) else {
         return;
     };
@@ -162,34 +151,36 @@ fn show_docked(ui: &mut Ui, world: &mut World, width: f32, most: f32) {
         .and_then(|seen| world.get::<Inventory>(seen))
         .cloned()
         .unwrap_or_else(Inventory::empty);
-    let look = QuestCardLook {
-        width,
-        max_height: most.min(card::MAX_HEIGHT),
-        moment: Some(moment),
-    };
     let content = world.resource::<Content>().clone();
     let parties = world.resource::<Parties>().clone();
     let painted = ui.layer_id();
     let since = motion::mark(ui.ctx(), painted);
-    let shown = show(ui, world, &content, quest, look, |ui, world, plate| {
-        let shown = match moment {
-            QuestMoment::Offer => offer(
-                ui,
-                world,
-                &content,
-                &parties,
-                quest,
-                Some(&inventory),
-                plate,
-            ),
-            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory, plate),
-            QuestMoment::Decision => {
-                decision(ui, &content, quest);
-                Vec::new()
-            }
-        };
-        inspectable(world, shown);
-    });
+    let shown = show(
+        ui,
+        world,
+        &content,
+        quest,
+        Some(moment),
+        |ui, world, plate| {
+            let shown = match moment {
+                QuestMoment::Offer => offer(
+                    ui,
+                    world,
+                    &content,
+                    &parties,
+                    quest,
+                    Some(&inventory),
+                    plate,
+                ),
+                QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory, plate),
+                QuestMoment::Decision => {
+                    decision(ui, &content, quest);
+                    Vec::new()
+                }
+            };
+            inspectable(world, shown);
+        },
+    );
     let staged = StagedCard {
         key: ui.id().with("docked quest card"),
         runs: motion::lifted(ui.ctx(), painted, since),
@@ -374,15 +365,10 @@ pub(super) fn caption(ui: &mut Ui, text: impl Into<String>) {
 pub(super) fn overview(def: &QuestDef) -> String {
     let kinds = def.kinds();
     let mut letters = kinds.chars();
-    let kinds = letters
+    letters
         .next()
-        .map(|first| first.to_uppercase().chain(letters).collect::<String>())
-        .unwrap_or_default();
-    match def.xp {
-        0 => kinds,
-        xp if kinds.is_empty() => format!("{xp} xp"),
-        xp => format!("{kinds} · {xp} xp"),
-    }
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
 }
 
 fn counted(content: &Content, stack: ItemStack) -> String {

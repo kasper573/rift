@@ -40,7 +40,6 @@ pub(crate) fn bytes(face: Face) -> &'static [u8] {
         Face::SmallCaps => include_bytes!("../fonts/AlegreyaSC-Medium.ttf"),
         Face::SmallCapsBold => include_bytes!("../fonts/AlegreyaSC-Bold.ttf"),
         Face::Quill => include_bytes!("../fonts/IMFellEnglish-Italic.ttf"),
-        Face::Numerals => include_bytes!("../fonts/Cinzel-Regular.ttf"),
         Face::Mono => include_bytes!("../fonts/JetBrainsMono-Regular.ttf"),
         Face::MonoBold => include_bytes!("../fonts/JetBrainsMono-Bold.ttf"),
     }

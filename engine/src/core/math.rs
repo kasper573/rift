@@ -124,6 +124,13 @@ impl Rgb {
         let [r, g, b] = self.0;
         bevy::color::Color::srgb_u8(r, g, b)
     }
+
+    /// The colour nearest `color` that can be written so.
+    pub fn nearest(color: bevy::color::Color) -> Rgb {
+        let color = color.to_srgba();
+        Rgb([color.red, color.green, color.blue]
+            .map(|part| (part.clamp(0.0, 1.0) * 255.0).round() as u8))
+    }
 }
 
 impl From<Rgb> for egui::Color32 {

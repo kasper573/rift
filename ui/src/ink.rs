@@ -17,6 +17,7 @@ pub const GOLD: Color32 = Color32::from_rgb(0xB8, 0x91, 0x2C);
 pub const GOLD2: Color32 = Color32::from_rgb(0xE2, 0xC2, 0x5A);
 pub const TYRIAN: Color32 = Color32::from_rgb(0x6B, 0x3A, 0x7A);
 pub const WAX: Color32 = Color32::from_rgb(0xA8, 0x26, 0x1F);
+pub const VERMILION: Color32 = Color32::from_rgb(0xC2, 0x1A, 0x14);
 pub const SPRING: Color32 = Color32::from_rgb(0x7E, 0xE8, 0x8F);
 
 pub const VEIL: Color32 = Color32::from_rgb(0x12, 0x12, 0x12);

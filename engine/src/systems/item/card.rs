@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::card::{self, Art, Card, CardResponse, CardTilt, Plate};
+use ui::card::{self, Card, CardResponse, CardTilt, Plate};
 use ui::controls::{self, Pill};
 use ui::drag;
 use ui::egui;
@@ -12,15 +12,14 @@ use ui::face::{self, TextRole};
 use ui::glyph::CardKind;
 use ui::ink;
 use ui::sheet::Depth;
-use ui::words;
 
 use crate::core::card::CardStyleDef;
+use crate::core::card::stage::HungCardLamp;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, ImageSource};
 use crate::core::math::ColorGradient;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::GameSettings;
-use crate::systems::equipment;
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
@@ -85,6 +84,11 @@ pub fn tilt(world: &World) -> CardTilt {
     hud::pinned_tilt(world, WINDOW_KEY)
 }
 
+/// The lamp the pinned card is lit by, while it is on the stage.
+pub fn lamp(world: &World) -> Option<HungCardLamp> {
+    hud::pinned_lamp(world, WINDOW_KEY)
+}
+
 pub fn shown(world: &World) -> Option<(ItemId, Rect)> {
     Some((
         hud::pinned::<ItemId>(world)?,
@@ -117,25 +121,24 @@ pub fn tooltip_noted(
 ) {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
-    let mark = def
-        .rarity
-        .get(&content)
+    let rarity = def.rarity.get(&content);
+    let mark = rarity
         .icon
         .as_ref()
         .and_then(|icon| gui::image(world, icon));
-    let lines: Vec<String> = std::iter::once(overview(&content, def))
+    let lines: Vec<String> = std::iter::once(format!("{} · {}", rarity.name, overview(def)))
         .chain(notes)
         .collect();
     hud::tooltip_marked(response, world, &def.name, mark.as_ref(), &lines, hint);
 }
 
-/// What an item is, in a line: its rarity, then its kind.
-pub fn overview(content: &Content, def: &ItemDef) -> String {
-    let rarity = &def.rarity.get(content).name;
+/// What an item is, in a line, for a tooltip, which has no band or style to say it: led by the
+/// rarity's name there. A card says each part of it once elsewhere.
+fn overview(def: &ItemDef) -> String {
     let category = def.category().label();
     match &def.kind {
-        ItemKind::Equipment { wear, .. } => format!("{rarity} · {category} · {}", wear.label()),
-        _ => format!("{rarity} · {category}"),
+        ItemKind::Equipment { wear, .. } => format!("{category} · {}", wear.label()),
+        _ => category.to_owned(),
     }
 }
 
@@ -219,13 +222,13 @@ pub fn show_noted(
     let held = session::me(world)
         .and_then(|me| world.get::<Inventory>(me))
         .map_or(0, |bag| bag.count(item));
-    let numeral = (def.stack_max() > 1 && held > 0).then(|| face::roman(held));
+    let tally = (def.stack_max() > 1 && held > 0).then(|| format!("{held} held"));
     let mut card = face_of(&content, world, item, look);
-    card.numeral = numeral.as_deref();
+    card.tally = tally.as_deref();
     card.show(ui, |ui, plate| {
         summary(ui, &content, item, plate);
         // Ahead of the item's own lines, so a long card never cuts off what the view has to say.
-        for note in comparison(world, item).iter().chain(notes) {
+        for note in notes {
             let text = match note.tone {
                 CardNoteTone::Plain => TextRole::CardBody.rich(&note.text).color(ink::INK),
                 CardNoteTone::Strong => face::bold(&note.text).size(TextRole::CardBody.size()),
@@ -236,13 +239,7 @@ pub fn show_noted(
         let viewer = session::me(world);
         details(ui, &content, item, |requirement| {
             let viewer = viewer?;
-            Some(if condition::holds(world, viewer, requirement) {
-                Judgement::Met
-            } else {
-                Judgement::Unmet {
-                    standing: condition::standing(world, viewer, requirement),
-                }
-            })
+            Some(condition::holds(world, viewer, requirement))
         });
         grants(ui, world, &content, item, plate);
         if let Some(verb) = use_verb(def) {
@@ -253,64 +250,6 @@ pub fn show_noted(
             foot(ui, world, &hint);
         }
     })
-}
-
-/// How wearing `item` would change the reader's stats, against what it would take the place of.
-fn comparison(world: &World, item: ItemId) -> Vec<ItemCardNote> {
-    let content = world.resource::<Content>();
-    let Some(me) = session::me(world) else {
-        return Vec::new();
-    };
-    if equipment::worn(world, me).any(|worn| worn == item) {
-        return Vec::new();
-    }
-    let displaced = equipment::displaced_by(world, me, item);
-    if displaced.is_empty() {
-        return Vec::new();
-    }
-    let names: Vec<String> = displaced
-        .iter()
-        .map(|worn| worn.get(content).name.clone())
-        .collect();
-    let than = words::join_and(&names);
-    let gives = status::boosts_of(content, item);
-    let gave: Vec<(StatKind, Option<f32>)> = displaced
-        .iter()
-        .flat_map(|worn| status::boosts_of(content, *worn))
-        .collect();
-    let mut stats: Vec<StatKind> = Vec::new();
-    for (stat, _) in gives.iter().chain(&gave) {
-        if !stats.contains(stat) {
-            stats.push(*stat);
-        }
-    }
-    stats
-        .into_iter()
-        .filter_map(|stat| {
-            let total = |boosts: &[(StatKind, Option<f32>)]| {
-                boosts
-                    .iter()
-                    .filter(|(boosted, _)| *boosted == stat)
-                    .map(|(_, by)| *by)
-                    .sum::<Option<f32>>()
-            };
-            let change = total(&gives)? - total(&gave)?;
-            let name: &'static str = stat.into();
-            if change > 0.0 {
-                Some(ItemCardNote {
-                    text: format!("{change} more {name} than {than}"),
-                    tone: CardNoteTone::Strong,
-                })
-            } else if change < 0.0 {
-                Some(ItemCardNote {
-                    text: format!("{} less {name} than {than}", -change),
-                    tone: CardNoteTone::Warning,
-                })
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 /// The face of an item's card: drawn in the style its rarity names, on its item type's colour
@@ -329,21 +268,12 @@ pub fn face_of<'a>(
         .of(&def.kind);
     let style = CardStyleDef::of(content, def.rarity.get(content).card_style);
     let mut card = Card::new(kind(def), &def.name);
+    card.band = def.category().label();
     card.dress = style.dress(images, Some(ground));
-    card.art = Art {
-        icon,
-        height: look.art,
-    };
-    card.width = look.width;
-    card.max_height = look.max_height;
+    card.picture = icon;
     card.closable = look.closable;
     card.depth = look.depth;
     card
-}
-
-pub enum Judgement {
-    Met,
-    Unmet { standing: Option<String> },
 }
 
 pub fn summary(ui: &mut Ui, content: &Content, item: ItemId, plate: Plate) {
@@ -351,29 +281,24 @@ pub fn summary(ui: &mut Ui, content: &Content, item: ItemId, plate: Plate) {
     if plate.name_cut {
         card::full_name(ui, &def.name);
     }
-    card::overview(ui, &overview(content, def));
-    let tags = tags(def);
-    if !tags.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            for (label, pill) in tags {
-                controls::pill(ui, label, pill);
-            }
-        });
+    if def.has(ItemModuleKind::QuestItem) {
+        controls::pill(ui, "Quest item", Pill::Gold);
     }
 }
 
-/// `judge` answers `None` when nobody in particular is reading.
+/// `meets` answers whether the reader meets a requirement, `None` when nobody in particular is
+/// reading.
 pub fn details(
     ui: &mut Ui,
     content: &Content,
     item: ItemId,
-    judge: impl Fn(&Condition) -> Option<Judgement>,
+    meets: impl Fn(&Condition) -> Option<bool>,
 ) {
     let def = item.get(content);
     if let Some(flavor) = def.flavor() {
         card::flavour(ui, flavor);
     }
-    facts(ui, content, item, def, judge);
+    facts(ui, content, item, def, meets);
 }
 
 /// The skills an item lends while worn. Answers each one's line, for a reader who may take the
@@ -405,18 +330,12 @@ pub fn grant_lines(
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CardLook {
-    pub width: f32,
-    pub max_height: f32,
-    pub art: f32,
     pub closable: bool,
     pub depth: Depth,
 }
 
 impl CardLook {
     pub const PINNED: CardLook = CardLook {
-        width: card::WIDTH,
-        max_height: card::MAX_HEIGHT,
-        art: card::ART,
         closable: true,
         depth: Depth::Front,
     };
@@ -485,23 +404,12 @@ fn grant_line(ui: &mut Ui, images: &mut (impl ImageSource + ?Sized), def: &Skill
     .response
 }
 
-fn tags(def: &ItemDef) -> Vec<(&'static str, Pill)> {
-    [
-        (ItemModuleKind::Bound, "Bound", Pill::Rubric),
-        (ItemModuleKind::QuestItem, "Quest item", Pill::Gold),
-    ]
-    .into_iter()
-    .filter(|(flag, ..)| def.has(*flag))
-    .map(|(_, label, pill)| (label, pill))
-    .collect()
-}
-
 fn facts(
     ui: &mut Ui,
     content: &Content,
     item: ItemId,
     def: &ItemDef,
-    judge: impl Fn(&Condition) -> Option<Judgement>,
+    meets: impl Fn(&Condition) -> Option<bool>,
 ) {
     let boosts = status::boosts_of(content, item);
     match &def.kind {
@@ -512,21 +420,13 @@ fn facts(
             }
             if let Some(requirement) = requires {
                 let line = format!("Requires {}", condition::describe(content, requirement));
-                match judge(requirement) {
-                    Some(Judgement::Met) => card::requirement(ui, true, &line),
-                    Some(Judgement::Unmet {
-                        standing: Some(standing),
-                    }) => {
-                        card::requirement(ui, false, &format!("{line} · {standing}"));
-                    }
-                    Some(Judgement::Unmet { standing: None }) => {
-                        card::requirement(ui, false, &line)
-                    }
+                match meets(requirement) {
+                    Some(met) => card::requirement(ui, met, &line),
                     None => card::fact(ui, &line),
                 }
             }
         }
-        ItemKind::Usable { casts: None } => card::fact(ui, "Can be used"),
+        ItemKind::Usable { casts: None } => {}
         ItemKind::Usable { casts: Some(skill) } => {
             card::fact(ui, &format!("Casts {}", skill.get(content).name))
         }

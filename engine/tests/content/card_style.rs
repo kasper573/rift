@@ -81,7 +81,7 @@ fn a_card_style_picks_looks_it_can_paint_within_what_a_card_has_room_for() {
                 "crest": { "type": "banner" },
                 "name_band": { "type": "ribbon", "overhang": 6.0, "icon": true },
                 "label_line": { "type": "strip" },
-                "art": { "type": "inset", "height": 150.0, "margin": 6.0 },
+                "art": { "type": "inset", "margin": 6.0 },
                 "material": { "type": "foil", "pattern": "cards/weave.png", "strength": 0.6 },
                 "paper": { "type": "watermarked", "strength": 0.2 },
                 "dividers": { "type": "ornament" },

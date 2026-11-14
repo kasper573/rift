@@ -27,7 +27,37 @@ use ui::motion::{CardPose, LiftedRun};
 use super::{CardHandling, CardLamp, CardMaterial};
 use crate::core::content::ImageRef;
 use crate::core::gui;
-use crate::core::render::world::{DRAWN_FRAMES_AFTER, RenderProgress};
+use crate::core::render::Look;
+use crate::core::render::world::sky::{Daylight, SunLight, adaptation};
+use crate::core::render::world::{DRAWN_FRAMES_AFTER, RenderProgress, lights};
+use crate::core::units::Degrees;
+
+/// The light of the sky over the player, where one stands. Whatever shows the sky tells it, and
+/// tells it anew only once the light has changed to the eye; a lamp that follows the sky is hung
+/// by it.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct CardSkyLight(pub Option<SkyLampLight>);
+
+/// A sky's light for the cards: its sun, or by night its moon, as it shines under a clear sky,
+/// and the bearing its sun stands at at noon.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyLampLight {
+    pub shining: SunLight,
+    pub noon: Degrees,
+}
+
+/// The lamp a card on the stage is lit by, as it hangs this pass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HungCardLamp {
+    /// Where over the window it hangs, as shares of the window's width and height from its top
+    /// left corner, and how far in front of the window, in window heights.
+    pub across: f32,
+    pub down: f32,
+    pub height: f32,
+    pub color: Color,
+    /// How much of a card's light is the lamp's.
+    pub strength: f32,
+}
 
 /// A card as it is put on the stage this pass.
 #[derive(Clone, Debug)]
@@ -96,6 +126,7 @@ impl Plugin for CardStagePlugin {
         bevy::asset::embedded_asset!(app, "print.wesl");
         app.add_plugins(MaterialPlugin::<CardSurface>::default())
             .init_resource::<CardStage>()
+            .init_resource::<CardSkyLight>()
             // A staged card's camera and meshes are set as the interface draws, and must be
             // where the card is in the frame that shows it: a pass later, a dragged card's
             // picture would trail the place the interface shows it at.
@@ -160,7 +191,7 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
     };
     let scene = Scene {
         eye: handling.eye * screen.height(),
-        lamp: lamp_at(&handling.lamp, screen),
+        lamp: Lamp::over(world, &handling.lamp, screen),
         height: screen.height(),
     };
 
@@ -180,7 +211,6 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
     );
     let layer = staged.layer.unwrap_or_else(|| free_layer(world));
     staged.layer = Some(layer);
-    frame_picture(world, &mut staged, layer, view, &scene, &handling.lamp);
     let placed = Transform {
         translation: on_stage(pose.center, screen),
         rotation: Quat::from_rotation_z(-pose.angle)
@@ -188,18 +218,44 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
             * Quat::from_rotation_x(staged.tilt.above.to_radians()),
         scale: Vec3::splat(pose.scale),
     };
+    let shot = Shot {
+        view,
+        scene,
+        screen,
+        placed,
+    };
+    let reframed = staged.shot != Some(shot);
+    if reframed {
+        frame_picture(world, &mut staged, layer, &shot);
+        staged.shot = Some(shot);
+    }
     let laid = Laid {
         flat: card.flat,
         reach: reach_of(runs.iter().map(|run| run.mesh.calc_bounds()), card.flat),
         pixels,
         placed,
+        moved: reframed,
         layer,
-        look: SurfaceLook::of(world, &card.material, &handling.lamp),
-        lamp: scene.lamp,
+        look: SurfaceLook::of(world, &card.material, &scene.lamp),
+        lamp: scene.lamp.at,
     };
-    lay_runs(world, &mut staged, runs, &laid);
+    let relaid = lay_runs(world, &mut staged, runs, &laid);
 
+    let was_drawn = staged.drawn;
     staged.drawn = staged.drawn || drawn(world, &mut staged, &card.material, &laid.look);
+    staged.due = if reframed || relaid || staged.drawn != was_drawn {
+        DUE_AFTER_A_CHANGE
+    } else {
+        staged.due.saturating_sub(1)
+    };
+    let draws = staged.due > 0 || !staged.drawn;
+    if let Some(mut camera) = staged
+        .camera
+        .and_then(|camera| world.get_mut::<Camera>(camera))
+        && camera.is_active != draws
+    {
+        camera.is_active = draws;
+    }
     let shown = match staged.texture {
         Some(texture) if staged.drawn => {
             let lies = Rect::from_min_size(
@@ -232,6 +288,19 @@ pub fn stage(world: &mut World, gui: &egui::Context, card: StagedCard, onto: Lay
     shown
 }
 
+/// The lamp the card of `key` is lit by, while it is on the stage.
+pub fn lamp_of(world: &World, key: egui::Id) -> Option<HungCardLamp> {
+    let shot = world.get_resource::<CardStage>()?.cards.get(&key)?.shot?;
+    let (lamp, screen) = (shot.scene.lamp, shot.screen);
+    Some(HungCardLamp {
+        across: 0.5 + lamp.at.x / screen.width(),
+        down: 0.5 - lamp.at.y / screen.height(),
+        height: lamp.at.z / screen.height(),
+        color: lamp.color,
+        strength: lamp.share * lamp.shines,
+    })
+}
+
 /// How far the card of `key` is turned toward the pointer.
 pub fn tilt_of(world: &World, key: egui::Id) -> CardTilt {
     world
@@ -261,6 +330,10 @@ struct Staged {
     /// at hand, and whether it has drawn the card since.
     at_hand: Option<u64>,
     drawn: bool,
+    /// What the card's picture was last taken of, and how many more passes it is taken anew: a
+    /// card that lies as it lay, painted as it was, keeps the picture it has.
+    shot: Option<Shot>,
+    due: u8,
     tilt: CardTilt,
     layer: Option<usize>,
     side: u32,
@@ -283,12 +356,72 @@ struct StagedRun {
     lamp: Vec3,
 }
 
+/// Everything a card's picture is taken of but the card's own paint: the part of the window it
+/// covers, the scene with its lamp, the window in the interface's points, and where the card
+/// lies in it.
+#[derive(Clone, Copy, PartialEq)]
+struct Shot {
+    view: SubCameraView,
+    scene: Scene,
+    screen: Rect,
+    placed: Transform,
+}
+
 /// Where the stage's eye and lamp stand over the window, in the points the interface is drawn
 /// in, and how many of them the window is high.
+#[derive(Clone, Copy, PartialEq)]
 struct Scene {
     eye: f32,
-    lamp: Vec3,
+    lamp: Lamp,
     height: f32,
+}
+
+/// The stage's lamp: where it hangs, its colour, how much of a card's light is its at its
+/// fullest, and how much of that it shines with now.
+#[derive(Clone, Copy, PartialEq)]
+struct Lamp {
+    at: Vec3,
+    color: Color,
+    share: f32,
+    shines: f32,
+}
+
+impl Lamp {
+    /// The lamp as the game's settings hang it, or the light of the sky where the lamp follows
+    /// one and one stands.
+    fn over(world: &World, hung: &CardLamp, screen: Rect) -> Lamp {
+        let at = lamp_at(hung, screen);
+        let written = Lamp {
+            at,
+            color: hung.color.color(),
+            share: hung.strength,
+            shines: 1.0,
+        };
+        let sky = world
+            .get_resource::<CardSkyLight>()
+            .and_then(|light| light.0)
+            .filter(|_| hung.follows_sky);
+        let (Some(sky), Some(look)) = (sky, world.get_resource::<Look>()) else {
+            return written;
+        };
+        let light = sky.shining;
+        let daylight = world
+            .get_resource::<Daylight>()
+            .copied()
+            .unwrap_or_default();
+        let opened = adaptation(daylight, light, look);
+        let shines = light.illuminance / look.light.sun_lux * 2f32.powf(opened.0);
+        let toward = lights::toward(light.elevation, light.azimuth);
+        let ahead = lights::toward(Degrees(0.0), sky.noon);
+        let aside = lights::toward(Degrees(0.0), Degrees(sky.noon.0 + 90.0));
+        let away = at.length();
+        Lamp {
+            at: Vec3::new(toward.dot(aside), toward.y, toward.dot(ahead)) * away,
+            color: light.color,
+            shines: shines.clamp(0.0, 1.0),
+            ..written
+        }
+    }
 }
 
 /// Where a card's runs of triangles are laid this pass, and what they are drawn with.
@@ -298,6 +431,8 @@ struct Laid {
     reach: egui::Vec2,
     pixels: f32,
     placed: Transform,
+    /// Whether that is not where it lay last pass.
+    moved: bool,
     layer: usize,
     look: SurfaceLook,
     lamp: Vec3,
@@ -317,8 +452,8 @@ struct SurfaceLook {
 }
 
 impl SurfaceLook {
-    fn of(world: &mut World, material: &CardMaterial, lamp: &CardLamp) -> SurfaceLook {
-        let even = 1.0 - lamp.strength;
+    fn of(world: &mut World, material: &CardMaterial, lamp: &Lamp) -> SurfaceLook {
+        let even = 1.0 - lamp.share;
         let plain = SurfaceLook {
             roughness: 1.0,
             reflectance: 0.0,
@@ -350,7 +485,7 @@ impl SurfaceLook {
             CardMaterial::Foil { pattern, strength } => SurfaceLook {
                 roughness: FOIL_ROUGH,
                 reflectance: SHEEN,
-                foil: Some((measure(world, pattern), *strength)),
+                foil: Some((measure(world, pattern), *strength * lamp.shines)),
                 ..plain
             },
             CardMaterial::Embossed { relief, gloss } => SurfaceLook {
@@ -423,6 +558,9 @@ const FIRST_LAYER: usize = 8;
 /// How much nearer and farther than the window's plane the stage's camera draws, as shares of
 /// its distance from it.
 const DEPTH: (f32, f32) = (0.1, 10.0);
+/// How many passes a card's picture is taken anew once the card has changed: the pass of the
+/// change, and those it takes to reach the screen.
+const DUE_AFTER_A_CHANGE: u8 = DRAWN_FRAMES_AFTER as u8 + 1;
 /// How many seconds a card's picture is kept once the card is off the stage.
 const LINGER: f64 = 1.0;
 /// How wide the lamp is, in window heights: a point would leave a polished card a highlight a
@@ -534,14 +672,9 @@ fn free_layer(world: &World) -> usize {
 
 /// Points the card's camera at the part of the window the card is drawn in, into a picture of
 /// that size, with the lamp where it hangs.
-fn frame_picture(
-    world: &mut World,
-    staged: &mut Staged,
-    layer: usize,
-    view: SubCameraView,
-    scene: &Scene,
-    lamp: &CardLamp,
-) {
+fn frame_picture(world: &mut World, staged: &mut Staged, layer: usize, shot: &Shot) {
+    let Shot { view, scene, .. } = shot;
+    let lamp = scene.lamp;
     let side = view.size.x;
     if staged.side != side || staged.picture.is_none() {
         if let Some(old) = staged.picture.take() {
@@ -600,15 +733,15 @@ fn frame_picture(
         GlobalTransform::from(stands),
     ));
     if let Some(mut drawn) = camera.get_mut::<Camera>()
-        && drawn.sub_camera_view != Some(view)
+        && drawn.sub_camera_view != Some(*view)
     {
-        drawn.sub_camera_view = Some(view);
+        drawn.sub_camera_view = Some(*view);
     }
-    let hangs = Transform::from_translation(scene.lamp);
+    let hangs = Transform::from_translation(lamp.at);
     let light = PointLight {
-        color: lamp.color.color(),
+        color: lamp.color,
         // What lights a matte face squarely under the lamp to the lamp's share of its colour.
-        intensity: lamp.strength * 4.0 * PI * PI * scene.lamp.z * scene.lamp.z,
+        intensity: lamp.share * lamp.shines * 4.0 * PI * PI * lamp.at.z * lamp.at.z,
         range: LAMP_RANGE * scene.height,
         radius: LAMP_WIDTH * scene.height,
         shadow_maps_enabled: false,
@@ -636,10 +769,13 @@ fn frame_picture(
 }
 
 /// Makes the card's runs of triangles its meshes, each drawn over the one before it, and lays
-/// them where the card is. A run painted as it was last pass keeps its mesh.
-fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: &Laid) {
+/// them where the card is. A run painted as it was last pass keeps its mesh. Whether any run is
+/// drawn otherwise than it was.
+fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: &Laid) -> bool {
+    let mut relaid = false;
     for gone in staged.runs.drain(runs.len().min(staged.runs.len())..) {
         world.despawn(gone.entity);
+        relaid = true;
     }
     for (over, lifted) in runs.into_iter().enumerate() {
         let Some(print) = gui::texture_image(world, lifted.mesh.texture_id) else {
@@ -662,6 +798,7 @@ fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: 
                         .resource_mut::<Assets<Mesh>>()
                         .insert(run.mesh.id(), mesh)
                         .ok();
+                    relaid = true;
                 }
                 if moved
                     || run.lifted.clip != lifted.clip
@@ -673,6 +810,7 @@ fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: 
                         .resource_mut::<Assets<CardSurface>>()
                         .insert(run.material.id(), surface(&lifted))
                         .ok();
+                    relaid = true;
                 }
                 run.lifted = lifted;
                 run.flat = laid.flat;
@@ -680,9 +818,11 @@ fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: 
                 run.print = print;
                 run.look = laid.look.clone();
                 run.lamp = laid.lamp;
-                world
-                    .entity_mut(run.entity)
-                    .insert((laid.placed, GlobalTransform::from(laid.placed)));
+                if laid.moved {
+                    world
+                        .entity_mut(run.entity)
+                        .insert((laid.placed, GlobalTransform::from(laid.placed)));
+                }
             }
             None => {
                 let mesh = world
@@ -713,9 +853,11 @@ fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: 
                     look: laid.look.clone(),
                     lamp: laid.lamp,
                 });
+                relaid = true;
             }
         }
     }
+    relaid
 }
 
 /// A run's triangles as a mesh about the middle of `flat`, facing the eye. Its first uv is the
@@ -802,6 +944,7 @@ fn strike(world: &mut World) {
                 gone.extend(staged.runs.drain(..).map(|run| run.entity));
                 gone.extend(staged.camera.take());
                 gone.extend(staged.lamp.take());
+                staged.shot = None;
             }
         }
         stage.cards.retain(|_, staged| {

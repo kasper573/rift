@@ -165,32 +165,14 @@ pub enum CardLabelLine {
     Seal,
 }
 
-/// How the picture is framed and how tall it stands. Without a height it is as tall as the card
-/// makes its picture.
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// How the picture is framed within its part of the card, which is as large on every card.
+#[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CardArt {
-    Flush {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        height: Option<CardPoints>,
-    },
+    #[default]
+    Flush,
     /// Set in from the frame by a margin, with a thin border of its own.
-    Inset {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        height: Option<CardPoints>,
-        margin: CardPoints,
-    },
-    /// Arched at the top.
-    Arched {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        height: Option<CardPoints>,
-    },
-}
-
-impl Default for CardArt {
-    fn default() -> CardArt {
-        CardArt::Flush { height: None }
-    }
+    Inset { margin: CardPoints },
 }
 
 /// What a card is made of, and so what it does with the lamp's light. Each measure is a share
@@ -318,7 +300,8 @@ pub struct CardHandling {
     pub lamp: CardLamp,
 }
 
-/// The light every card is lit by. It hangs still: a highlight moves only as a card does.
+/// The light every card is lit by. It hangs still, or moves no faster than the day does: a
+/// highlight moves only as a card does.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CardLamp {
@@ -332,6 +315,16 @@ pub struct CardLamp {
     /// How much of a card's light is the lamp's. The rest falls evenly, so at nought a matte
     /// card takes no shading at all.
     pub strength: f32,
+    /// Whether the lamp is the light of the sky wherever one stands over the player: the sun, or
+    /// by night the moon. The window then faces that sky where its light stands at noon: the
+    /// light rises to the window's left, stands highest over its middle at noon and sets to its
+    /// right, in front of the window all the while and as far from its middle as the lamp hangs
+    /// here, so the nearer the horizon it stands the smaller the pool of light under it. It has
+    /// that light's colour, and as much of the strength written here as that light has of a
+    /// full sun's to an eye grown used to it. No cloud dims it. Under no sky the lamp hangs as
+    /// it is written here.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub follows_sky: bool,
 }
 
 impl CardHandling {
@@ -403,7 +396,6 @@ impl Fixture for CardStyleFixture {
 const MOST_LABEL: usize = 24;
 const CREST_ICON: (f32, f32) = (8.0, 48.0);
 const MOST_OVERHANG: f32 = 24.0;
-const ART_HEIGHT: (f32, f32) = (40.0, 320.0);
 const MOST_ART_MARGIN: f32 = 24.0;
 const MOST_GLOW: f32 = 48.0;
 impl CardHandling {
@@ -411,9 +403,9 @@ impl CardHandling {
     /// the card is turned the most both ways, in the smallest window the tallest card fits in:
     /// there the eye stands nearest, and the far corner shrinks the most.
     fn corner_shift(&self) -> f32 {
-        let (across, down) = (card::WIDTH / 2.0, card::MAX_HEIGHT / 2.0);
+        let (across, down) = (card::WIDTH / 2.0, card::HEIGHT / 2.0);
         let turn = self.tilt.0.to_radians();
-        let eye = self.eye * card::MAX_HEIGHT;
+        let eye = self.eye * card::HEIGHT;
         let sunk = (across + down) * turn.sin();
         across.hypot(down) * (1.0 - turn.cos() * eye / (eye + sunk))
     }
@@ -478,19 +470,7 @@ impl CardStyleDef {
             }
             CardNameBand::Plain { .. } | CardNameBand::Filled { .. } => {}
         }
-        let (CardArt::Flush { height }
-        | CardArt::Inset { height, .. }
-        | CardArt::Arched { height }) = self.art;
-        if let Some(height) = height {
-            check.range(
-                "/art/height",
-                height.0,
-                ART_HEIGHT.0,
-                ART_HEIGHT.1,
-                "points",
-            );
-        }
-        if let CardArt::Inset { margin, .. } = self.art {
+        if let CardArt::Inset { margin } = self.art {
             check.above_up_to("/art/margin", margin.0, 0.0, MOST_ART_MARGIN, "points");
         }
         match &self.material {

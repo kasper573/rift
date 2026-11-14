@@ -11,9 +11,10 @@ use crate::glyph::{self, CardKind, Mark};
 use crate::sheet::{self, Depth};
 use crate::{controls, ink, paint};
 
+/// How wide and tall every card is, wherever it is shown and whatever it shows: a crest and a
+/// ribbon may reach past it, and text that overruns it scrolls.
 pub const WIDTH: f32 = 300.0;
-pub const DOCKED_WIDTH: f32 = 480.0;
-pub const MAX_HEIGHT: f32 = 420.0;
+pub const HEIGHT: f32 = 420.0;
 pub const MARGIN: f32 = 6.0;
 pub const CORNER: f32 = 10.0;
 const FRAME_STROKE: f32 = 2.5;
@@ -27,9 +28,9 @@ const FRAME_RADIUS: f32 = 6.0;
 const GLYPH: f32 = 18.0;
 pub const KIND_BAND: f32 = 26.0;
 pub const NAME_BAND: f32 = 34.0;
-pub const ART: f32 = 118.0;
-pub const ART_QUEST: f32 = 80.0;
-pub const ART_SHORT: f32 = 70.0;
+/// How tall the picture's part of every card is.
+pub const ART: f32 = 128.0;
+const PICTURE: f32 = 96.0;
 const PLATE_PADDING: Margin = Margin::symmetric(12, 10);
 pub const LINE_GAP: f32 = 6.0;
 pub const GRANT_ICON: f32 = 22.0;
@@ -52,6 +53,9 @@ const RULE_ROW: f32 = 10.0;
 /// How many times over a tilt closes all but a third of what is left within its settling time:
 /// after it, under a fiftieth remains.
 const SETTLING: f32 = 4.0;
+/// How near its goal, in degrees, a tilt is there: closing in for ever, a card would never lie
+/// still, and what shows it would never be done drawing it.
+const AT_REST: f32 = 0.01;
 const RULE_FADE: f32 = 0.25;
 
 pub const SHADOW: Shadow = Shadow {
@@ -72,18 +76,6 @@ const CARD_CONTACT_SHADOW: Shadow = Shadow {
     spread: 0,
     color: Color32::from_black_alpha(80),
 };
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Art {
-    pub icon: Option<TextureId>,
-    pub height: f32,
-}
-
-impl Art {
-    fn icon_size(self) -> f32 {
-        if self.height >= ART { 96.0 } else { 60.0 }
-    }
-}
 
 /// How a card is dressed: the colour behind its picture, the two colours, the icon and the label
 /// its looks paint with, and the look each of its parts takes. The picture, the words in its
@@ -117,7 +109,7 @@ impl CardDress<'static> {
         crest: CrestLook::None,
         name_band: NameBandLook::Plain { icon: false },
         label_line: LabelLineLook::None,
-        art: ArtLook::Flush { height: None },
+        art: ArtLook::Flush,
         paper: PaperLook::Cream,
         dividers: DividerLook::Line,
         halo: HaloLook::Shadow,
@@ -170,14 +162,12 @@ pub enum LabelLineLook {
     Seal,
 }
 
-/// How the picture is framed and how tall it stands, as tall as the card's own art where the
-/// look names no height: flush with the frame, set in with a margin and a border of its own, or
-/// arched at the top.
+/// How the picture is framed within its part of the card: flush with the frame, or set in with
+/// a margin and a border of its own.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ArtLook {
-    Flush { height: Option<f32> },
-    Inset { height: Option<f32>, margin: f32 },
-    Arched { height: Option<f32> },
+    Flush,
+    Inset { margin: f32 },
 }
 
 /// What lies under a card's text: cream, cream tinted with the gradient, or cream watermarked
@@ -208,13 +198,11 @@ pub enum HaloLook {
 pub struct Card<'a> {
     pub kind: CardKind,
     pub band: &'a str,
-    pub numeral: Option<&'a str>,
+    /// What the band counts at its far end: a rank, or how many are held.
+    pub tally: Option<&'a str>,
     pub name: &'a str,
-    pub art: Art,
-    pub width: f32,
-    pub max_height: f32,
+    pub picture: Option<TextureId>,
     pub closable: bool,
-    pub stamp: Option<&'a str>,
     pub depth: Depth,
     pub dress: CardDress<'a>,
 }
@@ -260,9 +248,15 @@ impl CardTilt {
         } else {
             1.0
         };
-        CardTilt {
+        let turned = CardTilt {
             aside: self.aside + (goal.aside - self.aside) * covered,
             above: self.above + (goal.above - self.above) * covered,
+        };
+        let there = |turned: f32, goal: f32| (goal - turned).abs() < AT_REST;
+        if there(turned.aside, goal.aside) && there(turned.above, goal.above) {
+            goal
+        } else {
+            turned
         }
     }
 }
@@ -296,16 +290,10 @@ impl<'a> Card<'a> {
         Card {
             kind,
             band: kind.word(),
-            numeral: None,
+            tally: None,
             name,
-            art: Art {
-                icon: None,
-                height: ART,
-            },
-            width: WIDTH,
-            max_height: MAX_HEIGHT,
+            picture: None,
             closable: false,
-            stamp: None,
             depth: Depth::Front,
             dress: CardDress::PLAIN,
         }
@@ -315,16 +303,10 @@ impl<'a> Card<'a> {
         let crest = self.crest_size(ui.painter());
         let risen = crest.map_or(0.0, |crest| crest.y - CREST_SUNK);
         let outer_min = ui.cursor().min + Vec2::new(0.0, risen);
-        let frame_width = self.width - 2.0 * MARGIN;
+        let frame_width = WIDTH - 2.0 * MARGIN;
         let under = ui.painter().add(Shape::Noop);
         let frame_min = outer_min + Vec2::splat(MARGIN);
-        let room = Rect::from_min_size(
-            frame_min,
-            Vec2::new(
-                frame_width,
-                (self.max_height - risen - 2.0 * MARGIN).max(0.0),
-            ),
-        );
+        let frame = Rect::from_min_size(frame_min, Vec2::new(frame_width, HEIGHT - 2.0 * MARGIN));
         let mut inner = ui.new_child(
             UiBuilder::new()
                 .max_rect(Rect::from_min_size(
@@ -333,14 +315,12 @@ impl<'a> Card<'a> {
                 ))
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
-        inner.set_clip_rect(room.intersect(ui.clip_rect()));
+        inner.set_clip_rect(frame.intersect(ui.clip_rect()));
         inner.spacing_mut().item_spacing = Vec2::ZERO;
         let (band_rect, band) =
             inner.allocate_exact_size(Vec2::new(frame_width, KIND_BAND), Sense::click_and_drag());
         band.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, self.band));
-        let art_height = self.art_height();
-        let (art_rect, _) =
-            inner.allocate_exact_size(Vec2::new(frame_width, art_height), Sense::hover());
+        let (art_rect, _) = inner.allocate_exact_size(Vec2::new(frame_width, ART), Sense::hover());
         let (name_rect, _) =
             inner.allocate_exact_size(Vec2::new(frame_width, NAME_BAND), Sense::hover());
         inner.put(
@@ -370,7 +350,7 @@ impl<'a> Card<'a> {
         let close = self.closable.then(|| {
             let rect = Rect::from_min_size(
                 Pos2::new(
-                    outer_min.x + self.width - CROSS_AT.x - sheet::CROSS,
+                    outer_min.x + WIDTH - CROSS_AT.x - sheet::CROSS,
                     outer_min.y + CROSS_AT.y,
                 ),
                 Vec2::splat(sheet::CROSS),
@@ -382,10 +362,8 @@ impl<'a> Card<'a> {
             sheet::cross(&painter, rect, response.hovered());
             response
         });
-        let used = KIND_BAND + art_height + NAME_BAND + strip.map_or(0.0, |strip| strip.height());
-        let plate_room = (self.max_height - risen - 2.0 * MARGIN - used).max(0.0);
-        let paper = painter.add(Shape::Noop);
-        let paper_top = inner.cursor().min.y;
+        let written = Rect::from_min_max(Pos2::new(frame.min.x, inner.cursor().min.y), frame.max);
+        painter.extend(self.paper(written));
         let rule = SectionRule {
             look: self.dress.dividers,
             gradient: self.dress.gradient,
@@ -400,27 +378,14 @@ impl<'a> Card<'a> {
                     plate(ui, Plate { name_cut, rule });
                 });
         };
-        if self.max_height.is_finite() {
-            sheet::scroll(
-                &mut inner,
-                egui::ScrollArea::vertical()
-                    .max_height(plate_room)
-                    .auto_shrink([false, true])
-                    .id_salt(("card plate", self.name)),
-                write,
-            );
-        } else {
-            write(&mut inner);
-        }
-        let frame = Rect::from_min_max(
-            frame_min,
-            Pos2::new(
-                frame_min.x + frame_width,
-                inner.min_rect().max.y.min(room.max.y),
-            ),
+        sheet::scroll(
+            &mut inner,
+            egui::ScrollArea::vertical()
+                .max_height(written.height())
+                .auto_shrink([false, false])
+                .id_salt(("card plate", self.name)),
+            write,
         );
-        let written = Rect::from_min_max(Pos2::new(frame.min.x, paper_top), frame.max);
-        painter.set(paper, Shape::Vec(self.paper(written)));
         let outer = frame.expand(MARGIN);
         let taken = Rect::from_min_max(outer.min - Vec2::new(0.0, risen), outer.max);
         ui.allocate_rect(taken, Sense::hover());
@@ -428,23 +393,12 @@ impl<'a> Card<'a> {
             under,
             Shape::Vec(self.board(ui.painter(), outer, frame, crest)),
         );
-        self.paint_over(ui.painter(), outer, frame, art_rect);
+        self.paint_over(ui.painter(), outer, frame);
         CardResponse {
             rect: taken,
             frame,
             band,
             close,
-        }
-    }
-
-    /// How tall the picture's part of the card is: its own height or the one its look names,
-    /// with the margin an inset picture is set in by above and below it.
-    fn art_height(&self) -> f32 {
-        match self.dress.art {
-            ArtLook::Flush { height } | ArtLook::Arched { height } => {
-                height.unwrap_or(self.art.height)
-            }
-            ArtLook::Inset { height, margin } => height.unwrap_or(self.art.height) + 2.0 * margin,
         }
     }
 
@@ -607,7 +561,7 @@ impl<'a> Card<'a> {
             self.band,
             ink::INK,
         );
-        if let Some(numeral) = self.numeral {
+        if let Some(tally) = self.tally {
             let right = if self.closable {
                 band.max.x - sheet::CROSS - 10.0
             } else {
@@ -617,8 +571,8 @@ impl<'a> Card<'a> {
                 painter,
                 Pos2::new(right, band.center().y),
                 Align2::RIGHT_CENTER,
-                TextRole::Numeral,
-                numeral,
+                TextRole::Band,
+                tally,
                 ink::INK,
             );
         }
@@ -627,47 +581,30 @@ impl<'a> Card<'a> {
     fn paint_art(&self, painter: &Painter, art: Rect) {
         let [top, bottom] = self.dress.ground;
         let picture = match self.dress.art {
-            ArtLook::Flush { .. } => {
-                painter.add(shaded(
-                    &[
-                        art.left_top(),
-                        art.right_top(),
-                        art.right_bottom(),
-                        art.left_bottom(),
-                    ],
-                    art,
-                    [top, bottom],
-                ));
-                art
-            }
-            ArtLook::Inset { margin, .. } => {
-                let set = art.shrink(margin);
-                painter.add(shaded(
-                    &[
-                        set.left_top(),
-                        set.right_top(),
-                        set.right_bottom(),
-                        set.left_bottom(),
-                    ],
-                    set,
-                    [top, bottom],
-                ));
-                painter.rect_stroke(
-                    set,
-                    0.0,
-                    Stroke::new(INSET_STROKE, self.dress.gradient[1]),
-                    StrokeKind::Outside,
-                );
-                set
-            }
-            ArtLook::Arched { .. } => {
-                painter.add(shaded(&arch(art), art, [top, bottom]));
-                art
-            }
+            ArtLook::Flush => art,
+            ArtLook::Inset { margin } => art.shrink(margin),
         };
-        match self.art.icon {
+        painter.add(shaded(
+            &[
+                picture.left_top(),
+                picture.right_top(),
+                picture.right_bottom(),
+                picture.left_bottom(),
+            ],
+            picture,
+            [top, bottom],
+        ));
+        if let ArtLook::Inset { .. } = self.dress.art {
+            painter.rect_stroke(
+                picture,
+                0.0,
+                Stroke::new(INSET_STROKE, self.dress.gradient[1]),
+                StrokeKind::Outside,
+            );
+        }
+        match self.picture {
             Some(icon) => {
-                let size = Vec2::splat(self.art.icon_size().min(picture.height()));
+                let size = Vec2::splat(PICTURE.min(picture.height()));
                 let rect = Rect::from_center_size(picture.center(), size);
                 let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
                 for offset in [
@@ -800,7 +737,7 @@ impl<'a> Card<'a> {
         );
     }
 
-    fn paint_over(&self, painter: &Painter, outer: Rect, frame: Rect, art: Rect) {
+    fn paint_over(&self, painter: &Painter, outer: Rect, frame: Rect) {
         let top = Rect::from_min_size(outer.min + Vec2::new(9.0, 10.0), Vec2::splat(GLYPH));
         let bottom = Rect::from_min_size(
             outer.max - Vec2::new(9.0, 10.0) - Vec2::splat(GLYPH),
@@ -808,14 +745,6 @@ impl<'a> Card<'a> {
         );
         self.kind.paint(painter, top, ink::INK, false);
         self.kind.paint(painter, bottom, ink::INK, true);
-        if let Some(stamp) = self.stamp {
-            controls::stamp(
-                painter,
-                Pos2::new(frame.max.x - 44.0, art.max.y + NAME_BAND + 22.0),
-                stamp,
-                ink::OCHRE,
-            );
-        }
         if let (LabelLineLook::Seal, Some(label)) = (self.dress.label_line, self.dress.label) {
             controls::stamp(painter, frame.max - SEAL_IN, label, self.dress.gradient[1]);
         }
@@ -951,21 +880,6 @@ fn tiled(rect: Rect, image: TextureId, width: f32, [top, bottom]: [Color32; 2]) 
     Shape::mesh(mesh)
 }
 
-/// The edge of `rect` arched at the top: its sides rise to half its width short of the top and
-/// meet in a half circle, or a flatter arc where the rect is too low for one.
-fn arch(rect: Rect) -> Vec<Pos2> {
-    let rise = (rect.width() / 2.0).min(rect.height());
-    let center = Pos2::new(rect.center().x, rect.top() + rise);
-    let steps = 4 * ARC_STEPS;
-    (0..=steps)
-        .map(|step| {
-            let angle = PI + PI * step as f32 / steps as f32;
-            center + Vec2::new(angle.cos() * rect.width() / 2.0, angle.sin() * rise)
-        })
-        .chain([rect.right_bottom(), rect.left_bottom()])
-        .collect()
-}
-
 /// Takes the same room whatever it holds and when it holds nothing, so nothing beside it moves as
 /// the selection changes.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1062,7 +976,7 @@ pub fn requirement(ui: &mut Ui, met: bool, text: &str) {
         let (mark, color) = if met {
             (Mark::Check, ink::VERDIGRIS)
         } else {
-            (Mark::Cross, ink::RUBRIC)
+            (Mark::Cross, ink::VERMILION)
         };
         glyph::show(ui, mark, 12.0, color);
         ui.add(egui::Label::new(TextRole::CardBody.rich(text).color(color)).wrap());

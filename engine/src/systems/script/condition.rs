@@ -165,19 +165,6 @@ pub fn min_level(part: &Condition) -> Option<u32> {
     }
 }
 
-pub fn standing(world: &World, subject: Entity, condition: &Condition) -> Option<String> {
-    match condition {
-        Expr::AtLeast { a, .. } | Expr::More { a, .. } => match &**a {
-            Expr::Query(RiftQuery::Level { .. }) => Some(format!(
-                "you are level {}",
-                crate::systems::class::level(world, subject)
-            )),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// The times of day `condition` names, each once, in the order it names them.
 pub fn times(condition: &Condition) -> Vec<TimeOfDayName> {
     let mut times: Vec<TimeOfDayName> = Vec::new();

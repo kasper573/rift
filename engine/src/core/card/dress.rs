@@ -67,16 +67,8 @@ impl CardStyleDef {
                 CardLabelLine::Seal => LabelLineLook::Seal,
             },
             art: match self.art {
-                CardArt::Flush { height } => ArtLook::Flush {
-                    height: height.map(|height| height.0),
-                },
-                CardArt::Inset { height, margin } => ArtLook::Inset {
-                    height: height.map(|height| height.0),
-                    margin: margin.0,
-                },
-                CardArt::Arched { height } => ArtLook::Arched {
-                    height: height.map(|height| height.0),
-                },
+                CardArt::Flush => ArtLook::Flush,
+                CardArt::Inset { margin } => ArtLook::Inset { margin: margin.0 },
             },
             paper: match self.paper {
                 CardPaper::Cream => PaperLook::Cream,

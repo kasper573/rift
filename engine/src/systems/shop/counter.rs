@@ -27,8 +27,7 @@ use crate::systems::script::condition::Wording;
 use crate::systems::text::duration;
 
 const COUNTER_WIDTH: f32 = 784.0;
-const COUNTER_HEIGHT: f32 = 440.0;
-const PANE_WIDTH: f32 = 326.0;
+const COUNTER_HEIGHT: f32 = 604.0;
 const PAGE_GAP: f32 = 10.0;
 const NOTE_ROOM: f32 = 22.0;
 const PURSE: f32 = 26.0;
@@ -219,10 +218,10 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
     let room = ui.available_rect_before_wrap();
     let purse = Rect::from_min_max(Pos2::new(room.min.x, room.max.y - PURSE), room.max);
     let pages = Rect::from_min_max(room.min, Pos2::new(room.max.x, purse.min.y - PAGE_GAP));
-    let beside = pages.width() - sheet::GUTTER - PANE_WIDTH;
+    let beside = pages.width() - sheet::GUTTER - card::WIDTH;
     let ([left], right) = sheet::spaced_columns(pages, [beside]);
     let pane = CardPane {
-        size: Vec2::new(PANE_WIDTH, pages.height()),
+        size: Vec2::new(card::WIDTH, pages.height()),
         foot: controls::CONTROL_HEIGHT,
     };
     let wares = shelf.wares(&content);
@@ -372,7 +371,7 @@ fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware
         |ui| {
             if let Some(ware) = ware {
                 let notes = ware.notes(&content);
-                item::card::show_noted(ui, world, ware.item, card_look(ui), &notes);
+                item::card::show_noted(ui, world, ware.item, CARD_LOOK, &notes);
             }
         },
         |ui| {
@@ -388,15 +387,10 @@ fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware
     }
 }
 
-fn card_look(ui: &Ui) -> CardLook {
-    CardLook {
-        width: PANE_WIDTH,
-        max_height: ui.available_height().min(card::MAX_HEIGHT),
-        art: card::ART_SHORT,
-        closable: false,
-        depth: Depth::Front,
-    }
-}
+const CARD_LOOK: CardLook = CardLook {
+    closable: false,
+    depth: Depth::Front,
+};
 
 fn trade_button(ui: &mut Ui, content: &Content, ware: &Ware, waiting: bool) -> egui::Response {
     let label = match &ware.refusal {
@@ -465,7 +459,7 @@ fn sale_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane) {
         ui,
         |ui| match shelf.offered {
             Some((_, held)) => {
-                item::card::show_noted(ui, world, held.item, card_look(ui), &notes);
+                item::card::show_noted(ui, world, held.item, CARD_LOOK, &notes);
             }
             None => {
                 ui.add_space(16.0);

@@ -242,6 +242,21 @@ pub struct SunLight {
     pub illuminance: f32,
 }
 
+impl SunLight {
+    /// Whether this light has turned or changed its strength from `other` by as much as the
+    /// sky's light takes for a change: what follows a light that is always moving redoes its
+    /// work only then.
+    pub fn far_from(&self, other: &SunLight) -> bool {
+        let shed = |light: &SunLight| {
+            (
+                lights::toward(light.elevation, light.azimuth),
+                light.color.to_linear().to_vec3() * light.illuminance,
+            )
+        };
+        shed_apart(shed(self), shed(other))
+    }
+}
+
 /// The air over the world under `sky`: an Earth's atmosphere whose haze scatters the light
 /// `scattering` times as much as dry air's dust, the water in moist air scattering it white and
 /// hazing the horizon the more it holds, scaled down so the
@@ -606,17 +621,24 @@ impl Shedding {
     }
 
     fn far_from(&self, other: &Self) -> bool {
-        let turned = SUN_TURNED.radians().0.cos();
         self.suns.len() != other.suns.len()
             || self.airs.len() != other.airs.len()
-            || self.suns.iter().zip(&other.suns).any(|(a, b)| {
-                a.0.dot(b.0) < turned
-                    || (a.1 - b.1).abs().max_element() > SUN_BRIGHTENED * a.1.max(b.1).max_element()
-            })
+            || self
+                .suns
+                .iter()
+                .zip(&other.suns)
+                .any(|(a, b)| shed_apart(*a, *b))
             || self
                 .airs
                 .iter()
                 .zip(&other.airs)
                 .any(|(a, b)| a.0 != b.0 || (a.1 - b.1).abs() > AIR_CLIMBED)
     }
+}
+
+/// Whether two lights, each the way it lies and its radiance, differ by as much as the sky's
+/// light takes for a change.
+fn shed_apart(a: (Vec3, Vec3), b: (Vec3, Vec3)) -> bool {
+    a.0.dot(b.0) < SUN_TURNED.radians().0.cos()
+        || (a.1 - b.1).abs().max_element() > SUN_BRIGHTENED * a.1.max(b.1).max_element()
 }

@@ -12,7 +12,7 @@ use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::item::{ItemDef, ItemId, widget};
 use engine::systems::quest::QuestDef;
 use engine::systems::skill::{self, SkillDef};
-use ui::card::{self, Art, Card};
+use ui::card::{self, Card};
 use ui::egui::{LayerId, Ui};
 use ui::glyph::CardKind;
 use ui::motion;
@@ -108,11 +108,7 @@ pub(super) fn show_card_style(editor: &mut Editor, ui: &mut Ui, key: &str) {
             let def = skill.get(&content);
             let mut face = Card::new(skill::card::kind(def), &def.name);
             face.dress = style.get(&content).dress(&mut images, None);
-            face.art = Art {
-                icon: images.image(&def.icon).map(|image| image.texture),
-                height: card::ART,
-            };
-            face.width = ui.available_width().min(card::WIDTH);
+            face.picture = images.image(&def.icon).map(|image| image.texture);
             face.show(ui, |_, _| {});
         } else {
             stand_in(ui, &mut images, style.get(&content), None, "Card");
@@ -144,7 +140,6 @@ pub(super) fn on_stage(
 
 fn show_item(ui: &mut Ui, images: &mut ProjectImages, content: &Content, item: ItemId) {
     let look = CardLook {
-        width: ui.available_width().min(card::WIDTH),
         closable: false,
         ..CardLook::PINNED
     };
@@ -166,7 +161,6 @@ fn stand_in(
 ) {
     let mut face = Card::new(CardKind::Resource, name);
     face.dress = style.dress(images, ground);
-    face.width = ui.available_width().min(card::WIDTH);
     face.show(ui, |ui, plate| {
         card::overview(ui, "A card with nothing on it yet");
         card::heading(ui, plate, "a section");

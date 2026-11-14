@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use ui::card::{self, Art, Card, CardResponse, CardTilt};
+use ui::card::{self, Card, CardResponse, CardTilt};
 use ui::egui;
 use ui::egui::{Rect, Response, Ui};
 use ui::face::{self, TextRole};
@@ -10,6 +10,7 @@ use ui::ink;
 
 use super::{Rank, SkillDef, SkillId, SkillKind, SkillStat};
 use crate::core::card::CardStyleDef;
+use crate::core::card::stage::HungCardLamp;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook};
@@ -72,6 +73,11 @@ pub fn open(world: &mut World, skill: SkillId, from: Option<Rect>) {
 /// How far the pinned card is turned toward the pointer.
 pub fn tilt(world: &World) -> CardTilt {
     hud::pinned_tilt(world, WINDOW_KEY)
+}
+
+/// The lamp the pinned card is lit by, while it is on the stage.
+pub fn lamp(world: &World) -> Option<HungCardLamp> {
+    hud::pinned_lamp(world, WINDOW_KEY)
 }
 
 pub fn shown(world: &World) -> Option<SkillId> {
@@ -157,32 +163,20 @@ pub fn kind(def: &SkillDef) -> CardKind {
 pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) -> CardResponse {
     let content = world.resource::<Content>().clone();
     let def = card.skill.get(&content);
-    let ranks = def.rank_count();
-    let numeral = format!(
-        "{} · {}",
-        face::roman(u32::from(card.rank.0)),
-        face::roman(u32::from(ranks))
-    );
+    let tally = rank_tally(def, card.rank);
     let learned = card.rank > Rank::NONE;
-    let maxed = card.granted_by.is_none() && learned && card.rank.0 >= ranks;
     let icon = gui::image(world, &def.icon).map(|image| image.texture);
     let mut shown = Card::new(kind(def), &def.name);
     shown.dress = CardStyleDef::of(&content, def.card_style).dress(world, None);
-    shown.numeral = Some(&numeral);
-    shown.art = Art {
-        icon,
-        height: look.art,
-    };
-    shown.width = look.width;
-    shown.max_height = look.max_height;
+    shown.tally = Some(&tally);
+    shown.picture = icon;
     shown.closable = look.closable;
-    shown.stamp = maxed.then_some("maxed");
     shown.depth = look.depth;
     shown.show(ui, |ui, plate| {
         if plate.name_cut {
             card::full_name(ui, &def.name);
         }
-        card::overview(ui, &overview(world, &content, def, card));
+        card::overview(ui, &card_overview(&content, def, card));
         card::heading(ui, plate, "ranks");
         for (index, level) in def.levels.iter().enumerate() {
             let rank = Rank(index as u8 + 1);
@@ -223,9 +217,19 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
     })
 }
 
+/// What a skill's card says under its name. Its band already says its kind and its rank, and
+/// its sections what it still needs.
+fn card_overview(content: &Content, def: &SkillDef, card: &SkillCard) -> String {
+    match card.granted_by {
+        Some(item) => lent_line(content, item),
+        None => use_line(def, card.rank),
+    }
+}
+
+/// What a skill's tooltip says under its name, which has no band to say any of it.
 fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) -> String {
     if let Some(item) = card.granted_by {
-        return format!("Known while your {} is worn", item.get(content).name);
+        return lent_line(content, item);
     }
     if card.rank == Rank::NONE {
         let wanting = card.node.as_ref().and_then(|access| {
@@ -238,12 +242,23 @@ fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) 
             None => "Not learned".to_owned(),
         };
     }
+    let kind = match def.kind {
+        SkillKind::Active => "",
+        SkillKind::Passive => "Passive · ",
+    };
     format!(
-        "Rank {} of {} · {}",
-        face::roman(u32::from(card.rank.0)),
-        face::roman(u32::from(def.rank_count())),
+        "{} · {kind}{}",
+        rank_tally(def, card.rank),
         use_line(def, card.rank)
     )
+}
+
+fn rank_tally(def: &SkillDef, rank: Rank) -> String {
+    format!("Rank {} of {}", rank.0, def.rank_count())
+}
+
+fn lent_line(content: &Content, item: ItemId) -> String {
+    format!("Known while your {} is worn", item.get(content).name)
 }
 
 fn draw_card(world: &mut World) {
@@ -265,7 +280,7 @@ fn draw_card(world: &mut World) {
 
 fn use_line(def: &SkillDef, rank: Rank) -> String {
     if def.kind == SkillKind::Passive {
-        return "Passive · holds while known".to_owned();
+        return "Holds while known".to_owned();
     }
     let rank = rank.max(Rank::FIRST);
     let mut parts = vec![def.target.describe().to_owned()];

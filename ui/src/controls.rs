@@ -250,22 +250,38 @@ pub fn pill(ui: &mut Ui, text: &str, pill: Pill) -> Response {
     .response
 }
 
-pub fn pill_with<R>(ui: &mut Ui, pill: Pill, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+pub fn pill_with<R>(
+    ui: &mut Ui,
+    pill: Pill,
+    mut add: impl FnMut(&mut Ui) -> R,
+) -> InnerResponse<R> {
     let color = pill.color();
-    egui::Frame::new()
-        .fill(ink::white_wash(0.25))
-        .stroke(Stroke::new(1.0, color))
-        .corner_radius(PILL_HEIGHT / 2.0)
-        .inner_margin(Margin::symmetric(8, 1))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                ui.style_mut().override_font_id = Some(Face::BookBold.id(12.0));
-                ui.visuals_mut().override_text_color = Some(color);
-                add(ui)
+    let mut framed = |ui: &mut Ui| {
+        egui::Frame::new()
+            .fill(ink::white_wash(0.25))
+            .stroke(Stroke::new(1.0, color))
+            .corner_radius(PILL_HEIGHT / 2.0)
+            .inner_margin(Margin::symmetric(8, 1))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 3.0;
+                    ui.style_mut().override_font_id = Some(Face::BookBold.id(12.0));
+                    ui.visuals_mut().override_text_color = Some(color);
+                    add(ui)
+                })
+                .inner
             })
-            .inner
-        })
+    };
+    if !ui.layout().main_wrap {
+        return framed(ui);
+    }
+    // A frame is laid out where its row stands, whatever room is left there, so a row that wraps
+    // is told the pill's size first and takes it to the next row when it doesn't fit.
+    let size = {
+        let measuring = UiBuilder::new().id_salt("pill size").invisible();
+        framed(&mut ui.new_child(measuring)).response.rect.size()
+    };
+    ui.allocate_ui(size, framed).inner
 }
 
 pub fn notice(ui: &mut Ui, text: &str) -> Response {
@@ -521,8 +537,10 @@ pub fn stamp(painter: &Painter, center: Pos2, word: &str, color: Color32) {
         center + rot * Vec2::new(-half.x, half.y),
     ];
     painter.add(Shape::closed_line(corners, Stroke::new(1.5, color)));
+    let written_from = center - galley.rect.center().to_vec2();
     painter.add(Shape::Text(
-        TextShape::new(center, galley, color).with_angle_and_anchor(angle, Align2::CENTER_CENTER),
+        TextShape::new(written_from, galley, color)
+            .with_angle_and_anchor(angle, Align2::CENTER_CENTER),
     ));
 }
 

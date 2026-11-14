@@ -23,13 +23,12 @@ use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
-use engine::systems::quest::card::{QuestCardLook, QuestMoment};
+use engine::systems::quest::card::QuestMoment;
 use engine::systems::quest::{self, Parties, QuestDef};
 use engine::systems::script::{EffectReach, RiftScripts};
 use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
 use strum::VariantArray;
-use ui::card;
 use ui::egui::{self, Ui, Vec2};
 use ui::face;
 use ui::glyph::{self, Mark};
@@ -630,14 +629,10 @@ pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Cont
     }
     let parties = Parties::of(content, content.built::<RiftScripts>());
     let width = ui.available_width();
-    let look = QuestCardLook {
-        width: width.min(card::DOCKED_WIDTH),
-        max_height: card::MAX_HEIGHT,
-        moment: Some(QuestMoment::Offer),
-    };
     ui.vertical(|ui| {
         ui.set_width(width);
-        quest::card::show(ui, images, content, quest, look, |ui, images, plate| {
+        let moment = Some(QuestMoment::Offer);
+        quest::card::show(ui, images, content, quest, moment, |ui, images, plate| {
             quest::card::offer(ui, images, content, &parties, quest, None, plate);
         });
     });

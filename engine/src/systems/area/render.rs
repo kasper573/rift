@@ -9,12 +9,13 @@ use bevy::prelude::*;
 use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
 use super::{AreaId, AreaObject, AreaTag, PropDef};
 use crate::core::assets;
+use crate::core::card::stage::{CardSkyLight, SkyLampLight};
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::video::VideoPreferences;
-use crate::core::render::world::sky::Daylight;
-use crate::core::render::{CameraFraming, CameraRig, camera};
+use crate::core::render::world::sky::{Daylight, shining, sun_at};
+use crate::core::render::{CameraFraming, CameraRig, Look, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::cover::ShownWeather;
@@ -33,6 +34,7 @@ impl Plugin for AreaRenderPlugin {
         app.add_plugins(SceneryPlugin)
             .init_resource::<ShownArea>()
             .init_resource::<Daylight>()
+            .init_resource::<CardSkyLight>()
             .add_systems(
                 Update,
                 (
@@ -206,6 +208,7 @@ fn light_area(
         return 0.0;
     };
     scenery::light(world, area, weather, daylight, stood, camera);
+    light_cards(world, area, daylight);
     if let Some(mut shown) = world.get_resource_mut::<ShownArea>()
         && shown
             .0
@@ -216,6 +219,37 @@ fn light_area(
         standing.shone = Some(daylight);
     }
     super::rain::fall(world, area_id, area, weather, stood.rain, camera)
+}
+
+/// Tells the cards the light of `area`'s sky at `daylight` as a clear sky sheds it, its sun or by
+/// night its moon, and tells them again only once it has changed to the eye: the day moves it
+/// every frame, and a card lit by it is drawn anew whenever it is told.
+fn light_cards(world: &mut World, area: &super::Area, daylight: Daylight) {
+    let look = *world.resource::<Look>();
+    let light = area.lighting.sun.map(|noon| {
+        let sun = sun_at(
+            daylight,
+            noon.elevation,
+            noon.azimuth,
+            noon.color.color(),
+            0.0,
+            0.0,
+            &look,
+        );
+        SkyLampLight {
+            shining: shining(sun, 0.0, 0.0, &look),
+            noon: noon.azimuth,
+        }
+    });
+    let mut told = world.resource_mut::<CardSkyLight>();
+    let changed = match (told.0, light) {
+        (Some(was), Some(now)) => now.noon != was.noon || now.shining.far_from(&was.shining),
+        (None, None) => false,
+        _ => true,
+    };
+    if changed {
+        told.0 = light;
+    }
 }
 
 /// Gives every object of the shown world a place on the ground, the extent of its shape and the
@@ -292,6 +326,7 @@ fn play_prop_effects(world: &mut World) {
 
 fn leave_area(world: &mut World) {
     tear_down(world);
+    world.resource_mut::<CardSkyLight>().0 = None;
 }
 
 fn tear_down(world: &mut World) {

@@ -359,8 +359,7 @@ impl QuestDef {
 
     pub fn meta(&self, parties: &Parties, quest: QuestId) -> String {
         format!(
-            "{} · Level {} · from {}",
-            self.category,
+            "Level {} · from {}",
             self.min_level(),
             parties
                 .giver(quest)

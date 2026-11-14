@@ -5,7 +5,7 @@ use ui::card::{
     DividerLook, HaloLook, LabelLineLook, NameBandLook, PaperLook,
 };
 use ui::controls::{RowHover, RowLook};
-use ui::face::{self, Face};
+use ui::face::Face;
 use ui::glyph::{CardKind, Icon, Mark, Weight};
 use ui::motion::{self, SheetClock};
 use ui::sheet::{Depth, Sheet};
@@ -64,17 +64,6 @@ fn every_mark_is_an_icon_of_the_icon_font_in_every_weight() {
             );
         }
     }
-}
-
-#[test]
-fn roman_numerals() {
-    assert_eq!(face::roman(0), "0");
-    assert_eq!(face::roman(1), "I");
-    assert_eq!(face::roman(4), "IV");
-    assert_eq!(face::roman(9), "IX");
-    assert_eq!(face::roman(12), "XII");
-    assert_eq!(face::roman(3999), "MMMCMXCIX");
-    assert_eq!(face::roman(4000), "4000");
 }
 
 #[test]
@@ -190,42 +179,9 @@ fn what_a_layer_was_painted_since_a_mark_is_lifted_off_it_as_the_triangles_it_wo
 }
 
 #[test]
-fn a_card_keeps_its_width_and_grows_with_what_it_holds_up_to_its_most() {
-    let ctx = context();
-    let mut short = None;
-    let mut long = None;
-    pass(&ctx, |ui| {
-        short = Some(
-            Card::new(CardKind::Equipment, "Rusty Sword")
-                .show(ui, |ui, _| card::fact(ui, "+2 Damage"))
-                .rect,
-        );
-        long = Some(
-            Card::new(CardKind::Quest, "A long errand")
-                .show(ui, |ui, _| {
-                    for line in 0..40 {
-                        card::fact(ui, &format!("Objective {line}"));
-                    }
-                })
-                .rect,
-        );
-    });
-    let (short, long) = (short.unwrap(), long.unwrap());
-    assert_eq!(short.width(), card::WIDTH);
-    assert!(short.height() > card::KIND_BAND + card::ART + card::NAME_BAND);
-    assert!(short.height() < card::MAX_HEIGHT);
-    assert!(
-        (long.height() - card::MAX_HEIGHT).abs() <= 1.0,
-        "{}",
-        long.height()
-    );
-}
-
-#[test]
-fn a_dressed_card_keeps_its_width_and_makes_room_for_what_its_dress_adds() {
+fn every_card_is_one_size_whatever_it_holds_and_however_it_is_dressed() {
     let ctx = context();
     let crest = 18.0;
-    let taller = card::ART + 32.0;
     let dress = CardDress {
         label: Some("Epic"),
         border: BorderLook::Double {
@@ -239,37 +195,50 @@ fn a_dressed_card_keeps_its_width_and_makes_room_for_what_its_dress_adds() {
             icon: true,
         },
         label_line: LabelLineLook::Strip,
-        art: ArtLook::Arched {
-            height: Some(taller),
-        },
+        art: ArtLook::Inset { margin: 6.0 },
         paper: PaperLook::Tinted { strength: 0.25 },
         dividers: DividerLook::Gradient,
         halo: HaloLook::Glow { spread: 12.0 },
         ..CardDress::PLAIN
     };
-    let mut rects = Vec::new();
+    let mut shown = Vec::new();
     pass(&ctx, |ui| {
-        for dress in [CardDress::PLAIN, dress] {
-            let mut shown = Card::new(CardKind::Equipment, "Rusty Sword");
-            shown.dress = dress;
-            let response = shown.show(ui, |ui, plate| {
+        for (name, lines, dress) in [
+            ("Rusty Sword", 1, CardDress::PLAIN),
+            ("A long errand", 40, CardDress::PLAIN),
+            ("Moon Charm", 1, dress),
+        ] {
+            let mut card = Card::new(CardKind::Equipment, name);
+            card.dress = dress;
+            let response = card.show(ui, |ui, plate| {
                 card::heading(ui, plate, "grants while worn");
-                card::fact(ui, "+2 Damage");
+                for line in 0..lines {
+                    card::fact(ui, &format!("Line {line}"));
+                }
             });
-            rects.push((response.rect, response.frame));
+            shown.push((response.rect, response.frame));
         }
     });
-    let [(plain, _), (dressed, frame)] = rects[..] else {
-        panic!("two cards");
+    let [
+        (short, short_frame),
+        (long, long_frame),
+        (dressed, dressed_frame),
+    ] = shown[..]
+    else {
+        panic!("three cards");
     };
-    assert_eq!(dressed.width(), plain.width());
+    let size = Vec2::new(card::WIDTH, card::HEIGHT);
+    assert_eq!(short.size(), size);
+    assert_eq!(long.size(), size);
+    assert_eq!(short_frame.size(), long_frame.size());
+    assert_eq!(dressed_frame.size(), short_frame.size());
+    assert_eq!(dressed.width(), card::WIDTH);
     assert!(
-        dressed.height() - plain.height() >= crest + (taller - card::ART),
-        "{} over {}",
-        dressed.height(),
-        plain.height()
+        dressed.height() - card::HEIGHT >= crest,
+        "a crest rises over the card: {}",
+        dressed.height()
     );
-    assert!(dressed.contains_rect(frame));
+    assert!(dressed.contains_rect(dressed_frame));
 }
 
 #[test]
@@ -313,9 +282,7 @@ fn a_card_pane_takes_the_same_room_empty_and_full() {
         let full = pane.show(
             ui,
             |ui| {
-                let mut card = Card::new(CardKind::Equipment, "Rusty Sword");
-                card.max_height = ui.available_height();
-                card.show(ui, |ui, _| {
+                Card::new(CardKind::Equipment, "Rusty Sword").show(ui, |ui, _| {
                     for _ in 0..40 {
                         card::fact(ui, "A long line of facts about the sword.");
                     }

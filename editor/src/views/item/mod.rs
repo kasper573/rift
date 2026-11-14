@@ -14,7 +14,7 @@ use engine::systems::item::card::{self as item_card, CardLook};
 use engine::systems::item::{self, CARD_SIZE, ICON_SIZE, ItemDef, Wear, widget};
 use ui::egui::{self, Sense, Ui, Vec2};
 use ui::face;
-use ui::{card, chip, form, panel, sheet, theme};
+use ui::{chip, form, panel, sheet, theme};
 
 use super::area::camera;
 use super::stage::{self, StagePicture, StageToggle};
@@ -175,7 +175,6 @@ fn shown(editor: &mut Editor, ui: &mut Ui, key: &str) {
         ui.add_space(12.0);
         ui.vertical(|ui| {
             let look = CardLook {
-                width: ui.available_width().min(card::WIDTH),
                 closable: false,
                 ..CardLook::PINNED
             };

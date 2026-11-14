@@ -7,7 +7,7 @@ use ui::sheet::Depth;
 
 use super::panel;
 use crate::core::card::CardMaterial;
-use crate::core::card::stage::{self, StagedCard};
+use crate::core::card::stage::{self, HungCardLamp, StagedCard};
 use crate::core::gui::{self, Band, GuiContext};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::settings::UserSettings;
@@ -189,6 +189,11 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
 /// How far the pinned card of `key` is turned toward the pointer.
 pub(crate) fn pinned_tilt(world: &World, key: &'static str) -> CardTilt {
     stage::tilt_of(world, panel::layer(key).id)
+}
+
+/// The lamp the pinned card of `key` is lit by, while it is on the stage.
+pub(crate) fn pinned_lamp(world: &World, key: &'static str) -> Option<HungCardLamp> {
+    stage::lamp_of(world, panel::layer(key).id)
 }
 
 // A press brings the area it lands on to the front as its pass ends, and areas brought to the front

@@ -14,7 +14,6 @@ pub enum Face {
     SmallCaps,
     SmallCapsBold,
     Quill,
-    Numerals,
     Mono,
     MonoBold,
 }
@@ -53,7 +52,6 @@ pub enum TextRole {
     Tooltip,
     Small,
     Flavour,
-    Numeral,
     KeyHint,
     Mono,
     Count,
@@ -77,7 +75,6 @@ impl TextRole {
             | TextRole::Tooltip
             | TextRole::Small => Face::Book,
             TextRole::Flavour => Face::Quill,
-            TextRole::Numeral => Face::Numerals,
             TextRole::KeyHint | TextRole::Mono => Face::Mono,
             TextRole::Count | TextRole::SlotKey => Face::MonoBold,
         }
@@ -93,7 +90,7 @@ impl TextRole {
             TextRole::CardBody | TextRole::Flavour => 14.5,
             TextRole::Button | TextRole::MainTab => 14.0,
             TextRole::Tooltip => 13.5,
-            TextRole::Small | TextRole::Numeral | TextRole::Mono => 13.0,
+            TextRole::Small | TextRole::Mono => 13.0,
             TextRole::Count => 11.0,
             TextRole::SlotKey => 10.0,
         }
@@ -185,36 +182,4 @@ pub fn quill(text: impl Into<String>) -> RichText {
 
 pub fn mono(text: impl Into<String>) -> RichText {
     TextRole::Mono.rich(text)
-}
-
-/// A Roman numeral for a card band; zero stays a zero and a count past the numerals' reach stays
-/// in digits.
-pub fn roman(n: u32) -> String {
-    if n == 0 || n >= 4000 {
-        return n.to_string();
-    }
-    const STEPS: [(u32, &str); 13] = [
-        (1000, "M"),
-        (900, "CM"),
-        (500, "D"),
-        (400, "CD"),
-        (100, "C"),
-        (90, "XC"),
-        (50, "L"),
-        (40, "XL"),
-        (10, "X"),
-        (9, "IX"),
-        (5, "V"),
-        (4, "IV"),
-        (1, "I"),
-    ];
-    let mut left = n;
-    let mut out = String::new();
-    for (value, numeral) in STEPS {
-        while left >= value {
-            out.push_str(numeral);
-            left -= value;
-        }
-    }
-    out
 }
