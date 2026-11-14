@@ -7,6 +7,7 @@ use strum::{IntoStaticStr, VariantArray};
 use ui::ink::Prose;
 
 use crate::core::content::SchemaMark;
+use crate::core::math::Rgb;
 use crate::core::script::{Expr, Value};
 use crate::core::text::{StyledLine, StyledSpan, TextMotion, TextPiece, TextVoice};
 use crate::core::units::{Millis, Seconds};
@@ -179,6 +180,28 @@ pub struct LineText(pub Vec<SpanText>);
 pub enum SpanText {
     Text { text: String, fx: Vec<Fx> },
     Input(InputAction),
+    Named { name: String, mark: NameMark },
+}
+
+/// What marks a name as one of a kind: the kind's icon before it, and the kind's colour where
+/// the ground is dark enough to show it.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct NameMark {
+    pub icon: Option<String>,
+    pub color: Rgb,
+}
+
+impl From<&str> for LineText {
+    fn from(text: &str) -> LineText {
+        LineText::plain(text)
+    }
+}
+
+impl From<String> for LineText {
+    fn from(text: String) -> LineText {
+        LineText::plain(text)
+    }
 }
 
 impl LineText {
@@ -213,7 +236,7 @@ impl LineText {
         self.0
             .iter()
             .map(|span| match span {
-                SpanText::Text { text, .. } => text.clone(),
+                SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => text.clone(),
                 SpanText::Input(action) => inputs.name(*action).unwrap_or_default(),
             })
             .collect()
@@ -223,7 +246,7 @@ impl LineText {
         self.0
             .iter()
             .map(|span| match span {
-                SpanText::Text { text, .. } => text.as_str(),
+                SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => text.as_str(),
                 SpanText::Input(_) => "",
             })
             .collect()
@@ -233,7 +256,9 @@ impl LineText {
         self.0
             .iter()
             .map(|span| match span {
-                SpanText::Text { text, .. } => text.split_whitespace().count(),
+                SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => {
+                    text.split_whitespace().count()
+                }
                 SpanText::Input(_) => 1,
             })
             .sum()
@@ -249,6 +274,11 @@ impl SpanText {
         let (text, fx) = match self {
             SpanText::Text { text, fx } => (text, fx),
             SpanText::Input(action) => return vec![map::input(*action)],
+            SpanText::Named { name, mark } => {
+                let icon = mark.icon.clone().map(|icon| TextPiece::Image(icon.into()));
+                let name = StyledSpan::plain(name.clone()).lit(mark.color.into());
+                return icon.into_iter().chain([name.into()]).collect();
+            }
         };
         let mut span = StyledSpan::plain(text.clone());
         let mut pause = None;

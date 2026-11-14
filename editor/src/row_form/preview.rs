@@ -1,5 +1,6 @@
 use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
+use engine::core::card::CardStyleDef;
 use engine::core::content::{Content, ContentFile, MODULES, NamedContent};
 use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::GameSettings;
@@ -18,6 +19,7 @@ use engine::systems::actor::{Action, Appearance, Motion, Pose as BodyPose, appea
 use engine::systems::class::ClassDef;
 use engine::systems::equipment::{self, Equipment};
 use engine::systems::item::ItemId;
+use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
@@ -37,6 +39,7 @@ use ui::words;
 use ui::{chip, controls};
 
 use super::quests::quest_parties_sections;
+use super::styles;
 use crate::app::Editor;
 use crate::rows;
 use crate::stage::{self, Scenario, Scene};
@@ -99,6 +102,8 @@ pub(crate) fn preview_place(table: &str) -> Option<PreviewPlace> {
         | StatusEffectDef::TABLE
         | SkillDef::TABLE
         | ResourceDef::TABLE
+        | ItemRarityDef::TABLE
+        | CardStyleDef::TABLE
         | MaterialDef::TABLE => Some(PreviewPlace::Beside),
         SfxDef::TABLE | BabbleDef::TABLE | BabbleBankDef::TABLE => Some(PreviewPlace::Below),
         _ => None,
@@ -116,6 +121,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
         BabbleDef::TABLE => return show_babble(editor, ui, key),
         MaterialDef::TABLE => return show_material(editor, ui, key),
         ResourceDef::TABLE => return show_resource(editor, ui, key),
+        ItemRarityDef::TABLE => return styles::show_rarity(editor, ui, key),
+        CardStyleDef::TABLE => return styles::show_card_style(editor, ui, key),
         _ => {}
     }
     let now = ui.input(|i| i.time);
@@ -604,7 +611,7 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
     }
 }
 
-fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Content, key: &str) {
+pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Content, key: &str) {
     let Some(quest) = content.by_path::<QuestDef>(key) else {
         return;
     };
@@ -620,8 +627,8 @@ fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Content, key: &
     };
     ui.vertical(|ui| {
         ui.set_width(width);
-        quest::card::show(ui, images, content, quest, look, |ui, images| {
-            quest::card::offer(ui, images, content, &parties, quest, None);
+        quest::card::show(ui, images, content, quest, look, |ui, images, plate| {
+            quest::card::offer(ui, images, content, &parties, quest, None, plate);
         });
     });
 }

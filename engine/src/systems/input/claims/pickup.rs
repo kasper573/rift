@@ -5,17 +5,31 @@ use crate::core::render::world::decal::GroundDecal;
 use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::input::marks;
 use crate::systems::interface::CursorShape;
+use crate::systems::item::plates::{self, Named};
 use crate::systems::item::{self, PickupRequest};
 use crate::systems::player::session;
 
-pub struct PickupClaimant;
+/// Takes a click on an item on the ground or on its plate. A plate the player asked for is
+/// claimed apart, ahead of what stands under it: asking for names is looting.
+pub enum PickupClaimant {
+    AskedPlate,
+    Item,
+}
 
 impl Claimant for PickupClaimant {
     fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;
         }
-        item::pickable_at(world, pointed?.ground?).map(ClickClaim::Pickup)
+        pointed?;
+        let item = match self {
+            PickupClaimant::AskedPlate => plates::taken_by_plate(world, &[Named::ByKey]),
+            PickupClaimant::Item => {
+                plates::taken_by_plate(world, &[Named::ByPointer, Named::Unprompted])
+                    .or_else(|| item::pickable_at(world, pointed?.ground?))
+            }
+        };
+        item.map(ClickClaim::Pickup)
     }
 
     fn drive(&self, world: &mut World, claim: Option<ClickClaim>, start: bool) {

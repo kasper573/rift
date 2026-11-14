@@ -11,11 +11,31 @@ use crate::core::units::Radians;
 /// glow of a crystal. Whoever draws the thing says which, and stands the thing by its transform
 /// and its [`SiteExtent`](super::render::SiteExtent).
 #[derive(Component, Clone, Debug, Default, PartialEq)]
-pub struct StandingVfx(pub Vec<VfxId>);
+pub struct StandingVfx {
+    pub vfx: Vec<VfxId>,
+    /// What each of them is played with.
+    pub params: VfxParams,
+    /// Whether each stands still at the middle of its run rather than playing.
+    pub held: bool,
+}
+
+impl StandingVfx {
+    /// `vfx` playing with nothing filled in.
+    pub fn playing(vfx: Vec<VfxId>) -> StandingVfx {
+        StandingVfx {
+            vfx,
+            ..StandingVfx::default()
+        }
+    }
+}
+
+/// A vfx held still at the middle of its run, its lights steady.
+#[derive(Component)]
+pub(super) struct HeldStill;
 
 /// The vfx a thing was last found to play, each already playing.
 #[derive(Component)]
-struct StandingPlayed(Vec<VfxId>);
+struct StandingPlayed(StandingVfx);
 
 /// A vfx playing of the client's own accord on the thing it stands on.
 #[derive(Component)]
@@ -27,11 +47,11 @@ pub(super) fn play(world: &mut World) {
     let Some(now) = server_now(world) else {
         return;
     };
-    let fresh: Vec<(Entity, Vec<VfxId>)> = world
+    let fresh: Vec<(Entity, StandingVfx)> = world
         .query::<(Entity, &StandingVfx, Option<&StandingPlayed>)>()
         .iter(world)
-        .filter(|(_, standing, played)| played.is_none_or(|played| played.0 != standing.0))
-        .map(|(thing, standing, _)| (thing, standing.0.clone()))
+        .filter(|(_, standing, played)| played.is_none_or(|played| played.0 != **standing))
+        .map(|(thing, standing, _)| (thing, standing.clone()))
         .collect();
     let restarted: Vec<Entity> = fresh.iter().map(|(thing, _)| *thing).collect();
     let playing: Vec<(Entity, Entity)> = world
@@ -44,20 +64,23 @@ pub(super) fn play(world: &mut World) {
             world.despawn(instance);
         }
     }
-    for (thing, vfx) in fresh {
-        for &vfx in &vfx {
-            world.spawn((
+    for (thing, standing) in fresh {
+        for &vfx in &standing.vfx {
+            let mut instance = world.spawn((
                 VfxInstance {
                     vfx,
                     site: VfxSite::Object(thing),
-                    params: VfxParams::default(),
+                    params: standing.params.clone(),
                     heading: Radians::default(),
                     started: now,
                     until: None,
                 },
                 StandsOn(thing),
             ));
+            if standing.held {
+                instance.insert(HeldStill);
+            }
         }
-        world.entity_mut(thing).insert(StandingPlayed(vfx));
+        world.entity_mut(thing).insert(StandingPlayed(standing));
     }
 }

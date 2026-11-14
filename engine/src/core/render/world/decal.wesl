@@ -14,6 +14,7 @@ struct Paint {
 
 const RING: u32 = 0u;
 const TAU: f32 = 6.2831855;
+const SHADE: f32 = 0.6;
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -34,7 +35,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
         alpha = band * dash;
     } else {
-        alpha = pow(1.0 - clamp(reach, 0.0, 1.0), 1.6);
+        let rim = smoothstep(0.6, 0.68, reach) * (1.0 - smoothstep(0.76, 0.84, reach));
+        let lit = paint.color.a * max(0.45 * pow(1.0 - clamp(reach, 0.0, 1.0), 1.6), rim);
+        let shade = paint.color.a * SHADE * smoothstep(0.2, 0.6, reach) * (1.0 - smoothstep(0.82, 1.0, reach));
+        let cover = lit + shade * (1.0 - lit);
+        return vec4<f32>(paint.color.rgb * lit / max(cover, 0.0001), cover);
     }
     return vec4<f32>(paint.color.rgb, paint.color.a * alpha);
 }

@@ -3,6 +3,7 @@
 
 use engine::core::audio::playback::SfxDef;
 use engine::core::babble::{BabbleBankDef, BabbleDef};
+use engine::core::card::CardStyleDef;
 use engine::core::content::{AssetKind, ImageRef};
 use engine::core::content::{ContentFile, SETTINGS_FILE, table_of};
 use engine::core::vfx::VfxDef;
@@ -25,6 +26,7 @@ use engine::systems::crafting::RecipeBookDef;
 use engine::systems::emote::EmoteDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::interface::{CursorDef, InterfaceIconDef};
+use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::item::{ItemDef, ToolTypeDef};
 use engine::systems::memory::MemoryDef;
 use engine::systems::notification::NotificationDef;
@@ -181,7 +183,8 @@ impl KindFamily {
             | ShopDef::TABLE
             | RecipeBookDef::TABLE
             | StanceDef::TABLE
-            | ToolTypeDef::TABLE => KindFamily::Items,
+            | ToolTypeDef::TABLE
+            | ItemRarityDef::TABLE => KindFamily::Items,
             SkillDef::TABLE | StatusEffectDef::TABLE | VfxDef::TABLE | VfxShaderDef::TABLE => {
                 KindFamily::Abilities
             }
@@ -193,6 +196,7 @@ impl KindFamily {
             | CursorDef::TABLE
             | InterfaceIconDef::TABLE
             | AttentionDef::TABLE
+            | CardStyleDef::TABLE
             | TerminalCommandDef::TABLE => KindFamily::Interface,
             _ => return None,
         })
@@ -233,6 +237,8 @@ pub fn of_table(table: &str) -> KindIcon {
         EmoteDef::TABLE => KindIcon::plain(phosphor::HAND_WAVING),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),
         ToolTypeDef::TABLE => KindIcon::plain(phosphor::TOOLBOX),
+        ItemRarityDef::TABLE => KindIcon::plain(phosphor::SPARKLE).unpictured(),
+        CardStyleDef::TABLE => KindIcon::plain(phosphor::CARDS).unpictured(),
         ResourceDef::TABLE => KindIcon::plain(phosphor::DIAMOND).unpictured(),
         SpawnableDef::TABLE => KindIcon::plain(phosphor::TENT),
         SkillDef::TABLE => KindIcon::plain(phosphor::LIGHTNING),

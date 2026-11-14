@@ -7,7 +7,6 @@ use ui::float;
 use ui::{controls, glyph, ink};
 
 use crate::core::content::Content;
-use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
 use crate::core::text::{StyledLine, TextPiece};
 use crate::systems::actor::held::{self, Held};
@@ -15,9 +14,9 @@ use crate::systems::actor::skeleton::EquipmentSlot;
 use crate::systems::actor::stance::{self, HandIndex, HandRole, StanceDef};
 use crate::systems::actor::{Appearance, appearance};
 use crate::systems::equipment::{EquipmentPlace, HoldRequest, UnequipRequest};
-use crate::systems::hud::{self, Carried};
+use crate::systems::hud::Carried;
 use crate::systems::input::map::{self, InputAction, input};
-use crate::systems::item::widget::{SLOT, SlotLook, slot};
+use crate::systems::item::widget::{SLOT, SlotLook, slot, slot_pip};
 use crate::systems::item::{ItemId, UseItemRequest, card};
 use crate::systems::player::session;
 
@@ -154,7 +153,7 @@ fn places(world: &World) -> Vec<Place> {
 }
 
 fn empty_slot(ui: &mut Ui, world: &mut World, place: &Place) {
-    let response = framed(ui, world, place, None, false, Sense::hover());
+    let response = framed(ui, world, place, SlotLook::EMPTY, Sense::hover());
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Label,
@@ -188,14 +187,11 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
     let faded = drag::carried::<Carried>(ui.ctx()) == Some(Carried::Worn(place.slot.clone()));
-    let response = framed(
-        ui,
-        world,
-        place,
-        Some(&def.icon),
+    let look = SlotLook {
         faded,
-        Sense::click_and_drag(),
-    );
+        ..SlotLook::of(&content, item)
+    };
+    let response = framed(ui, world, place, look, Sense::click_and_drag());
     held_where_dropped(world, place, &response);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
@@ -225,7 +221,7 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
             ])
             .collect(),
     );
-    let mut lines = vec![card::overview(def)];
+    let mut lines = Vec::new();
     match stance::of_item(&content, item) {
         Some(_) if place.slot == EquipmentPlace::Tool => lines.push(format!(
             "{} · in hand only while it works",
@@ -248,7 +244,7 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
     if matches!(place.slot, EquipmentPlace::Hand(_)) && fights_unarmed(world) {
         lines.push("Its stance has no set here: you fight as unarmed".to_owned());
     }
-    hud::tooltip(&response, world, &def.name, &lines, Some(&hint));
+    card::tooltip_noted(world, &response, item, lines, Some(&hint));
 }
 
 /// Holds a bag's item dropped on a hand in that hand.
@@ -265,15 +261,9 @@ fn framed(
     ui: &mut Ui,
     world: &mut World,
     place: &Place,
-    icon: Option<&ImageRef>,
-    faded: bool,
+    look: SlotLook,
     sense: Sense,
 ) -> egui::Response {
-    let look = SlotLook {
-        icon,
-        faded,
-        ..SlotLook::EMPTY
-    };
     if place.span() == 1 {
         let response = slot(ui, world, look, sense);
         if place.unseen {
@@ -287,13 +277,15 @@ fn framed(
         ui.painter(),
         rect,
         controls::SlotLook {
-            filled: icon.is_some(),
+            filled: look.icon.is_some(),
             hovered: response.hovered(),
             refused: false,
+            edge: look.edge(),
         },
     );
-    if let Some(image) = icon.and_then(|icon| world.image(icon)) {
-        let tint = if faded {
+    slot_pip(ui, world, rect, &look);
+    if let Some(image) = look.icon.and_then(|icon| world.image(icon)) {
+        let tint = if look.faded {
             Color32::from_white_alpha(110)
         } else {
             Color32::WHITE

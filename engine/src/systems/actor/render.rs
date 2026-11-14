@@ -403,7 +403,7 @@ pub fn dress(world: &mut World) {
                 footprint: Vec2::splat(hitbox.radius.0 * 2.0),
                 height: hitbox.height.0,
             },
-            StandingVfx(actor_model.def().effects.clone()),
+            StandingVfx::playing(actor_model.def().effects.clone()),
             Puppet {
                 dressed,
                 clips,

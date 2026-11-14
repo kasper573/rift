@@ -139,6 +139,7 @@ pub(crate) fn show_shader(editor: &mut Editor, ui: &mut Ui, key: &str) {
                         (param.name.clone(), fill)
                     })
                     .collect(),
+                reach: None,
                 duration: Seconds(1.0),
                 delay: Seconds(0.0),
             };

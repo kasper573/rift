@@ -17,8 +17,8 @@ use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::card::{CardLook, CardNoteTone, ItemCardNote};
 use crate::systems::item::widget::{
-    InventoryPane, SlotAction, SlotVerdict, inventory_pane, inventory_room, slot_action,
-    slot_notes, slot_verdict_source,
+    InventoryPane, SlotAction, SlotVerdict, inventory_pane, inventory_room, listed_icon,
+    slot_action, slot_notes, slot_verdict_source,
 };
 use crate::systems::item::{self, Inventory, ItemCategory, ItemId, ItemStack};
 use crate::systems::player::session;
@@ -319,7 +319,7 @@ fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui
                     }
                 });
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    hud::icon(ui, world, &def.icon, ICON);
+                    listed_icon(ui, world, &content, ware.item, ICON);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
                         ui.add(egui::Label::new(face::body(&name)).wrap());

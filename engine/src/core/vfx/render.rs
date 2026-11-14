@@ -36,6 +36,7 @@ use super::uniform::{MAX_PATH_POINTS, ParamsUniform, SiteUniform, VfxShaderKey, 
 use super::{
     BodyShape, CompiledVfxShaders, ParamValue, SiteKind, SpriteAnchor, Stage, VfxDef, VfxInstance,
     VfxLayer, VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell, standing,
+    standing::HeldStill,
 };
 use crate::core::content::Content;
 use crate::core::geometry::{PlacedShape, Shape};
@@ -166,6 +167,8 @@ pub struct SiteFrame {
     /// How far the thing the site is has faded from sight, 0 whole to 1 gone: what is drawn on it
     /// pales with it.
     pub faded: f32,
+    /// How far beyond the site a shader layer may draw on it.
+    pub margin: Meters,
 }
 
 /// Where a site stands.
@@ -442,6 +445,7 @@ impl SiteFrame {
             texture: None,
             camera_yaw: Radians::default(),
             faded: 1.0 - Opacity::of(world, entity).clamp(0.0, 1.0),
+            margin: MARGIN,
         })
     }
 
@@ -485,6 +489,7 @@ impl SiteFrame {
             texture: None,
             camera_yaw: Radians::default(),
             faded: 0.0,
+            margin: MARGIN,
         }
     }
 
@@ -537,6 +542,7 @@ impl SiteFrame {
             texture: None,
             camera_yaw: Radians::default(),
             faded: 0.0,
+            margin: MARGIN,
         }
     }
 
@@ -557,6 +563,7 @@ impl SiteFrame {
             texture,
             camera_yaw: Radians::default(),
             faded: 0.0,
+            margin: MARGIN,
         }
     }
 
@@ -575,6 +582,7 @@ impl SiteFrame {
             texture: Some(texture),
             camera_yaw: Radians::default(),
             faded: 0.0,
+            margin: MARGIN,
         }
     }
 
@@ -605,7 +613,7 @@ impl SiteFrame {
             | Stage::Prop
             | Stage::Sky
             | Stage::Rain => Vec2::ONE,
-            Stage::Ground | Stage::Billboard => quad_overscan(self.metres(stage)),
+            Stage::Ground | Stage::Billboard => quad_overscan(self.metres(stage), self.margin),
         }
     }
 
@@ -954,8 +962,10 @@ fn sync(world: &mut World) {
             .socket
             .as_deref()
             .and_then(|socket| socket_point(world, &instance.site, socket));
+        let held = world.get::<HeldStill>(entity).is_some();
         let elapsed = now.since(instance.started);
         let elapsed = match instance.until {
+            _ if held => def.lasts() * 0.5,
             Some(_) => elapsed,
             None => Seconds(elapsed.0 % def.lasts().0.max(f32::EPSILON)),
         };
@@ -972,11 +982,18 @@ fn sync(world: &mut World) {
                     present_light(world, piece, frame, socket, *anchor);
                 }
                 VfxLayer::Shader {
-                    shader: id, params, ..
+                    shader: id,
+                    params,
+                    reach,
+                    ..
                 } => {
                     let Some(compiled) = compiled_shader(world, *id) else {
                         hide(world, piece);
                         continue;
+                    };
+                    let frame = &SiteFrame {
+                        margin: reach.unwrap_or(MARGIN),
+                        ..frame.clone()
                     };
                     let packed = ParamsUniform::pack(id.get(&content), |name| {
                         params.get(name)?.resolve(&instance.params)
@@ -1048,11 +1065,12 @@ fn attach(world: &mut World, entity: Entity, def: &VfxDef, content: &Content) ->
                 aura,
                 ..
             } => {
+                let held = world.get::<HeldStill>(entity).is_some();
                 let lamp = lights::Lamp {
                     color: color.color(),
                     intensity: *intensity,
                     radius: *radius,
-                    flicker: *flicker,
+                    flicker: if held { 0.0 } else { *flicker },
                     shadows_from: *shadows_from,
                     aura: *aura,
                 };
@@ -1431,7 +1449,8 @@ fn restore(world: &mut World, swapped: &mut Swapped) {
     swapped.body = None;
 }
 
-/// A surface piece that goes gives its meshes their materials back on the way out.
+/// A surface piece that goes gives its meshes their materials back on the way out. A mesh that
+/// went with it, as a taken item's does, has nothing to wear one.
 fn unswap_removed(gone: On<Remove<Swapped>>, swapped: Query<&Swapped>, mut commands: Commands) {
     let Ok(swapped) = swapped.get(gone.entity) else {
         return;
@@ -1439,16 +1458,16 @@ fn unswap_removed(gone: On<Remove<Swapped>>, swapped: Query<&Swapped>, mut comma
     for (mesh, worn) in &swapped.meshes {
         commands
             .entity(*mesh)
-            .remove::<MeshMaterial3d<SurfaceMaterial>>()
-            .insert(MeshMaterial3d(worn.clone()));
+            .try_remove::<MeshMaterial3d<SurfaceMaterial>>()
+            .try_insert(MeshMaterial3d(worn.clone()));
     }
 }
 
-/// How many times its own size a site `metres` across is drawn, per axis, with `MARGIN` on every
+/// How many times its own size a site `metres` across is drawn, per axis, with `margin` on every
 /// side.
-fn quad_overscan(metres: Vec2) -> Vec2 {
+fn quad_overscan(metres: Vec2, margin: Meters) -> Vec2 {
     let metres = metres.max(Vec2::splat(0.1));
-    (metres + Vec2::splat(2.0 * MARGIN.0)) / metres
+    (metres + Vec2::splat(2.0 * margin.0)) / metres
 }
 
 fn bounds(points: &[Pos<Meters>]) -> (Vec2, Vec2) {

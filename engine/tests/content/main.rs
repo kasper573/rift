@@ -1,11 +1,13 @@
 mod areas;
 mod blueprints;
+mod card_style;
 mod files;
 mod image;
 mod load_errors;
 mod media;
 mod model;
 mod pictures;
+mod rarity;
 mod reader;
 mod references;
 mod retarget;

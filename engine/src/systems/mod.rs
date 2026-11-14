@@ -61,6 +61,7 @@ use crate::core::audio::Hearing;
 use crate::core::audio::playback::{SfxDef, SfxPlugin};
 use crate::core::audio::soundscape::SoundscapePlugin;
 use crate::core::babble::{BabblePlugin, Speech};
+use crate::core::card::{CardStyleDef, CardStyleFixture};
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
     Content, ContentFile, ContentFolder, ContentProblem, ContentRegistry, ContentVersion,
@@ -77,7 +78,7 @@ use crate::core::render::WorldRenderPlugin;
 use crate::core::text::{Lettering, StyledTextPlugin, Typing};
 use crate::core::tick::{self, Tick};
 use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
-use crate::core::units::{Hertz, HourOfDay, Meters, Seconds};
+use crate::core::units::{Hertz, HourOfDay, Meters, Seconds, WindowPx};
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
 use crate::systems::player::PlayerDefId;
@@ -229,6 +230,8 @@ pub struct GameSettings {
     pub claims_last: Seconds,
     pub slots: SlotCounts,
     pub drops: DroppedItems,
+    /// The colour behind the picture on an item's card, by the item's type.
+    pub item_type_art_colors: item::card::ItemTypeArtColors,
     pub reading: ReadingPace,
     pub notices: NoticeTimes,
     pub words: GameWords,
@@ -371,6 +374,20 @@ pub struct DroppedItems {
     pub pickup_reach: Meters,
     /// How far from an item on the ground a click still picks it.
     pub click_reach: Meters,
+    /// How wide the line round an item is while the player asks for the names of items.
+    pub outline: WindowPx,
+    /// How wide the line round an item is while the pointer rests on it.
+    pub outline_hover: WindowPx,
+    /// The smallest an item is drawn across as it lies: a smaller model is scaled up to it.
+    pub least_size: Meters,
+    /// How long before it is gone an item pulses and its mark on the ground fades.
+    pub fades_for: Seconds,
+    /// How far from a player's character their items are named when they ask for names.
+    pub names_reach: Meters,
+    /// How many names of items show at once at the most.
+    pub names_shown: u32,
+    /// How many items play the vfx of their rarity at once at the most.
+    pub effects_shown: u32,
 }
 
 /// How the server runs its world's day and weather as it starts them: what staging returns the
@@ -613,7 +630,10 @@ pub fn client_app(
             actor::plate::PlatePlugin,
             movement::MovementRenderPlugin,
             combat::render::CombatRenderPlugin,
-            item::render::ItemRenderPlugin,
+            (
+                item::render::ItemRenderPlugin,
+                item::plates::ItemPlatePlugin,
+            ),
             resource::render::ResourceRenderPlugin,
             view::CameraFollowPlugin,
             visibility::SightEdgePlugin,
@@ -758,7 +778,9 @@ pub fn tables() -> ContentRegistry {
         .fixture::<vfx::VfxFixture>()
         .fixture::<vfx::VfxShaderFixture>()
         .fixture::<area::world_map::WorldMap>()
+        .fixture::<CardStyleFixture>()
         .bundle::<SfxDef>()
+        .file::<CardStyleDef>()
         .file::<attention::AttentionDef>()
         .file::<input::map::InputDef>()
         .file::<interface::CursorDef>()
@@ -766,6 +788,8 @@ pub fn tables() -> ContentRegistry {
         .file::<item::ItemDef>()
         .named::<item::ItemDef>()
         .modules::<item::ItemDef>()
+        .file::<item::rarity::ItemRarityDef>()
+        .named::<item::rarity::ItemRarityDef>()
         .file::<item::ToolTypeDef>()
         .named::<item::ToolTypeDef>()
         .file::<class::ClassDef>()
@@ -825,6 +849,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, emote::check_all)
         .hook(LoadStep::Across, item::check_pictures)
         .hook(LoadStep::Across, item::check_looks)
+        .hook(LoadStep::Across, item::rarity::check_all)
         .hook(LoadStep::Across, vfx::check_sites)
         .hook(LoadStep::Across, player::snapshot::check_all);
     registry
@@ -863,6 +888,11 @@ fn check_settings(loading: &mut Loading) {
     check.at_least("/drops/scatter", drops.scatter.0, 0.0, "meters");
     check.at_least("/drops/pickup_reach", drops.pickup_reach.0, 0.0, "meters");
     check.at_least("/drops/click_reach", drops.click_reach.0, 0.0, "meters");
+    check.at_least("/drops/outline", drops.outline.0, 0.0, "pixels");
+    check.at_least("/drops/outline_hover", drops.outline_hover.0, 0.0, "pixels");
+    check.at_least("/drops/least_size", drops.least_size.0, 0.0, "meters");
+    check.at_least("/drops/fades_for", drops.fades_for.0, 0.0, "seconds");
+    check.at_least("/drops/names_reach", drops.names_reach.0, 0.0, "meters");
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
         ("decline_quest", &settings.words.decline_quest),

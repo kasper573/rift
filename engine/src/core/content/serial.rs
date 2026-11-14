@@ -124,6 +124,10 @@ pub fn is_true(flag: &bool) -> bool {
     *flag
 }
 
+pub fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
+}
+
 pub fn is_false(flag: &bool) -> bool {
     !*flag
 }

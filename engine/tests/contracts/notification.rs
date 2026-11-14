@@ -1,14 +1,15 @@
 use bevy_ecs::prelude::*;
 use bevy_terminal::TerminalSaid;
 use engine::core::content::Content;
-use engine::core::math::{Offset, Pos};
+use engine::core::math::{Offset, Pos, Rgb};
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
 use engine::systems::area::{self, AreaDef};
 use engine::systems::combat::{self, Attitude};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
-use engine::systems::history::{History, HistoryTopic};
+use engine::systems::history::{History, HistoryTopic, RecordTally};
 use engine::systems::interact::{self, InteractRequest};
+use engine::systems::item::rarity::RARITY_ICON_SIZE;
 use engine::systems::movement::{self, position};
 use engine::systems::notification::{self, Notification, NotificationKind, NotificationSent};
 use engine::systems::npc::{self, NpcDef};
@@ -16,7 +17,7 @@ use engine::systems::player::{AreaDrawn, commands_locked};
 use engine::systems::quest::{self, QuestDef};
 use engine::systems::region;
 use engine::systems::status::{self, StatusEffectDef};
-use engine::systems::text::LineText;
+use engine::systems::text::{LineText, NameMark, SpanText};
 use engine::systems::{actor, belongings, chat, class, script, stat, vfx};
 use serde_json::json;
 use testkit::{Game, Map, Sim, path};
@@ -324,6 +325,44 @@ fn healing_a_level_and_a_status_each_pop_with_their_own_look_unless_the_status_k
     assert_eq!(pops(&mut sim, 1), looks);
 }
 
+#[test]
+fn an_item_gained_is_told_by_its_name_marked_with_its_rarity_and_kept_so_in_history() {
+    let mut sim = island(&game());
+    let player = sim.join(1);
+    sim.run(0.5);
+    sim.forget_notified();
+
+    sim.give(player, "tusk", 2);
+    sim.give(player, "ring", 1);
+    sim.run(0.5);
+
+    let named = |name: &str, icon: Option<&str>, color: [u8; 3]| {
+        LineText(vec![SpanText::Named {
+            name: name.to_owned(),
+            mark: NameMark {
+                icon: icon.map(str::to_owned),
+                color: Rgb(color),
+            },
+        }])
+    };
+    let ring = named("ring", Some("rarities/fine.png"), [90, 60, 200]);
+    let gained: Vec<(LineText, Option<RecordTally>)> = sim
+        .told(1)
+        .into_iter()
+        .filter_map(|notification| match notification.kind {
+            NotificationKind::Feed(row) => Some((notification.text, row.tally)),
+            _ => None,
+        })
+        .collect();
+    assert!(gained.contains(&(ring.clone(), Some(RecordTally::Change(1)))));
+    assert!(gained.contains(&(
+        named("tusk", None, [128, 128, 128]),
+        Some(RecordTally::Change(2))
+    )));
+    let history = sim.world.get::<History>(player).expect("a history");
+    assert!(history.records().any(|record| record.entry.text == ring));
+}
+
 /// An island with a pier the gulls haunt, a forest across the water that greets newcomers, and a
 /// chief who taunts whoever is after his tusks.
 fn game() -> Content {
@@ -407,6 +446,22 @@ fn game() -> Content {
         )
         .npc("dummy", 40.0, json!([]))
         .item("tusk", json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 50 }] }))
+        .asset(
+            "rarities/fine.png",
+            testkit::png(RARITY_ICON_SIZE.0, RARITY_ICON_SIZE.1),
+        )
+        .rarity(
+            "fine",
+            2,
+            json!({
+                "icon": "rarities/fine.png",
+                "gradient": { "from": [90, 60, 200], "to": [40, 20, 120] },
+            }),
+        )
+        .item(
+            "ring",
+            json!({ "rarity": path("item_rarity", "fine"), "kind": { "type": "resource" } }),
+        )
         .quest("tusks",
             json!({
                 "title": "Tusks",

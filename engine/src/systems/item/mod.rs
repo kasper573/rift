@@ -1,5 +1,7 @@
 pub mod card;
 pub mod effects;
+pub mod plates;
+pub mod rarity;
 pub mod render;
 pub mod widget;
 
@@ -9,7 +11,7 @@ use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
-use bevy_ecs::query::{QueryState, With};
+use bevy_ecs::query::QueryState;
 use bevy_ecs::world::World;
 use bevy_replication::Replicated;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
@@ -25,7 +27,7 @@ use crate::core::content::{
     RowCheck, serial,
 };
 use crate::core::math::{Offset, Pos, Rng};
-use crate::core::time;
+use crate::core::time::{self, UnixMillis, WallClock};
 use crate::core::units::{MeterPos, Meters, Percent, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::part::ModelPartId;
@@ -36,6 +38,7 @@ use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
 use crate::systems::interface::CursorId;
+use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
@@ -44,6 +47,7 @@ use crate::systems::script::{
     Condition, EventKind, Owner, RiftInstances, RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::systems::skill::{self, CastAim, SkillId};
+use crate::systems::text::{NameMark, SpanText};
 use crate::systems::visibility::{self, Presence, seen_by};
 
 pub fn register(app: &mut App) {
@@ -290,13 +294,12 @@ impl Reservation {
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct DropLife(pub Seconds);
-
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DroppedItem {
     pub item: ItemId,
     pub count: u32,
+    /// When it will be gone, by the server's clock.
+    pub until: UnixMillis,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -350,6 +353,7 @@ pub const CARD_SIZE: (u32, u32) = (256, 180);
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct ItemDef {
     pub name: String,
+    pub rarity: ItemRarityId,
     pub look: PropId,
     pub icon: ImageRef,
     pub card: ImageRef,
@@ -366,6 +370,7 @@ impl ContentFile for ItemDef {
         let sound = near.file()?;
         Ok(ItemDef {
             name: near.name(),
+            rarity: near.file()?,
             look: near.file()?,
             icon: near.image_sized(ICON_SIZE)?,
             card: near.image_sized(CARD_SIZE)?,
@@ -472,6 +477,19 @@ pub fn check_looks(loading: &mut Loading) {
 impl NamedContent for ItemDef {
     fn shown_name(&self) -> &str {
         &self.name
+    }
+}
+
+/// An item's name as a line writes it, marked with its rarity.
+pub fn named(content: &Content, item: ItemId) -> SpanText {
+    let def = item.get(content);
+    let rarity = def.rarity.get(content);
+    SpanText::Named {
+        name: def.name.clone(),
+        mark: NameMark {
+            icon: rarity.icon.as_ref().map(ImageRef::path),
+            color: rarity.gradient.from,
+        },
     }
 }
 
@@ -962,16 +980,27 @@ pub fn pickup_request(world: &mut World) {
     });
 }
 
+/// The item nearest `point` within a click's reach of it that the player may take.
 pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
     let me = crate::systems::player::session::my_id(world);
+    dropped_at(world, point, |reservation| takeable(reservation, me))
+}
+
+/// The item nearest `point` within a click's reach of it, whoever may take it.
+pub fn lying_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
+    dropped_at(world, point, |_| true)
+}
+
+fn dropped_at(
+    world: &mut World,
+    point: Pos<Meters>,
+    wanted: impl Fn(Option<&Reservation>) -> bool,
+) -> Option<Entity> {
     let reach = world.resource::<GameSettings>().drops.click_reach;
     world
         .query::<(Entity, &Position, &DroppedItem, Option<&Reservation>)>()
         .iter(world)
-        .filter(|(_, at, _, reservation)| {
-            at.pos.distance(point) <= reach
-                && reservation.is_none_or(|reservation| reservation.allows(me))
-        })
+        .filter(|(_, at, _, reservation)| at.pos.distance(point) <= reach && wanted(*reservation))
         .min_by(|a, b| {
             a.1.pos
                 .distance(point)
@@ -979,6 +1008,12 @@ pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
                 .total_cmp(&b.1.pos.distance(point).0)
         })
         .map(|(entity, ..)| entity)
+}
+
+/// Whether `account` may take a dropped item reserved as `reservation` says: anyone may take
+/// what is reserved for nobody.
+pub fn takeable(reservation: Option<&Reservation>, account: Option<ClientId>) -> bool {
+    reservation.is_none_or(|reservation| reservation.allows(account))
 }
 
 pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
@@ -995,17 +1030,11 @@ pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
     }
 }
 
-type OwnedDrops = QueryState<(Entity, &'static Reservation), With<DroppedItem>>;
-
-pub fn expire_drops(world: &mut World, drops: &mut OwnedDrops) {
-    let now = time::uptime(world);
-    let last = world.resource::<GameSettings>().drops.last;
+pub fn expire_drops(world: &mut World, drops: &mut QueryState<(Entity, &DroppedItem)>) {
+    let now = world.resource::<WallClock>().now;
     let stale: Vec<Entity> = drops
         .iter(world)
-        .filter(|(entity, reservation)| {
-            let ttl = world.get::<DropLife>(*entity).map_or(last, |life| life.0);
-            now - reservation.at >= ttl
-        })
+        .filter(|(_, dropped)| dropped.until <= now)
         .map(|(entity, _)| entity)
         .collect();
     for entity in stale {
@@ -1070,8 +1099,13 @@ pub fn scatter_at(
     }
     let content = world.resource::<Content>().clone();
     let area = area::load(&content, area_id);
-    let scatter = content.built::<GameSettings>().drops.scatter;
+    let settings = content.built::<GameSettings>().drops;
+    let scatter = settings.scatter;
     let now = time::uptime(world);
+    let until = world
+        .resource::<WallClock>()
+        .now
+        .after(life.unwrap_or(settings.last));
     let count = drops.len();
     let mut items = Vec::with_capacity(count);
     for (index, &(item, stack)) in drops.iter().enumerate() {
@@ -1081,7 +1115,11 @@ pub fn scatter_at(
                 Replicated,
                 Position::at(pos),
                 AreaTag { area: area_id },
-                DroppedItem { item, count: stack },
+                DroppedItem {
+                    item,
+                    count: stack,
+                    until,
+                },
                 Reservation {
                     by: reserved_by,
                     at: now,
@@ -1090,9 +1128,6 @@ pub fn scatter_at(
             .id();
         if let Some(presence) = &presence {
             world.entity_mut(entity).insert(presence.clone());
-        }
-        if let Some(life) = life {
-            world.entity_mut(entity).insert(DropLife(life));
         }
         items.push(entity);
     }

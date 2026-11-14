@@ -26,6 +26,8 @@ pub enum TextPiece {
     Span(StyledSpan),
     Pause(Duration),
     Key(KeyCap),
+    /// A picture of the game's set in the line as tall as its letters, named by its file.
+    Image(Cow<'static, str>),
 }
 
 /// A key drawn as a cap: an input named by its current binding, or a key named outright.
@@ -57,6 +59,9 @@ pub struct StyledSpan {
 pub enum SpanInk {
     Prose(Prose),
     Fixed(Color32),
+    /// A colour of the game's own, which shows only where the ground is dark, lifted there until
+    /// it reads. On paper, where most colours would not, the text keeps its ink.
+    Lit(Color32),
 }
 
 #[derive(
@@ -240,7 +245,7 @@ impl StyledLine {
             .iter()
             .filter_map(|piece| match piece {
                 TextPiece::Span(span) => Some(span.text.as_ref()),
-                TextPiece::Pause(_) => None,
+                TextPiece::Pause(_) | TextPiece::Image(_) => None,
                 TextPiece::Key(cap) => Some(cap.name(keys)),
             })
             .collect()
@@ -275,6 +280,11 @@ impl StyledSpan {
 
     pub fn prose(mut self, prose: Prose) -> StyledSpan {
         self.ink = Some(SpanInk::Prose(prose));
+        self
+    }
+
+    pub fn lit(mut self, color: Color32) -> StyledSpan {
+        self.ink = Some(SpanInk::Lit(color));
         self
     }
 
@@ -315,7 +325,7 @@ pub fn reveal_times(pieces: &[TextPiece], pace: TypingPace) -> Vec<Duration> {
                     times.push(clock);
                 }
             }
-            TextPiece::Key(_) => {
+            TextPiece::Key(_) | TextPiece::Image(_) => {
                 clock += step(1.0);
                 times.push(clock);
             }

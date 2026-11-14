@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use ui::card::{self, Art, Card, CardResponse};
+use ui::card::{self, Art, Card, CardResponse, Plate};
 use ui::controls::{self, Pill};
 use ui::egui::{Align, Label, Layout, Response, Sense, Ui};
 use ui::face::{self, TextRole};
@@ -10,6 +10,7 @@ use super::{
     ActiveQuest, Objective, ObjectiveProgress, Parties, QuestDef, QuestId, QuestLog, clock_label,
     resets_label,
 };
+use crate::core::card::CardStyleDef;
 use crate::core::content::Content;
 use crate::core::gui::ImageSource;
 use crate::core::time::UnixMillis;
@@ -51,7 +52,7 @@ pub fn show<I: ImageSource + ?Sized>(
     content: &Content,
     quest: QuestId,
     look: QuestCardLook,
-    plate: impl FnOnce(&mut Ui, &mut I),
+    plate: impl FnOnce(&mut Ui, &mut I, Plate),
 ) -> CardResponse {
     let def = quest.get(content);
     let band = match look.moment {
@@ -60,6 +61,7 @@ pub fn show<I: ImageSource + ?Sized>(
     };
     let icon = images.image(def.icon(content)).map(|image| image.texture);
     let mut shown = Card::new(CardKind::Quest, &def.title);
+    shown.dress = CardStyleDef::of(content, def.card_style).dress(images, None);
     shown.band = &band;
     shown.art = Art {
         icon,
@@ -72,7 +74,7 @@ pub fn show<I: ImageSource + ?Sized>(
             card::full_name(ui, &def.title);
         }
         card::overview(ui, &overview(def));
-        plate(ui, images);
+        plate(ui, images, written);
     })
 }
 
@@ -85,6 +87,7 @@ pub fn offer<I: ImageSource + ?Sized>(
     parties: &Parties,
     quest: QuestId,
     inventory: Option<&Inventory>,
+    plate: Plate,
 ) -> Vec<(Response, ItemId)> {
     let def = quest.get(content);
     let progress = def.progress(
@@ -94,7 +97,7 @@ pub fn offer<I: ImageSource + ?Sized>(
         inventory,
     );
     card::overview(ui, &def.meta(parties, quest));
-    card::heading(ui, "objectives");
+    card::heading(ui, plate, "objectives");
     for (index, (objective, progress)) in def.objectives().zip(&progress).enumerate() {
         ui.push_id(("objective", index), |ui| {
             objective_row(ui, images, content, objective, progress, Standing::Open);
@@ -102,10 +105,10 @@ pub fn offer<I: ImageSource + ?Sized>(
     }
     let mut shown = Vec::new();
     if def.reveals(ChoiceReveal::Gains) {
-        card::heading(ui, "rewards");
+        card::heading(ui, plate, "rewards");
         shown.extend(reward_chips(ui, images, content, def));
         if !def.pick_one().is_empty() {
-            card::heading(ui, "pick one when you return");
+            card::heading(ui, plate, "pick one when you return");
             shown.extend(picks(ui, images, content, def));
         }
     }
@@ -163,10 +166,18 @@ fn show_docked(ui: &mut Ui, world: &mut World, width: f32, most: f32) {
     };
     let content = world.resource::<Content>().clone();
     let parties = world.resource::<Parties>().clone();
-    show(ui, world, &content, quest, look, |ui, world| {
+    show(ui, world, &content, quest, look, |ui, world, plate| {
         let shown = match moment {
-            QuestMoment::Offer => offer(ui, world, &content, &parties, quest, Some(&inventory)),
-            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory),
+            QuestMoment::Offer => offer(
+                ui,
+                world,
+                &content,
+                &parties,
+                quest,
+                Some(&inventory),
+                plate,
+            ),
+            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory, plate),
             QuestMoment::Decision => {
                 decision(ui, &content, quest);
                 Vec::new()
@@ -189,10 +200,11 @@ fn turn_in(
     content: &Content,
     quest: QuestId,
     inventory: &Inventory,
+    plate: Plate,
 ) -> Vec<(Response, ItemId)> {
     let def = quest.get(content);
     if def.reveals(ChoiceReveal::Costs) {
-        card::heading(ui, "hand in");
+        card::heading(ui, plate, "hand in");
         for (index, &stack) in def.hand_in().iter().enumerate() {
             ui.push_id(("hand in", index), |ui| {
                 hand_in_row(ui, images, content, stack, inventory.count(stack.item));
@@ -202,7 +214,7 @@ fn turn_in(
     if !def.reveals(ChoiceReveal::Gains) {
         return Vec::new();
     }
-    card::heading(ui, "rewards");
+    card::heading(ui, plate, "rewards");
     let shown = reward_chips(ui, images, content, def);
     if !def.pick_one().is_empty() {
         card::foot(ui, "Your pick is offered in the conversation");
@@ -326,9 +338,8 @@ pub(super) fn picks(
             .enumerate()
             .map(|(index, stack)| {
                 let look = SlotLook {
-                    icon: Some(&stack.item.get(content).icon),
                     count: stack.count,
-                    ..SlotLook::EMPTY
+                    ..SlotLook::of(content, stack.item)
                 };
                 let response = ui
                     .push_id(("pick", index), |ui| slot(ui, images, look, Sense::click()))

@@ -245,7 +245,7 @@ impl Notification {
     }
 
     /// A row of the feed under a topic, bare until given an icon, a tally, a sound or a failure.
-    pub fn feed(topic: HistoryTopic, text: impl Into<String>) -> FeedLine {
+    pub fn feed(topic: HistoryTopic, text: impl Into<LineText>) -> FeedLine {
         FeedLine {
             row: FeedRow {
                 topic,
@@ -254,7 +254,7 @@ impl Notification {
                 failure: false,
                 sfx: None,
             },
-            text: LineText::plain(text),
+            text: text.into(),
         }
     }
 

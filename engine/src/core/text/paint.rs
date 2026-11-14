@@ -11,9 +11,10 @@ use ui::egui::{
     WidgetType,
 };
 use ui::face::{Face, TextRole};
-use ui::ink::Ground;
+use ui::ink::{self, Ground};
 
 use super::{KeyNames, Lettering, SpanInk, StyledLine, Swing, TextMotion, TextPiece, TextVoice};
+use crate::core::gui;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextLook {
@@ -104,6 +105,9 @@ pub fn show(
     for cap in plan.caps.iter().filter(|cap| cap.letter < shown) {
         paint_cap(ui, &placed, cap, pad);
     }
+    for image in plan.images.iter().filter(|image| image.letter < shown) {
+        paint_image(ui, world, &placed, image);
+    }
     for (index, word) in plan.words.iter().enumerate() {
         let visible = word.letters.start
             ..word
@@ -146,6 +150,7 @@ struct Plan {
     letters: Vec<Letter>,
     words: Vec<Word>,
     caps: Vec<Cap>,
+    images: Vec<SetImage>,
     units: usize,
     pad: f32,
     halo: Option<Color32>,
@@ -170,6 +175,14 @@ struct Cap {
     color: Color32,
 }
 
+/// A picture in the room left before the space at `at`.
+struct SetImage {
+    at: usize,
+    letter: usize,
+    file: String,
+    side: f32,
+}
+
 #[derive(Clone, Copy)]
 struct Placed {
     baseline: Pos2,
@@ -185,6 +198,7 @@ impl Plan {
             letters: Vec::new(),
             words: Vec::new(),
             caps: Vec::new(),
+            images: Vec::new(),
             units: 0,
             pad,
             halo: look.halo,
@@ -196,6 +210,22 @@ impl Plan {
         for piece in &line.pieces {
             match piece {
                 TextPiece::Pause(_) => {}
+                TextPiece::Image(file) => {
+                    plan.images.push(SetImage {
+                        at: plan.letters.len(),
+                        letter,
+                        file: file.to_string(),
+                        side: look.size,
+                    });
+                    plan.letters.push(Letter {
+                        ch: ' ',
+                        format: span_format(None, look.color, look, lettering),
+                        leading: std::mem::take(&mut owed) + look.size,
+                        letter,
+                    });
+                    open = false;
+                    letter += 1;
+                }
                 TextPiece::Key(cap) => {
                     let format = TextFormat {
                         line_height: look.line_height,
@@ -351,6 +381,23 @@ fn paint_cap(ui: &Ui, placed: &[Option<Placed>], cap: &Cap, pad: f32) {
     );
 }
 
+fn paint_image(ui: &Ui, world: &World, placed: &[Option<Placed>], image: &SetImage) {
+    let (Some(space), Some(picture)) = (placed[image.at], gui::kept_image(world, &image.file))
+    else {
+        return;
+    };
+    let middle = space.baseline.y - space.ascent + space.height / 2.0;
+    ui.painter().image(
+        picture.texture,
+        Rect::from_min_size(
+            Pos2::new(space.baseline.x - image.side, middle - image.side / 2.0),
+            Vec2::splat(image.side),
+        ),
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        Color32::WHITE,
+    );
+}
+
 fn paint_word(
     ui: &Ui,
     plan: &Plan,
@@ -415,6 +462,10 @@ fn ink_of(ink: Option<SpanInk>, look: TextLook) -> Color32 {
     match ink {
         Some(SpanInk::Prose(prose)) => prose.on(look.ground),
         Some(SpanInk::Fixed(color)) => color,
+        Some(SpanInk::Lit(color)) => match look.ground {
+            Ground::Paper => look.color,
+            Ground::Dusk => ink::legible(color, ink::VEIL),
+        },
         None => look.color,
     }
 }

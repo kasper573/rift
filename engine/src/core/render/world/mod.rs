@@ -16,6 +16,7 @@ pub mod mannequin;
 pub mod material;
 pub mod model;
 pub mod opacity;
+pub mod outline;
 pub mod paint;
 pub mod plumb;
 pub mod rig_clip;
@@ -95,6 +96,7 @@ impl Plugin for WorldScenePlugin {
             haze::HazePlugin,
             layers::JointLayersPlugin,
         ))
+        .add_plugins(outline::OutlineScenePlugin)
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()

@@ -1563,6 +1563,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bff34eb29ff4b8a8688bc7299f14fb6b597461ca80fec03ed7d22939ab33e48f"
 
 [[package]]
+name = "bevy_mod_outline"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bff636b5803e3c76ec5910123bf1f51a4ee888e59186849862d265e39f0011cf"
+dependencies = [
+ "bevy",
+ "bitfield",
+ "indexmap 2.14.2",
+ "itertools 0.14.0",
+ "nonmax",
+ "thiserror 1.0.69",
+ "wgpu-types 30.0.1",
+]
+
+[[package]]
 name = "bevy_pbr"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2264,6 +2279,26 @@ name = "bit-vec"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
+
+[[package]]
+name = "bitfield"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b56e92e42c7e82416925c583156d76ae1d3d83fa5133c379173319dbe1ad51e"
+dependencies = [
+ "bitfield-macros",
+]
+
+[[package]]
+name = "bitfield-macros"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11499bf38d9079be6f0f993f9d033ab3cc4dbd66bd5a51a63b6310ea689f534b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
 
 [[package]]
 name = "bitflags"
@@ -3639,6 +3674,7 @@ dependencies = [
  "bevy_egui",
  "bevy_input",
  "bevy_math",
+ "bevy_mod_outline",
  "bevy_platform 0.20.1",
  "bevy_replication",
  "bevy_skeleton_modifiers",

@@ -124,6 +124,11 @@ pub enum VfxLayer {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
         params: BTreeMap<String, ParamFill>,
+        /// How far beyond its site the layer may draw: a pillar of light over a thing no taller
+        /// than a hand. Left out, the margin every layer has.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("minimum" = SHORTEST_REACH, "maximum" = LONGEST_REACH))]
+        reach: Option<Meters>,
         #[schemars(extend("minimum" = SHORTEST_RUN))]
         duration: Seconds,
         #[serde(default, skip_serializing_if = "Seconds::is_zero")]

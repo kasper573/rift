@@ -27,6 +27,7 @@ use crate::core::vfx::{
 use crate::systems::WorldArea;
 use crate::systems::actor::model::ModelDef;
 use crate::systems::area::{AreaObject, AreaTag, PropDef};
+use crate::systems::item::rarity::ItemRarityDef;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::RiftEffect;
@@ -48,7 +49,8 @@ pub fn register(app: &mut App) {
 
 /// Every vfx plays on sites its layers' stages take: a script names the site it plays a vfx on, the
 /// engine's fixtures play on actors, a status effect's vfx on whoever carries the status, an
-/// actor or an object, and those a prop or a body plays of its own accord on it as on an object.
+/// actor or an object, and those a prop or a body plays of its own accord, or a rarity on its
+/// items as they lie dropped, on it as on an object.
 pub fn check_sites(loading: &mut Loading) {
     let content = loading.content();
     let mut played: Vec<(VfxId, &[SiteKind], String)> = Vec::new();
@@ -87,6 +89,14 @@ pub fn check_sites(loading: &mut Loading) {
     for (id, model) in loading.rows::<ModelDef>(&content) {
         for vfx in &model.effects {
             played.push((*vfx, &[SiteKind::Object], id.path(&content).to_owned()));
+        }
+    }
+    for (id, rarity) in loading.rows::<ItemRarityDef>(&content) {
+        for vfx in [rarity.dropped.vfx, rarity.dropped.landing_vfx] {
+            played.extend(vfx.map(|vfx| {
+                let dropped: &[SiteKind] = &[SiteKind::Object];
+                (vfx, dropped, id.path(&content).to_owned())
+            }));
         }
     }
     for (vfx, sites, by) in played {

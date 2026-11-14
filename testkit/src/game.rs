@@ -113,6 +113,9 @@ pub struct Map(pub Vec<String>);
 /// The prop every item a test declares is lying on the ground as.
 const DROP: &str = "drop";
 
+/// The rarity of every item a test declares without naming one.
+const PLAIN: &str = "plain";
+
 /// The terrains and the footstep of every area a test declares.
 pub const TURF: &str = "turf";
 pub const ROCK: &str = "rock";
@@ -233,7 +236,24 @@ impl Game {
                 "corpses_linger": 5.0,
                 "claims_last": 60.0,
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },
-                "drops": { "last": 120.0, "scatter": 1.0, "pickup_reach": 1.0, "click_reach": 0.5 },
+                "drops": {
+                    "last": 120.0,
+                    "scatter": 1.0,
+                    "pickup_reach": 1.0,
+                    "click_reach": 0.5,
+                    "outline": 2.0,
+                    "outline_hover": 3.0,
+                    "least_size": 0.3,
+                    "fades_for": 10.0,
+                    "names_reach": 12.0,
+                    "names_shown": 24,
+                    "effects_shown": 6,
+                },
+                "item_type_art_colors": {
+                    "equipment": { "from": [128, 128, 128], "to": [96, 96, 96] },
+                    "usable": { "from": [128, 128, 128], "to": [96, 96, 96] },
+                    "resource": { "from": [128, 128, 128], "to": [96, 96, 96] },
+                },
                 "reading": { "glance": 2.0, "per_word": 0.3 },
                 "notices": { "pops_last": 1.0, "intro_after": 0.3 },
                 "words": {
@@ -420,6 +440,7 @@ impl Game {
         let sfx = path("sfx", "item");
         let mut row = json!({
             "name": name,
+            "rarity": path("item_rarity", PLAIN),
             "look": path("prop", DROP),
             "icon": icon,
             "card": card,
@@ -430,9 +451,33 @@ impl Game {
         }
         self.sfx("item")
             .prop(DROP, json!({ "type": "none" }))
+            .rarity(PLAIN, 1, json!({}))
             .row("item", name, row)
             .asset(&icon, png(item::ICON_SIZE.0, item::ICON_SIZE.1))
             .asset(&card, png(item::CARD_SIZE.0, item::CARD_SIZE.1))
+    }
+
+    /// An item rarity of `rank` and `fields`, named after its file, in one grey.
+    pub fn rarity(self, name: &str, rank: u32, fields: Value) -> Game {
+        let mut row = json!({
+            "name": name,
+            "rank": rank,
+            "gradient": { "from": [128, 128, 128], "to": [128, 128, 128] },
+            "dropped": { "named": { "type": "on_key" } },
+        });
+        for (field, value) in fields.as_object().expect("a rarity's fields") {
+            row[field] = value.clone();
+        }
+        self.row("item_rarity", name, row)
+    }
+
+    /// A card style of `fields`, named after its file, on a grey ground.
+    pub fn card_style(self, name: &str, fields: Value) -> Game {
+        let mut row = json!({ "ground": { "from": [128, 128, 128], "to": [96, 96, 96] } });
+        for (field, value) in fields.as_object().expect("a card style's fields") {
+            row[field] = value.clone();
+        }
+        self.row("card_style", name, row)
     }
 
     /// A quest of `fields`, named after its file, with a picture for its art.

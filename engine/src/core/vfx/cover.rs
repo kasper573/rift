@@ -40,6 +40,15 @@ pub struct ShownWeather {
     pub flash: f32,
 }
 
+/// A thing lying on the ground that the cover parts round as round a body's limb: `girth` round
+/// where it stands, from the ground up to `height`. Bodies tread first, so among many a thing
+/// may lie in standing cover.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct PartsCover {
+    pub girth: f32,
+    pub height: f32,
+}
+
 /// What the weather is made of: the moment, the shown area's weather, its rain and daylight, where
 /// the camera looks and who treads the ground.
 #[derive(SystemParam)]
@@ -51,6 +60,7 @@ pub(super) struct WeatherSources<'w, 's> {
     daylight: Option<Res<'w, Daylight>>,
     rig: Option<Res<'w, CameraRig>>,
     bodies: Query<'w, 's, (Entity, &'static GlobalTransform, &'static Body)>,
+    lying: Query<'w, 's, (&'static GlobalTransform, &'static PartsCover)>,
     joints: Query<'w, 's, &'static GlobalTransform>,
 }
 
@@ -84,6 +94,7 @@ pub(super) fn blow(
         daylight,
         rig,
         bodies,
+        lying,
         joints,
     } = sources;
     let subject = rig.map_or(Vec3::ZERO, |rig| rig.target());
@@ -105,6 +116,17 @@ pub(super) fn blow(
     nearest.sort_by(|a, b| a.0.total_cmp(&b.0));
     nearest.truncate(TREADS);
     trails.retain(|entity, _| nearest.iter().any(|(_, near, _, _)| near == entity));
+    let mut lain: Vec<(f32, &GlobalTransform, &PartsCover)> = lying
+        .iter()
+        .map(|(placed, parts)| {
+            (
+                placed.translation().distance_squared(subject),
+                placed,
+                parts,
+            )
+        })
+        .collect();
+    lain.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut weather = Weather {
         treads: nearest
             .into_iter()
@@ -116,6 +138,11 @@ pub(super) fn blow(
                     ..tread(placed, body, &joints)
                 }
             })
+            .chain(
+                lain.into_iter()
+                    .map(|(_, placed, parts)| parted(placed, *parts)),
+            )
+            .take(TREADS)
             .collect(),
         ..Weather::default()
     };
@@ -265,6 +292,21 @@ fn tread(placed: &GlobalTransform, body: &Body, joints: &Query<&GlobalTransform>
         ground,
         reach,
         limbs,
+        trail: Vec::new(),
+    }
+}
+
+/// The cover parted round a thing lying where it is `placed`, which leaves no trail.
+fn parted(placed: &GlobalTransform, parts: PartsCover) -> Tread {
+    let foot = placed.translation();
+    Tread {
+        ground: foot.xz(),
+        reach: parts.girth,
+        limbs: vec![TreadingLimb {
+            from: foot,
+            to: foot + Vec3::Y * parts.height,
+            girth: parts.girth,
+        }],
         trail: Vec::new(),
     }
 }

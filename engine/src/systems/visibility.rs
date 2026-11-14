@@ -78,6 +78,11 @@ impl PresenceFade {
     }
 }
 
+/// How much of itself a thing shows for a reason of its own, from 1 whole to 0 nothing, whatever
+/// else thins it: an item about to be gone.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Faint(pub f32);
+
 /// What the server has just begun to show a client.
 type Arrived = (Added<Position>, With<Remote>, Without<PresenceFade>);
 
@@ -88,6 +93,7 @@ type Placed = (
     Option<&'static RenderPosition>,
     Option<&'static Opacity>,
     Option<&'static PresenceFade>,
+    Option<&'static Faint>,
 );
 
 /// Starts fading in whatever the server begins to show a client whose character already stands
@@ -131,7 +137,7 @@ fn fade_at_the_edge(
         return;
     };
     let now = Seconds(time.elapsed_secs());
-    for (entity, at, shown, opacity, fade) in &placed {
+    for (entity, at, shown, opacity, fade, faint) in &placed {
         let present = fade.map_or(1.0, |fade| fade.shown(now, look.presence_fades));
         match fade {
             Some(PresenceFade::Out(_)) if present <= 0.0 => {
@@ -146,7 +152,9 @@ fn fade_at_the_edge(
         let wanted = if entity == mine {
             1.0
         } else {
-            shown_at(eye.distance(stands(at, shown)), settings.sight) * present
+            shown_at(eye.distance(stands(at, shown)), settings.sight)
+                * present
+                * faint.map_or(1.0, |faint| faint.0)
         };
         if opacity.map_or(1.0, |opacity| opacity.0) != wanted {
             commands.entity(entity).try_insert(Opacity(wanted));

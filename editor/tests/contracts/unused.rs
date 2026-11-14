@@ -60,6 +60,10 @@ fn what_nothing_in_use_reaches_is_unused_at_any_depth() {
                 path("sfx", "item").as_str(),
                 &UnusedRow::NamedByUnused(vec![path("item", "cap")])
             ),
+            (
+                path("item_rarity", "plain").as_str(),
+                &UnusedRow::NamedByUnused(vec![path("item", "cap")])
+            ),
         ]
     );
     let assets: Vec<&str> = project.unused.assets().collect();

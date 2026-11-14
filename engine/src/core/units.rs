@@ -466,7 +466,10 @@ impl Radians {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
 pub struct WorldPx(pub f32);
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(transform = SchemaMark::Unit.with("px"))]
 pub struct WindowPx(pub f32);
 
 #[derive(

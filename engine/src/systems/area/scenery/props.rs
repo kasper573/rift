@@ -59,7 +59,7 @@ pub(super) fn stand_playing(
             GlobalTransform::from(stands),
             Visibility::default(),
             extent,
-            StandingVfx(def.effects.clone()),
+            StandingVfx::playing(def.effects.clone()),
             ChildOf(root),
         ))
         .id();

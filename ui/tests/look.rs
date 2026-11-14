@@ -1,6 +1,9 @@
 use egui::{Context, Pos2, Rect, Vec2};
 use strum::VariantArray;
-use ui::card::{self, Card, CardPane};
+use ui::card::{
+    self, ArtLook, BorderLook, Card, CardDress, CardPane, CornerLook, CrestLook, DividerLook,
+    HaloLook, LabelLineLook, NameBandLook, PaperLook,
+};
 use ui::controls::{RowHover, RowLook};
 use ui::face::{self, Face};
 use ui::glyph::{CardKind, Icon, Mark, Weight};
@@ -216,6 +219,57 @@ fn a_card_keeps_its_width_and_grows_with_what_it_holds_up_to_its_most() {
 }
 
 #[test]
+fn a_dressed_card_keeps_its_width_and_makes_room_for_what_its_dress_adds() {
+    let ctx = context();
+    let crest = 18.0;
+    let taller = card::ART + 32.0;
+    let dress = CardDress {
+        label: Some("Epic"),
+        border: BorderLook::Double {
+            width: 3.0,
+            gap: 2.0,
+        },
+        corners: CornerLook::Notched { size: 4.0 },
+        crest: CrestLook::Icon { size: crest },
+        name_band: NameBandLook::Ribbon {
+            overhang: 6.0,
+            icon: true,
+        },
+        label_line: LabelLineLook::Strip,
+        art: ArtLook::Arched {
+            height: Some(taller),
+        },
+        paper: PaperLook::Tinted { strength: 0.25 },
+        dividers: DividerLook::Gradient,
+        halo: HaloLook::Glow { spread: 12.0 },
+        ..CardDress::PLAIN
+    };
+    let mut rects = Vec::new();
+    pass(&ctx, |ui| {
+        for dress in [CardDress::PLAIN, dress] {
+            let mut shown = Card::new(CardKind::Equipment, "Rusty Sword");
+            shown.dress = dress;
+            let response = shown.show(ui, |ui, plate| {
+                card::heading(ui, plate, "grants while worn");
+                card::fact(ui, "+2 Damage");
+            });
+            rects.push((response.rect, response.frame));
+        }
+    });
+    let [(plain, _), (dressed, frame)] = rects[..] else {
+        panic!("two cards");
+    };
+    assert_eq!(dressed.width(), plain.width());
+    assert!(
+        dressed.height() - plain.height() >= crest + (taller - card::ART),
+        "{} over {}",
+        dressed.height(),
+        plain.height()
+    );
+    assert!(dressed.contains_rect(frame));
+}
+
+#[test]
 fn a_card_pane_takes_the_same_room_empty_and_full() {
     let ctx = context();
     let pane = CardPane {
@@ -385,4 +439,20 @@ fn a_sheet_in_motion_keeps_its_pin_where_it_falls_within_a_pixel_at_rest() {
         let drift = within(posed) - within(pin);
         assert!(drift.length() < 1e-3, "drifted {drift:?} within its pixel");
     }
+}
+
+#[test]
+fn any_colour_reads_as_text_over_the_dark_and_one_that_already_does_is_left_as_it_is() {
+    let dim = [
+        egui::Color32::BLACK,
+        egui::Color32::from_rgb(128, 128, 128),
+        ink::TYRIAN,
+        ink::AZURE,
+        ink::RUBRIC,
+    ];
+    for color in dim {
+        let read = ink::contrast(ink::legible(color, ink::VEIL), ink::VEIL);
+        assert!(read >= ink::READABLE, "{color:?} reads at {read}");
+    }
+    assert_eq!(ink::legible(ink::SPRING, ink::VEIL), ink::SPRING);
 }

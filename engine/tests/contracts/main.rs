@@ -1,5 +1,6 @@
 mod babble;
 mod backoff;
+mod bindings;
 mod climate;
 mod clock;
 mod clouds;
@@ -23,6 +24,7 @@ mod interaction;
 mod kill_credit;
 mod launch;
 mod looks;
+mod loot_names;
 mod memory;
 mod notification;
 mod poses;

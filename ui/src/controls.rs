@@ -5,8 +5,8 @@ use egui::emath::Rot2;
 use egui::epaint::TextShape;
 use egui::{
     Align, Align2, Color32, CornerRadius, InnerResponse, Key, Layout, Margin, Painter, Pos2,
-    Rangef, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo,
-    WidgetText, WidgetType,
+    Rangef, Rect, Response, Sense, Shape, Stroke, StrokeKind, TextureId, Ui, UiBuilder, Vec2,
+    WidgetInfo, WidgetText, WidgetType,
 };
 
 use crate::face::{Face, TextRole};
@@ -594,7 +594,12 @@ pub struct SlotLook {
     pub filled: bool,
     pub hovered: bool,
     pub refused: bool,
+    /// The two colours a filled slot is edged in, from its top to its bottom.
+    pub edge: Option<[Color32; 2]>,
 }
+
+pub const SLOT_EDGE: f32 = 2.5;
+pub const SLOT_PIP: f32 = 10.0;
 
 pub fn slot_frame(painter: &Painter, rect: Rect, look: SlotLook) {
     if look.hovered {
@@ -623,9 +628,24 @@ pub fn slot_frame(painter: &Painter, rect: Rect, look: SlotLook) {
             3.0,
         );
     }
+    if look.filled
+        && let Some(edge) = look.edge
+    {
+        paint::gradient_edge(painter, rect, SLOT_EDGE, edge);
+    }
     if look.refused {
         glyph::hatch(painter, rect.shrink(1.0), ink::ink_wash(0.35));
     }
+}
+
+/// A small picture in the top left corner of a slot, clear of its lozenge and its count.
+pub fn slot_pip(painter: &Painter, rect: Rect, texture: TextureId, tint: Color32) {
+    painter.image(
+        texture,
+        Rect::from_min_size(rect.min + Vec2::splat(SLOT_EDGE), Vec2::splat(SLOT_PIP)),
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        tint,
+    );
 }
 
 pub fn slot_count(painter: &Painter, rect: Rect, count: u32) {

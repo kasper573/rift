@@ -57,6 +57,7 @@ use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::layers::Layered;
+use crate::core::render::world::outline::Outline;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::world::{OnItsWay, missing_drawn};
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
@@ -66,6 +67,7 @@ use crate::core::units::{
 };
 use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::rain::{RainField, Shelter};
+use crate::core::vfx::standing::StandingVfx;
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::{Hung, Puppet, RenderActor};
@@ -90,7 +92,8 @@ use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
 use crate::systems::input::scope::InputScope;
 use crate::systems::interface::CursorId;
-use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack};
+use crate::systems::item::rarity::ItemRarityId;
+use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
 use crate::systems::npc::{Npc, NpcId};
@@ -584,9 +587,19 @@ pub struct ProbeGroundItem {
     #[schemars(with = "u64")]
     pub id: Entity,
     pub item: ItemId,
+    pub rarity: ItemRarityId,
     pub count: u32,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
+    /// Whether this player may take it.
+    pub mine: bool,
+    /// Where the plate that names it is drawn, when one is.
+    #[schemars(with = "Option<RectSchema>")]
+    pub plate: Option<Rect<WindowPx>>,
+    /// Whether the vfx of its rarity plays on it.
+    pub effects: bool,
+    /// Whether a line is drawn round it.
+    pub outlined: bool,
 }
 
 /// A resource standing in the world.
@@ -1841,15 +1854,36 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
 }
 
 fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
+    let content = world.resource::<Content>().clone();
+    let me = session::my_id(world);
     world
-        .query::<(Entity, &DroppedItem, &Position, &AreaTag)>()
+        .query::<(
+            Entity,
+            &DroppedItem,
+            &Position,
+            &AreaTag,
+            Option<&Reservation>,
+        )>()
         .iter(world)
-        .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
-        .map(|(entity, dropped, at, _)| ProbeGroundItem {
+        .filter(|(.., tag, _)| area.is_none_or(|area| tag.area == area))
+        .map(|(entity, dropped, at, _, reservation)| ProbeGroundItem {
             id: entity,
             item: dropped.item,
+            rarity: dropped.item.get(&content).rarity,
             count: dropped.count,
             at: at.pos,
+            mine: item::takeable(reservation, me),
+            plate: None,
+            effects: false,
+            outlined: false,
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|item| ProbeGroundItem {
+            plate: item::plates::plate_of(world, item.id).map(gui::window_rect),
+            effects: world.get::<StandingVfx>(item.id).is_some(),
+            outlined: world.get::<Outline>(item.id).is_some(),
+            ..item
         })
         .collect()
 }

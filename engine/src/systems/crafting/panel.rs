@@ -23,7 +23,7 @@ use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead}
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction, InputMap, input};
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::widget::{SLOT, SlotLook, slot};
+use crate::systems::item::widget::{SLOT, SlotLook, listed_icon, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemStack};
 use crate::systems::player::session;
 use crate::systems::prompt::tray;
@@ -362,7 +362,7 @@ fn recipe_row(
         }
         ui.horizontal(|ui| {
             if let Some(first) = row.recipe.makes.first() {
-                hud::icon(ui, world, &first.item.get(&content).icon, ICON);
+                listed_icon(ui, world, &content, first.item, ICON);
             }
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
@@ -488,11 +488,9 @@ fn no_result(ui: &mut Ui, world: &mut World) {
 fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
     let content = world.resource::<Content>().clone();
     for made in &result.makes {
-        let def = made.item.get(&content);
         let look = SlotLook {
-            icon: Some(&def.icon),
             count: made.count,
-            ..SlotLook::EMPTY
+            ..SlotLook::of(&content, made.item)
         };
         let response = slot(ui, world, look, Sense::hover());
         response.widget_info(|| {
@@ -502,10 +500,7 @@ fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
                 format!("Result: {}", made.describe(&content)),
             )
         });
-        let lines: Vec<String> = std::iter::once(item::card::overview(def))
-            .chain(crafts_note(result))
-            .collect();
-        hud::tooltip(&response, world, &def.name, &lines, None);
+        item::card::tooltip_noted(world, &response, made.item, crafts_note(result), None);
     }
     let name = match result.makes.as_slice() {
         [made] => Some(made.item.get(&content).name.as_str()),
@@ -544,7 +539,7 @@ fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
                             }
                             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                 for made in &result.makes {
-                                    hud::icon(ui, world, &made.item.get(&content).icon, ICON);
+                                    listed_icon(ui, world, &content, made.item, ICON);
                                 }
                                 ui.vertical(|ui| {
                                     ui.spacing_mut().item_spacing.y = 1.0;

@@ -567,6 +567,15 @@
       "bindings": [
         {
           "type": "key",
+          "key": "KeyZ"
+        }
+      ]
+    },
+    "name_items": {
+      "label": "Name the items lying nearby",
+      "bindings": [
+        {
+          "type": "key",
           "key": "AltLeft"
         }
       ]

@@ -7,11 +7,11 @@ use crate::systems::class::{self, Class, SkillPoints};
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::{Inventory, ItemId};
+use crate::systems::item::{self, Inventory, ItemId};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::Xp;
 use crate::systems::skill::Learned;
-use crate::systems::text::LineText;
+use crate::systems::text::{LineText, SpanText};
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Belongings {
@@ -98,18 +98,10 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
         );
     }
     for &on in now.worn.difference(&before.worn) {
-        told.push(worn_row(
-            content,
-            format!("Equipped {}", on.get(content).name),
-            on,
-        ));
+        told.push(worn_row(content, "Equipped ", on));
     }
     for &off in before.worn.difference(&now.worn) {
-        told.push(worn_row(
-            content,
-            format!("Took off {}", off.get(content).name),
-            off,
-        ));
+        told.push(worn_row(content, "Took off ", off));
     }
     if now.level > before.level {
         told.push(Notification::new(
@@ -138,11 +130,14 @@ fn item_row(content: &Content, item: ItemId, change: i32) -> Notification {
     } else {
         sounds.trade
     };
-    Notification::feed(HistoryTopic::Item, &*item.get(content).name)
-        .icon(item.get(content).icon.path())
-        .tally(RecordTally::Change(change))
-        .sound(sfx)
-        .into()
+    Notification::feed(
+        HistoryTopic::Item,
+        LineText(vec![item::named(content, item)]),
+    )
+    .icon(item.get(content).icon.path())
+    .tally(RecordTally::Change(change))
+    .sound(sfx)
+    .into()
 }
 
 /// How far a count moved, as a tally shows it.
@@ -150,7 +145,14 @@ fn change(before: u32, now: u32) -> i32 {
     i32::try_from(i64::from(now) - i64::from(before)).unwrap_or(i32::MAX)
 }
 
-fn worn_row(content: &Content, text: String, item: ItemId) -> Notification {
+fn worn_row(content: &Content, did: &str, item: ItemId) -> Notification {
+    let text = LineText(vec![
+        SpanText::Text {
+            text: did.to_owned(),
+            fx: Vec::new(),
+        },
+        item::named(content, item),
+    ]);
     Notification::feed(HistoryTopic::Item, text)
         .icon(item.get(content).icon.path())
         .sound(item.get(content).sfx.trade)

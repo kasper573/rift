@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
 use crate::core::audio::playback::SfxId;
+use crate::core::card::CardStyleId;
 use crate::core::content::ImageRef;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
@@ -105,6 +106,9 @@ pub struct SkillDef {
     /// The recipes whoever knows the skill masters, for as long as they know it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub masteries: Vec<RecipeKey>,
+    /// What the skill's card is drawn in. Left out, the game's default card style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_style: Option<CardStyleId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<SkillModule>,
 }
@@ -132,6 +136,7 @@ impl ContentFile for SkillDef {
             basic_attack: false,
             levels: vec![first],
             masteries: Vec::new(),
+            card_style: None,
             modules: Vec::new(),
         })
     }

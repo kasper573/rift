@@ -1,20 +1,25 @@
 use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use ui::card::{self, Art, Card, CardResponse, Plate};
 use ui::controls::{self, Pill};
 use ui::drag;
 use ui::egui;
-use ui::egui::{Rect, Response, TextureId, Ui};
+use ui::egui::{Rect, Response, Ui};
 use ui::face::{self, TextRole};
 use ui::glyph::CardKind;
 use ui::ink;
 use ui::sheet::Depth;
 use ui::words;
 
+use crate::core::card::CardStyleDef;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, ImageSource};
+use crate::core::math::ColorGradient;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
+use crate::systems::GameSettings;
 use crate::systems::equipment;
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
@@ -91,19 +96,41 @@ pub fn inspect(world: &mut World, response: Response, item: ItemId) -> Response 
     response
 }
 
-pub fn tooltip(world: &World, response: &Response, item: ItemId) {
-    let content = world.resource::<Content>().clone();
-    let def = item.get(&content);
-    let lines = [overview(def)];
+pub fn tooltip(world: &mut World, response: &Response, item: ItemId) {
     let hint = StyledLine::new(inspect_hint());
-    hud::tooltip(response, world, &def.name, &lines, Some(&hint));
+    tooltip_noted(world, response, item, [], Some(&hint));
 }
 
-pub fn overview(def: &ItemDef) -> String {
+/// An item's tooltip: its name, a line led by its rarity that says what it is, `notes` under
+/// that, and a hint.
+pub fn tooltip_noted(
+    world: &mut World,
+    response: &Response,
+    item: ItemId,
+    notes: impl IntoIterator<Item = String>,
+    hint: Option<&StyledLine>,
+) {
+    let content = world.resource::<Content>().clone();
+    let def = item.get(&content);
+    let mark = def
+        .rarity
+        .get(&content)
+        .icon
+        .as_ref()
+        .and_then(|icon| gui::image(world, icon));
+    let lines: Vec<String> = std::iter::once(overview(&content, def))
+        .chain(notes)
+        .collect();
+    hud::tooltip_marked(response, world, &def.name, mark.as_ref(), &lines, hint);
+}
+
+/// What an item is, in a line: its rarity, then its kind.
+pub fn overview(content: &Content, def: &ItemDef) -> String {
+    let rarity = &def.rarity.get(content).name;
     let category = def.category().label();
     match &def.kind {
-        ItemKind::Equipment { wear, .. } => format!("{category} · {}", wear.label()),
-        _ => category.to_owned(),
+        ItemKind::Equipment { wear, .. } => format!("{rarity} · {category} · {}", wear.label()),
+        _ => format!("{rarity} · {category}"),
     }
 }
 
@@ -142,6 +169,26 @@ pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> Car
     show_noted(ui, world, item, look, &[])
 }
 
+/// The colour behind the picture on an item's card, by the type of item: it stands in place of
+/// the ground of the card style the item's rarity names.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemTypeArtColors {
+    pub equipment: ColorGradient,
+    pub usable: ColorGradient,
+    pub resource: ColorGradient,
+}
+
+impl ItemTypeArtColors {
+    pub fn of(&self, kind: &ItemKind) -> ColorGradient {
+        match kind {
+            ItemKind::Equipment { .. } => self.equipment,
+            ItemKind::Usable { .. } => self.usable,
+            ItemKind::Resource => self.resource,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ItemCardNote {
     pub text: String,
@@ -168,8 +215,7 @@ pub fn show_noted(
         .and_then(|me| world.get::<Inventory>(me))
         .map_or(0, |bag| bag.count(item));
     let numeral = (def.stack_max() > 1 && held > 0).then(|| face::roman(held));
-    let icon = gui::image(world, &def.icon).map(|image| image.texture);
-    let mut card = face_of(def, icon, look);
+    let mut card = face_of(&content, world, item, look);
     card.numeral = numeral.as_deref();
     card.show(ui, |ui, plate| {
         summary(ui, &content, item, plate);
@@ -193,7 +239,7 @@ pub fn show_noted(
                 }
             })
         });
-        grants(ui, world, &content, item);
+        grants(ui, world, &content, item, plate);
         if let Some(verb) = use_verb(def) {
             let hint = StyledLine::new(vec![
                 input(InputAction::UseItem),
@@ -262,8 +308,23 @@ fn comparison(world: &World, item: ItemId) -> Vec<ItemCardNote> {
         .collect()
 }
 
-pub fn face_of(def: &ItemDef, icon: Option<TextureId>, look: CardLook) -> Card<'_> {
+/// The face of an item's card: drawn in the style its rarity names, on its item type's colour
+/// behind the picture.
+pub fn face_of<'a>(
+    content: &'a Content,
+    images: &mut (impl ImageSource + ?Sized),
+    item: ItemId,
+    look: CardLook,
+) -> Card<'a> {
+    let def = item.get(content);
+    let icon = images.image(&def.icon).map(|image| image.texture);
+    let ground = content
+        .built::<GameSettings>()
+        .item_type_art_colors
+        .of(&def.kind);
+    let style = CardStyleDef::of(content, def.rarity.get(content).card_style);
     let mut card = Card::new(kind(def), &def.name);
+    card.dress = style.dress(images, Some(ground));
     card.art = Art {
         icon,
         height: look.art,
@@ -285,7 +346,7 @@ pub fn summary(ui: &mut Ui, content: &Content, item: ItemId, plate: Plate) {
     if plate.name_cut {
         card::full_name(ui, &def.name);
     }
-    card::overview(ui, &overview(def));
+    card::overview(ui, &overview(content, def));
     let tags = tags(def);
     if !tags.is_empty() {
         ui.horizontal_wrapped(|ui| {
@@ -317,12 +378,13 @@ pub fn grant_lines(
     images: &mut (impl ImageSource + ?Sized),
     content: &Content,
     item: ItemId,
+    plate: Plate,
 ) -> Vec<(Response, SkillId)> {
     let granted = skill::grants_of(content, item);
     if granted.is_empty() {
         return Vec::new();
     }
-    card::heading(ui, "grants while worn");
+    card::heading(ui, plate, "grants while worn");
     let lines = granted
         .iter()
         .map(|&granted| (grant_line(ui, images, granted.get(content)), granted))
@@ -371,8 +433,8 @@ fn draw_card(world: &mut World) {
     });
 }
 
-fn grants(ui: &mut Ui, world: &mut World, content: &Content, item: ItemId) {
-    for (response, granted) in grant_lines(ui, world, content, item) {
+fn grants(ui: &mut Ui, world: &mut World, content: &Content, item: ItemId, plate: Plate) {
+    for (response, granted) in grant_lines(ui, world, content, item, plate) {
         let response = response.interact(egui::Sense::click_and_drag());
         if map::drag_started(world, InputAction::CarryItem, &response) {
             drag::carry(ui.ctx(), Carried::Skill(granted));

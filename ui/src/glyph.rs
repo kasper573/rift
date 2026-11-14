@@ -32,22 +32,6 @@ impl CardKind {
         }
     }
 
-    pub fn ground(self) -> [Color32; 2] {
-        match self {
-            CardKind::Equipment => [Color32::from_rgb(0x3A, 0x5E, 0xA3), ink::AZURE],
-            CardKind::Usable | CardKind::Active => [Color32::from_rgb(0xC8, 0x30, 0x2A), ink::WAX],
-            CardKind::Resource => [
-                Color32::from_rgb(0xE3, 0xB3, 0x35),
-                Color32::from_rgb(0xC4, 0x92, 0x1E),
-            ],
-            CardKind::Quest => [ink::TYRIAN, Color32::from_rgb(0x4F, 0x2A, 0x5C)],
-            CardKind::Passive => [
-                Color32::from_rgb(0x4A, 0x94, 0x60),
-                Color32::from_rgb(0x3F, 0x7A, 0x58),
-            ],
-        }
-    }
-
     pub fn texture(self, ctx: &egui::Context) -> TextureId {
         let id = Id::new(("kind glyph", self));
         if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {

@@ -11,6 +11,7 @@ use ui::egui::Ui;
 use ui::{controls, sheet};
 
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
+use crate::core::content::Content;
 use crate::core::math::{Pos, Size};
 use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
@@ -23,6 +24,8 @@ use crate::systems::hud;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
+use crate::systems::item::plates::ItemNaming;
+use crate::systems::item::rarity::{ItemRarityDef, RarityRank};
 use crate::systems::skill::HotbarSlot;
 
 const SLIDER_WIDTH: f32 = 120.0;
@@ -63,6 +66,8 @@ pub(crate) struct UserSettings {
     video: VideoPreferences,
     #[serde(default)]
     crafting: CraftingSettings,
+    #[serde(default)]
+    items: ItemSettings,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -126,6 +131,7 @@ impl MenuTab for SettingsMenuTab {
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let typing = world.get_resource::<Typing>().copied();
+        let rarities = rarities(world.resource::<Content>());
         let turn_ease = world
             .get_resource::<CameraRig>()
             .map(|rig| rig.framing().turn_ease);
@@ -136,9 +142,23 @@ impl MenuTab for SettingsMenuTab {
                 &mut world.resource_mut::<UserSettings>(),
                 typing,
                 turn_ease,
+                &rarities,
             )
         });
     }
+}
+
+/// The game's rarities by name, the lowest rank first.
+fn rarities(content: &Content) -> Vec<(RarityRank, String)> {
+    let mut rarities: Vec<(RarityRank, String)> = content
+        .ids::<ItemRarityDef>()
+        .map(|rarity| {
+            let rarity = rarity.get(content);
+            (rarity.rank, rarity.name.clone())
+        })
+        .collect();
+    rarities.sort();
+    rarities
 }
 
 fn show_settings(
@@ -146,11 +166,12 @@ fn show_settings(
     settings: &mut Mut<UserSettings>,
     typing: Option<Typing>,
     turn_ease: Option<Seconds>,
+    rarities: &[(RarityRank, String)],
 ) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     if ui.available_width() < 2.0 * COLUMN + sheet::GUTTER {
         ui.spacing_mut().item_spacing.x = ROW_GAP;
-        show_first_column(ui, settings, typing, turn_ease);
+        show_first_column(ui, settings, typing, turn_ease, rarities);
         ui.add_space(SECTION_GAP);
         show_second_column(ui, settings);
         return;
@@ -162,7 +183,7 @@ fn show_settings(
         };
         left.spacing_mut().item_spacing.x = ROW_GAP;
         right.spacing_mut().item_spacing.x = ROW_GAP;
-        show_first_column(left, settings, typing, turn_ease);
+        show_first_column(left, settings, typing, turn_ease, rarities);
         show_second_column(right, settings);
     });
 }
@@ -172,12 +193,16 @@ fn show_first_column(
     settings: &mut Mut<UserSettings>,
     typing: Option<Typing>,
     turn_ease: Option<Seconds>,
+    rarities: &[(RarityRank, String)],
 ) {
     sheet::section(ui, "Interface");
     show_interface(ui, settings, typing);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "HUD");
     show_hud(ui, settings);
+    ui.add_space(SECTION_GAP);
+    sheet::section(ui, "Items on the ground");
+    show_items(ui, settings, rarities);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "Camera");
     controls::form(ui, ("settings", "camera"), |ui| {
@@ -282,6 +307,68 @@ fn show_hud(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
             .clicked()
         {
             settings.reset_hud();
+        }
+        ui.end_row();
+    });
+}
+
+fn show_items(ui: &mut Ui, settings: &mut Mut<UserSettings>, rarities: &[(RarityRank, String)]) {
+    controls::form(ui, ("settings", "items"), |ui| {
+        let naming = settings.item_naming();
+        let mut switched = naming.switched;
+        if controls::toggle(ui, "Item names stay on", &mut switched)
+            .hinted("The key switches names on and off, rather than showing them while held")
+            .changed()
+        {
+            settings.items.naming.switched = switched;
+        }
+        ui.end_row();
+        let mut as_dropped = naming.as_dropped;
+        if controls::toggle(ui, "Name items as they drop", &mut as_dropped)
+            .hinted("Off, an item is named only under the pointer and by the key")
+            .changed()
+        {
+            settings.items.naming.as_dropped = as_dropped;
+        }
+        ui.end_row();
+        let label = ui.label("Name items from");
+        let name_of = |from: RarityRank| {
+            rarities
+                .iter()
+                .rev()
+                .find(|(rank, _)| *rank <= from)
+                .or(rarities.first())
+                .map_or("", |(_, name)| name.as_str())
+        };
+        let mut from = naming.from;
+        controls::combo("name items from")
+            .selected_text(name_of(naming.from))
+            .show_ui(ui, |ui| {
+                for (rank, name) in rarities {
+                    ui.selectable_value(&mut from, *rank, name);
+                }
+            })
+            .response
+            .labelled_by(label.id)
+            .hinted("The lowest rarity the key names. The pointer names whatever it rests on");
+        if from != naming.from {
+            settings.items.naming.from = from;
+        }
+        ui.end_row();
+        let mut always = settings.outlines_items_always();
+        if controls::toggle(ui, "Always outline items", &mut always)
+            .hinted("Off, an item is outlined under the pointer and while its name is asked for")
+            .changed()
+        {
+            settings.items.outline_always = always;
+        }
+        ui.end_row();
+        let mut calm = settings.rarity_effects_calm();
+        if controls::toggle(ui, "Calm rarity effects", &mut calm)
+            .hinted("What a rarity plays on its items stands still, and nothing bursts or pulses")
+            .changed()
+        {
+            settings.items.calm_effects = calm;
         }
         ui.end_row();
     });
@@ -494,6 +581,26 @@ impl UserSettings {
 
     pub(crate) fn toggle_day_clock(&mut self) {
         self.screen.day_clock_hidden = !self.screen.day_clock_hidden;
+    }
+
+    pub(crate) fn item_naming(&self) -> ItemNaming {
+        self.items.naming
+    }
+
+    pub(crate) fn item_names_on(&self) -> bool {
+        self.items.names_on
+    }
+
+    pub(crate) fn switch_item_names(&mut self) {
+        self.items.names_on = !self.items.names_on;
+    }
+
+    pub(crate) fn outlines_items_always(&self) -> bool {
+        self.items.outline_always
+    }
+
+    pub(crate) fn rarity_effects_calm(&self) -> bool {
+        self.items.calm_effects
     }
 
     pub(crate) fn confirms_risky_crafts(&self) -> bool {
@@ -715,6 +822,21 @@ struct CraftingSettings {
     /// Whether a craft that may fail goes ahead unasked.
     #[serde(default)]
     unconfirmed: bool,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ItemSettings {
+    #[serde(default)]
+    naming: ItemNaming,
+    /// Whether names are switched on, for a player whose key switches them.
+    #[serde(default)]
+    names_on: bool,
+    /// Whether the player's items are outlined as they lie, not only while named.
+    #[serde(default)]
+    outline_always: bool,
+    /// Whether what a rarity plays on its items is held still rather than played.
+    #[serde(default)]
+    calm_effects: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]

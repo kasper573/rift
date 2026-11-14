@@ -453,6 +453,10 @@ fn spoken(text: &StyledLine) -> Vec<Spoken> {
                 glyph: Glyph::Input,
                 voice: None,
             }],
+            TextPiece::Image(_) => vec![Spoken {
+                glyph: Glyph::Char(' '),
+                voice: None,
+            }],
             TextPiece::Pause(_) => Vec::new(),
         })
         .collect()

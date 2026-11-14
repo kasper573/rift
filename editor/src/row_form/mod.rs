@@ -4,6 +4,7 @@ pub mod quests;
 pub mod rows;
 pub mod scripts;
 pub mod settings;
+mod styles;
 pub mod tune;
 pub mod usages;
 

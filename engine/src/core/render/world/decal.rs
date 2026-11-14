@@ -35,7 +35,8 @@ pub enum DecalLook {
         width: f32,
         dashes: u32,
     },
-    /// A disc fading out from its centre.
+    /// A disc fading out from its centre to a rim of its colour, in a soft shadow round the rim
+    /// that shows it on bright ground too.
     Glow { color: Color },
 }
 

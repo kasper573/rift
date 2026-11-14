@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use engine::core::content::ContentFile;
 use engine::core::content::media::GltfInfos;
-use engine::core::gui::ImageSource;
 use engine::systems::area::{Picture, Pictured};
 use engine::systems::item::card::{self as item_card, CardLook};
 use engine::systems::item::{self, CARD_SIZE, ICON_SIZE, ItemDef, Wear, widget};
@@ -127,7 +126,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             sheet::section(ui, "as the player sees it");
-                            shown(editor, ui, key, &row);
+                            shown(editor, ui, key);
                         });
                 }
                 ItemPage::Look => {
@@ -148,7 +147,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
 }
 
 /// What the game draws of the item: its icon in a slot and its card.
-fn shown(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
+fn shown(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let ctx = ui.ctx().clone();
     let Some(content) = editor.loaded() else {
         form::hint(ui, "The card shows once the content loads.");
@@ -165,20 +164,26 @@ fn shown(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
     };
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            widget::shown_slot(ui, &mut images, &row.icon);
+            widget::shown_slot(
+                ui,
+                &mut images,
+                &content,
+                item.get(&content).rarity,
+                Some(item),
+            );
         });
         ui.add_space(12.0);
         ui.vertical(|ui| {
-            let art = images.image(&row.icon).map(|image| image.texture);
             let look = CardLook {
                 width: ui.available_width().min(card::WIDTH),
                 closable: false,
                 ..CardLook::PINNED
             };
-            item::card::face_of(row, art, look).show(ui, |ui, plate| {
+            let face = item::card::face_of(&content, &mut images, item, look);
+            face.show(ui, |ui, plate| {
                 item::card::summary(ui, &content, item, plate);
                 item::card::details(ui, &content, item, |_| None);
-                item::card::grant_lines(ui, &mut images, &content, item);
+                item::card::grant_lines(ui, &mut images, &content, item, plate);
             });
         });
     });

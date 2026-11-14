@@ -9,6 +9,7 @@ use ui::glyph::CardKind;
 use ui::ink;
 
 use super::{Rank, SkillDef, SkillId, SkillKind, SkillStat};
+use crate::core::card::CardStyleDef;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook};
@@ -161,6 +162,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
     let maxed = card.granted_by.is_none() && learned && card.rank.0 >= ranks;
     let icon = gui::image(world, &def.icon).map(|image| image.texture);
     let mut shown = Card::new(kind(def), &def.name);
+    shown.dress = CardStyleDef::of(&content, def.card_style).dress(world, None);
     shown.numeral = Some(&numeral);
     shown.art = Art {
         icon,
@@ -176,7 +178,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
             card::full_name(ui, &def.name);
         }
         card::overview(ui, &overview(world, &content, def, card));
-        card::heading(ui, "ranks");
+        card::heading(ui, plate, "ranks");
         for (index, level) in def.levels.iter().enumerate() {
             let rank = Rank(index as u8 + 1);
             let lit = rank <= card.rank;
@@ -191,7 +193,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
             );
         }
         if !def.masteries.is_empty() {
-            card::heading(ui, "masters");
+            card::heading(ui, plate, "masters");
             for recipe in def.masteries.iter().filter_map(|key| key.get(&content)) {
                 card::fact(ui, &crafting::stacks_named(&content, &recipe.makes));
             }
@@ -199,13 +201,13 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
         if let Some(access) = &card.node {
             let lines = access_lines(world, &content, access);
             if !lines.is_empty() {
-                card::heading(ui, if learned { "unlocked by" } else { "costs" });
+                card::heading(ui, plate, if learned { "unlocked by" } else { "costs" });
                 for (line, met) in lines {
                     card::requirement(ui, met, &line);
                 }
             }
         }
-        card::heading(ui, "to use");
+        card::heading(ui, plate, "to use");
         let needs = use_lines(world, &content, def);
         if needs.is_empty() {
             card::fact(ui, "Nothing needed");

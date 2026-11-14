@@ -16,9 +16,9 @@ use ui::float;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use ui::egui::{Id, LayerId, Pos2, Rect, Sense, Ui, Vec2};
+use ui::egui::{Color32, Id, LayerId, Pos2, Rect, Sense, Ui, Vec2};
 use ui::face::{self, TextRole};
-use ui::{controls, ink, sheet};
+use ui::{controls, ink, paint, sheet};
 
 use crate::core::content::Content;
 use crate::core::content::ImageRef;
@@ -26,7 +26,8 @@ use crate::core::gui::{self, Band, ImageSource, WidgetRects};
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::area_map::minimap;
 use crate::systems::input::map::{InputAction, InputMap};
-use crate::systems::item::Inventory;
+use crate::systems::item::widget::SlotRarity;
+use crate::systems::item::{Inventory, ItemId};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
@@ -161,16 +162,36 @@ pub(crate) fn tooltip(
     lines: &[String],
     hint: Option<&StyledLine>,
 ) {
+    tooltip_marked(response, world, title, None, lines, hint);
+}
+
+/// A tooltip whose first line is led by `mark`, a small picture of what the line says.
+pub(crate) fn tooltip_marked(
+    response: &egui::Response,
+    world: &World,
+    title: &str,
+    mark: Option<&gui::GuiImage>,
+    lines: &[String],
+    hint: Option<&StyledLine>,
+) {
     float::tooltip(response, |ui| {
         ui.set_max_width(TOOLTIP_WIDTH);
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.label(face::bold(title).size(TextRole::Tooltip.size()));
-        for line in lines {
-            ui.label(
-                egui::RichText::new(line)
-                    .size(TextRole::Tooltip.size())
-                    .color(ink::INK2),
-            );
+        for (index, line) in lines.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if index == 0
+                    && let Some(mark) = mark
+                {
+                    ui.add(mark.widget(Vec2::splat(TextRole::Tooltip.size())));
+                }
+                ui.label(
+                    egui::RichText::new(line)
+                        .size(TextRole::Tooltip.size())
+                        .color(ink::INK2),
+                );
+            });
         }
         if let Some(hint) = hint {
             let look = TextLook::new(TextRole::Small.size(), ink::INK3);
@@ -345,8 +366,8 @@ fn draw_carried(world: &mut World) {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let icon = match carried {
-        Carried::Skill(skill) => skill.get(&content).icon.clone(),
+    let carried = match carried {
+        Carried::Skill(skill) => CarriedThing::Skill(skill),
         Carried::BagSlot(slot) => {
             let Some(stack) = session::my_character(world)
                 .and_then(|me| me.get::<Inventory>())
@@ -354,31 +375,59 @@ fn draw_carried(world: &mut World) {
             else {
                 return;
             };
-            stack.item.get(&content).icon.clone()
+            CarriedThing::Item(stack.item)
         }
         Carried::Worn(slot) => {
             let Some(item) = session::me(world).and_then(|me| equipment::in_slot(world, me, &slot))
             else {
                 return;
             };
-            item.get(&content).icon.clone()
+            CarriedThing::Item(item)
         }
         Carried::BarEntry { entry, .. } => match entry {
-            HotbarEntry::Skill(skill) => skill.get(&content).icon.clone(),
-            HotbarEntry::Item(item) => item.get(&content).icon.clone(),
+            HotbarEntry::Skill(skill) => CarriedThing::Skill(skill),
+            HotbarEntry::Item(item) => CarriedThing::Item(item),
             HotbarEntry::Empty => return,
         },
     };
-    let Some(image) = gui::image(world, &icon) else {
+    let (icon, rarity) = match carried {
+        CarriedThing::Skill(skill) => (&skill.get(&content).icon, None),
+        CarriedThing::Item(item) => {
+            let def = item.get(&content);
+            (&def.icon, Some(SlotRarity::of(&content, def.rarity)))
+        }
+    };
+    let Some(image) = gui::image(world, icon) else {
         return;
     };
+    let pip = rarity
+        .and_then(|rarity| rarity.icon)
+        .and_then(|icon| gui::image(world, icon));
     float::at_pointer(
         &gui,
         Id::new("carried"),
         Band::Pointer.order(),
         -Vec2::splat(CARRIED / 2.0),
-        |ui| ui.add(image.widget(Vec2::splat(CARRIED))),
+        |ui| {
+            let response = ui.add(image.widget(Vec2::splat(CARRIED)));
+            if let Some(rarity) = rarity {
+                paint::gradient_edge(
+                    ui.painter(),
+                    response.rect,
+                    controls::SLOT_EDGE,
+                    rarity.colors(),
+                );
+            }
+            if let Some(pip) = pip {
+                controls::slot_pip(ui.painter(), response.rect, pip.texture, Color32::WHITE);
+            }
+        },
     );
+}
+
+enum CarriedThing {
+    Skill(SkillId),
+    Item(ItemId),
 }
 
 fn sized(ui: &mut Ui, image: Option<gui::GuiImage>, size: f32) -> egui::Response {

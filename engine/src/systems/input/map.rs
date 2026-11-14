@@ -97,6 +97,8 @@ pub enum InputAction {
     SlotOptions,
     /// Held, to keep the wheel of emotes open round the player's character.
     Emotes,
+    /// Held or tapped, to name the items lying round the player's character.
+    NameItems,
     FocusChat,
 }
 
@@ -347,6 +349,32 @@ impl InputBinding {
         }
     }
 
+    fn modifiers(self) -> KeyModifiers {
+        match self {
+            InputBinding::Key(gesture) => gesture.modifiers,
+            InputBinding::AnyKey => KeyModifiers::NONE,
+            InputBinding::Mouse { modifiers, .. } => modifiers,
+            InputBinding::Click(gesture) => gesture.modifiers,
+            InputBinding::Drag(gesture) => gesture.modifiers,
+            InputBinding::Wheel(gesture) => gesture.modifiers,
+        }
+    }
+
+    /// The gesture alone, with nothing held beside it.
+    fn bare(self) -> InputBinding {
+        match self {
+            InputBinding::Key(gesture) => InputBinding::key(gesture.key),
+            InputBinding::AnyKey => InputBinding::AnyKey,
+            InputBinding::Mouse { button, .. } => InputBinding::mouse(button),
+            InputBinding::Click(gesture) => InputBinding::Click(ClickGesture {
+                modifiers: KeyModifiers::NONE,
+                ..gesture
+            }),
+            InputBinding::Drag(gesture) => InputBinding::drag(gesture.button),
+            InputBinding::Wheel(gesture) => InputBinding::wheel(gesture.turn),
+        }
+    }
+
     pub fn name(&self) -> String {
         let (modifiers, name) = match *self {
             InputBinding::Key(gesture) => (gesture.modifiers, key_name(gesture.key)),
@@ -365,24 +393,57 @@ impl InputBinding {
 }
 
 #[derive(Resource, Clone, Debug, PartialEq)]
-pub struct InputMap(HashMap<InputAction, Vec<InputBinding>>);
+pub struct InputMap {
+    bindings: HashMap<InputAction, Vec<InputBinding>>,
+    own_keys: KeyModifiers,
+    /// Every modifier the game binds a gesture with, by the gesture alone.
+    bound_with: HashMap<InputBinding, KeyModifiers>,
+}
 
 impl InputMap {
     pub fn new(content: &Content) -> InputMap {
         let file = InputFixture::Game.get(content);
-        InputMap(
-            InputAction::VARIANTS
-                .iter()
-                .map(|&action| {
-                    let bound = file.actions.get(&action).cloned().unwrap_or_default();
-                    (action, bound.bindings)
-                })
-                .collect(),
-        )
+        let bindings: HashMap<InputAction, Vec<InputBinding>> = InputAction::VARIANTS
+            .iter()
+            .map(|&action| {
+                let bound = file.actions.get(&action).cloned().unwrap_or_default();
+                (action, bound.bindings)
+            })
+            .collect();
+        let own_keys = bindings
+            .values()
+            .flatten()
+            .filter_map(|binding| match binding {
+                InputBinding::Key(gesture) => Some(KeyModifiers::of(gesture.key)),
+                _ => None,
+            })
+            .fold(KeyModifiers::NONE, KeyModifiers::and);
+        let mut bound_with: HashMap<InputBinding, KeyModifiers> = HashMap::new();
+        for binding in bindings.values().flatten() {
+            let with = bound_with.entry(binding.bare()).or_default();
+            *with = with.and(binding.modifiers());
+        }
+        InputMap {
+            bindings,
+            own_keys,
+            bound_with,
+        }
     }
 
     pub fn bindings(&self, action: InputAction) -> &[InputBinding] {
-        self.0.get(&action).map_or(&[], Vec::as_slice)
+        self.bindings.get(&action).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether the modifiers held are just those `gesture` asks for. A modifier the game binds
+    /// as an action's own key is that key: held, it stands in no gesture's way, except where the
+    /// game also binds the gesture with it, and then it means that binding.
+    fn holds(&self, keys: &ButtonInput<KeyCode>, gesture: InputBinding) -> bool {
+        let wanted = gesture.modifiers();
+        let meant = self
+            .bound_with
+            .get(&gesture.bare())
+            .map_or(wanted, |with| with.and(wanted));
+        KeyModifiers::held(keys).without(self.own_keys.without(meant)) == wanted
     }
 
     pub fn name(&self, action: InputAction) -> Option<String> {
@@ -415,12 +476,13 @@ impl InputMap {
 pub fn just_pressed(world: &World, action: InputAction) -> bool {
     let keys = world.resource::<ButtonInput<KeyCode>>();
     let mouse = world.resource::<ButtonInput<MouseButton>>();
+    let map = world.resource::<InputMap>();
     scope::reads(world, action)
-        && bindings(world, action).any(|binding| match *binding {
-            InputBinding::Key(gesture) => gesture.just_pressed(keys),
+        && map.bindings(action).iter().any(|binding| match *binding {
+            InputBinding::Key(gesture) => gesture.just_pressed(keys, map),
             InputBinding::AnyKey => keys.get_just_pressed().next().is_some(),
-            InputBinding::Mouse { button, modifiers } => {
-                mouse.just_pressed(button) && KeyModifiers::held(keys) == modifiers
+            InputBinding::Mouse { button, .. } => {
+                mouse.just_pressed(button) && map.holds(keys, *binding)
             }
             InputBinding::Click(_) | InputBinding::Drag(_) | InputBinding::Wheel(_) => false,
         })
@@ -435,12 +497,13 @@ pub fn just_pressed_index(world: &World, actions: &[InputAction]) -> Option<usiz
 pub fn pressed(world: &World, action: InputAction) -> bool {
     let keys = world.resource::<ButtonInput<KeyCode>>();
     let mouse = world.resource::<ButtonInput<MouseButton>>();
+    let map = world.resource::<InputMap>();
     scope::reads(world, action)
-        && bindings(world, action).any(|binding| match *binding {
-            InputBinding::Key(gesture) => gesture.pressed(keys),
+        && map.bindings(action).iter().any(|binding| match *binding {
+            InputBinding::Key(gesture) => gesture.pressed(keys, map),
             InputBinding::AnyKey => keys.get_pressed().next().is_some(),
-            InputBinding::Mouse { button, modifiers } => {
-                mouse.pressed(button) && KeyModifiers::held(keys) == modifiers
+            InputBinding::Mouse { button, .. } => {
+                mouse.pressed(button) && map.holds(keys, *binding)
             }
             InputBinding::Click(_) | InputBinding::Drag(_) | InputBinding::Wheel(_) => false,
         })
@@ -448,16 +511,18 @@ pub fn pressed(world: &World, action: InputAction) -> bool {
 
 pub fn clicked(world: &World, action: InputAction, response: &egui::Response) -> bool {
     let keys = world.resource::<ButtonInput<KeyCode>>();
-    bindings(world, action).any(|binding| match binding {
-        InputBinding::Click(gesture) => gesture.clicked(response, keys),
+    let map = world.resource::<InputMap>();
+    map.bindings(action).iter().any(|binding| match binding {
+        InputBinding::Click(gesture) => gesture.clicked(response, keys, map),
         _ => false,
     })
 }
 
 pub fn drag_started(world: &World, action: InputAction, response: &egui::Response) -> bool {
     let keys = world.resource::<ButtonInput<KeyCode>>();
-    bindings(world, action).any(|binding| match binding {
-        InputBinding::Drag(gesture) => gesture.started(response, keys),
+    let map = world.resource::<InputMap>();
+    map.bindings(action).iter().any(|binding| match binding {
+        InputBinding::Drag(gesture) => gesture.started(response, keys, map),
         _ => false,
     })
 }
@@ -469,9 +534,11 @@ pub fn wheeled(world: &World, action: InputAction) -> u32 {
     let turned = world
         .get_resource::<WheelNotches>()
         .map_or(0, |notches| notches.turned);
-    bindings(world, action)
+    let map = world.resource::<InputMap>();
+    map.bindings(action)
+        .iter()
         .filter_map(|binding| match binding {
-            InputBinding::Wheel(gesture) => Some(gesture.notches(turned, keys)),
+            InputBinding::Wheel(gesture) => Some(gesture.notches(turned, keys, map)),
             _ => None,
         })
         .max()
@@ -480,7 +547,11 @@ pub fn wheeled(world: &World, action: InputAction) -> u32 {
 
 /// Whether a turn of the wheel is one of the ways `action` is bound.
 pub fn takes_wheel(world: &World, action: InputAction) -> bool {
-    bindings(world, action).any(|binding| matches!(binding, InputBinding::Wheel(_)))
+    world
+        .resource::<InputMap>()
+        .bindings(action)
+        .iter()
+        .any(|binding| matches!(binding, InputBinding::Wheel(_)))
 }
 
 pub fn input(action: InputAction) -> TextPiece {
@@ -512,24 +583,12 @@ pub struct KeyGesture {
 }
 
 impl KeyGesture {
-    pub fn just_pressed(&self, keys: &ButtonInput<KeyCode>) -> bool {
-        keys.just_pressed(self.key) && self.beside(keys) == self.modifiers
+    pub fn just_pressed(&self, keys: &ButtonInput<KeyCode>, map: &InputMap) -> bool {
+        keys.just_pressed(self.key) && map.holds(keys, InputBinding::Key(*self))
     }
 
-    pub fn pressed(&self, keys: &ButtonInput<KeyCode>) -> bool {
-        keys.pressed(self.key) && self.beside(keys) == self.modifiers
-    }
-
-    /// The modifiers held beside the gesture's own key: a modifier bound as a key is itself, not
-    /// a modifier of itself.
-    fn beside(&self, keys: &ButtonInput<KeyCode>) -> KeyModifiers {
-        let held = KeyModifiers::held(keys);
-        KeyModifiers {
-            ctrl: held.ctrl && !CTRL.contains(&self.key),
-            shift: held.shift && !SHIFT.contains(&self.key),
-            alt: held.alt && !ALT.contains(&self.key),
-            super_key: held.super_key && !SUPER.contains(&self.key),
-        }
+    pub fn pressed(&self, keys: &ButtonInput<KeyCode>, map: &InputMap) -> bool {
+        keys.pressed(self.key) && map.holds(keys, InputBinding::Key(*self))
     }
 }
 
@@ -576,7 +635,12 @@ impl From<Clicks> for u8 {
 }
 
 impl ClickGesture {
-    fn clicked(&self, response: &egui::Response, keys: &ButtonInput<KeyCode>) -> bool {
+    fn clicked(
+        &self,
+        response: &egui::Response,
+        keys: &ButtonInput<KeyCode>,
+        map: &InputMap,
+    ) -> bool {
         let Some(button) = pointer_button(self.button) else {
             return false;
         };
@@ -585,7 +649,7 @@ impl ClickGesture {
             Clicks::Double => response.double_clicked_by(button),
             Clicks::Triple => response.triple_clicked_by(button),
         };
-        clicked && KeyModifiers::held(keys) == self.modifiers
+        clicked && map.holds(keys, InputBinding::Click(*self))
     }
 }
 
@@ -598,9 +662,14 @@ pub struct DragGesture {
 }
 
 impl DragGesture {
-    fn started(&self, response: &egui::Response, keys: &ButtonInput<KeyCode>) -> bool {
+    fn started(
+        &self,
+        response: &egui::Response,
+        keys: &ButtonInput<KeyCode>,
+        map: &InputMap,
+    ) -> bool {
         pointer_button(self.button).is_some_and(|button| response.drag_started_by(button))
-            && KeyModifiers::held(keys) == self.modifiers
+            && map.holds(keys, InputBinding::Drag(*self))
     }
 }
 
@@ -620,8 +689,8 @@ pub enum WheelTurn {
 }
 
 impl WheelGesture {
-    fn notches(&self, turned: i32, keys: &ButtonInput<KeyCode>) -> u32 {
-        if KeyModifiers::held(keys) != self.modifiers {
+    fn notches(&self, turned: i32, keys: &ButtonInput<KeyCode>, map: &InputMap) -> u32 {
+        if !map.holds(keys, InputBinding::Wheel(*self)) {
             return 0;
         }
         match self.turn {
@@ -661,6 +730,25 @@ impl KeyModifiers {
         }
     }
 
+    const fn without(self, other: KeyModifiers) -> KeyModifiers {
+        KeyModifiers {
+            ctrl: self.ctrl && !other.ctrl,
+            shift: self.shift && !other.shift,
+            alt: self.alt && !other.alt,
+            super_key: self.super_key && !other.super_key,
+        }
+    }
+
+    /// The modifier `key` is, when it is one.
+    fn of(key: KeyCode) -> KeyModifiers {
+        KeyModifiers {
+            ctrl: CTRL.contains(&key),
+            shift: SHIFT.contains(&key),
+            alt: ALT.contains(&key),
+            super_key: SUPER.contains(&key),
+        }
+    }
+
     pub fn held(keys: &ButtonInput<KeyCode>) -> KeyModifiers {
         KeyModifiers {
             ctrl: keys.any_pressed(CTRL),
@@ -671,9 +759,7 @@ impl KeyModifiers {
     }
 
     pub fn is_modifier(key: KeyCode) -> bool {
-        [CTRL, SHIFT, ALT, SUPER]
-            .iter()
-            .any(|keys| keys.contains(&key))
+        KeyModifiers::of(key) != KeyModifiers::NONE
     }
 
     fn egui(self) -> egui::Modifiers {
@@ -802,8 +888,4 @@ fn capitalized(name: String) -> String {
         .next()
         .map(|first| first.to_uppercase().chain(letters).collect())
         .unwrap_or_default()
-}
-
-fn bindings(world: &World, action: InputAction) -> impl Iterator<Item = &InputBinding> {
-    world.resource::<InputMap>().bindings(action).iter()
 }

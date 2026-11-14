@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
+use engine::core::time::{UnixMillis, WallClock};
 use engine::core::units::{Meters, Seconds};
 use engine::systems::area::{AreaDef, AreaTag};
 use engine::systems::combat::{self, AttackRequest, Attitude};
@@ -72,6 +73,41 @@ fn a_new_order_replaces_the_one_in_progress() {
     assert_eq!(stat::effective(&sim.world, brute, StatKind::Health), full);
 }
 
+#[test]
+fn a_dropped_item_tells_when_it_will_be_gone_and_is_gone_then() {
+    let mut sim = yard();
+    let player = sim.join(1);
+    let at = position(&sim.world, player).expect("position");
+    let area = sim.id::<AreaDef>("yard");
+    let bone = sim.id::<ItemDef>("bone");
+    let now = sim.world.resource::<WallClock>().now;
+    let brief = Some(Seconds(5.0));
+
+    item::scatter_at(&mut sim.world, at, area, &[(bone, 1)], None, None, None);
+    item::scatter_at(&mut sim.world, at, area, &[(bone, 1)], None, None, brief);
+
+    assert_eq!(
+        lying(&mut sim),
+        vec![now.after(Seconds(5.0)), now.after(Seconds(120.0))]
+    );
+    sim.later(5.0);
+    assert_eq!(lying(&mut sim), vec![now.after(Seconds(120.0))]);
+    sim.later(115.0);
+    assert_eq!(lying(&mut sim), vec![]);
+}
+
+/// When each item lying on the ground will be gone, the soonest first.
+fn lying(sim: &mut Sim) -> Vec<UnixMillis> {
+    let mut gone_at: Vec<UnixMillis> = sim
+        .world
+        .query::<&DroppedItem>()
+        .iter(&sim.world)
+        .map(|dropped| dropped.until)
+        .collect();
+    gone_at.sort();
+    gone_at
+}
+
 fn yard() -> Sim {
     let content = Game::new()
         .area("yard", &Map::open(13, 5), json!([]))
@@ -96,7 +132,7 @@ fn yard() -> Sim {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan(movement::AdvanceWalks::default())
-        .add(item::pickups)
+        .add((item::pickups, item::expire_drops))
         .plan(stat::SettleHealth::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
@@ -121,6 +157,7 @@ fn drop_bone(sim: &mut Sim, at: Pos<Meters>) -> Entity {
             DroppedItem {
                 item: bone,
                 count: 2,
+                until: UnixMillis(u64::MAX),
             },
             Reservation {
                 by: None,

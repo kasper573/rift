@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString};
 
 use crate::core::audio::playback::SfxId;
+use crate::core::card::CardStyleId;
 use crate::core::content::ImageRef;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Fixture, Loading, ModuleRule, ModuleSet,
@@ -66,6 +67,9 @@ pub struct QuestDef {
     /// what it says of the quest, and reads best of one taller than it is wide.
     pub art: ImageRef,
     pub xp: u32,
+    /// What the quest's card is drawn in. Left out, the game's default card style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card_style: Option<CardStyleId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reveal: Vec<ChoiceReveal>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -82,6 +86,7 @@ impl ContentFile for QuestDef {
             blurb: String::new(),
             art: near.image()?,
             xp: 0,
+            card_style: None,
             reveal: Vec::new(),
             modules: vec![
                 QuestModule::Objective(Objective::Task {

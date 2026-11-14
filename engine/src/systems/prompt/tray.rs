@@ -201,10 +201,9 @@ pub fn slots(ui: &mut Ui, world: &mut World, count: u32) {
                     };
                     let def = placed.stack.item.get(&content);
                     let look = SlotLook {
-                        icon: Some(&def.icon),
                         count: placed.stack.count,
                         refused: placed.short,
-                        ..SlotLook::EMPTY
+                        ..SlotLook::of(&content, placed.stack.item)
                     };
                     let response = slot(ui, world, look, Sense::click());
                     response.widget_info(|| {

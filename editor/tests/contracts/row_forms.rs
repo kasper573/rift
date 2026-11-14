@@ -544,6 +544,7 @@ fn a_script_module_added_to_a_row_runs_a_script_of_its_kind_made_for_it_when_non
             .file("icons/cap.png", testkit::png(32, 32))
             .file("art/cap_card.png", testkit::png(256, 180))
             .prop("drop", json!({ "type": "none" }))
+            .rarity("plain", 1, json!({}))
             .npc("orc", 10.0, json!([]));
         let mut editor = support::open(game, &scratch);
         let row = editor::rows::new_file(&mut editor, "", table)

@@ -59,7 +59,8 @@ impl InputAction {
             | InputAction::CameraHome
             | InputAction::ZoomIn
             | InputAction::ZoomOut
-            | InputAction::Emotes => &[World],
+            | InputAction::Emotes
+            | InputAction::NameItems => &[World],
             InputAction::OpenCharacter
             | InputAction::OpenSkills
             | InputAction::OpenQuests

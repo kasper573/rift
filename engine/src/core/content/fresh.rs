@@ -47,6 +47,15 @@ impl<'a> Nearby<'a> {
             .ok_or_else(|| format!("it needs {wanted}: make one first"))
     }
 
+    /// Every file of `Row` in the game that reads.
+    pub fn all<Row: ContentFile>(&self) -> Vec<Row> {
+        self.reader
+            .paths_of::<Row>()
+            .iter()
+            .filter_map(|path| self.reader.read::<Row>(path).ok())
+            .collect()
+    }
+
     /// The file `id` names, as it reads.
     pub fn read<Row: ContentFile>(&self, id: ContentId<Row>) -> Result<Row, String> {
         let path = self

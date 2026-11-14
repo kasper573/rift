@@ -1,9 +1,10 @@
+use engine::core::card::CardStyleFixture;
 use engine::core::content::fixture::FixtureLock;
 use engine::core::content::{ContentFile, Fixture};
 use engine::core::vfx::{ParamKind, ShaderParam};
 use engine::systems::area::world_map::WorldMap;
 use engine::systems::attention::AttentionMark;
-use engine::systems::input::map::{BoundAction, InputAction, InputDef, InputFixture};
+use engine::systems::input::map::{BoundAction, InputAction, InputBinding, InputDef, InputFixture};
 use engine::systems::interface::{CursorShape, InterfaceIcon, InterfaceSound};
 use engine::systems::vfx::{VfxFixture, VfxShaderFixture};
 use serde_json::{Value, json};
@@ -39,28 +40,35 @@ impl Game {
                 }
             })
         });
-        each::<WorldMap>(game, |game, key, _| game.row("world_map", key, json!({})))
+        let game = each::<WorldMap>(game, |game, key, _| game.row("world_map", key, json!({})));
+        each::<CardStyleFixture>(game, |game, key, _| game.card_style(key, json!({})))
     }
 
     /// The input file with every action named and none bound: what a server needs to word the
     /// inputs a line of text names.
     pub fn inputs(self) -> Game {
-        let unbound = InputDef {
+        self.bound(&[])
+    }
+
+    /// The input file with every action named, and bound only as `bound` says.
+    pub fn bound(self, bound: &[(InputAction, InputBinding)]) -> Game {
+        let file = InputDef {
             actions: InputAction::VARIANTS
                 .iter()
                 .map(|&action| {
                     let label = <&str>::from(action).to_owned();
-                    let bound = BoundAction {
-                        label,
-                        bindings: Vec::new(),
-                    };
-                    (action, bound)
+                    let bindings = bound
+                        .iter()
+                        .filter(|(to, _)| *to == action)
+                        .map(|(_, binding)| *binding)
+                        .collect();
+                    (action, BoundAction { label, bindings })
                 })
                 .collect(),
         };
-        let unbound = serde_json::to_value(unbound).expect("an input file");
+        let file = serde_json::to_value(file).expect("an input file");
         each::<InputFixture>(self, |game, key, _| {
-            game.row(InputDef::TABLE, key, unbound.clone())
+            game.row(InputDef::TABLE, key, file.clone())
         })
     }
 }

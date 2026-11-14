@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "84979a65",
+  "content_version": "1e3a7e73",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -29,7 +29,52 @@
     "last": 120.0,
     "scatter": 1.0,
     "pickup_reach": 1.0,
-    "click_reach": 0.5
+    "click_reach": 0.5,
+    "outline": 2.0,
+    "outline_hover": 3.0,
+    "least_size": 0.35,
+    "fades_for": 10.0,
+    "names_reach": 14.0,
+    "names_shown": 24,
+    "effects_shown": 8
+  },
+  "item_type_art_colors": {
+    "equipment": {
+      "from": [
+        58,
+        94,
+        163
+      ],
+      "to": [
+        45,
+        78,
+        140
+      ]
+    },
+    "usable": {
+      "from": [
+        200,
+        48,
+        42
+      ],
+      "to": [
+        168,
+        38,
+        31
+      ]
+    },
+    "resource": {
+      "from": [
+        227,
+        179,
+        53
+      ],
+      "to": [
+        196,
+        146,
+        30
+      ]
+    }
   },
   "reading": {
     "glance": 2.0,

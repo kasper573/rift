@@ -2,14 +2,16 @@ use bevy::prelude::*;
 use ui::drag;
 use ui::egui;
 use ui::egui::{Color32, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
-use ui::{controls, ink, sheet};
+use ui::{controls, ink, paint, sheet};
 
 use crate::core::content::Content;
 use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
+use crate::core::math::ColorGradient;
 use crate::core::text::{StyledLine, TextPiece};
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, InputMap, input};
+use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::{
     DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, card,
 };
@@ -136,6 +138,7 @@ pub fn slot_notes(world: &World, stack: ItemStack) -> Vec<String> {
 
 pub(crate) struct SlotLook<'a> {
     pub icon: Option<&'a ImageRef>,
+    pub rarity: Option<SlotRarity<'a>>,
     pub count: u32,
     pub wanted: bool,
     pub faded: bool,
@@ -147,6 +150,7 @@ pub(crate) struct SlotLook<'a> {
 impl SlotLook<'_> {
     pub(crate) const EMPTY: SlotLook<'static> = SlotLook {
         icon: None,
+        rarity: None,
         count: 0,
         wanted: false,
         faded: false,
@@ -156,17 +160,106 @@ impl SlotLook<'_> {
     };
 }
 
-/// `icon` in a slot as the bag draws one: how an item's icon looks to the player.
+impl<'a> SlotLook<'a> {
+    /// A slot holding `item`: its icon, edged and marked as its rarity is.
+    pub(crate) fn of(content: &'a Content, item: ItemId) -> SlotLook<'a> {
+        let def = item.get(content);
+        SlotLook {
+            icon: Some(&def.icon),
+            rarity: Some(SlotRarity::of(content, def.rarity)),
+            ..SlotLook::EMPTY
+        }
+    }
+
+    /// The colours its slot is edged in, ghosted as its icon is.
+    pub(crate) fn edge(&self) -> Option<[Color32; 2]> {
+        self.rarity.map(|rarity| {
+            rarity
+                .colors()
+                .map(|color| color.gamma_multiply(self.ghost()))
+        })
+    }
+
+    fn ghost(&self) -> f32 {
+        if self.faded { GHOST } else { 1.0 }
+    }
+}
+
+/// What a slot shows of its item's rarity: the colours of its edge, and the icon in its corner.
+#[derive(Clone, Copy)]
+pub(crate) struct SlotRarity<'a> {
+    pub gradient: ColorGradient,
+    pub icon: Option<&'a ImageRef>,
+}
+
+impl<'a> SlotRarity<'a> {
+    pub(crate) fn of(content: &'a Content, rarity: ItemRarityId) -> SlotRarity<'a> {
+        let def = rarity.get(content);
+        SlotRarity {
+            gradient: def.gradient,
+            icon: def.icon.as_ref(),
+        }
+    }
+
+    pub(crate) fn colors(self) -> [Color32; 2] {
+        self.gradient.colors()
+    }
+}
+
+/// The rarity's icon in the corner of the slot at `rect`.
+pub(crate) fn slot_pip(
+    ui: &Ui,
+    images: &mut (impl ImageSource + ?Sized),
+    rect: Rect,
+    look: &SlotLook,
+) {
+    if let Some(pip) = look
+        .rarity
+        .and_then(|rarity| rarity.icon)
+        .and_then(|icon| images.image(icon))
+    {
+        let tint = Color32::from_white_alpha((look.ghost() * 255.0) as u8);
+        controls::slot_pip(ui.painter(), rect, pip.texture, tint);
+    }
+}
+
+/// An item's icon where it is listed beside its name rather than held in a slot, `size` across
+/// and edged in its rarity's colours as a slot that size would be.
+pub(crate) fn listed_icon(
+    ui: &mut Ui,
+    images: &mut (impl ImageSource + ?Sized),
+    content: &Content,
+    item: ItemId,
+    size: f32,
+) -> Response {
+    let response = hud::icon(ui, images, &item.get(content).icon, size);
+    let scale = size / controls::SLOT_ICON;
+    paint::gradient_edge(
+        ui.painter(),
+        response
+            .rect
+            .expand((SLOT - controls::SLOT_ICON) / 2.0 * scale),
+        controls::SLOT_EDGE * scale,
+        SlotRarity::of(content, item.get(content).rarity).colors(),
+    );
+    response
+}
+
+/// A slot as the bag draws one of an item of `rarity`, edged and marked as the rarity is, and
+/// holding `item`'s icon where there is an item to show in it.
 pub fn shown_slot(
     ui: &mut Ui,
     images: &mut (impl ImageSource + ?Sized),
-    icon: &ImageRef,
+    content: &Content,
+    rarity: ItemRarityId,
+    item: Option<ItemId>,
 ) -> Response {
     slot(
         ui,
         images,
         SlotLook {
-            icon: Some(icon),
+            icon: item.map(|item| &item.get(content).icon),
+            rarity: Some(SlotRarity::of(content, rarity)),
             ..SlotLook::EMPTY
         },
         Sense::hover(),
@@ -191,6 +284,7 @@ pub(crate) fn slot(
             filled: look.icon.is_some(),
             hovered,
             refused: look.refused,
+            edge: look.edge(),
         },
     );
     if look.selected {
@@ -201,16 +295,13 @@ pub(crate) fn slot(
             .rect_stroke(rect, 3.0, Stroke::new(1.5, ink::OCHRE), StrokeKind::Inside);
     }
     if let Some(image) = look.icon.and_then(|icon| images.image(icon)) {
-        let tint = if look.faded {
-            Color32::from_white_alpha((GHOST * 255.0) as u8)
-        } else {
-            Color32::WHITE
-        };
+        let tint = Color32::from_white_alpha((look.ghost() * 255.0) as u8);
         ui.place(
             Rect::from_center_size(rect.center(), Vec2::splat(controls::SLOT_ICON)),
             image.widget(Vec2::splat(controls::SLOT_ICON)).tint(tint),
         );
     }
+    slot_pip(ui, images, rect, &look);
     if look.count > 1 {
         controls::slot_count(ui.painter(), rect, look.count);
     }
@@ -270,13 +361,12 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&m
     let left = filled.stack.count.saturating_sub(filled.aside);
     let is_selected = selected.as_deref() == Some(&Some(cell.slot));
     let look = SlotLook {
-        icon: Some(&def.icon),
         count: left,
         wanted,
         faded: refused || carried || left == 0,
-        refused: false,
         quest: def.has(ItemModuleKind::QuestItem),
         selected: is_selected,
+        ..SlotLook::of(&content, filled.stack.item)
     };
     let response = slot(ui, world, look, Sense::click_and_drag());
     response.widget_info(|| {
@@ -303,12 +393,9 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&m
     if map::drag_started(world, InputAction::CarryItem, &response) {
         drag::carry(ui.ctx(), Carried::BagSlot(cell.slot));
     }
-    let lines: Vec<String> = std::iter::once(card::overview(def))
-        .chain(filled.notes.iter().cloned())
-        .chain(verdict)
-        .collect();
+    let notes = filled.notes.iter().cloned().chain(verdict);
     let hint = StyledLine::new(hint_pieces(&filled.hints));
-    hud::tooltip(&response, world, &def.name, &lines, Some(&hint));
+    card::tooltip_noted(world, &response, filled.stack.item, notes, Some(&hint));
     if let Some(selected) = selected
         && map::clicked(world, InputAction::Select, &response)
     {

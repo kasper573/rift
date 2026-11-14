@@ -286,7 +286,7 @@ fn play_prop_effects(world: &mut World) {
         {
             shown.insert(scenery::extent_of(info, 1.0));
         }
-        shown.insert(StandingVfx(prop.effects.clone()));
+        shown.insert(StandingVfx::playing(prop.effects.clone()));
     }
 }
 

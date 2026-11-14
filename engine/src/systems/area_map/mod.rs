@@ -13,7 +13,7 @@ use ui::egui::{self, Align2, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use ui::face::{Face, TextRole};
 use ui::{dusk, float, ink};
 
-use crate::core::content::{Content, RowCheck};
+use crate::core::content::{Content, ImageRef, RowCheck};
 use crate::core::gui::{self, GuiImage};
 use crate::core::math::{Pos, Rect};
 use crate::core::render::CameraRig;
@@ -24,6 +24,7 @@ use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::attention::{self, AttentionId};
 use crate::systems::combat::Attitude;
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::item::{self, DroppedItem, Reservation};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::{PlayedBy, session};
@@ -102,6 +103,8 @@ pub enum MapMarkKind {
     Townsperson,
     Player,
     WayOut,
+    /// An item on the ground whose rarity marks it, drawn as the rarity's icon.
+    Loot,
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +114,8 @@ pub struct MapMark {
     pub at: Pos<Meters>,
     pub attention: Vec<AttentionId>,
     pub opacity: f32,
+    /// The picture the mark is drawn as, for a kind that has no shape of its own.
+    pub icon: Option<ImageRef>,
 }
 
 pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
@@ -155,16 +160,20 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
                 at,
                 attention: Vec::new(),
                 opacity: opacity.map_or(1.0, |opacity| opacity.0),
+                icon: None,
             };
             Some((entity, mark))
         })
         .collect();
-    let people = seen.into_iter().map(|(entity, mark)| MapMark {
-        attention: attention::plate_marks(world, Some(viewer), entity),
-        ..mark
-    });
+    let people: Vec<MapMark> = seen
+        .into_iter()
+        .map(|(entity, mark)| MapMark {
+            attention: attention::plate_marks(world, Some(viewer), entity),
+            ..mark
+        })
+        .collect();
     let scripts = world.resource::<RiftScripts>();
-    let ways = area::warp::warp_objects(&content, scripts, area)
+    let ways: Vec<MapMark> = area::warp::warp_objects(&content, scripts, area)
         .into_iter()
         .filter(|object| object.to.area != area)
         .map(|object| MapMark {
@@ -173,8 +182,38 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
             at: object.shape.center(),
             attention: Vec::new(),
             opacity: 1.0,
-        });
-    people.chain(ways).collect()
+            icon: None,
+        })
+        .collect();
+    let account = world.get::<PlayedBy>(viewer).map(|played| played.client);
+    let loot: Vec<MapMark> = world
+        .query::<(
+            &AreaTag,
+            &Position,
+            &DroppedItem,
+            Option<&Reservation>,
+            Option<&Opacity>,
+        )>()
+        .iter(world)
+        .filter(|(tag, at, _, reservation, _)| {
+            tag.area == area
+                && eye.distance_to(at.pos) <= sight.0
+                && item::takeable(*reservation, account)
+        })
+        .filter_map(|(_, at, dropped, _, opacity)| {
+            let def = dropped.item.get(&content);
+            let rarity = def.rarity.get(&content);
+            rarity.dropped.on_minimap.then(|| MapMark {
+                kind: MapMarkKind::Loot,
+                name: def.name.clone(),
+                at: at.pos,
+                attention: Vec::new(),
+                opacity: opacity.map_or(1.0, |opacity| opacity.0),
+                icon: rarity.icon.clone(),
+            })
+        })
+        .collect();
+    people.into_iter().chain(ways).chain(loot).collect()
 }
 
 struct MapView {
@@ -338,6 +377,7 @@ const BUTTON: f32 = 8.5;
 const WEDGE_HALF: f32 = 0.5;
 const WEDGE_REACH: f32 = 0.62;
 const PERSON: f32 = 4.5;
+const LOOT: f32 = 12.0;
 const DIAMOND: f32 = 5.5;
 const DOOR: Vec2 = Vec2::new(9.0, 10.0);
 const ATTENTION: f32 = 14.0;
@@ -515,6 +555,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
     // The more telling a kind, the later it is drawn, so it lies on top.
     for kind in [
         MapMarkKind::WayOut,
+        MapMarkKind::Loot,
         MapMarkKind::Townsperson,
         MapMarkKind::Player,
     ] {
@@ -529,6 +570,18 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                 }
                 MapMarkKind::Townsperson => {
                     ui.painter().circle(at, PERSON, fill(TOWNSPERSON), edge);
+                    mark.name.clone()
+                }
+                MapMarkKind::Loot => {
+                    if let Some(icon) = mark.icon.as_ref().and_then(|icon| gui::image(world, icon))
+                    {
+                        ui.painter().image(
+                            icon.texture,
+                            egui::Rect::from_center_size(at, Vec2::splat(LOOT)),
+                            egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                            fill(Color32::WHITE),
+                        );
+                    }
                     mark.name.clone()
                 }
                 MapMarkKind::Player => {

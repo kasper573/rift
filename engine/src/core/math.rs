@@ -133,6 +133,20 @@ impl From<Rgb> for egui::Color32 {
     }
 }
 
+/// Two colours a thing is shaded between.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct ColorGradient {
+    pub from: Rgb,
+    pub to: Rgb,
+}
+
+impl ColorGradient {
+    pub fn colors(self) -> [egui::Color32; 2] {
+        [self.from.into(), self.to.into()]
+    }
+}
+
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FrameSize {

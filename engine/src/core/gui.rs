@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::{Mutex, PoisonError};
 use ui::egui;
 
 use bevy::asset::RenderAssetUsages;
@@ -140,7 +141,7 @@ impl Plugin for GuiPlugin {
             .add_systems(PreUpdate, adopt_context)
             .add_systems(
                 EguiPrimaryContextPass,
-                (forget_world_layers, raise_tiers).before(Band::Stage),
+                (forget_world_layers, raise_tiers, keep_asked_images).before(Band::Stage),
             )
             .add_systems(
                 PostUpdate,
@@ -188,23 +189,40 @@ pub fn print(world: &mut World, asset: &ImageRef) -> Option<GuiImage> {
     finished(world, &asset.path(), Finish::Print)
 }
 
+/// The picture for what draws with the world only to read: there once it is kept, and asked for
+/// until then, so it shows a frame or so after it is first drawn.
+pub fn kept_image(world: &World, file: &str) -> Option<GuiImage> {
+    let images = world.resource::<GuiImages>();
+    match images.kept.get(&(file.to_owned(), Finish::Plain)) {
+        Some(GuiTexture::Ready(image)) => Some(image.clone()),
+        _ => {
+            images
+                .asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(file.to_owned());
+            None
+        }
+    }
+}
+
 fn finished(world: &mut World, file: &str, finish: Finish) -> Option<GuiImage> {
     let key = (file.to_owned(), finish);
-    if !world.resource::<GuiImages>().0.contains_key(&key) {
+    if !world.resource::<GuiImages>().kept.contains_key(&key) {
         let handle = world.resource::<AssetServer>().load(file.to_owned());
         world
             .resource_mut::<GuiImages>()
-            .0
+            .kept
             .insert(key.clone(), GuiTexture::Loading(handle));
     }
-    let loading = match &world.resource::<GuiImages>().0[&key] {
+    let loading = match &world.resource::<GuiImages>().kept[&key] {
         GuiTexture::Ready(image) => return Some(image.clone()),
         GuiTexture::Loading(handle) => handle.clone(),
     };
     let image = upload(world, file, &loading, finish)?;
     world
         .resource_mut::<GuiImages>()
-        .0
+        .kept
         .insert(key, GuiTexture::Ready(image.clone()));
     Some(image)
 }
@@ -243,7 +261,10 @@ pub fn cursor(world: &World) -> egui::CursorIcon {
 }
 
 #[derive(Resource, Default)]
-struct GuiImages(HashMap<(String, Finish), GuiTexture>);
+struct GuiImages {
+    kept: HashMap<(String, Finish), GuiTexture>,
+    asked: Mutex<BTreeSet<String>>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Finish {
@@ -280,6 +301,19 @@ fn adopt_context(
 fn forget_world_layers(mut layers: ResMut<WorldLayers>, mut widgets: ResMut<WidgetRects>) {
     layers.0.clear();
     widgets.0.clear();
+}
+
+fn keep_asked_images(world: &mut World) {
+    let asked = std::mem::take(
+        world
+            .resource_mut::<GuiImages>()
+            .asked
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner),
+    );
+    for file in asked {
+        image_file(world, &file);
+    }
 }
 
 fn raise_tiers(gui: Option<Res<GuiContext>>) {

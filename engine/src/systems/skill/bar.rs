@@ -29,7 +29,8 @@ use crate::systems::input::map::{
 };
 use crate::systems::input::scope;
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::widget::{SLOT, SlotLook, slot};
+use crate::systems::item::rarity::ItemRarityId;
+use crate::systems::item::widget::{SLOT, SlotLook, SlotRarity, slot};
 use crate::systems::item::{Inventory, ItemId, ItemKind, UseItemRequest, card as item_card};
 use crate::systems::player::session;
 use crate::systems::reach::Engaged;
@@ -359,6 +360,7 @@ enum Glyph {
 
 struct SlotView {
     icon: Option<ImageRef>,
+    rarity: Option<ItemRarityId>,
     count: u32,
     dimmed: bool,
     fill: SlotFill,
@@ -369,6 +371,7 @@ impl SlotView {
     fn empty() -> SlotView {
         SlotView {
             icon: None,
+            rarity: None,
             count: 0,
             dimmed: false,
             fill: SlotFill::Ready,
@@ -388,6 +391,7 @@ impl SlotView {
                 let rank = super::rank_of(world, me, skill);
                 SlotView {
                     icon: Some(def.icon.clone()),
+                    rarity: None,
                     count: 0,
                     dimmed: rank == Rank::NONE,
                     fill: skill_fill(world, me, skill, rank),
@@ -402,6 +406,7 @@ impl SlotView {
                 let holds = super::hotbar::holds_item(world, me, item);
                 SlotView {
                     icon: Some(def.icon.clone()),
+                    rarity: Some(def.rarity),
                     count: held,
                     dimmed: !holds,
                     fill: if !holds {
@@ -465,7 +470,6 @@ fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> SlotFill
 }
 
 fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
-    let content = world.resource::<Content>().clone();
     let entry = session::my_character(world)
         .and_then(|me| me.get::<Hotbar>())
         .map_or(HotbarEntry::Empty, |hotbar| hotbar.entry(index));
@@ -473,8 +477,10 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     let rebinding = world.resource::<BarState>().rebinding == Some(index);
     let carried = drag::carried::<Carried>(ui.ctx());
     let ghost = matches!(carried, Some(Carried::BarEntry { from, .. }) if from == index);
+    let content = world.resource::<Content>().clone();
     let look = SlotLook {
         icon: view.icon.as_ref(),
+        rarity: view.rarity.map(|rarity| SlotRarity::of(&content, rarity)),
         count: view.count,
         faded: view.dimmed || ghost,
         ..SlotLook::EMPTY
@@ -785,11 +791,8 @@ fn slot_tooltip(
             card::tooltip(response, world, &card::of(world, skill), Some(&hint));
         }
         HotbarEntry::Item(item) => {
-            let content = world.resource::<Content>().clone();
-            let def = item.get(&content);
             let hint = StyledLine::new(uses.into_iter().chain(options).chain(take_off).collect());
-            let lines = [item_card::overview(def)];
-            hud::tooltip(response, world, &def.name, &lines, Some(&hint));
+            item_card::tooltip_noted(world, response, item, [], Some(&hint));
         }
     }
 }
@@ -1035,7 +1038,10 @@ fn key_pressed(world: &World, slot: HotbarSlot) -> bool {
         Some(SlotKey::Action(action)) => map::just_pressed(world, action),
         Some(SlotKey::Gesture(gesture)) => {
             scope::reads(world, SLOT_KEYS[0])
-                && gesture.just_pressed(world.resource::<ButtonInput<KeyCode>>())
+                && gesture.just_pressed(
+                    world.resource::<ButtonInput<KeyCode>>(),
+                    world.resource::<InputMap>(),
+                )
         }
         None => false,
     }

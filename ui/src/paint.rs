@@ -70,6 +70,34 @@ pub fn band(painter: &Painter, rect: Rect, color_at: impl Fn(f32) -> Color32) {
 
 const BAND_COLUMN: f32 = 2.0;
 
+/// The edge of `rect`, `width` wide inside it, shaded from the first colour at its top to the
+/// second at its bottom.
+pub fn gradient_edge(painter: &Painter, rect: Rect, width: f32, [top, bottom]: [Color32; 2]) {
+    let inner = rect.shrink(width);
+    let share = (width / rect.height()).clamp(0.0, 0.5);
+    let under_top = top.lerp_to_gamma(bottom, share);
+    let over_bottom = top.lerp_to_gamma(bottom, 1.0 - share);
+    let mut mesh = Mesh::default();
+    for (corner, color) in [
+        (rect.left_top(), top),
+        (rect.right_top(), top),
+        (rect.right_bottom(), bottom),
+        (rect.left_bottom(), bottom),
+        (inner.left_top(), under_top),
+        (inner.right_top(), under_top),
+        (inner.right_bottom(), over_bottom),
+        (inner.left_bottom(), over_bottom),
+    ] {
+        mesh.colored_vertex(corner, color);
+    }
+    for side in 0..4 {
+        let next = (side + 1) % 4;
+        mesh.add_triangle(side, next, side + 4);
+        mesh.add_triangle(next, next + 4, side + 4);
+    }
+    painter.add(Shape::mesh(mesh));
+}
+
 /// `rect` washed in `color` and hatched over in it, the lines further apart the larger `scale`.
 pub fn hatched(painter: &Painter, rect: Rect, color: Color32, scale: f32) {
     painter.rect_filled(

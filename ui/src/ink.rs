@@ -83,6 +83,37 @@ pub fn gold_wash(alpha: f32) -> Color32 {
     wash(GOLD, alpha)
 }
 
+/// `color` as text over the dark `ground`: itself where it stands clear of it, else mixed toward
+/// white until it does.
+pub fn legible(color: Color32, ground: Color32) -> Color32 {
+    (0..=LIFTS)
+        .map(|lift| on(color, Color32::WHITE, f32::from(lift) / f32::from(LIFTS)))
+        .find(|lifted| contrast(*lifted, ground) >= READABLE)
+        .unwrap_or(Color32::WHITE)
+}
+
+/// How far two colours stand apart, from 1 for the same to 21 for black on white.
+pub fn contrast(one: Color32, other: Color32) -> f32 {
+    let (one, other) = (luminance(one), luminance(other));
+    (one.max(other) + 0.05) / (one.min(other) + 0.05)
+}
+
+/// The contrast text needs with what it lies on to be read.
+pub const READABLE: f32 = 4.5;
+const LIFTS: u8 = 16;
+
+fn luminance(color: Color32) -> f32 {
+    let linear = |channel: u8| {
+        let share = f32::from(channel) / 255.0;
+        if share <= 0.04045 {
+            share / 12.92
+        } else {
+            ((share + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+}
+
 pub fn on(base: Color32, over: Color32, amount: f32) -> Color32 {
     let amount = amount.clamp(0.0, 1.0);
     let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * amount).round() as u8;
