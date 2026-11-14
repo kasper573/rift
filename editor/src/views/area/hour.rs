@@ -346,6 +346,7 @@ pub(super) fn bar(editor: &mut Editor, ui: &mut Ui, canvas: ERect) {
                         | NumberField::new(&mut typed)
                             .range(0.0..=24.0)
                             .unit("h")
+                            .width(HOUR_WIDTH)
                             .show(ui)
                     {
                         day.hour = Some(HourOfDay::wrapped(typed));
@@ -422,3 +423,5 @@ pub(super) fn keys(editor: &mut Editor, input: &egui::InputState) {
 fn cycle(content: &Content) -> Option<&DayCycle> {
     content.try_built::<GameSettings>()?.daylight.as_ref()
 }
+
+const HOUR_WIDTH: f32 = 64.0;

@@ -26,13 +26,10 @@ pub const DAY_DIAL: &str = "day_dial";
 pub struct DayDialWidget;
 
 impl HudWidget for DayDialWidget {
-    /// Under the minimap's fallback spot.
+    /// Beside the minimap's fallback spot, on its left and level with its top.
     fn fallback(&self, screen: egui::Rect) -> Pos2 {
-        let above = minimap::MinimapWidget.fallback(screen);
-        Pos2::new(
-            above.x + (minimap::RESTING_SIZE.x - RESTING_SIZE.x) / 2.0,
-            above.y + minimap::RESTING_SIZE.y + hud::MARGIN,
-        )
+        let beside = minimap::MinimapWidget.fallback(screen);
+        Pos2::new(beside.x - RESTING_SIZE.x - hud::MARGIN, beside.y)
     }
 
     /// In a game without a day, before the server has told its hour, and for a player who
