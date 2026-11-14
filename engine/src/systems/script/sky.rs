@@ -1,12 +1,13 @@
 //! The sky as a script reads it: the hour of the game's day, its times of day and the weather
 //! over the area. Each side of the game tells its world what its sky is as a tick or a frame
-//! begins, and every condition of the sky alone is then answered once for all that follow it.
+//! begins. A side that shows the sky then answers every condition of the sky alone once for all
+//! that follow it; a side that only runs the game answers the few it asks about as it asks.
 
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use bevy_platform::collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -136,8 +137,8 @@ impl SkyTable {
     }
 }
 
-/// How much every sky condition of the game holds under the world's sky now, each answered once
-/// for the sky and the game they were last asked under.
+/// How much every sky condition of the game holds under a sky, each answered once for the sky
+/// and the game they were last asked under: what reads the sky without its world reads here.
 #[derive(Resource, Default)]
 pub struct SkyNow {
     shares: HashMap<Arc<str>, f32>,
@@ -181,7 +182,8 @@ impl SkyNow {
         }
     }
 
-    /// How much of what follows `when` is there now, 0 to 1: all of it when it follows nothing.
+    /// How much of what follows `when` is there under the sky last answered, 0 to 1: all of it
+    /// when it follows nothing.
     pub fn share(&self, when: Option<&SkyCondition>) -> f32 {
         when.map_or(1.0, |when| {
             self.shares.get(&when.text).copied().unwrap_or(0.0)
@@ -189,25 +191,49 @@ impl SkyNow {
     }
 }
 
-/// How much of what follows `when` is there in `world` now.
+/// How much of what follows `when` is there in `world` now: as answered for all that follow it
+/// where the world's sky has been, else asked of the world.
 pub fn share(world: &World, when: Option<&SkyCondition>) -> f32 {
-    world
-        .get_resource::<SkyNow>()
-        .map_or(1.0, |now| now.share(when))
+    let (Some(when), Some(content)) = (when, world.get_resource::<Content>()) else {
+        return 1.0;
+    };
+    let answered = world.get_resource::<SkyNow>().filter(|answers| {
+        answers
+            .answered
+            .as_ref()
+            .is_some_and(|(game, under)| game.is(content) && *under == now(world))
+    });
+    match answered {
+        Some(answers) => answers.share(Some(when)),
+        None => content
+            .try_built::<SkyTable>()
+            .and_then(|table| table.0.get(&when.text))
+            .map_or(0.0, |answer| share_of(answer, world)),
+    }
 }
 
-/// Tells `world` its sky, and answers every condition followed in it under that sky: nothing
-/// when it is the sky its conditions were last answered under, in the same game.
+/// Tells `world` its sky.
 pub fn turn(world: &mut World, sky: Sky) {
+    match world.get_resource_mut::<Sky>() {
+        Some(mut told) => {
+            told.set_if_neq(sky);
+        }
+        None => world.insert_resource(sky),
+    }
+}
+
+/// Answers every condition followed in `world` under the sky it was told, for what reads the
+/// answers without the world: nothing when that is the sky they were last answered under, in the
+/// same game.
+pub fn answer(world: &mut World) {
     let content = world.resource::<Content>();
     let answered = world
         .get_resource::<SkyNow>()
         .and_then(|now| now.answered.as_ref());
     let same_game = answered.is_some_and(|(game, _)| game.is(content));
-    if same_game && answered.is_some_and(|(_, under)| *under == sky) {
+    if same_game && answered.is_some_and(|(_, under)| *under == now(world)) {
         return;
     }
-    world.insert_resource(sky);
     if same_game {
         world.resource_scope(|world, mut now: Mut<SkyNow>| now.answer_again(world));
     } else {

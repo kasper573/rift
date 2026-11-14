@@ -383,6 +383,7 @@ impl RenderedView {
                     rain: 0.0,
                 },
             );
+            sky::answer(world);
         }
         world.insert_resource(scenery::shown_weather(&request.weather, 0.0));
         let ground = area.heights.height_at(request.camera.target);

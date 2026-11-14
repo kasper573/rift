@@ -163,7 +163,6 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<spawner::SpawnerEntries>();
     world.init_resource::<area::weather::ServerSky>();
     world.init_resource::<script::Sky>();
-    world.init_resource::<script::SkyNow>();
     world.init_resource::<script::sky::DayWatch>();
     world.init_resource::<area::rain::ServerShelters>();
     world.insert_resource(sleep::Sleep::of(content));

@@ -171,6 +171,7 @@ fn follow_daylight(world: &mut World) {
             rain,
         },
     );
+    sky::answer(world);
     let flash = light_area(world, area_id, &area, &weather);
     let shown = scenery::shown_weather(&weather, flash);
     match world.get_resource_mut::<ShownWeather>() {
