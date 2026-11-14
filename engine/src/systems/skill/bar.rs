@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
-use ui::egui::{Align2, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use ui::egui::{Align2, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use ui::face::TextRole;
 use ui::glyph::{self, Halo, Mark};
 use ui::{controls, ink, sheet, slip};
@@ -18,7 +18,7 @@ use super::{
 };
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
-use crate::core::gui;
+use crate::core::gui::{self, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::Seconds;
@@ -128,7 +128,8 @@ pub fn reshape_grip(ui: &mut Ui, world: &mut World, paper: Rect) {
     resize(world, ui, &grip, paper, corner);
 }
 
-pub fn rebind_notice(ui: &mut Ui, world: &World, foot: Pos2) {
+// In an area of its own, so it never adds to the extent of the bar it stands over.
+pub fn rebind_notice(gui: &egui::Context, world: &World, foot: Pos2) {
     let Some(slot) = world.resource::<BarState>().rebinding else {
         return;
     };
@@ -138,15 +139,24 @@ pub fn rebind_notice(ui: &mut Ui, world: &World, foot: Pos2) {
         TextPiece::text(" cancels"),
     ]);
     let look = TextLook::new(TextRole::Small.size(), ink::INK);
-    let size = text::measure(ui.ctx(), world, &line, look, f32::INFINITY) + slip::PADDING.sum();
-    let rect = Rect::from_min_size(
-        Pos2::new(foot.x - size.x / 2.0, foot.y - size.y - NOTICE_GAP),
-        size,
-    );
-    slip::paint(ui.painter(), rect);
-    let inner = rect - slip::PADDING;
-    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-        text::show(ui, world, &line, look, None);
+    let size = text::measure(gui, world, &line, look, f32::INFINITY) + slip::PADDING.sum();
+    let area = egui::Area::new(Id::new("slot rebind notice"))
+        .order(Order::Background)
+        .pivot(Align2::CENTER_BOTTOM)
+        .fixed_pos(foot - Vec2::new(0.0, NOTICE_GAP))
+        .constrain(false)
+        .fade_in(false)
+        .interactable(false);
+    gui::stack(gui, Tier::Mid, area.layer());
+    area.show(gui, |ui| {
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        slip::paint(ui.painter(), rect);
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(rect - slip::PADDING),
+            |ui| {
+                text::show(ui, world, &line, look, None);
+            },
+        );
     });
 }
 

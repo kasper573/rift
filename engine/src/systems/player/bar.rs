@@ -68,7 +68,7 @@ impl HudWidget for PlayerBarWidget {
         let points = points_button(ui.ctx(), world, &outside, sheet.points);
         let statuses = status_row(ui.ctx(), world, &outside);
         bar::rebind_notice(
-            ui,
+            ui.ctx(),
             world,
             Pos2::new(layout.paper.center().x, outside.notice_foot),
         );
@@ -98,7 +98,8 @@ const GAIN_SECONDS: f64 = 1.8;
 const GAIN_RISE: f32 = 14.0;
 
 /// Where the bar's parts lie: the globe of health to the left of the paper, the globe of mana,
-/// for a character that has any, to its right, and what the paper holds between them.
+/// for a character that has any, to its right, and what the paper holds between them. The globes
+/// stand beside the paper's lowest row of slots.
 struct Layout {
     whole: Rect,
     health: Pos2,
@@ -113,13 +114,14 @@ struct Layout {
 impl Layout {
     fn of(origin: Pos2, slots: Vec2, mana: bool) -> Layout {
         let one_row = 2.0 * PADDING.y + EXPERIENCE_ROW + ROW_GAP + controls::SLOT;
-        let rise = ((globe::SIZE - one_row) / 2.0).max(0.0);
+        let below = ((globe::SIZE - one_row) / 2.0).max(0.0);
+        let rise = (below - (slots.y - controls::SLOT)).max(0.0);
         let paper_at = origin + Vec2::new(globe::SIZE - GLOBE_OVER_PAPER, rise);
         let held_at = paper_at + Vec2::new(GLOBE_OVER_PAPER + BESIDE_GLOBE, PADDING.y);
         let experience = Rect::from_min_size(held_at, Vec2::new(slots.x, EXPERIENCE_ROW));
         let slots = Rect::from_min_size(held_at + Vec2::new(0.0, EXPERIENCE_ROW + ROW_GAP), slots);
         let held = Rect::from_min_max(paper_at, slots.max + PADDING);
-        let middle = paper_at.y + one_row / 2.0;
+        let middle = held.max.y - one_row / 2.0;
         let health = Pos2::new(origin.x + globe::SIZE / 2.0, middle);
         let mana = mana.then(|| Pos2::new(slots.max.x + BESIDE_GLOBE + globe::SIZE / 2.0, middle));
         let paper = match mana {
