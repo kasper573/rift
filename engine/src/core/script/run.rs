@@ -190,9 +190,6 @@ struct Instance<V: Vocabulary> {
     may_do: MayDo<V>,
     state: OwnerState,
     flows: Vec<FlowSlot>,
-    /// Its owner is being removed, and may have left the world already: none of its flows is
-    /// picked to run again.
-    removed: bool,
 }
 
 /// The state of an owner's procedures, by procedure.
@@ -230,9 +227,6 @@ impl<V: Vocabulary> Instances<V> {
     }
 
     pub fn remove_owner(&mut self, owner: Owner<V>) {
-        if let Some(instance) = self.instances.get_mut(&owner) {
-            instance.removed = true;
-        }
         self.ops.push_back(Op::Remove { owner });
     }
 
@@ -522,7 +516,8 @@ struct TickClock {
 }
 
 /// Readies every flow whose wait is over: at the step after its wait, or back at the step it
-/// stepped to. A disabled owner is asleep: its flows wait, due, until it wakes.
+/// stepped to. A disabled owner is asleep: its flows wait, due, until it wakes. An owner that
+/// has left the world runs no more of them: they wait for its instance to be closed.
 fn wake_due<V: Vocabulary>(
     world: &World,
     flows: &mut SlotMap<FlowSlot, Option<Box<Flow<V>>>>,
@@ -537,12 +532,12 @@ fn wake_due<V: Vocabulary>(
         if !due {
             continue;
         }
-        let asleep = flow.owner.entity().is_some_and(|owner| {
+        let asleep_or_gone = flow.owner.entity().is_some_and(|owner| {
             world
                 .get_entity(owner)
-                .is_ok_and(|owner| owner.contains::<Disabled>())
+                .map_or(true, |owner| owner.contains::<Disabled>())
         });
-        if asleep {
+        if asleep_or_gone {
             continue;
         }
         let Some(top) = flow.frames.last_mut() else {
@@ -610,7 +605,6 @@ fn run_batch<V: Vocabulary>(world: &mut World, clock: TickClock) {
 }
 
 /// Every running flow read ahead on every core, through the steps that only read the world.
-/// The flows of an owner being removed stay as they are until its instance is closed.
 fn read_batch<V: Vocabulary>(
     world: &World,
     owners: &HashMap<Owner<V>, Instance<V>>,
@@ -621,12 +615,7 @@ fn read_batch<V: Vocabulary>(
     let running: Vec<(FlowSlot, &mut Flow<V>)> = flows
         .iter_mut()
         .filter_map(|(slot, flow)| Some((slot, &mut **flow.as_mut()?)))
-        .filter(|(_, flow)| {
-            flow.running
-                && !owners
-                    .get(&flow.owner)
-                    .is_some_and(|instance| instance.removed)
-        })
+        .filter(|(_, flow)| flow.running)
         .collect();
     let read = |(slot, flow): (FlowSlot, &mut Flow<V>)| {
         let key = FlowKey {
@@ -1301,7 +1290,6 @@ fn apply_ops<V: Vocabulary>(world: &mut World) {
                         may_do,
                         state: OwnerState::new(),
                         flows: Vec::new(),
-                        removed: false,
                     },
                 );
             }
