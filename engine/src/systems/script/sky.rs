@@ -167,6 +167,20 @@ impl SkyNow {
         }
     }
 
+    /// Answers the conditions again under the sky `world` was told since, in the game they
+    /// were last answered in.
+    fn answer_again(&mut self, world: &World) {
+        let table = world.resource::<Content>().try_built::<SkyTable>();
+        for (text, answer) in table.into_iter().flat_map(|table| &table.0) {
+            if let Some(share) = self.shares.get_mut(text) {
+                *share = share_of(answer, world);
+            }
+        }
+        if let Some((_, under)) = &mut self.answered {
+            *under = now(world);
+        }
+    }
+
     /// How much of what follows `when` is there now, 0 to 1: all of it when it follows nothing.
     pub fn share(&self, when: Option<&SkyCondition>) -> f32 {
         when.map_or(1.0, |when| {
@@ -189,12 +203,17 @@ pub fn turn(world: &mut World, sky: Sky) {
     let answered = world
         .get_resource::<SkyNow>()
         .and_then(|now| now.answered.as_ref());
-    if answered.is_some_and(|(game, under)| game.is(content) && *under == sky) {
+    let same_game = answered.is_some_and(|(game, _)| game.is(content));
+    if same_game && answered.is_some_and(|(_, under)| *under == sky) {
         return;
     }
     world.insert_resource(sky);
-    let now = SkyNow::of(world);
-    world.insert_resource(now);
+    if same_game {
+        world.resource_scope(|world, mut now: Mut<SkyNow>| now.answer_again(world));
+    } else {
+        let now = SkyNow::of(world);
+        world.insert_resource(now);
+    }
 }
 
 /// The day's course and the time of day that held as a server's world last looked, to tell a
