@@ -154,38 +154,50 @@ fn fade_at_the_edge(
     }
 }
 
+/// Whom something is there for; everyone, without one.
 #[derive(Component, Clone)]
 pub enum Presence {
     For(ClientId),
     When(CompiledCondition),
+    /// For the characters `viewers` has it there for, each as `shown` holds for it when it is
+    /// there on a condition too.
+    Among {
+        viewers: Viewers,
+        shown: Option<CompiledCondition>,
+    },
 }
 
-/// The only characters something is still there for: an npc that is away stays for whoever is
-/// in the middle of something with it.
-#[derive(Component, Clone, Debug, PartialEq)]
-pub struct StaysFor(pub Vec<Entity>);
+/// The characters something is there for, by who they are.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Viewers {
+    /// These alone: an npc that is away stays for whoever is in the middle of something with it.
+    Only(Vec<Entity>),
+    /// All but these: what an npc leaves behind is not seen by those it stays for.
+    Except(Vec<Entity>),
+}
 
-/// The characters something is not there for yet: what an npc leaves behind is not seen by
-/// those it stays for.
-#[derive(Component, Clone, Debug, PartialEq)]
-pub struct HiddenFrom(pub Vec<Entity>);
+impl Viewers {
+    fn has(&self, viewer: Entity) -> bool {
+        match self {
+            Viewers::Only(these) => these.contains(&viewer),
+            Viewers::Except(these) => !these.contains(&viewer),
+        }
+    }
+}
 
 pub fn present(world: &World, subject: Entity, viewer: Entity) -> bool {
-    if world
-        .get::<StaysFor>(subject)
-        .is_some_and(|stays| !stays.0.contains(&viewer))
-        || world
-            .get::<HiddenFrom>(subject)
-            .is_some_and(|hidden| hidden.0.contains(&viewer))
-    {
-        return false;
-    }
     match world.get::<Presence>(subject) {
         None => true,
         Some(Presence::For(client)) => world
             .get::<PlayedBy>(viewer)
             .is_some_and(|owner| owner.client == *client),
         Some(Presence::When(shown)) => shown.holds(world, viewer),
+        Some(Presence::Among { viewers, shown }) => {
+            viewers.has(viewer)
+                && shown
+                    .as_ref()
+                    .is_none_or(|shown| shown.holds(world, viewer))
+        }
     }
 }
 
@@ -203,6 +215,33 @@ pub fn in_sight(world: &World, viewer: Entity, subject: Entity) -> bool {
             (position(world, viewer), position(world, subject)),
             (Some(at), Some(there)) if at.distance(there) <= sight(world)
         )
+}
+
+/// Has `subject` there for `viewers` alone of those it is there for, or for all of them again
+/// with none. What is there for one client alone stays theirs.
+pub fn show_among(world: &mut World, subject: Entity, viewers: Option<Viewers>) {
+    let (now, shown) = match world.get::<Presence>(subject) {
+        Some(Presence::For(_)) => return,
+        Some(Presence::When(shown)) => (None, Some(shown)),
+        Some(Presence::Among { viewers, shown }) => (Some(viewers), shown.as_ref()),
+        None => (None, None),
+    };
+    if now == viewers.as_ref() {
+        return;
+    }
+    let shown = shown.cloned();
+    let mut subject = world.entity_mut(subject);
+    match (viewers, shown) {
+        (Some(viewers), shown) => {
+            subject.insert(Presence::Among { viewers, shown });
+        }
+        (None, Some(shown)) => {
+            subject.insert(Presence::When(shown));
+        }
+        (None, None) => {
+            subject.remove::<Presence>();
+        }
+    }
 }
 
 /// What a client sees: everything replicated that stands nowhere, its own character, and what
@@ -244,21 +283,16 @@ impl Interest for ClientSight {
             .collect();
         self.standing.clear();
         self.standing.resize(world.entities().len() as usize, None);
-        let mut placed = world.query_filtered::<(
-            Entity,
-            &Position,
-            Option<&AreaTag>,
-            Option<&Presence>,
-            Has<StaysFor>,
-            Has<HiddenFrom>,
-        ), With<Replicated>>();
-        for (entity, position, tag, presence, stays, hidden) in placed.iter(world) {
+        let mut placed = world.query_filtered::<
+            (Entity, &Position, Option<&AreaTag>, Option<&Presence>),
+            With<Replicated>,
+        >();
+        for (entity, position, tag, presence) in placed.iter(world) {
             self.standing[entity.index_u32() as usize] = Some(Standing {
                 entity,
                 at: position.pos,
                 area: tag.map(|tag| tag.area),
                 shown: match presence {
-                    _ if stays || hidden => Shown::When,
                     None => Shown::ToAll,
                     Some(Presence::For(client)) => Shown::To(*client),
                     Some(Presence::When(shown)) => match shown.shared(world) {
@@ -266,6 +300,7 @@ impl Interest for ClientSight {
                         Some(false) => Shown::ToNone,
                         None => Shown::When,
                     },
+                    Some(Presence::Among { .. }) => Shown::When,
                 },
             });
         }

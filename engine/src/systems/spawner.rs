@@ -16,7 +16,7 @@ use crate::systems::npc::{self, AbsenceSpanAt, Npc, NpcId, Pack, Roams, absence}
 use crate::systems::player::PlayedBy;
 use crate::systems::resource::{self, ResourceId};
 use crate::systems::script::{SkyCondition, sky};
-use crate::systems::visibility::{HiddenFrom, StaysFor};
+use crate::systems::visibility::Viewers;
 use crate::systems::{WorldArea, dialogue, stat, visibility};
 
 /// Keeps `count` of what it spawns standing within a rect of the area.
@@ -530,13 +530,9 @@ fn keep_residents(
             match (away, stays.is_empty()) {
                 (Some(_), true) => npc::despawn(world, body),
                 (Some(_), false) => {
-                    if world.get::<StaysFor>(body).map(|stays| &stays.0) != Some(&stays) {
-                        world.entity_mut(body).insert(StaysFor(stays.clone()));
-                    }
+                    visibility::show_among(world, body, Some(Viewers::Only(stays.clone())));
                 }
-                (None, _) => {
-                    world.entity_mut(body).remove::<StaysFor>();
-                }
+                (None, _) => visibility::show_among(world, body, None),
             }
         }
         let left = match (sign, away) {
@@ -548,17 +544,9 @@ fn keep_residents(
                 away.and_then(|span| Some((absence::leave_sign(world, resident, span)?, span)))
             }
         };
-        if let Some((sign, _)) = left
-            && world
-                .get::<HiddenFrom>(sign)
-                .map_or(&[][..], |hidden| &hidden.0)
-                != stays
-        {
-            if stays.is_empty() {
-                world.entity_mut(sign).remove::<HiddenFrom>();
-            } else {
-                world.entity_mut(sign).insert(HiddenFrom(stays));
-            }
+        if let Some((sign, _)) = left {
+            let hidden = (!stays.is_empty()).then_some(Viewers::Except(stays));
+            visibility::show_among(world, sign, hidden);
         }
         let mut entries = world.resource_mut::<SpawnerEntries>();
         let entries = entries.kept.get_mut(&at).expect("its home keeps the entry");
