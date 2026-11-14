@@ -240,17 +240,24 @@ impl DayCycle {
         }
     }
 
-    /// The day turning on from `hour` o'clock at `now`.
+    /// The day turning on from `hour` o'clock at `now`, whenever that is: a day that would have
+    /// begun before the epoch, as far back as an instant goes, is told from its next midnight.
     pub fn turning_from(&self, hour: HourOfDay, now: UnixMillis) -> TimeCourse<HourOfDay> {
-        TimeCourse::Since(now.before(Seconds(hour.share() * self.day_length.0)))
+        let begun = Seconds(hour.share() * self.day_length.0);
+        TimeCourse::Since(if now.since(UnixMillis(0)) >= begun {
+            now.before(begun)
+        } else {
+            now.after(self.day_length - begun)
+        })
     }
 
-    /// The hour of the day at `now` on a day running its `course`.
+    /// The hour of the day at `now` on a day running its `course`, before its midnight as after.
     pub fn hour(&self, course: TimeCourse<HourOfDay>, now: UnixMillis) -> HourOfDay {
         match course {
-            TimeCourse::Since(origin) => HourOfDay(
-                now.since(origin).0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0,
-            ),
+            TimeCourse::Since(midnight) => {
+                let run = now.since(midnight) - midnight.since(now);
+                HourOfDay(run.0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0)
+            }
             TimeCourse::Held(hour) => hour,
         }
     }

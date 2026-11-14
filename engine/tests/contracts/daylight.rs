@@ -153,17 +153,20 @@ fn the_sun_the_moon_and_ambient_light_turn_with_the_hour_and_dim_under_cloud() {
 #[test]
 fn a_day_turns_from_the_games_start_hour_or_holds_there_on_a_still_server() {
     let cycle = day(&[]);
+    for started in [UnixMillis(1_800_000_000_000), UnixMillis(0)] {
+        let turning = cycle.course(ServerDay::TURNING, started);
+        let hours = [0.0, 300.0, 1200.0 * 3.0 + 600.0]
+            .map(|at| cycle.hour(turning, started.after(Seconds(at))).0);
+        for (hour, expected) in hours.into_iter().zip([10.0, 16.0, 22.0]) {
+            assert!(
+                (hour - expected).abs() < 0.01,
+                "a turning day starts at the game's start hour and turns once a day length, \
+                 whenever the world starts: {hours:?} from {started:?}"
+            );
+        }
+    }
     let started = UnixMillis(1_800_000_000_000);
     let later = |seconds: f32| started.after(Seconds(seconds));
-
-    let turning = cycle.course(ServerDay::TURNING, started);
-    let hours = [0.0, 300.0, 1200.0 * 3.0 + 600.0].map(|at| cycle.hour(turning, later(at)).0);
-    for (hour, expected) in hours.into_iter().zip([10.0, 16.0, 22.0]) {
-        assert!(
-            (hour - expected).abs() < 0.01,
-            "a turning day starts at the game's start hour and turns once a day length: {hours:?}"
-        );
-    }
 
     let still = cycle.course(
         ServerDay {
