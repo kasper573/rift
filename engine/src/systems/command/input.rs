@@ -376,11 +376,12 @@ fn players_elsewhere(world: &World) -> Vec<InputOption> {
     let content = world.resource::<Content>();
     let here = world.resource::<Players>();
     let mut elsewhere: Vec<InputOption> = roster
-        .iter()
+        .all()
+        .into_iter()
         .filter(|enrolled| !here.0.contains_key(&enrolled.client))
         .map(|enrolled| InputOption {
-            text: enrolled.name.clone(),
             detail: enrolled.place.area.get(content).shown_name().to_owned(),
+            text: enrolled.name,
             key: String::new(),
         })
         .collect();

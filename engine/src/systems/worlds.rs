@@ -6,8 +6,8 @@ use rayon::prelude::*;
 use crate::core::content::Content;
 use crate::core::time::WallClock;
 use crate::systems::area::{AreaDef, AreaId};
-use crate::systems::player::errand::{self, ErrandOutcome};
-use crate::systems::player::roster::{self, ServerRoster};
+use crate::systems::player::errand::{self, Errand, ErrandOutcome};
+use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Players};
 use crate::systems::{player, stat, step_area};
 
@@ -50,39 +50,46 @@ pub fn tick(views: &mut [Option<&mut World>], clock: WallClock) {
 }
 
 /// What the worlds settle between ticks, the only time one hand holds them all: who plays where
-/// on the server, for the worlds that keep a roster, and every errand a world asked be done to a
-/// player in another. Each errand is answered, whatever became of its player.
+/// on the server, and every errand a world asked be done to a player in another. Each errand is
+/// answered, whatever became of its player. The worlds of a server play one game, so they keep
+/// a roster all alike: where the first keeps none, none has anything to settle, and the one the
+/// first keeps is the server's.
 pub fn confer(views: &mut [Option<&mut World>]) {
-    enroll(views);
-    for asking in 0..views.len() {
-        let errands = views[asking]
-            .as_deref_mut()
-            .map(errand::take)
-            .unwrap_or_default();
-        for errand in errands {
-            let outcome = carry(views, errand.to, errand.deed);
-            if let Some(world) = views[asking].as_deref_mut() {
-                (errand.then)(world, outcome);
-            }
+    let first = views.iter().flatten().next();
+    let Some(roster) = first.and_then(|world| world.get_resource::<ServerRoster>().cloned()) else {
+        return;
+    };
+    for (asking, errand) in enroll(views, &roster) {
+        let outcome = carry(views, errand.to, errand.deed);
+        if let Some(world) = views[asking].as_deref_mut() {
+            (errand.then)(world, outcome);
         }
     }
 }
 
-fn enroll(views: &mut [Option<&mut World>]) {
-    let keeps = |world: &&mut World| world.contains_resource::<ServerRoster>();
-    if !views.iter().flatten().any(keeps) {
-        return;
-    }
-    let roster = ServerRoster::of(
-        views
-            .iter()
-            .flatten()
-            .flat_map(|world| roster::enrolled(world))
-            .collect(),
-    );
-    for world in views.iter_mut().flatten().filter(|world| keeps(world)) {
-        world.insert_resource(roster.clone());
-    }
+/// Lists everyone on `roster`, each world enrolling its own players on a core of its own, and
+/// takes the errands each world asked for since, with the world that asked.
+fn enroll(views: &mut [Option<&mut World>], roster: &ServerRoster) -> Vec<(usize, Errand)> {
+    // A world lets its last enrollment go as it enrolls anew, which frees it there and then only
+    // once the roster no longer lists it: the roster is emptied first, or one core would free
+    // every world's.
+    roster.list(Vec::new());
+    let settled: Vec<(Enrollment, Vec<(usize, Errand)>)> = views
+        .par_iter_mut()
+        .enumerate()
+        .filter_map(|(asking, world)| Some((asking, world.as_deref_mut()?)))
+        .map(|(asking, world)| {
+            let asked = errand::take(world)
+                .into_iter()
+                .map(|errand| (asking, errand))
+                .collect();
+            (roster::enroll(world, roster), asked)
+        })
+        .collect();
+    let (enrolled, asked): (Vec<Enrollment>, Vec<Vec<(usize, Errand)>>) =
+        settled.into_iter().unzip();
+    roster.list(enrolled);
+    asked.into_iter().flatten().collect()
 }
 
 fn carry(

@@ -30,6 +30,8 @@ pub enum ErrandOutcome {
 }
 
 /// The errands a world has asked for since the server's worlds last conferred.
+/// Only a world that keeps the server's roster has any: without one it knows of no player
+/// elsewhere to ask anything of.
 #[derive(Resource, Default)]
 pub struct Errands(Vec<Errand>);
 
