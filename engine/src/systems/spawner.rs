@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::DeferredWorld;
@@ -6,11 +8,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::{Content, RowCheck, SchemaMark, serial};
+use crate::core::geometry::corners;
 use crate::core::ground::TileAt;
 use crate::core::math::{Pos, Rect, Rng};
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Seconds};
-use crate::systems::area::{self, Area, AreaId, AreaModule, Wild};
+use crate::systems::area::{self, Area, AreaId, AreaModule, TimeOfDayName, Wild};
 use crate::systems::movement::{NavMesh, Position, Spots, position};
 use crate::systems::npc::{self, AbsenceSpanAt, Npc, NpcId, Pack, Roams, absence};
 use crate::systems::player::PlayedBy;
@@ -216,8 +219,24 @@ pub struct Spawned {
 #[derive(Resource, Default)]
 pub struct SpawnerEntries {
     kept: HashMap<SpawnerAt, Entries>,
+    /// The entries that stand empty, in their order in the scene: all a tick may have to fill.
+    empty: BTreeSet<(SpawnerAt, u32)>,
     /// Those of them whose entries come and go with the sky, in their order in the scene.
     under_sky: Vec<SpawnerAt>,
+    /// The sky those were last tended under, as far as it matters to them: a tick under the
+    /// same one has nothing to take away and nothing idle to wake.
+    tended: SkyTended,
+}
+
+#[derive(Default)]
+struct SkyTended {
+    /// Each condition a share follows, once, with whether anything of it held.
+    followed: Vec<(SkyCondition, bool)>,
+    /// The time of day, where an npc that keeps hours is among what is kept.
+    time: Option<Option<TimeOfDayName>>,
+    /// Whether something was left to see to under that sky: what goes once nobody looks, or
+    /// whoever is away but for those in the middle of something with it.
+    unsettled: bool,
 }
 
 struct Entries {
@@ -256,11 +275,72 @@ impl SpawnerEntries {
         })
     }
 
-    fn keep(&mut self, at: SpawnerAt, entries: Entries, under_sky: bool) {
-        self.kept.insert(at, entries);
-        if under_sky && let Err(place) = self.under_sky.binary_search(&at) {
+    /// Keeps the entries of the module at `at`, all of them empty, and looks to the sky for
+    /// them when the module has anything come and go with it.
+    fn keep(&mut self, at: SpawnerAt, pack: Pack, content: &Content, module: &AreaModule) {
+        let count = match module {
+            AreaModule::Spawner(spawner) => spawner.count,
+            _ => 1,
+        };
+        self.kept.insert(
+            at,
+            Entries {
+                pack,
+                entries: vec![Entry::Idle; count as usize],
+                sign: None,
+            },
+        );
+        self.empty.extend((0..count).map(|entry| (at, entry)));
+        let shares: &[SpawnShare] = match module {
+            AreaModule::Spawner(spawner) => &spawner.spawns,
+            _ => &[],
+        };
+        let keeps_hours = keeps_hours(content, module);
+        if !keeps_hours && shares.iter().all(|share| share.when.is_none()) {
+            return;
+        }
+        if let Err(place) = self.under_sky.binary_search(&at) {
             self.under_sky.insert(place, at);
         }
+        for when in shares.iter().filter_map(|share| share.when.as_ref()) {
+            if !self.tended.followed.iter().any(|(known, _)| known == when) {
+                self.tended.followed.push((when.clone(), false));
+            }
+        }
+        if keeps_hours {
+            self.tended.time.get_or_insert(None);
+        }
+        self.tended.unsettled = true;
+    }
+
+    fn set(&mut self, at: SpawnerAt, entry: u32, state: Entry) {
+        let kept = self
+            .kept
+            .get_mut(&at)
+            .and_then(|entries| entries.entries.get_mut(entry as usize));
+        let Some(kept) = kept else {
+            return;
+        };
+        *kept = state;
+        match state {
+            Entry::Filled { .. } => self.empty.remove(&(at, entry)),
+            Entry::Freed { .. } | Entry::Idle => self.empty.insert((at, entry)),
+        };
+    }
+
+    /// Whether the sky has turned for what is kept since it was last tended, or that left
+    /// something to see to.
+    fn turned(&self, world: &World) -> bool {
+        let tended = &self.tended;
+        tended.unsettled
+            || tended
+                .time
+                .as_ref()
+                .is_some_and(|time| time.as_ref() != sky::time_of_day(world).map(|time| &time.name))
+            || tended
+                .followed
+                .iter()
+                .any(|(when, held)| holds(world, when) != *held)
     }
 }
 
@@ -279,48 +359,63 @@ pub fn fill(world: &mut World, tile: TileAt) {
         };
         let pack = npc::next_pack(world);
         let at = SpawnerAt(index);
-        world.resource_mut::<SpawnerEntries>().keep(
-            at,
-            Entries {
-                pack,
-                entries: vec![Entry::Idle; count as usize],
-                sign: None,
-            },
-            comes_and_goes(&content, module),
-        );
+        world
+            .resource_mut::<SpawnerEntries>()
+            .keep(at, pack, &content, module);
         for entry in 0..count {
             spawn_entry(world, &content, area, area_id, at, entry, &[]);
         }
     }
 }
 
-/// Tends every spawner and home the world has reached: takes away what the sky has there no
-/// longer, then fills again every entry whose wait is over.
+/// Tends every spawner and home the world has reached: once the sky has turned for them,
+/// takes away what it has there no longer and wakes what stood idle under it; then fills again
+/// every entry whose wait is over.
 pub fn tend(
     world: &mut World,
     characters: &mut QueryState<&'static Position, With<PlayedBy>>,
     sessions: &mut dialogue::Sessions,
 ) {
-    retire(world, characters, sessions);
-    refill(world, characters);
+    let turned = world.resource::<SpawnerEntries>().turned(world);
+    if turned {
+        let settled = retire(world, characters, sessions);
+        let time = time_now(world);
+        let held: Vec<bool> = world
+            .resource::<SpawnerEntries>()
+            .tended
+            .followed
+            .iter()
+            .map(|(when, _)| holds(world, when))
+            .collect();
+        let tended = &mut world.resource_mut::<SpawnerEntries>().tended;
+        for ((_, was), held) in tended.followed.iter_mut().zip(held) {
+            *was = held;
+        }
+        if let Some(seen) = &mut tended.time {
+            *seen = time;
+        }
+        tended.unsettled = !settled;
+    }
+    refill(world, characters, turned);
 }
 
 /// Takes away what stands of a share that holds no longer under the sky, each once no character
 /// has it in sight, its entry to be filled again within its spawner's respawn. A resident that
 /// is away leaves at once, but for whoever is in the middle of something with it, and its sign
-/// stands where it lives for everyone else until it is back.
+/// stands where it lives for everyone else until it is back. Says whether that is all seen to:
+/// nothing waits to go for somebody to look away or to be done with it.
 fn retire(
     world: &mut World,
     characters: &mut QueryState<&'static Position, With<PlayedBy>>,
     sessions: &mut dialogue::Sessions,
-) {
+) -> bool {
     let under_sky = world.resource::<SpawnerEntries>().under_sky.clone();
     if under_sky.is_empty() {
-        return;
+        return true;
     }
     let content = world.resource::<Content>().clone();
     let placed = area::placed(&content, world.resource::<WorldArea>().0);
-    keep_residents(world, placed, &under_sky, sessions);
+    let mut settled = keep_residents(world, placed, &under_sky, sessions);
     let spawners = world.resource::<SpawnerEntries>();
     let mut over: Vec<(SpawnerAt, u32, Entity, Seconds)> = Vec::new();
     for &at in &under_sky {
@@ -347,7 +442,7 @@ fn retire(
         }
     }
     if over.is_empty() {
-        return;
+        return settled;
     }
     let watching = watchers(world, characters);
     let sight = visibility::sight(world);
@@ -356,6 +451,7 @@ fn retire(
         let seen = position(world, stands)
             .is_some_and(|stood| watching.iter().any(|&from| from.distance(stood) <= sight));
         if seen {
+            settled = false;
             continue;
         }
         match world.get::<Npc>(stands) {
@@ -365,76 +461,80 @@ fn retire(
             }
         }
         let wait = Seconds(world.resource_mut::<Rng>().rand_float() * respawn.0);
-        world
-            .resource_mut::<SpawnerEntries>()
-            .kept
-            .get_mut(&at)
-            .expect("its spawner keeps the entry")
-            .entries[entry as usize] = Entry::Freed {
-            since: now,
-            wait: Some(wait),
-        };
+        world.resource_mut::<SpawnerEntries>().set(
+            at,
+            entry,
+            Entry::Freed {
+                since: now,
+                wait: Some(wait),
+            },
+        );
     }
+    settled
 }
 
 /// Fills again every entry freed longer ago than its wait: its spawner's or resident's respawn
 /// time after a fall, less after a turn of the sky, so a spawner turns from one share to the
-/// next over its respawn and never at a stroke. An entry is filled out of every character's
-/// sight where the ground allows.
-fn refill(world: &mut World, characters: &mut QueryState<&'static Position, With<PlayedBy>>) {
+/// next over its respawn and never at a stroke. What stood idle under the sky is looked at
+/// again once that has `turned`. An entry is filled out of every character's sight where the
+/// ground allows.
+fn refill(
+    world: &mut World,
+    characters: &mut QueryState<&'static Position, With<PlayedBy>>,
+    turned: bool,
+) {
+    let spawners = world.resource::<SpawnerEntries>();
+    if spawners.empty.is_empty() {
+        return;
+    }
     let content = world.resource::<Content>().clone();
     let area_id = world.resource::<WorldArea>().0;
     let placed = area::placed(&content, area_id);
     let now = time::uptime(world);
     let mut due: Vec<(SpawnerAt, u32)> = Vec::new();
     let mut woken: Vec<(SpawnerAt, u32, Seconds)> = Vec::new();
-    let spawners = world.resource::<SpawnerEntries>();
-    for (&at, entries) in &spawners.kept {
+    let mut looked: Option<(SpawnerAt, bool)> = None;
+    for &(at, entry) in &spawners.empty {
         let module = &placed[at.0 as usize].module;
         let (respawn, eases_in) = match module {
             AreaModule::Spawner(spawner) => (spawner.respawn, true),
             AreaModule::Resident(resident) => (resident.respawn, false),
             _ => continue,
         };
-        // Without a respawn only an idle entry is filled again, and only what follows the sky
-        // ever stands idle.
-        if respawn.is_none() && spawners.under_sky.binary_search(&at).is_err() {
-            continue;
-        }
-        let mut holds = None;
-        for (entry, state) in entries.entries.iter().enumerate() {
-            match (*state, respawn) {
-                (Entry::Freed { since, wait }, Some(respawn))
-                    if now - since >= wait.unwrap_or(respawn) =>
-                {
-                    due.push((at, entry as u32));
-                }
-                (Entry::Idle, respawn)
-                    if *holds.get_or_insert_with(|| holds_any(world, module)) =>
-                {
-                    match respawn {
-                        Some(respawn) if eases_in => woken.push((at, entry as u32, respawn)),
-                        _ => due.push((at, entry as u32)),
-                    }
-                }
-                _ => {}
+        match (spawners.kept[&at].entries[entry as usize], respawn) {
+            (Entry::Freed { since, wait }, Some(respawn))
+                if now - since >= wait.unwrap_or(respawn) =>
+            {
+                due.push((at, entry));
             }
+            (Entry::Idle, respawn) if turned => {
+                let holds = match looked {
+                    Some((known, holds)) if known == at => holds,
+                    _ => looked.insert((at, holds_any(world, module))).1,
+                };
+                match respawn {
+                    _ if !holds => {}
+                    Some(respawn) if eases_in => woken.push((at, entry, respawn)),
+                    _ => due.push((at, entry)),
+                }
+            }
+            _ => {}
         }
     }
     if due.is_empty() && woken.is_empty() {
         return;
     }
-    woken.sort_unstable_by_key(|&(at, entry, _)| (at, entry));
     for (at, entry, respawn) in woken {
         let wait = Seconds(world.resource_mut::<Rng>().rand_float() * respawn.0);
-        if let Some(entries) = world.resource_mut::<SpawnerEntries>().kept.get_mut(&at) {
-            entries.entries[entry as usize] = Entry::Freed {
+        world.resource_mut::<SpawnerEntries>().set(
+            at,
+            entry,
+            Entry::Freed {
                 since: now,
                 wait: Some(wait),
-            };
-        }
+            },
+        );
     }
-    due.sort_unstable();
     let area = area::load(&content, area_id);
     let watching = watchers(world, characters);
     for (at, entry) in due {
@@ -474,13 +574,8 @@ fn spawn_entry(
         },
         _ => return,
     };
-    world
-        .resource_mut::<SpawnerEntries>()
-        .kept
-        .get_mut(&at)
-        .expect("its spawner keeps the entry")
-        .entries[entry as usize] =
-        stands.map_or(Entry::Idle, |stands| Entry::Filled { share, stands });
+    let state = stands.map_or(Entry::Idle, |stands| Entry::Filled { share, stands });
+    world.resource_mut::<SpawnerEntries>().set(at, entry, state);
     if let Some(stands) = stands {
         world
             .entity_mut(stands)
@@ -508,28 +603,35 @@ fn holds_any(world: &World, module: &AreaModule) -> bool {
     }
 }
 
-/// Whether what `module` keeps standing comes and goes with the sky: by the `when` of a share,
-/// or the absence of an npc.
-fn comes_and_goes(content: &Content, module: &AreaModule) -> bool {
+/// Whether any npc `module` keeps standing is away for some of the game's day.
+fn keeps_hours(content: &Content, module: &AreaModule) -> bool {
     let absent = |npc: NpcId| npc.get(content).absence().is_some();
     match module {
-        AreaModule::Spawner(spawner) => spawner.spawns.iter().any(|share| {
-            share.when.is_some() || matches!(share.what, Spawns::Npc { npc } if absent(npc))
-        }),
+        AreaModule::Spawner(spawner) => spawner.npcs().any(absent),
         AreaModule::Resident(resident) => absent(resident.npc),
         _ => false,
     }
 }
 
+/// Whether anything of what follows `when` is there under the world's sky.
+fn holds(world: &World, when: &SkyCondition) -> bool {
+    sky::share(world, Some(when)) > 0.0
+}
+
+fn time_now(world: &World) -> Option<TimeOfDayName> {
+    sky::time_of_day(world).map(|time| time.name.clone())
+}
+
 /// Sees every resident of `homes` that is away out of the world, but for whoever is in the
 /// middle of something with it, and its sign into it where it lives; and the sign out again once
-/// the resident is back.
+/// the resident is back. Says whether none of them stays for anyone.
 fn keep_residents(
     world: &mut World,
     placed: &[area::Flattened],
     homes: &[SpawnerAt],
     sessions: &mut dialogue::Sessions,
-) {
+) -> bool {
+    let mut settled = true;
     for &at in homes {
         let AreaModule::Resident(resident) = &placed[at.0 as usize].module else {
             continue;
@@ -565,17 +667,23 @@ fn keep_residents(
                 away.and_then(|span| Some((absence::leave_sign(world, resident, span)?, span)))
             }
         };
+        settled &= stays.is_empty();
         if let Some((sign, _)) = left {
             let hidden = (!stays.is_empty()).then_some(Viewers::Except(stays));
             visibility::show_among(world, sign, hidden);
         }
-        let mut entries = world.resource_mut::<SpawnerEntries>();
-        let entries = entries.kept.get_mut(&at).expect("its home keeps the entry");
+        let mut spawners = world.resource_mut::<SpawnerEntries>();
+        let entries = spawners
+            .kept
+            .get_mut(&at)
+            .expect("its home keeps the entry");
         entries.sign = left;
-        if away.is_some() && body.is_some() && matches!(entries.entries[0], Entry::Freed { .. }) {
-            entries.entries[0] = Entry::Idle;
+        let freed = matches!(entries.entries[0], Entry::Freed { .. });
+        if away.is_some() && body.is_some() && freed {
+            spawners.set(at, 0, Entry::Idle);
         }
     }
+    settled
 }
 
 fn watchers(
@@ -628,6 +736,15 @@ fn free_point(
     watching: &[Pos<Meters>],
 ) -> Option<Pos<Meters>> {
     let sight = visibility::sight(world);
+    // A character sees a round of ground, so bounds whose every corner one of them sees are
+    // seen whole: nowhere in them is hidden, and looking would cost every draw there is.
+    let seen_whole = within.is_some_and(|bounds| {
+        watching.iter().any(|from| {
+            corners(bounds)
+                .iter()
+                .all(|corner| from.distance(*corner) <= sight)
+        })
+    });
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         let spots = world.resource::<Spots>();
         let mut draw = |fits: &dyn Fn(Pos<Meters>) -> bool| match within {
@@ -636,7 +753,7 @@ fn free_point(
         };
         let free = |at| spots.crowding(area, at, None) == 0;
         let unseen = |at: Pos<Meters>| watching.iter().all(|from| from.distance(at) > sight);
-        let hidden = (!watching.is_empty())
+        let hidden = (!watching.is_empty() && !seen_whole)
             .then(|| draw(&|at| free(at) && unseen(at)))
             .flatten();
         hidden.or_else(|| draw(&free)).or_else(|| draw(&|_| true))
@@ -648,17 +765,14 @@ fn free_entry(mut world: DeferredWorld, context: HookContext) {
         .get::<Spawned>(context.entity)
         .expect("the component being removed");
     let now = time::uptime(&world);
-    let Some(mut entries) = world.get_resource_mut::<SpawnerEntries>() else {
-        return;
-    };
-    if let Some(state) = entries
-        .kept
-        .get_mut(&spawner)
-        .and_then(|entries| entries.entries.get_mut(entry as usize))
-    {
-        *state = Entry::Freed {
-            since: now,
-            wait: None,
-        };
+    if let Some(mut entries) = world.get_resource_mut::<SpawnerEntries>() {
+        entries.set(
+            spawner,
+            entry,
+            Entry::Freed {
+                since: now,
+                wait: None,
+            },
+        );
     }
 }
