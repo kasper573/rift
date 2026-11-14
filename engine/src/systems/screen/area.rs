@@ -13,6 +13,7 @@ use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::interpolate::{Jumps, RenderValueSystems};
 use crate::core::math::Pos;
+use crate::core::render::camera::CameraRigSystems;
 use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
 };
@@ -40,7 +41,7 @@ impl Plugin for AreaScreenPlugin {
                 (
                     carry_view_across
                         .after(RenderValueSystems)
-                        .before(WorldViewSystems),
+                        .before(CameraRigSystems),
                     play_area_soundscape.in_set(WorldViewSystems),
                 )
                     .run_if(in_state(ClientScreen::Area)),

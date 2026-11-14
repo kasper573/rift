@@ -75,10 +75,12 @@ pub fn covering(transition: Res<ActiveTransition>) -> bool {
 }
 
 pub fn freeze(world: &mut World, viewed_at: Pos<Meters>, heading: Radians) {
-    let Some(from) = camera::view_of(world).and_then(|view| target_marks(world, &view, viewed_at))
-    else {
+    let Some(view) = camera::view_of(world) else {
         return;
     };
+    let from = target_marks(world, &view, viewed_at).unwrap_or(TargetMarks {
+        viewed: view.viewport() / 2.0,
+    });
     let style = world.resource::<ScreenTransitionPreference>().0;
     present::hold_frame(world);
     world.resource_mut::<ActiveTransition>().0 = Some(Cut {

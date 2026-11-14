@@ -515,7 +515,6 @@ pub fn server_app(
                     chat::rebroadcast,
                     belongings::notify_changes,
                     history::backfill,
-                    identity::name_replicated.run_if(replication_tick),
                 )
                     .chain(),
             )

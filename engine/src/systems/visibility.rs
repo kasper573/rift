@@ -14,6 +14,7 @@ use crate::core::tick::Planner;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::area::{self, AreaId, AreaTag};
+use crate::systems::identity::{self, Unnamed};
 use crate::systems::movement::{Position, RenderPosition, position};
 use crate::systems::player::session::MyCharacter;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
@@ -446,22 +447,28 @@ impl View {
 }
 
 /// Tells every client what changed in its sight, each replication tick, planned beside the rest
-/// of the tick from the world as the tick found it.
+/// of the tick from the world as the tick found it. What it tells of is named first, so a client
+/// hears an entity's name with the entity.
 #[derive(Default)]
-pub struct SendSights(bevy_replication::Sender);
+pub struct SendSights {
+    sender: bevy_replication::Sender,
+    unnamed: Option<Unnamed>,
+}
 
 impl Planner for SendSights {
     fn prepare(&mut self, world: &mut World) {
         if crate::systems::replication_tick(world) {
-            self.0.prepare(world);
+            let unnamed = self.unnamed.get_or_insert_with(|| world.query_filtered());
+            identity::name_replicated(world, unnamed);
+            self.sender.prepare(world);
         }
     }
 
     fn plan(&mut self, world: &World) {
-        self.0.plan(world);
+        self.sender.plan(world);
     }
 
     fn apply(&mut self, world: &mut World) {
-        self.0.apply(world);
+        self.sender.apply(world);
     }
 }

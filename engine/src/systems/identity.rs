@@ -62,12 +62,12 @@ pub fn register(app: &mut App) {
     app.replicate_once::<GlobalId>();
 }
 
-/// Names every replicated entity that has none yet, before the tick's replication tells clients
-/// of it.
-pub fn name_replicated(
-    world: &mut World,
-    unnamed: &mut QueryState<Entity, (With<Replicated>, Without<GlobalId>)>,
-) {
+/// The replicated entities of a world that have no name yet.
+pub type Unnamed = QueryState<Entity, (With<Replicated>, Without<GlobalId>)>;
+
+/// Names every replicated entity that has none yet. A client is told of an entity's name with the
+/// entity itself, so whoever tells clients of the world names it first.
+pub fn name_replicated(world: &mut World, unnamed: &mut Unnamed) {
     let fresh: Vec<Entity> = unnamed.iter(world).collect();
     for entity in fresh {
         let id = world.resource_mut::<Names>().give();
