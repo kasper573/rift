@@ -18,7 +18,7 @@ use strum::VariantArray;
 use ui::egui::{self, Align, Layout, Rect as ERect, Ui, Vec2};
 use ui::glyph::{self, Mark};
 use ui::input::NumberField;
-use ui::{chip, controls, theme};
+use ui::{chip, controls, input, theme};
 
 use crate::app::Editor;
 use crate::keymap::EditorKey;
@@ -300,8 +300,9 @@ impl ShownSky {
 }
 
 /// The hour the areas are shown at, in the bottom corner of an area view's map `canvas`: dragged
-/// or typed, played, and put back to the light the areas are authored in. What comes and goes
-/// with the hour is laid out last, so nothing a pointer rests on moves.
+/// or typed, played, and put back to the light the areas are authored in. Its rows stack upward
+/// from the corner, the hour's own controls lowest, so the bar fits a narrow view and nothing a
+/// pointer rests on moves when the row above comes or goes.
 pub(super) fn bar(editor: &mut Editor, ui: &mut Ui, canvas: ERect) {
     let Some(content) = editor
         .project
@@ -325,66 +326,16 @@ pub(super) fn bar(editor: &mut Editor, ui: &mut Ui, canvas: ERect) {
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(corner)
-            .layout(Layout::right_to_left(Align::Max)),
+            .layout(Layout::bottom_up(Align::Max)),
     );
     let shown = ui::slip::show(&mut child, |ui| {
-        ui.horizontal(|ui| {
-            let authored = match day.hour {
-                Some(_) => format!(
-                    "The light the area is authored in ({})",
-                    EditorKey::AsAuthored.name()
-                ),
-                None => format!(
-                    "Shown in its authored light. Pick an hour of the game's day to see what \
-                     follows it ({} and {})",
-                    EditorKey::HourEarlier.name(),
-                    EditorKey::HourLater.name()
-                ),
-            };
-            if controls::button(ui, "As authored")
-                .on_hover_text(authored)
-                .clicked()
-            {
-                match day.hour {
-                    Some(_) => day.as_authored(),
-                    None => day.step(0.0),
-                }
-            }
-            let (mark, does) = if day.playing {
-                (Mark::Pause, "Pause the day")
-            } else {
-                (Mark::Play, "Play the day")
-            };
-            if glyph::button(ui, mark, 13.0, theme::TEXT, does)
-                .on_hover_text(does)
-                .clicked()
-            {
-                day.toggle_play();
-            }
-            let Some(hour) = day.hour else {
-                return;
-            };
-            let mut typed = hour.0;
-            if controls::slider(ui, &mut typed, 0.0..=24.0).changed()
-                | NumberField::new(&mut typed)
-                    .range(0.0..=24.0)
-                    .unit("h")
-                    .width(HOUR_WIDTH)
-                    .show(ui)
-            {
-                day.hour = Some(HourOfDay::wrapped(typed));
-            }
-            controls::combo("day-pace")
-                .selected_text(day.pace.name())
-                .show_ui(ui, |ui| {
-                    for &pace in DayPace::VARIANTS {
-                        ui.selectable_value(&mut day.pace, pace, pace.name());
-                    }
-                });
-            if let Some(time) = cycle.time_at(HourOfDay::wrapped(typed)) {
-                chip::swatch(ui, time.name.0.as_str(), time.color.into());
-            }
-        });
+        let boxed = input::row_height(ui) + input::frame().total_margin().sum().y;
+        let row = Vec2::new(ui.available_width(), boxed);
+        let across = Layout::right_to_left(Align::Center);
+        ui.allocate_ui_with_layout(row, across, |ui| hour_row(ui, day));
+        if let Some(hour) = day.hour {
+            ui.allocate_ui_with_layout(row, across, |ui| pace_row(ui, day, cycle, hour));
+        }
     });
     day.pointed = shown.response.contains_pointer();
     if day.pointed && ui.input_mut(|input| EditorKey::PlayDay.consume(input)) {
@@ -417,8 +368,75 @@ pub(super) fn keys(editor: &mut Editor, input: &egui::InputState) {
     }
 }
 
+/// The hour itself: back to the authored light, played, dragged or typed.
+fn hour_row(ui: &mut Ui, day: &mut DayPreview) {
+    let authored = match day.hour {
+        Some(_) => format!(
+            "The light the area is authored in ({})",
+            EditorKey::AsAuthored.name()
+        ),
+        None => format!(
+            "Shown in its authored light. Pick an hour of the game's day to see what follows it \
+             ({} and {})",
+            EditorKey::HourEarlier.name(),
+            EditorKey::HourLater.name()
+        ),
+    };
+    if controls::button(ui, "As authored")
+        .on_hover_text(authored)
+        .clicked()
+    {
+        match day.hour {
+            Some(_) => day.as_authored(),
+            None => day.step(0.0),
+        }
+    }
+    let (mark, does) = if day.playing {
+        (Mark::Pause, "Pause the day")
+    } else {
+        (Mark::Play, "Play the day")
+    };
+    if glyph::button(ui, mark, 13.0, theme::TEXT, does)
+        .on_hover_text(does)
+        .clicked()
+    {
+        day.toggle_play();
+    }
+    let Some(hour) = day.hour else {
+        return;
+    };
+    let beside = HOUR_WIDTH + ui.spacing().item_spacing.x;
+    ui.spacing_mut().slider_width =
+        (ui.available_width() - beside).clamp(MIN_SLIDER, ui.spacing().slider_width);
+    let mut typed = hour.0;
+    if controls::slider(ui, &mut typed, 0.0..=24.0).changed()
+        | NumberField::new(&mut typed)
+            .range(0.0..=24.0)
+            .unit("h")
+            .width(HOUR_WIDTH)
+            .show(ui)
+    {
+        day.hour = Some(HourOfDay::wrapped(typed));
+    }
+}
+
+/// How fast a played day runs, and the time of day `hour` falls in.
+fn pace_row(ui: &mut Ui, day: &mut DayPreview, cycle: &DayCycle, hour: HourOfDay) {
+    controls::combo("day-pace")
+        .selected_text(day.pace.name())
+        .show_ui(ui, |ui| {
+            for &pace in DayPace::VARIANTS {
+                ui.selectable_value(&mut day.pace, pace, pace.name());
+            }
+        });
+    if let Some(time) = cycle.time_at(hour) {
+        chip::swatch(ui, time.name.0.as_str(), time.color.into());
+    }
+}
+
 fn cycle(content: &Content) -> Option<&DayCycle> {
     content.try_built::<GameSettings>()?.daylight.as_ref()
 }
 
 const HOUR_WIDTH: f32 = 64.0;
+const MIN_SLIDER: f32 = 60.0;
