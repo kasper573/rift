@@ -42,10 +42,10 @@ impl Plugin for QuestTrackerPlugin {
 pub struct QuestTrackerWidget;
 
 impl HudWidget for QuestTrackerWidget {
-    fn fallback(&self, screen: Rect) -> Pos2 {
+    fn fallback(&self, world: &World, screen: Rect) -> Pos2 {
         Pos2::new(
             screen.right() - WIDTH - hud::MARGIN,
-            screen.top() + hud::MARGIN + minimap::RESTING_SIZE.y + UNDER_THE_MAP,
+            screen.top() + hud::MARGIN + minimap::resting_size(world).y + UNDER_THE_MAP,
         )
     }
 

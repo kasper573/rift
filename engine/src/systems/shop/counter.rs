@@ -12,7 +12,7 @@ use super::{OfferView, SaleQuote, SaleVerdict, ShopId, ShopRequest, ShopView, Wa
 use crate::core::content::Content;
 use crate::systems::area::TimeOfDayName;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
-use crate::systems::hud::{self, Carried, Confirm, day_dial};
+use crate::systems::hud::{self, Carried, Confirm, day_clock};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::card::{CardLook, CardNoteTone, ItemCardNote};
@@ -324,11 +324,11 @@ fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui
                         ui.spacing_mut().item_spacing.y = 1.0;
                         ui.add(egui::Label::new(face::body(&name)).wrap());
                         if let Some((note, color)) = &note {
-                            day_dial::wording(ui, world, note, TextRole::Small, *color);
+                            day_clock::wording(ui, world, note, TextRole::Small, *color);
                         } else {
                             ui.horizontal(|ui| {
                                 for time in &ware.times {
-                                    day_dial::time_mark(
+                                    day_clock::time_mark(
                                         ui,
                                         world,
                                         time,

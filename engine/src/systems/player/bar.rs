@@ -19,7 +19,7 @@ pub const PLAYER_BAR: &str = "player_bar";
 pub struct PlayerBarWidget;
 
 impl HudWidget for PlayerBarWidget {
-    fn fallback(&self, screen: Rect) -> Pos2 {
+    fn fallback(&self, _world: &World, screen: Rect) -> Pos2 {
         let size = Layout::of(Pos2::ZERO, BarSlots::resting_size())
             .vial_and_paper
             .size();

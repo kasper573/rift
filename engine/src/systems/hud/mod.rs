@@ -1,5 +1,5 @@
 mod card;
-pub mod day_dial;
+pub mod day_clock;
 pub mod menu;
 mod panel;
 
@@ -65,7 +65,7 @@ impl Plugin for HudPlugin {
 }
 
 pub trait HudWidget: Send + Sync {
-    fn fallback(&self, screen: Rect) -> Pos2;
+    fn fallback(&self, world: &World, screen: Rect) -> Pos2;
     fn hidden(&self, _world: &World) -> bool {
         false
     }
@@ -185,7 +185,6 @@ pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -
 
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     (minimap::MINIMAP, &minimap::MinimapWidget),
-    (day_dial::DAY_DIAL, &day_dial::DayDialWidget),
     (
         quest::tracker::QUEST_TRACKER,
         &quest::tracker::QuestTrackerWidget,
@@ -249,7 +248,8 @@ fn draw_hud(world: &mut World) {
         if shown.hidden(world) {
             continue;
         }
-        let past = widget(world, &gui, name, shown.fallback(screen), |ui, world| {
+        let fallback = shown.fallback(world, screen);
+        let past = widget(world, &gui, name, fallback, |ui, world| {
             shown.show(ui, world)
         });
         if let Some(past) = past

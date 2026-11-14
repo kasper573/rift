@@ -6,31 +6,37 @@ use super::{MapView, MapWindow};
 use crate::core::content::Content;
 use crate::core::units::Radians;
 use crate::systems::hud::menu::{self, MenuTabName};
-use crate::systems::hud::{self, HudWidget};
+use crate::systems::hud::{self, HudWidget, day_clock};
 use crate::systems::settings::UserSettings;
 
 pub const MINIMAP: &str = "minimap";
-pub const RESTING_SIZE: Vec2 = Vec2::new(
-    DISC + 2.0 * RIM_OVERHANG,
-    DISC + 2.0 * RIM_OVERHANG + NAME_ROOM,
-);
+
+/// The room the minimap rests in: its disc, what goes round it, and the area's name under it.
+pub fn resting_size(world: &World) -> Vec2 {
+    let round = DISC + 2.0 * overhang(world);
+    Vec2::new(round, round + NAME_ROOM)
+}
 
 pub struct MinimapWidget;
 
 impl HudWidget for MinimapWidget {
-    fn fallback(&self, screen: egui::Rect) -> Pos2 {
+    fn fallback(&self, world: &World, screen: egui::Rect) -> Pos2 {
         Pos2::new(
-            screen.right() - RESTING_SIZE.x - hud::MARGIN,
+            screen.right() - resting_size(world).x - hud::MARGIN,
             screen.top() + hud::MARGIN,
         )
     }
 
     fn show(&self, ui: &mut Ui, world: &mut World) -> Option<egui::Rect> {
-        let (piece, _) = ui.allocate_exact_size(RESTING_SIZE, Sense::hover());
-        let center = piece.center_top() + Vec2::new(0.0, RIM_OVERHANG + DISC / 2.0);
+        let overhang = overhang(world);
+        let (piece, _) = ui.allocate_exact_size(resting_size(world), Sense::hover());
+        let center = piece.center_top() + Vec2::new(0.0, overhang + DISC / 2.0);
         let whole = egui::Rect::from_center_size(center, Vec2::splat(DISC));
         ui.painter()
             .add(slip::SHADOW.as_shape(whole, CornerRadius::same((DISC / 2.0) as u8)));
+        if day_clock::shown(world) {
+            day_clock::face(ui, world, center, DISC / 2.0);
+        }
         let user = world.resource::<UserSettings>();
         let (chosen, turning) = (user.minimap_reach(), user.minimap_turns());
         let view = MapView::of(
@@ -67,7 +73,7 @@ impl HudWidget for MinimapWidget {
         super::lettered(
             ui,
             &area_name,
-            center + Vec2::new(0.0, DISC / 2.0 + RIM_OVERHANG),
+            center + Vec2::new(0.0, DISC / 2.0 + overhang),
         );
         if disc.clicked() {
             menu::toggle(world, MenuTabName::Map);
@@ -85,6 +91,15 @@ const NAME_ROOM: f32 = 22.0;
 // Clockwise from the rim's right end.
 const CLOSER_AT: Radians = Radians(0.56);
 const WIDER_AT: Radians = Radians(0.84);
+
+/// How far past the disc what goes round it reaches: its rim, or the clock when that is shown.
+fn overhang(world: &World) -> f32 {
+    if day_clock::shown(world) {
+        day_clock::REACH
+    } else {
+        RIM_OVERHANG
+    }
+}
 
 fn rim(ui: &Ui, center: Pos2) {
     let painter = ui.painter();

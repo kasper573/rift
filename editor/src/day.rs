@@ -39,16 +39,7 @@ pub(crate) fn track(
     path: &str,
 ) -> FormChange {
     let ctx = ui.ctx().clone();
-    let spans: Vec<Timespan> = times
-        .iter()
-        .map(|time| Timespan {
-            name: time.name.0.clone(),
-            from: time.from.0,
-            eases: time.eases.0,
-            color: time.color.into(),
-            icon: icon_of(cx, &ctx, &time.icon),
-        })
-        .collect();
+    let spans = timespans_of(times, |icon| icon_of(cx, &ctx, icon));
     let mut changed = FormChange::default();
     ui.vertical(|ui| {
         if times.is_empty() {
@@ -187,7 +178,7 @@ pub(crate) fn strip(ui: &mut Ui, cx: &mut FormCx, when: &SkyCondition) {
     let Some(cycle) = daylight(&content) else {
         return;
     };
-    let spans = cycle.timespans(|_| None);
+    let spans = timespans_of(&cycle.times, |_| None);
     match shares(&content, when) {
         Ok(shares) => {
             day_strip::day_strip(ui, DAY, &spans, |hour| {
@@ -344,6 +335,23 @@ fn named_in(
 
 fn daylight(content: &Content) -> Option<&DayCycle> {
     content.try_built::<GameSettings>()?.daylight.as_ref()
+}
+
+/// The day's times as spans of its 24 hours, each with the texture `icon` gives its icon.
+fn timespans_of(
+    times: &[TimeOfDay],
+    mut icon: impl FnMut(&ImageRef) -> Option<egui::TextureId>,
+) -> Vec<Timespan> {
+    times
+        .iter()
+        .map(|time| Timespan {
+            name: time.name.0.clone(),
+            from: time.from.0,
+            eases: time.eases.0,
+            color: time.color.into(),
+            icon: icon(&time.icon),
+        })
+        .collect()
 }
 
 fn icon_of(cx: &mut FormCx, ctx: &egui::Context, icon: &ImageRef) -> Option<egui::TextureId> {

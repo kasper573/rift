@@ -5,11 +5,8 @@ use engine::core::render::world::sky::{Daylight, ambient_at, night, shining, sun
 use engine::core::time::UnixMillis;
 use engine::core::units::{DayHours, Degrees, HourOfDay, Seconds};
 use engine::systems::area::{DayCycle, TimeOfDay, TimeOfDayName};
-use engine::systems::area_map::minimap::{self, MinimapWidget};
-use engine::systems::hud::HudWidget;
-use engine::systems::hud::day_dial::{self, DayDialWidget};
+use engine::systems::hud::day_clock;
 use engine::systems::launch::{ServerDay, ServerDaylight};
-use engine::systems::quest::tracker::QuestTrackerWidget;
 use ui::egui;
 
 const NOON: (Degrees, Degrees) = (Degrees(52.0), Degrees(215.0));
@@ -282,22 +279,42 @@ fn the_times_of_a_day_divide_it_between_them_and_ease_into_one_another() {
 }
 
 #[test]
-fn the_dial_of_the_day_rests_clear_of_the_minimap_and_of_the_quests_tracked_under_it() {
-    for (width, height) in [(1280.0, 720.0), (1920.0, 1080.0), (800.0, 600.0)] {
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, height));
-        let dial =
-            egui::Rect::from_min_size(DayDialWidget.fallback(screen), day_dial::RESTING_SIZE);
-        let map = egui::Rect::from_min_size(MinimapWidget.fallback(screen), minimap::RESTING_SIZE);
-        let tracked = egui::Rect::from_min_max(QuestTrackerWidget.fallback(screen), screen.max);
+fn the_clock_round_the_minimap_marks_the_hour_where_an_hour_hand_would_point() {
+    let toward = |hour: f32| day_clock::hand(HourOfDay(hour));
+    let (up, right, down, left) = (
+        egui::vec2(0.0, -1.0),
+        egui::vec2(1.0, 0.0),
+        egui::vec2(0.0, 1.0),
+        egui::vec2(-1.0, 0.0),
+    );
+    for (hour, points) in [
+        (0.0, up),
+        (3.0, right),
+        (6.0, down),
+        (9.0, left),
+        (12.0, up),
+        (15.0, right),
+        (18.0, down),
+        (21.0, left),
+    ] {
         assert!(
-            screen.contains_rect(dial),
-            "the dial rests off a window of {width} by {height}"
-        );
-        assert!(
-            !dial.intersects(map) && !dial.intersects(tracked),
-            "the dial rests over the minimap or the tracker in a window of {width} by {height}"
+            (toward(hour) - points).length() < 0.001,
+            "at {hour} the clock marks {:?}, not {points:?}",
+            toward(hour)
         );
     }
+    let (to_nine, to_ten) = (
+        (toward(9.5) - toward(9.0)).length(),
+        (toward(9.5) - toward(10.0)).length(),
+    );
+    assert!(
+        (to_nine - to_ten).abs() < 0.001 && to_nine < (toward(9.0) - toward(10.0)).length(),
+        "half past nine is marked midway between nine and ten"
+    );
+    assert!(
+        (toward(22.0) - toward(10.0)).length() < 0.001,
+        "ten at night is marked where ten in the morning is"
+    );
 }
 
 fn day(times: &[(&str, f32, f32)]) -> DayCycle {

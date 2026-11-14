@@ -30,7 +30,7 @@ use crate::core::time::{self};
 use crate::core::units::MeterPos;
 use crate::systems::actor::Name;
 use crate::systems::actor::render::Said;
-use crate::systems::hud::{self, day_dial};
+use crate::systems::hud::{self, day_clock};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{ItemId, card};
@@ -1071,7 +1071,7 @@ fn pills(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId,
                 controls::pill_with(ui, pill, |ui| {
                     glyph::show(ui, mark, PILL_ICON, pill.color());
                     let color = ui.visuals().text_color();
-                    day_dial::wording(ui, world, what, TextRole::Body, color);
+                    day_clock::wording(ui, world, what, TextRole::Body, color);
                 });
             }
             ChoiceChip::Pays { item, count, have } => {
