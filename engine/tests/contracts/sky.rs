@@ -6,7 +6,7 @@ use engine::systems::area::{self, AreaObject};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, position};
-use engine::systems::script::{self, SkyCondition, sky};
+use engine::systems::script::{self, SkyCondition};
 use engine::systems::status::{self, StatusEffectDef};
 use engine::systems::visibility::present;
 use engine::systems::{GameSettings, actor, npc, region, spawner};
@@ -363,10 +363,8 @@ fn hills(times: Value) -> Sim {
         .accept::<ConversationRequest>()
         .add((
             area::weather::turn_sky,
-            area::weather::read_sky,
-            sky::raise_turns,
             status::expire,
-            (npc::clear_fallen, spawner::retire, spawner::refill).chain(),
+            (npc::clear_fallen, spawner::tend).chain(),
             interact::interact_request,
             dialogue::requests,
         ))

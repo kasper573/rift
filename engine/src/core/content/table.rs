@@ -228,6 +228,11 @@ struct Loaded {
 pub struct Content(Arc<Loaded>);
 
 impl Content {
+    /// Whether this is the very content `other` is, loaded once and shared.
+    pub fn is(&self, other: &Content) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+
     pub fn table<Row: ContentFile>(&self) -> &Table<Row> {
         self.0
             .tables

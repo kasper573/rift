@@ -437,13 +437,7 @@ pub fn server_app(
         .add_systems(
             First,
             (
-                (
-                    area::weather::turn_sky,
-                    area::weather::read_sky,
-                    script::sky::raise_turns,
-                    player::welcome,
-                )
-                    .chain(),
+                (area::weather::turn_sky, player::welcome).chain(),
                 advance_replication_clock,
                 (sleep::settle, region::settle).chain(),
             ),
@@ -492,13 +486,7 @@ pub fn server_app(
                     item::expire_drops,
                     player::join,
                     player::respawn,
-                    (
-                        npc::clear_fallen,
-                        spawner::retire,
-                        spawner::refill,
-                        npc::dismiss,
-                    )
-                        .chain(),
+                    (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
                     chat::hear,

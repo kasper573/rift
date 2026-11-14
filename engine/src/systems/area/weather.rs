@@ -413,30 +413,6 @@ impl DayCycle {
     }
 }
 
-/// Tells a server's world its sky this tick: the hour of its day, and the weather over its area,
-/// the rain as hard as it falls under the cloud that holds the most water.
-pub fn read_sky(world: &mut World) {
-    let hour = world
-        .resource::<Content>()
-        .try_built::<GameSettings>()
-        .and_then(|settings| settings.daylight.as_ref())
-        .zip(world.get_resource::<DayClock>().and_then(|clock| clock.0))
-        .map(|(cycle, course)| cycle.hour(course, world.resource::<WallClock>().now));
-    let weather = world
-        .resource::<ServerSky>()
-        .weather()
-        .copied()
-        .unwrap_or_default();
-    sky::turn(
-        world,
-        Sky {
-            hour,
-            weather,
-            rain: weather.rain,
-        },
-    );
-}
-
 /// Keeps the client's daylight at the game's hour, or fixed for a game without a day cycle or
 /// before the server has told the time.
 pub fn tell_time(world: &mut World) {
@@ -524,7 +500,9 @@ impl ServerSky {
 }
 
 /// Turns the sky over the world's area on to this tick: the weather where the server's course
-/// stands, and the clouds carried along on its wind.
+/// stands, the rain as hard as it falls under the cloud that holds the most water, the clouds
+/// carried along on its wind, and the hour of the game's day. The world is told that sky, and
+/// the scripts of a game that names its times of day hear the day turn from one into the next.
 pub fn turn_sky(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let climate = &super::load(&content, world.resource::<WorldArea>().0).climate;
@@ -552,6 +530,21 @@ pub fn turn_sky(world: &mut World) {
     };
     sky.clouds.blown(weather.wind.blowing(), seconds, &look);
     sky.weather = Some(weather);
+    let cycle = content.built::<GameSettings>().daylight.as_ref();
+    let hour = cycle
+        .zip(world.get_resource::<DayClock>().and_then(|clock| clock.0))
+        .map(|(cycle, course)| cycle.hour(course, now));
+    sky::turn(
+        world,
+        Sky {
+            hour,
+            weather,
+            rain: weather.rain,
+        },
+    );
+    if cycle.is_some_and(|cycle| !cycle.times.is_empty()) {
+        sky::raise_turns(world);
+    }
 }
 
 /// Wind blowing toward `direction` (degrees from north, clockwise) at `strength`, from calm at 0

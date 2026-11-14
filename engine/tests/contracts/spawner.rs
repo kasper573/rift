@@ -1,11 +1,13 @@
+use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
+use bevy_ecs::query::Allow;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::time::{DayClock, TimeCourse};
 use engine::core::units::HourOfDay;
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::spawner::{self, Spawned};
-use engine::systems::{actor, area, combat, region, script, stat};
+use engine::systems::{actor, area, combat, region, script, sleep, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -90,6 +92,7 @@ fn a_spawner_turns_with_the_sky_from_one_share_to_the_next_out_of_sight_and_over
         }),
         NOON,
     );
+    sim.add(sleep::settle).add(movement::file_by_chunk);
     let player = sim.join(1);
     let seen = |sim: &Sim, npc: Entity| {
         let from = position(&sim.world, player).expect("the player stands somewhere");
@@ -212,23 +215,23 @@ fn field(width: usize, pack: Value, hour: f32) -> Sim {
     sim.serve("wilds")
         .plan(stat::SettleHealth::default())
         .add((
-            area::weather::read_sky,
+            area::weather::turn_sky,
             combat::defeats,
-            (npc::clear_fallen, spawner::retire, spawner::refill).chain(),
+            (npc::clear_fallen, spawner::tend).chain(),
         ))
         .plan(actor::SettleActions::default());
     hold(&mut sim, hour);
-    area::weather::read_sky(&mut sim.world);
+    area::weather::turn_sky(&mut sim.world);
     region::hold_whole(&mut sim.world);
     script::spawn_stateless(&mut sim.world);
     sim
 }
 
-/// Every living npc a spawner keeps, in the order they came to life.
+/// Every living npc a spawner keeps, asleep or awake, in the order they came to life.
 fn standing(sim: &mut Sim) -> Vec<Entity> {
     let mut spawned = sim
         .world
-        .query_filtered::<Entity, (With<Spawned>, With<Npc>)>();
+        .query_filtered::<Entity, (With<Spawned>, With<Npc>, Allow<Disabled>)>();
     let mut all: Vec<Entity> = spawned.iter(&sim.world).collect();
     all.sort_unstable();
     all.into_iter()

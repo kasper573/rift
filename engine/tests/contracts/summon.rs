@@ -275,7 +275,7 @@ fn harbour() -> Sim {
         .add((
             interact::interactions,
             (dialogue::hold, dialogue::refresh).chain(),
-            (npc::clear_fallen, spawner::refill, npc::dismiss).chain(),
+            (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
         ))
         .plan(stat::SettleHealth::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))

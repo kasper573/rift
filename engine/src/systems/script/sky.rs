@@ -137,9 +137,12 @@ impl SkyTable {
 }
 
 /// How much every sky condition of the game holds under the world's sky now, each answered once
-/// as a tick or a frame begins.
+/// for the sky and the game they were last asked under.
 #[derive(Resource, Default)]
-pub struct SkyNow(HashMap<Arc<str>, f32>);
+pub struct SkyNow {
+    shares: HashMap<Arc<str>, f32>,
+    answered: Option<(Content, Sky)>,
+}
 
 impl SkyNow {
     /// How much every sky condition of a game of `content` holds under `sky`: what a tool asks
@@ -152,20 +155,23 @@ impl SkyNow {
     }
 
     fn of(world: &World) -> SkyNow {
-        SkyNow(
-            world
-                .resource::<Content>()
+        let content = world.resource::<Content>();
+        SkyNow {
+            shares: content
                 .try_built::<SkyTable>()
                 .into_iter()
                 .flat_map(|table| &table.0)
                 .map(|(text, answer)| (text.clone(), share_of(answer, world)))
                 .collect(),
-        )
+            answered: Some((content.clone(), now(world))),
+        }
     }
 
     /// How much of what follows `when` is there now, 0 to 1: all of it when it follows nothing.
     pub fn share(&self, when: Option<&SkyCondition>) -> f32 {
-        when.map_or(1.0, |when| self.0.get(&when.text).copied().unwrap_or(0.0))
+        when.map_or(1.0, |when| {
+            self.shares.get(&when.text).copied().unwrap_or(0.0)
+        })
     }
 }
 
@@ -176,14 +182,17 @@ pub fn share(world: &World, when: Option<&SkyCondition>) -> f32 {
         .map_or(1.0, |now| now.share(when))
 }
 
-/// Tells `world` its sky, and answers every condition followed in it under that sky.
+/// Tells `world` its sky, and answers every condition followed in it under that sky: nothing
+/// when it is the sky its conditions were last answered under, in the same game.
 pub fn turn(world: &mut World, sky: Sky) {
+    let content = world.resource::<Content>();
+    let answered = world
+        .get_resource::<SkyNow>()
+        .and_then(|now| now.answered.as_ref());
+    if answered.is_some_and(|(game, under)| game.is(content) && *under == sky) {
+        return;
+    }
     world.insert_resource(sky);
-    answer(world);
-}
-
-/// Answers every sky condition of the game under the sky `world` was last told.
-pub fn answer(world: &mut World) {
     let now = SkyNow::of(world);
     world.insert_resource(now);
 }
@@ -197,7 +206,12 @@ pub struct DayWatch(Option<(TimeCourse<HourOfDay>, TimeOfDayName)>);
 /// world that starts within a time, or whose day is set to another hour, hears of no turn.
 pub fn raise_turns(world: &mut World) {
     let course = world.get_resource::<DayClock>().and_then(|clock| clock.0);
-    let holds = course.zip(time_of_day(world).map(|time| time.name.clone()));
+    let holds = course.zip(time_of_day(world).map(|time| &time.name));
+    let watched = world.resource::<DayWatch>().0.as_ref();
+    if watched.map(|(course, time)| (*course, time)) == holds {
+        return;
+    }
+    let holds = holds.map(|(course, time)| (course, time.clone()));
     let before = std::mem::replace(&mut world.resource_mut::<DayWatch>().0, holds.clone());
     let (Some((course, began)), Some((earlier, ended))) = (holds, before) else {
         return;
