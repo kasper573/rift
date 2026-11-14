@@ -329,7 +329,7 @@ impl Planner for SettleActions {
     }
 }
 
-fn set_action(actor: &mut Mut<Actor>, action: Action) {
+pub(crate) fn set_action(actor: &mut Mut<Actor>, action: Action) {
     if actor.action != action {
         actor.action = action;
     }

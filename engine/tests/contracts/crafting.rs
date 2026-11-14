@@ -3,7 +3,7 @@ use engine::core::content::{Content, LoadReport};
 use engine::core::units::Seconds;
 use engine::core::vfx::{VfxShaderDef, VfxShaderId};
 use engine::systems::actor::skeleton::MoveName;
-use engine::systems::actor::{self, HandsAtWork, Motion, Playing};
+use engine::systems::actor::{self, Action, Actor, HandsAtWork, Motion, Playing};
 use engine::systems::class::NodeKey;
 use engine::systems::crafting::{
     self, CraftingRequest, CraftingView, RecipeBookDef, RecipeId, RecipeKey,
@@ -365,9 +365,21 @@ fn a_crafter_makes_the_books_move_with_its_tool_or_the_recipes_own_for_as_long_a
     sim.run(1.0);
     let later = made(&sim).expect("made over and over while the craft is under way");
     assert!(later.started > first.started, "one move after another");
-    sim.run(1.0);
+    let swings = |sim: &Sim| {
+        sim.world
+            .get::<Actor>(player)
+            .is_some_and(|actor| actor.action == Action::Attack)
+    };
+    assert!(swings(&sim), "a move is shown as a swing");
+    assert!(
+        sim.run_until(1.5, |world| world.get::<Playing>(player).is_none()),
+        "the move ends with the craft"
+    );
     assert_eq!(sim.count(player, "ingot"), 1);
-    assert_eq!(made(&sim), None, "the move ends with the craft");
+    assert!(
+        !swings(&sim),
+        "and no swing is shown past it, not for a tick"
+    );
     assert_eq!(holds(&sim), None, "and the tool is put away");
 
     craft(&mut sim, 1, &[("log", 1)], PLANK);
@@ -775,6 +787,7 @@ fn forge(game: Game) -> Sim {
         .plan((
             script::RunFlows::default(),
             movement::AdvanceWalks::default(),
+            actor::SettleActions::default(),
         ))
         .add((
             interact::interactions,

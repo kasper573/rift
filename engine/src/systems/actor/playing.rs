@@ -420,7 +420,9 @@ pub fn progress(world: &mut World, playing: &mut QueryState<Entity, With<Playing
     }
 }
 
-/// Cuts short what an actor plays where that is `motion`, which then never lands.
+/// Cuts short what an actor plays where that is `motion`, which then never lands. The actor is
+/// left idle, whenever in the tick the cut is made: one still shown at the motion's action with
+/// nothing to play would be seen to begin that action anew.
 pub fn cut(world: &mut World, actor: Entity, motion: &Motion) {
     if world
         .get::<Playing>(actor)
@@ -429,6 +431,11 @@ pub fn cut(world: &mut World, actor: Entity, motion: &Motion) {
         let now = world.resource::<WallClock>().now;
         interrupt(world, actor);
         world.entity_mut(actor).insert(LastAction { at: now });
+        if let Some(mut shown) = world.get_mut::<Actor>(actor)
+            && shown.action == motion.action()
+        {
+            super::set_action(&mut shown, Action::Idle);
+        }
     }
 }
 

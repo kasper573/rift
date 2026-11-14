@@ -246,7 +246,8 @@ struct FeedLine {
 }
 
 /// What the feed's lines stack up from: a point over the player's head they are centred on, or
-/// the corner of the window's bottom right they are set against, clear of the interface there.
+/// the corner of the window's bottom right they are set against, clear of the interface there
+/// as far as that leaves them in the window's lower half. What stands taller they are drawn over.
 #[derive(Clone, Copy)]
 enum FeedAnchor {
     OverHead(Pos2),
@@ -289,9 +290,14 @@ impl FeedAnchor {
             .filter(|rect| rect.right() > right - widest && rect.left() < right)
             .collect();
         taken.sort_by(|a, b| b.bottom().total_cmp(&a.bottom()));
+        let reach = SHOWN as f32 * row;
         for rect in taken {
-            if rect.bottom() > bottom - SHOWN as f32 * row && rect.top() < bottom {
-                bottom = rect.top() - EDGE;
+            if rect.bottom() > bottom - reach && rect.top() < bottom {
+                let over = rect.top() - EDGE;
+                if over - reach < screen.center().y {
+                    break;
+                }
+                bottom = over;
             }
         }
         FeedAnchor::Corner(Pos2::new(right, bottom))
