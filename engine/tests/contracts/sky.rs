@@ -256,8 +256,8 @@ fn assert_share(sim: &Sim, condition: &Value, share: f32, when: &str) {
 }
 
 /// Hills under a windy, clouded, rainy sky whose day is divided into `times`, where a keeper
-/// is lit for as long as a night that began as the day turned, and a baker is away at dawn and
-/// by night, when she leaves a sign.
+/// is lit for as long as a night that began as the day turned, and a baker whose script keeps
+/// her at her counter is away at dawn and by night, when she leaves a sign.
 fn hills(times: Value) -> Sim {
     let night = !times.as_array().expect("times").is_empty();
     let content = Game::new()
@@ -293,6 +293,9 @@ fn hills(times: Value) -> Sim {
             json!({
                 "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 3.0, "next": "greet" },
                 "greet": says("Fresh bread.", json!([{ "label": ["Good day."] }])),
+                "started": { "type": "on", "event": "started", "next": "rest" },
+                "rest": { "type": "wait", "seconds": 0.1, "at_most": 0.1, "next": "still" },
+                "still": { "type": "stop", "priority": 1, "next": "rest" },
             }),
         )
         .prop("signboard", json!({ "type": "none" }))
