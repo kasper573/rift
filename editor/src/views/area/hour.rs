@@ -299,8 +299,9 @@ impl ShownSky {
     }
 }
 
-/// The hour the areas are shown at, in the corner of an area view's map `canvas`: dragged or
-/// typed, played, and put back to the light the areas are authored in.
+/// The hour the areas are shown at, in the bottom corner of an area view's map `canvas`: dragged
+/// or typed, played, and put back to the light the areas are authored in. What comes and goes
+/// with the hour is laid out last, so nothing a pointer rests on moves.
 pub(super) fn bar(editor: &mut Editor, ui: &mut Ui, canvas: ERect) {
     let Some(content) = editor
         .project
@@ -324,10 +325,31 @@ pub(super) fn bar(editor: &mut Editor, ui: &mut Ui, canvas: ERect) {
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(corner)
-            .layout(Layout::right_to_left(Align::Min)),
+            .layout(Layout::right_to_left(Align::Max)),
     );
     let shown = ui::slip::show(&mut child, |ui| {
         ui.horizontal(|ui| {
+            let authored = match day.hour {
+                Some(_) => format!(
+                    "The light the area is authored in ({})",
+                    EditorKey::AsAuthored.name()
+                ),
+                None => format!(
+                    "Shown in its authored light. Pick an hour of the game's day to see what \
+                     follows it ({} and {})",
+                    EditorKey::HourEarlier.name(),
+                    EditorKey::HourLater.name()
+                ),
+            };
+            if controls::button(ui, "As authored")
+                .on_hover_text(authored)
+                .clicked()
+            {
+                match day.hour {
+                    Some(_) => day.as_authored(),
+                    None => day.step(0.0),
+                }
+            }
             let (mark, does) = if day.playing {
                 (Mark::Pause, "Pause the day")
             } else {
@@ -339,53 +361,28 @@ pub(super) fn bar(editor: &mut Editor, ui: &mut Ui, canvas: ERect) {
             {
                 day.toggle_play();
             }
-            match day.hour {
-                Some(hour) => {
-                    let mut typed = hour.0;
-                    if controls::slider(ui, &mut typed, 0.0..=24.0).changed()
-                        | NumberField::new(&mut typed)
-                            .range(0.0..=24.0)
-                            .unit("h")
-                            .width(HOUR_WIDTH)
-                            .show(ui)
-                    {
-                        day.hour = Some(HourOfDay::wrapped(typed));
+            let Some(hour) = day.hour else {
+                return;
+            };
+            let mut typed = hour.0;
+            if controls::slider(ui, &mut typed, 0.0..=24.0).changed()
+                | NumberField::new(&mut typed)
+                    .range(0.0..=24.0)
+                    .unit("h")
+                    .width(HOUR_WIDTH)
+                    .show(ui)
+            {
+                day.hour = Some(HourOfDay::wrapped(typed));
+            }
+            controls::combo("day-pace")
+                .selected_text(day.pace.name())
+                .show_ui(ui, |ui| {
+                    for &pace in DayPace::VARIANTS {
+                        ui.selectable_value(&mut day.pace, pace, pace.name());
                     }
-                    if let Some(time) = cycle.time_at(HourOfDay::wrapped(typed)) {
-                        chip::swatch(ui, time.name.0.as_str(), time.color.into());
-                    }
-                    if day.playing {
-                        controls::combo("day-pace")
-                            .selected_text(day.pace.name())
-                            .show_ui(ui, |ui| {
-                                for &pace in DayPace::VARIANTS {
-                                    ui.selectable_value(&mut day.pace, pace, pace.name());
-                                }
-                            });
-                    }
-                    if controls::button(ui, "As authored")
-                        .on_hover_text(format!(
-                            "The light the area is authored in ({})",
-                            EditorKey::AsAuthored.name()
-                        ))
-                        .clicked()
-                    {
-                        day.as_authored();
-                    }
-                }
-                None => {
-                    if controls::button(ui, "As authored")
-                        .on_hover_text(format!(
-                            "Shown in its authored light. Pick an hour of the game's day to see \
-                             what follows it ({} and {})",
-                            EditorKey::HourEarlier.name(),
-                            EditorKey::HourLater.name()
-                        ))
-                        .clicked()
-                    {
-                        day.step(0.0);
-                    }
-                }
+                });
+            if let Some(time) = cycle.time_at(HourOfDay::wrapped(typed)) {
+                chip::swatch(ui, time.name.0.as_str(), time.color.into());
             }
         });
     });
