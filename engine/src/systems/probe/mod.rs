@@ -481,6 +481,10 @@ pub struct ProbeTerrain {
     #[schemars(with = "SizeSchema")]
     pub size: Size<Meters>,
     pub heights: Vec<Meters>,
+    /// How deep water stands over each of the heights, nothing over dry ground. The pointer of
+    /// someone a mount carries over water, and an aim at a spot, meet the water's surface there
+    /// rather than the ground under it.
+    pub depths: Vec<Meters>,
 }
 
 impl ProbeTerrain {
@@ -1636,8 +1640,10 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
         .heights
         .size()
         .tiles_within(window)
-        .filter(|&tile| area.heights.is_loaded(tile))
-        .count();
+        .map(|tile| {
+            usize::from(area.heights.is_loaded(tile)) + usize::from(area.water.is_loaded(tile))
+        })
+        .sum();
     let sending = TerrainSent(Some((area_id, window, loaded)));
     let mut sent = world.resource_mut::<TerrainSent>();
     if *sent == sending {
@@ -1647,17 +1653,18 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
     let area = area::load(world.resource::<Content>(), area_id);
     let size = Size::new(window.size.width.floor(), window.size.height.floor());
     let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);
-    let heights = (0..rows)
-        .flat_map(|row| (0..columns).map(move |column| (column, row)))
-        .map(|(column, row)| {
-            area.heights
-                .height_at(window.origin + Offset::new(column as f32, row as f32))
-        })
-        .collect();
+    let samples = || {
+        (0..rows)
+            .flat_map(|row| (0..columns).map(move |column| (column, row)))
+            .map(|(column, row)| window.origin + Offset::new(column as f32, row as f32))
+    };
     Some(ProbeTerrain {
         origin: window.origin,
         size,
-        heights,
+        heights: samples().map(|at| area.heights.height_at(at)).collect(),
+        depths: samples()
+            .map(|at| area.water.depth_at(&area.heights, at))
+            .collect(),
     })
 }
 
