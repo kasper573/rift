@@ -26,7 +26,10 @@ use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::plates::ItemNaming;
 use crate::systems::item::rarity::{ItemRarityDef, RarityRank};
+use crate::systems::player::session;
 use crate::systems::skill::HotbarSlot;
+use crate::systems::social_request::{self, setting::SocialChoice};
+use crate::systems::society::SocietyView;
 
 const SLIDER_WIDTH: f32 = 120.0;
 const ROW_GAP: f32 = 8.0;
@@ -130,22 +133,37 @@ impl MenuTab for SettingsMenuTab {
         InputAction::OpenSettings
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let typing = world.get_resource::<Typing>().copied();
-        let rarities = rarities(world.resource::<Content>());
-        let turn_ease = world
-            .get_resource::<CameraRig>()
-            .map(|rig| rig.framing().turn_ease);
+        let game = GameSide {
+            typing: world.get_resource::<Typing>().copied(),
+            turn_ease: world
+                .get_resource::<CameraRig>()
+                .map(|rig| rig.framing().turn_ease),
+            rarities: rarities(world.resource::<Content>()),
+            tabs: hud::menu::tab_names(world),
+            society: session::my_character(world)
+                .and_then(|me| me.get::<SocietyView>())
+                .cloned(),
+        };
         let ([], pane) = sheet::columns(ui, ui.available_rect_before_wrap(), []);
+        let mut chosen = None;
         sheet::scroll_pane(ui, pane, egui::ScrollArea::vertical(), |ui| {
-            show_settings(
-                ui,
-                &mut world.resource_mut::<UserSettings>(),
-                typing,
-                turn_ease,
-                &rarities,
-            )
+            chosen = show_settings(ui, &mut world.resource_mut::<UserSettings>(), &game);
         });
+        if let Some(chosen) = chosen {
+            chosen.send(world);
+        }
     }
+}
+
+/// What the settings show that is the game's or the server's to say, not the device's.
+struct GameSide {
+    typing: Option<Typing>,
+    turn_ease: Option<Seconds>,
+    rarities: Vec<(RarityRank, String)>,
+    /// The menu's tabs, as the game has them.
+    tabs: Vec<MenuTabName>,
+    /// How the player's account stands in society, once the server has said.
+    society: Option<SocietyView>,
 }
 
 /// The game's rarities by name, the lowest rank first.
@@ -164,49 +182,40 @@ fn rarities(content: &Content) -> Vec<(RarityRank, String)> {
 fn show_settings(
     ui: &mut Ui,
     settings: &mut Mut<UserSettings>,
-    typing: Option<Typing>,
-    turn_ease: Option<Seconds>,
-    rarities: &[(RarityRank, String)],
-) {
+    game: &GameSide,
+) -> Option<SocialChoice> {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     if ui.available_width() < 2.0 * COLUMN + sheet::GUTTER {
         ui.spacing_mut().item_spacing.x = ROW_GAP;
-        show_first_column(ui, settings, typing, turn_ease, rarities);
+        show_first_column(ui, settings, game);
         ui.add_space(SECTION_GAP);
-        show_second_column(ui, settings);
-        return;
+        return show_second_column(ui, settings, game);
     }
     ui.spacing_mut().item_spacing.x = sheet::GUTTER;
     ui.columns(2, |columns| {
         let [left, right] = columns else {
-            return;
+            return None;
         };
         left.spacing_mut().item_spacing.x = ROW_GAP;
         right.spacing_mut().item_spacing.x = ROW_GAP;
-        show_first_column(left, settings, typing, turn_ease, rarities);
-        show_second_column(right, settings);
-    });
+        show_first_column(left, settings, game);
+        show_second_column(right, settings, game)
+    })
 }
 
-fn show_first_column(
-    ui: &mut Ui,
-    settings: &mut Mut<UserSettings>,
-    typing: Option<Typing>,
-    turn_ease: Option<Seconds>,
-    rarities: &[(RarityRank, String)],
-) {
+fn show_first_column(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: &GameSide) {
     sheet::section(ui, "Interface");
-    show_interface(ui, settings, typing);
+    show_interface(ui, settings, game);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "HUD");
     show_hud(ui, settings);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "Items on the ground");
-    show_items(ui, settings, rarities);
+    show_items(ui, settings, &game.rarities);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "Camera");
     controls::form(ui, ("settings", "camera"), |ui| {
-        if let Some(turn_ease) = turn_ease {
+        if let Some(turn_ease) = game.turn_ease {
             let label = ui.label("Camera smoothing");
             smoothing_slider(ui, settings, turn_ease, label.id);
             ui.end_row();
@@ -214,7 +223,11 @@ fn show_first_column(
     });
 }
 
-fn show_second_column(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+fn show_second_column(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    game: &GameSide,
+) -> Option<SocialChoice> {
     sheet::section(ui, "Chat");
     show_chat(ui, settings);
     ui.add_space(SECTION_GAP);
@@ -234,12 +247,17 @@ fn show_second_column(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
             ui.end_row();
         }
     });
+    let society = game.society.as_ref()?;
+    ui.add_space(SECTION_GAP);
+    sheet::section(ui, "Social");
+    social_request::setting::section(ui, society, true)
 }
 
-fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<Typing>) {
+fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: &GameSide) {
+    let typing = game.typing;
     controls::form(ui, ("settings", "interface"), |ui| {
         let label = ui.label("Menu opens on");
-        menu_tab_picker(ui, settings, label.id);
+        menu_tab_picker(ui, settings, &game.tabs, label.id);
         ui.end_row();
         let mut snapping = settings.snapping_enabled();
         if controls::toggle(ui, "UI snapping", &mut snapping).changed() {
@@ -409,7 +427,12 @@ fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     });
 }
 
-fn menu_tab_picker(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+fn menu_tab_picker(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    tabs: &[MenuTabName],
+    label: egui::Id,
+) {
     let chosen = settings.menu_opens_on();
     let mut picked = chosen;
     controls::combo("menu opens on")
@@ -417,7 +440,7 @@ fn menu_tab_picker(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::I
         .show_ui(ui, |ui| {
             ui.selectable_value(&mut picked, None, LAST_USED_TAB);
             ui.separator();
-            for &tab in MenuTabName::VARIANTS {
+            for &tab in tabs {
                 ui.selectable_value(&mut picked, Some(tab), tab.title());
             }
         })

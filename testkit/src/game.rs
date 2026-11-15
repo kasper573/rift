@@ -284,6 +284,7 @@ impl Game {
                 "history_merges_within": 10.0,
                 "suggestions": 10,
                 "lingers_for": 0.0,
+                "requests": { "card_shows": 20.0, "new_accounts_accept": "everyone" },
                 "look": look(),
                 "dialogue_shots": {
                     "shoulder": { "back": 1.6, "aside": 0.7, "up": 0.95, "aim": 0.75 },
@@ -985,6 +986,16 @@ fn words() -> GameWords {
         play_on: "You can go on playing.".to_owned(),
         saved: "Saved".to_owned(),
         saved_again: "Everything up to now is kept.".to_owned(),
+        not_taking_requests: "{name} is not taking requests".to_owned(),
+        you_blocked: "You have blocked {name}".to_owned(),
+        not_here: "{name} is not here".to_owned(),
+        friendship_asks: "{name} wants to be your friend".to_owned(),
+        friendship_asked: "You asked {name} to be your friend".to_owned(),
+        friendship_sent: "Friend request sent to {name}".to_owned(),
+        friendship_accepted: "{name} is now your friend".to_owned(),
+        already_friends: "{name} is already your friend".to_owned(),
+        friends_full: "Your friends list is full".to_owned(),
+        too_many_friend_requests: "You have too many friend requests waiting".to_owned(),
     }
 }
 

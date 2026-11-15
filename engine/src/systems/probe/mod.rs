@@ -85,6 +85,7 @@ use crate::systems::crafting::{self, RecipeId};
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::stage;
 use crate::systems::equipment::{self, EquipmentPlace};
+use crate::systems::friend::{self, page::ShownFriends};
 use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
@@ -107,6 +108,7 @@ use crate::systems::save::{self, notice::ShownSaving};
 use crate::systems::script::{RiftScripts, sky};
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
+use crate::systems::social_request::{self, card::ShownRequestCard};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
 
@@ -349,6 +351,11 @@ pub struct ProbeSnapshot {
     pub feed_place: feed::FeedPlace,
     /// What the interface shows of saving.
     pub saving: ShownSaving,
+    /// The request cards on the HUD, the one in front first.
+    pub social_requests: Vec<ShownRequestCard>,
+    /// What the Friends page shows: the list, the requests in and out, the players kept away
+    /// and what the search found.
+    pub friends: ShownFriends,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -1222,6 +1229,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         feed: feed::rows(world),
         feed_place: feed::place(world),
         saving: save::notice::shown(world),
+        social_requests: social_request::card::shown(world),
+        friends: friend::page::shown(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),

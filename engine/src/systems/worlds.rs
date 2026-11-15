@@ -10,7 +10,7 @@ use crate::systems::player::errand::{self, Errand, ErrandOutcome};
 use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Departure, Players};
 use crate::systems::save::{self, Checkpoints};
-use crate::systems::society::Society;
+use crate::systems::society::{self, ServerSociety};
 use crate::systems::{player, stat, step_area};
 
 #[derive(Clone)]
@@ -44,7 +44,7 @@ impl Worlds {
 /// way.
 pub struct AboveWorlds {
     pub roster: ServerRoster,
-    pub society: Society,
+    pub society: ServerSociety,
     pub checkpoints: Checkpoints,
 }
 
@@ -53,7 +53,7 @@ impl AboveWorlds {
     pub fn unsaved() -> AboveWorlds {
         AboveWorlds {
             roster: ServerRoster::default(),
-            society: Society::default(),
+            society: ServerSociety::default(),
             checkpoints: Checkpoints::none(),
         }
     }
@@ -77,8 +77,8 @@ pub fn tick(
 }
 
 /// What the worlds settle between ticks, the only time one hand holds them all: who plays where
-/// on the server, every errand a world asked be done to a player in another, and the checkpoint
-/// that saves them all as they stand at this one instant. Each errand is answered, whatever
+/// on the server, every errand a world asked be done to a player in another, what their players
+/// asked of society, and the checkpoint that saves them all as they stand at this one instant. Each errand is answered, whatever
 /// became of its player. Says which characters left their world since the worlds last conferred.
 pub fn confer(
     views: &mut [Option<&mut World>],
@@ -91,6 +91,7 @@ pub fn confer(
             (errand.then)(world, outcome);
         }
     }
+    society::settle(views, above, now);
     save::checkpoint(views, &mut above.checkpoints, now)
 }
 

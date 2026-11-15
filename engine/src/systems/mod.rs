@@ -13,6 +13,7 @@ pub mod dialogue;
 pub mod emote;
 pub mod equipment;
 pub mod frame_rate;
+pub mod friend;
 pub mod history;
 pub mod hud;
 pub mod identity;
@@ -40,6 +41,7 @@ pub mod settings;
 pub mod shop;
 pub mod skill;
 pub mod sleep;
+pub mod social_request;
 pub mod society;
 pub mod spawner;
 pub mod staging;
@@ -108,6 +110,9 @@ pub fn protocol(app: &mut App) {
     equipment::register(app);
     history::register(app);
     save::notice::register(app);
+    social_request::register(app);
+    society::view::register(app);
+    friend::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -125,6 +130,11 @@ pub fn protocol(app: &mut App) {
     vfx::register(app);
     emote::register(app);
     plug_ins(app.world_mut());
+}
+
+/// The kinds of request between players the engine's systems bring.
+pub fn request_sources() -> Vec<social_request::SocialRequestSource> {
+    vec![friend::request_source()]
 }
 
 /// Wires each system's say into the registries other systems read, so neither names the other: what
@@ -158,6 +168,8 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<player::roster::ServerRoster>();
     world.init_resource::<player::roster::Enrollment>();
     world.init_resource::<player::errand::Errands>();
+    world.init_resource::<society::ServerSociety>();
+    world.init_resource::<society::SocietyAsks>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
@@ -255,6 +267,10 @@ pub struct GameSettings {
     /// How long a character stays in the world once its player is gone, however they left. At
     /// zero it is gone at once.
     pub lingers_for: Seconds,
+    pub requests: social_request::RequestSettings,
+    /// How friends work. A game without it has no friends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub friends: Option<friend::FriendSettings>,
 }
 
 /// How much a player keeps.
@@ -369,6 +385,27 @@ pub struct GameWords {
     pub saved: String,
     /// What players are told as the game saves again.
     pub saved_again: String,
+    /// What a player is told asking something of `{name}`, who takes no request from them.
+    pub not_taking_requests: String,
+    /// What a player is told asking something of `{name}`, whom they keep away themselves.
+    pub you_blocked: String,
+    /// What a player is told asking `{name}` for what needs them at their character, as they
+    /// are not.
+    pub not_here: String,
+    /// What a request for friendship from `{name}` says to the player asked.
+    pub friendship_asks: String,
+    /// What a request for friendship says to the player who asked `{name}`.
+    pub friendship_asked: String,
+    /// What a player is told as their request for friendship is sent to `{name}`.
+    pub friendship_sent: String,
+    /// What a player is told as `{name}` accepts their request for friendship.
+    pub friendship_accepted: String,
+    /// What a player is told asking `{name}`, a friend already, to be their friend.
+    pub already_friends: String,
+    /// What a player is told as their friends list has no room for one more.
+    pub friends_full: String,
+    /// What a player is told asking for friendship with as many requests waiting as they may have.
+    pub too_many_friend_requests: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -538,7 +575,13 @@ pub fn server_app(
                     (prompt::hold, crafting::hold, crafting::work).chain(),
                     item::expire_drops,
                     player::join,
-                    (save::notice::tell_returned, save::notice::tell_saving),
+                    (
+                        save::notice::tell_returned,
+                        save::notice::tell_saving,
+                        society::view::greet,
+                        social_request::requests,
+                        friend::requests,
+                    ),
                     player::linger,
                     player::respawn,
                     (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
@@ -698,7 +741,13 @@ pub fn client_app(
             terminal::TerminalPlugin,
             frame_rate::FrameRatePlugin,
         ))
-        .add_plugins((area_map::AreaMapPlugin, save::notice::SavingNoticePlugin));
+        .add_plugins((
+            area_map::AreaMapPlugin,
+            save::notice::SavingNoticePlugin,
+            social_request::card::plugin,
+            society::tab::plugin,
+            friend::page::plugin,
+        ));
     app
 }
 
@@ -931,6 +980,22 @@ fn check_settings(loading: &mut Loading) {
     check.at_least("/drops/least_size", drops.least_size.0, 0.0, "meters");
     check.at_least("/drops/fades_for", drops.fades_for.0, 0.0, "seconds");
     check.at_least("/drops/names_reach", drops.names_reach.0, 0.0, "meters");
+    check.at_least(
+        "/requests/card_shows",
+        settings.requests.card_shows.0,
+        0.0,
+        "seconds",
+    );
+    if let Some(friends) = &settings.friends {
+        check.at_least("/friends/most", friends.most, 1, "friends");
+        check.at_least("/friends/requests", friends.requests, 1, "requests");
+        check.at_least(
+            "/friends/request_lasts",
+            friends.request_lasts.0,
+            0.0,
+            "seconds",
+        );
+    }
     settings.cards.check("/cards", &mut check);
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
@@ -971,6 +1036,19 @@ fn check_settings(loading: &mut Loading) {
         ("play_on", &settings.words.play_on),
         ("saved", &settings.words.saved),
         ("saved_again", &settings.words.saved_again),
+        ("not_taking_requests", &settings.words.not_taking_requests),
+        ("you_blocked", &settings.words.you_blocked),
+        ("not_here", &settings.words.not_here),
+        ("friendship_asks", &settings.words.friendship_asks),
+        ("friendship_asked", &settings.words.friendship_asked),
+        ("friendship_sent", &settings.words.friendship_sent),
+        ("friendship_accepted", &settings.words.friendship_accepted),
+        ("already_friends", &settings.words.already_friends),
+        ("friends_full", &settings.words.friends_full),
+        (
+            "too_many_friend_requests",
+            &settings.words.too_many_friend_requests,
+        ),
     ] {
         check.text(format!("/words/{field}"), said, 1, 80);
     }

@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "8e5c32ba",
+  "content_version": "d8881367",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -139,7 +139,17 @@
     "not_saving_since": "What you have done since {time} may be lost if the server stops.",
     "play_on": "You can go on playing.",
     "saved": "Saved",
-    "saved_again": "Everything up to now is kept."
+    "saved_again": "Everything up to now is kept.",
+    "not_taking_requests": "{name} is not taking requests",
+    "you_blocked": "You have blocked {name}",
+    "not_here": "{name} is not here",
+    "friendship_asks": "{name} wants to be your friend",
+    "friendship_asked": "You asked {name} to be your friend",
+    "friendship_sent": "Friend request sent to {name}",
+    "friendship_accepted": "{name} is now your friend",
+    "already_friends": "{name} is already your friend",
+    "friends_full": "Your friends list is full",
+    "too_many_friend_requests": "You have too many friend requests waiting"
   },
   "typing": {
     "pace": 45.0,
@@ -346,5 +356,14 @@
   },
   "history_merges_within": 10.0,
   "suggestions": 10,
-  "lingers_for": 30.0
+  "lingers_for": 30.0,
+  "requests": {
+    "card_shows": 20.0,
+    "new_accounts_accept": "everyone"
+  },
+  "friends": {
+    "most": 100,
+    "requests": 20,
+    "request_lasts": 604800.0
+  }
 }

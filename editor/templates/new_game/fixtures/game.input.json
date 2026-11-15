@@ -135,12 +135,39 @@
         }
       ]
     },
+    "open_social": {
+      "label": "Open the Social tab",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyF"
+        }
+      ]
+    },
     "open_settings": {
       "label": "Open the Settings tab",
       "bindings": [
         {
           "type": "key",
           "key": "KeyO"
+        }
+      ]
+    },
+    "accept_request": {
+      "label": "Say yes to the request in front",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyY"
+        }
+      ]
+    },
+    "decline_request": {
+      "label": "Say no to the request in front",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyN"
         }
       ]
     },

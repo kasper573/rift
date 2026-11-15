@@ -39,7 +39,7 @@ use engine::systems::save::load::{self, LoadedCharacter};
 use engine::systems::save::{
     self, Checkpoints, DepartedCharacters, GameChange, Returned, SavedCharacter,
 };
-use engine::systems::society::Society;
+use engine::systems::society::{ServerSociety, Society};
 use engine::systems::staging::{self, STAGING_ROUTE, Staging};
 use engine::systems::worlds::{self, AboveWorlds, Worlds};
 use engine::systems::{GameSettings, TICK_HZ, load_content, server_app, start_server};
@@ -97,7 +97,11 @@ fn main() {
     });
 
     let society = runtime
-        .block_on(Society::read(&store, &ContentScope::of(&content)))
+        .block_on(Society::read(
+            &store,
+            &ContentScope::of(&content),
+            engine::systems::request_sources(),
+        ))
         .unwrap_or_else(|problem| {
             eprintln!(
                 "the server did not start: what {} holds cannot be read: {problem}",
@@ -107,7 +111,7 @@ fn main() {
         });
     let above = AboveWorlds {
         roster: Default::default(),
-        society,
+        society: ServerSociety::of(society),
         checkpoints: Checkpoints::to(
             store.clone(),
             runtime.handle().clone(),

@@ -82,6 +82,7 @@ pub enum InterfaceIcon {
     Quests,
     Map,
     History,
+    Social,
     Settings,
 }
 

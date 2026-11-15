@@ -1,11 +1,9 @@
-use std::time::Duration;
-
 use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
 use engine::core::content::{Content, ContentScope};
 use engine::core::math::Pos;
-use engine::core::store::{Record, RecordId, RecordRow, RecordStore, RecordStoreAddress};
+use engine::core::store::{Record, RecordRow};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::account::{AccountId, AccountIdentity};
@@ -25,9 +23,7 @@ use engine::systems::player::{
 use engine::systems::quest::QuestDef;
 use engine::systems::save::load::{self, LoadedCharacter};
 use engine::systems::save::notice::{self, ChangeLine, GameChanged, Returned, SavingNews};
-use engine::systems::save::{
-    self, CheckpointReport, Checkpoints, GameChange, SavedCharacter, ServerSaving,
-};
+use engine::systems::save::{self, GameChange, SavedCharacter, ServerSaving};
 use engine::systems::script::Place;
 use engine::systems::skill::{self, Rank};
 use engine::systems::society::{Account, Society};
@@ -36,6 +32,8 @@ use engine::systems::worlds::{self, AboveWorlds};
 use engine::systems::{GameSettings, combat};
 use serde_json::json;
 use testkit::{Game, Map, Sim};
+
+use crate::saves::{Saves, checkpoint, confer};
 
 #[test]
 fn what_a_server_saved_as_it_stopped_is_what_the_next_one_plays_on() {
@@ -69,7 +67,11 @@ fn what_a_server_saved_as_it_stopped_is_what_the_next_one_plays_on() {
     let content = game(Some(&Map::open(9, 9))).load();
     let society = saves
         .runtime
-        .block_on(Society::read(&saves.store, &ContentScope::of(&content)))
+        .block_on(Society::read(
+            &saves.store,
+            &ContentScope::of(&content),
+            Vec::new(),
+        ))
         .expect("the store is read");
     let known = society.accounts().get(&AccountId("wren".to_owned()));
     assert_eq!(
@@ -432,100 +434,6 @@ fn a_character_stays_in_the_world_a_while_after_its_player_is_gone() {
         })
         .collect();
     assert_eq!(left, [("wren", whole - 4.0)], "as it then is");
-}
-
-const EVERY: Seconds = Seconds(30.0);
-
-/// A store in a file of its own, and the runtime checkpoints are written on.
-struct Saves {
-    runtime: tokio::runtime::Runtime,
-    store: RecordStore,
-    address: RecordStoreAddress,
-    _folder: tempfile::TempDir,
-}
-
-impl Saves {
-    fn in_a_file() -> Saves {
-        let runtime = tokio::runtime::Runtime::new().expect("a runtime");
-        let folder = tempfile::tempdir().expect("a folder for the store");
-        let address = RecordStoreAddress::file(&folder.path().join("records.sqlite"));
-        let store = runtime
-            .block_on(RecordStore::open(&address))
-            .expect("a file opens");
-        Saves {
-            runtime,
-            store,
-            address,
-            _folder: folder,
-        }
-    }
-
-    /// What a server that saves the game `content` holds to this store keeps above its worlds.
-    fn above(&self, content: &Content) -> AboveWorlds {
-        AboveWorlds {
-            checkpoints: Checkpoints::to(
-                self.store.clone(),
-                self.runtime.handle().clone(),
-                content,
-                EVERY,
-                Duration::ZERO,
-            ),
-            ..AboveWorlds::unsaved()
-        }
-    }
-
-    fn character(&self, account: &str) -> Option<String> {
-        let id = RecordId(account.to_owned());
-        self.runtime
-            .block_on(self.store.one(SavedCharacter::KIND, &id))
-            .expect("the store is read")
-    }
-
-    fn all(&self, kind: &'static str) -> Vec<String> {
-        self.runtime
-            .block_on(self.store.all(kind))
-            .expect("the store is read")
-    }
-
-    /// Has the file refuse every character put in it, or take them again.
-    fn refuse_characters(&self, refuse: bool) {
-        let rule = if refuse {
-            "CREATE TRIGGER refuse BEFORE INSERT ON records WHEN NEW.kind = 'character' \
-             BEGIN SELECT RAISE(ABORT, 'refused'); END"
-        } else {
-            "DROP TRIGGER refuse"
-        };
-        self.runtime.block_on(async {
-            let pool = sqlx::AnyPool::connect(self.address.as_str())
-                .await
-                .expect("the file opens again");
-            sqlx::query(rule).execute(&pool).await.expect("a rule");
-        });
-    }
-}
-
-/// Has the worlds of `sims` confer, as a server's do between ticks: who left them since.
-fn confer(sims: &mut [&mut Sim], above: &mut AboveWorlds) -> Vec<player::Departure> {
-    let now = sims[0].world.resource::<WallClock>().now;
-    let mut views: Vec<Option<&mut World>> =
-        sims.iter_mut().map(|sim| Some(&mut sim.world)).collect();
-    worlds::confer(&mut views, above, now)
-}
-
-/// The next checkpoint of worlds that have conferred before, an interval on: how it went, once
-/// the store has answered.
-fn checkpoint(sims: &mut [&mut Sim], above: &mut AboveWorlds) -> CheckpointReport {
-    for sim in sims.iter_mut() {
-        sim.later(EVERY.0);
-    }
-    for _ in 0..5000 {
-        confer(sims, above);
-        if let Some(report) = above.checkpoints.reports().pop() {
-            return report;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    panic!("the store never answered the checkpoint");
 }
 
 /// What `sim`'s clients were sent of `M` since `cursor` last read.

@@ -51,6 +51,9 @@ impl InputAction {
             | InputAction::Choice7
             | InputAction::Choice8
             | InputAction::Choice9 => &[Conversation],
+            InputAction::AcceptRequest | InputAction::DeclineRequest => {
+                &[Conversation, Menu, World]
+            }
             InputAction::Respawn
             | InputAction::TurnLeft
             | InputAction::TurnRight
@@ -66,6 +69,7 @@ impl InputAction {
             | InputAction::OpenQuests
             | InputAction::OpenMap
             | InputAction::OpenHistory
+            | InputAction::OpenSocial
             | InputAction::OpenSettings
             | InputAction::BarSlot1
             | InputAction::BarSlot2

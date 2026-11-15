@@ -48,7 +48,12 @@ pub enum InputAction {
     OpenQuests,
     OpenMap,
     OpenHistory,
+    OpenSocial,
     OpenSettings,
+    /// Says yes to the request on the card in front.
+    AcceptRequest,
+    /// Says no to the request on the card in front.
+    DeclineRequest,
     Dismiss,
     SubmitText,
     /// Takes the selected way to go on with what is being typed.
