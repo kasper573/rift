@@ -182,6 +182,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<player::Departures>();
     world.init_resource::<player::roster::ServerRoster>();
     world.init_resource::<player::roster::Enrollment>();
+    world.init_resource::<player::roster::EnrollmentQuery>();
     world.init_resource::<player::errand::Errands>();
     world.init_resource::<society::ServerSociety>();
     world.init_resource::<society::SocietyAsks>();

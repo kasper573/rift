@@ -127,8 +127,7 @@ impl EffectDef<RiftScripting> for WarpToActor {
                 Aimed::Here(other) => standing(world, other),
                 Aimed::Elsewhere(client) => world
                     .get_resource::<ServerRoster>()
-                    .and_then(|roster| roster.player(client))
-                    .map(|enrolled| enrolled.place),
+                    .and_then(|roster| roster.place_of(client)),
                 Aimed::Nobody => None,
             };
             effects::reach(

@@ -159,7 +159,7 @@ impl Interest for InterestInAll {
 
 /// The change tick of the last send, so the next tells what changed since.
 #[derive(Resource)]
-struct LastSend(Tick);
+pub(crate) struct LastSend(Tick);
 
 impl FromWorld for LastSend {
     fn from_world(world: &mut World) -> LastSend {

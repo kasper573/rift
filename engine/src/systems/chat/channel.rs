@@ -8,7 +8,8 @@ use strum::{IntoStaticStr, VariantArray};
 
 use crate::core::content::{ContentFile, Fixture, ImageRef, NamedContent, Nearby, RowCheck};
 use crate::core::math::Rgb;
-use crate::systems::player::Players;
+use crate::systems::player::PlayedBy;
+use crate::systems::society::SocietyView;
 
 /// The channels the engine knows, in the order a player's are listed. Each is a file every game
 /// provides.
@@ -95,7 +96,8 @@ const MOST_NAME: usize = 16;
 #[derive(Clone, Copy)]
 pub struct ChatChannelSource {
     pub channel: ChatChannel,
-    /// Whether the player of a character is in the channel.
+    /// Whether the player of a character is in the channel. Asked as the character comes to a
+    /// world and whenever what its player sees of society changes.
     pub open_to: fn(&World, Entity) -> bool,
     /// Carries what the player of a character said on the channel to whoever hears it.
     pub send: fn(&mut World, Entity, String),
@@ -122,9 +124,10 @@ pub(super) fn source_of(world: &World, channel: ChatChannel) -> Option<ChatChann
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct ChatChannels(pub Vec<ChatChannel>);
 
-/// Tells every player the channels they are in, as that changes.
-pub fn list(world: &mut World) {
-    let players: Vec<Entity> = world.resource::<Players>().0.values().copied().collect();
+/// Tells every player the channels they are in, as that changes: as they come to the world,
+/// and as what they see of society does.
+pub fn list(world: &mut World, due: &mut Unlisted) {
+    let players: Vec<Entity> = due.iter(world).collect();
     for player in players {
         let listed = world.get::<ChatChannels>(player);
         if !listed.is_some_and(|listed| listed.0.iter().copied().eq(open_to(world, player))) {
@@ -133,6 +136,14 @@ pub fn list(world: &mut World) {
         }
     }
 }
+
+type Unlisted = QueryState<
+    Entity,
+    (
+        With<PlayedBy>,
+        Or<(Without<ChatChannels>, Changed<SocietyView>)>,
+    ),
+>;
 
 fn open_to(world: &World, player: Entity) -> impl Iterator<Item = ChatChannel> {
     let sources = &world.resource::<Sources>().0;

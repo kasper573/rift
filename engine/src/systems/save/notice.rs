@@ -135,7 +135,7 @@ pub struct SavingNoticePlugin;
 impl Plugin for SavingNoticePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Told>()
-            .add_systems(Update, hear)
+            .add_systems(Update, hear.run_if(resource_exists::<GameSettings>))
             .add_systems(OnExit(ClientScreen::Area), forget)
             .add_systems(
                 EguiPrimaryContextPass,

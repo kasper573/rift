@@ -116,6 +116,7 @@ fn a_checkpoint_the_store_refuses_is_made_good_by_the_next_and_players_are_told_
             Vec::<String>::new(),
             "nothing of a checkpoint is written unless all of it is"
         );
+        confer(&mut [&mut village], &mut above);
         village.tick();
         let news: Vec<SavingNews> = heard(&mut village, &mut told);
         let expected = match failed {
@@ -138,6 +139,7 @@ fn a_checkpoint_the_store_refuses_is_made_good_by_the_next_and_players_are_told_
     let report = checkpoint(&mut [&mut village], &mut above);
     assert_eq!(report.outcome, Ok(2), "the account and her character");
     assert_eq!(above.checkpoints.waiting(), 0);
+    confer(&mut [&mut village], &mut above);
     village.tick();
     assert_eq!(
         heard::<SavingNews>(&mut village, &mut told),

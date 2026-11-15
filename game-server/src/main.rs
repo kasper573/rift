@@ -910,6 +910,7 @@ async fn session(State(http): State<Http>, headers: HeaderMap, body: String) -> 
     let found = match find_character(&http, &identity.id).await {
         Ok(found) => found,
         Err(problem) => {
+            counter!(SIGN_INS, "character" => "refused").increment(1);
             eprintln!("the sign-in of {} is refused: {problem}", identity.id.0);
             return (StatusCode::SERVICE_UNAVAILABLE, RECORDS_UNREACHABLE).into_response();
         }
@@ -942,9 +943,11 @@ async fn find_character(
         .as_ref()
         .is_some_and(|characters| characters.waits_for(account));
     if staged || http.online.plays(account) {
+        counter!(SIGN_INS, "character" => "in_play").increment(1);
         return Ok(SessionCharacter::InPlay);
     }
     if let Some(saved) = http.departed.of(account) {
+        counter!(SIGN_INS, "character" => "memory").increment(1);
         let loaded = load::unchanged(&http.content, &saved);
         return Ok(SessionCharacter::Read(Some(Box::new(loaded))));
     }
@@ -953,8 +956,14 @@ async fn find_character(
         .await
         .map_err(|_| RecordStoreProblem("the store took too long to answer".to_owned()))??;
     let loaded = held.map(|body| load::load(&http.content, &body).map(Box::new));
-    loaded.transpose().map(SessionCharacter::Read)
+    let loaded = loaded.transpose()?;
+    counter!(SIGN_INS, "character" => "store").increment(1);
+    Ok(SessionCharacter::Read(loaded))
 }
+
+/// Counts sign-ins by where their `character` was found: `in_play`, in `memory`, in the `store`
+/// (which may hold none yet), or `refused` when the store could not be read.
+const SIGN_INS: &str = "rift_sign_ins_total";
 
 /// What a sign-in is told when what is saved of its account cannot be read.
 const RECORDS_UNREACHABLE: &str = "the game cannot reach its records";

@@ -198,7 +198,7 @@
     "instance_timed_out": "Time ran out in {area}",
     "instance_not_yours": "You are no longer of this party",
     "instance_rewards_title": "Your rewards from {area}",
-    "instance_rewards_text": "Your bag had no room for these."
+    "instance_rewards_text": "Your inventory had no room for these."
   },
   "typing": {
     "pace": 45.0,

@@ -180,19 +180,24 @@ impl Society {
     /// change areas is shown it, an account whose player left is saved as last seen `now`, and
     /// memory holds the inbox of every account that plays.
     fn note_playing(&mut self, roster: &ServerRoster, unwritten: &mut Unwritten, now: UnixMillis) {
-        let playing: HashMap<AccountId, Playing> = roster
-            .all()
-            .into_iter()
-            .filter_map(|enrolled| {
-                let playing = Playing {
-                    area: enrolled.place.area,
-                    away: enrolled.away,
-                };
-                Some((enrolled.account?, playing))
-            })
-            .collect();
-        if playing != self.playing {
+        if roster.moved() {
+            let mut playing: HashMap<AccountId, Playing> = HashMap::new();
+            roster.each(|enrolled| {
+                if let Some(account) = &enrolled.account {
+                    let playing_as = Playing {
+                        area: enrolled.area,
+                        away: enrolled.away,
+                    };
+                    playing.insert(account.clone(), playing_as);
+                }
+            });
             let before = std::mem::replace(&mut self.playing, playing);
+            for gone in before
+                .keys()
+                .filter(|gone| !self.playing.contains_key(*gone))
+            {
+                self.inboxes.left(gone);
+            }
             let moved: BTreeSet<&AccountId> = before
                 .keys()
                 .chain(self.playing.keys())
@@ -218,9 +223,7 @@ impl Society {
                 self.changed.extend(watching);
             }
         }
-        let playing = &self.playing;
-        self.inboxes
-            .keep(|account| playing.contains_key(account), unwritten);
+        self.inboxes.keep(unwritten);
     }
 }
 
@@ -296,6 +299,23 @@ pub fn ask(world: &mut World, by: ClientId, ask: SocietyAsk) {
     world.resource_mut::<SocietyAsks>().0.push((by, ask));
 }
 
+/// What the players of `world` asked of society since the worlds last conferred, leaving it
+/// nothing asked, in a world that holds `society` from here on.
+pub fn take_asks(world: &mut World, society: &ServerSociety) -> Vec<(ClientId, SocietyAsk)> {
+    let Some(asks) = world.get_resource::<SocietyAsks>() else {
+        return Vec::new();
+    };
+    let asked = !asks.0.is_empty();
+    if !world.resource::<ServerSociety>().is(society) {
+        world.insert_resource(society.clone());
+    }
+    if asked {
+        std::mem::take(&mut world.resource_mut::<SocietyAsks>().0)
+    } else {
+        Vec::new()
+    }
+}
+
 /// Society being settled, with every world of the server in hand: what a kind of request works
 /// with as it is accepted. Whatever runs here has society in `society`, and must not read the
 /// one a world holds.
@@ -354,26 +374,16 @@ impl Settling<'_, '_> {
 /// of society since, world by world and each world's in the order they were asked, changes
 /// society, has the next checkpoint write each record it changed, and shows every player
 /// playing what they now see of it.
-pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: UnixMillis) {
-    let mut asked: Vec<(Content, ClientId, SocietyAsk)> = Vec::new();
-    let mut game: Option<Content> = None;
-    for world in views.iter_mut().flatten() {
-        if !world.contains_resource::<SocietyAsks>() {
-            continue;
-        }
-        if game.is_none() {
-            game = world.get_resource::<Content>().cloned();
-        }
-        if !world.resource::<ServerSociety>().is(&above.society) {
-            world.insert_resource(above.society.clone());
-        }
-        let asks = std::mem::take(&mut world.resource_mut::<SocietyAsks>().0);
-        if asks.is_empty() {
-            continue;
-        }
-        let content = world.resource::<Content>().clone();
-        asked.extend(asks.into_iter().map(|(by, ask)| (content.clone(), by, ask)));
-    }
+pub fn settle(
+    views: &mut [Option<&mut World>],
+    above: &mut AboveWorlds,
+    asked: Vec<(ClientId, SocietyAsk)>,
+    now: UnixMillis,
+) {
+    let game: Option<Content> = views
+        .iter()
+        .flatten()
+        .find_map(|world| world.get_resource::<Content>().cloned());
     let mut society = above.society.change();
     society.note_playing(&above.roster, &mut above.checkpoints.unwritten, now);
     let mut settling = Settling {
@@ -384,7 +394,10 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
         now,
     };
     area_instance::look(&mut settling);
-    for (content, by, ask) in asked {
+    for (by, ask) in asked {
+        let Some(content) = &game else {
+            break;
+        };
         let Some(by) = settling.roster.player(by).and_then(|player| player.account) else {
             continue;
         };
@@ -402,7 +415,7 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
             SocietyAsk::Party(ask) => party::settle(&mut settling, settings, &by, ask),
             SocietyAsk::PartyLine(text) => party::say(&mut settling, &by, &text),
             SocietyAsk::EnterInstance(entry) => {
-                area_instance::enter(&mut settling, &content, &by, entry);
+                area_instance::enter(&mut settling, content, &by, entry);
             }
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {

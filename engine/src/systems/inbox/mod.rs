@@ -108,6 +108,9 @@ pub struct Inboxes {
     /// How many messages from players each inbox holds, in memory or not.
     held: HashMap<AccountId, u32>,
     open: HashMap<AccountId, Inbox>,
+    /// The accounts with an inbox in memory whose players do not play: each is let go of once
+    /// the store holds it as memory does.
+    unattended: BTreeSet<AccountId>,
     dealt: u64,
     /// When each account sent its last messages, within the minute a limit counts.
     sent: HashMap<AccountId, VecDeque<UnixMillis>>,
@@ -165,6 +168,9 @@ impl Inboxes {
         if matches!(message.from, MessageSender::Player(_)) {
             *self.held.entry(message.to.clone()).or_default() += 1;
         }
+        if !self.open.contains_key(&message.to) {
+            self.unattended.insert(message.to.clone());
+        }
         let inbox = self.open.entry(message.to.clone()).or_default();
         inbox.unwritten.insert(message.id);
         inbox.messages.insert(message.id, message.clone());
@@ -215,6 +221,7 @@ impl Inboxes {
     /// Has memory hold all of the inbox of `account`, who came to play: at once where there is
     /// no store to read, else once the store has answered.
     pub(crate) fn arrived(&mut self, account: &AccountId) {
+        self.unattended.remove(account);
         let inbox = self.open.entry(account.clone()).or_default();
         if inbox.whole || inbox.reading {
             return;
@@ -227,41 +234,51 @@ impl Inboxes {
         }
     }
 
-    /// Takes in what the store answered, and lets go of the inboxes of accounts that are not
-    /// `playing` once the store holds them as memory does. An inbox the store failed to answer
-    /// for is asked for again.
-    pub(crate) fn keep(&mut self, playing: impl Fn(&AccountId) -> bool, unwritten: &Unwritten) {
+    /// Notes that `account` plays no longer: memory lets go of its inbox once the store holds it
+    /// as memory does.
+    pub(crate) fn left(&mut self, account: &AccountId) {
+        if self.open.contains_key(account) {
+            self.unattended.insert(account.clone());
+        }
+    }
+
+    /// Takes in what the store answered, and lets go of the inboxes of accounts that do not
+    /// play once the store holds them as memory does. An inbox the store failed to answer for
+    /// is asked for again while its account plays.
+    pub(crate) fn keep(&mut self, unwritten: &Unwritten) {
         for read in self.reads.finished() {
             let Some(inbox) = self.open.get_mut(&read.account) else {
                 continue;
             };
             inbox.reading = false;
-            let Ok(stored) = read.messages else {
-                continue;
-            };
-            for message in stored {
-                // Memory holds a message newer than the store does, or as the store does.
-                if !inbox.unwritten.contains(&message.id) {
-                    inbox.messages.entry(message.id).or_insert(message);
+            match read.messages {
+                Ok(stored) => {
+                    for message in stored {
+                        // Memory holds a message newer than the store does, or as the store does.
+                        if !inbox.unwritten.contains(&message.id) {
+                            inbox.messages.entry(message.id).or_insert(message);
+                        }
+                    }
+                    inbox.whole = true;
+                    self.changed.insert(read.account);
                 }
+                Err(_) if !self.unattended.contains(&read.account) => self.arrived(&read.account),
+                Err(_) => {}
             }
-            inbox.whole = true;
-            self.changed.insert(read.account);
         }
-        let mut again = Vec::new();
-        self.open.retain(|account, inbox| {
-            inbox
-                .unwritten
-                .retain(|&id| unwritten.holds(&(InboxMessage::KIND, record_id(id))));
-            let plays = playing(account);
-            if plays && !inbox.whole && !inbox.reading {
-                again.push(account.clone());
+        let open = &mut self.open;
+        self.unattended.retain(|account| {
+            let written = open.get_mut(account).is_none_or(|inbox| {
+                inbox
+                    .unwritten
+                    .retain(|&id| unwritten.holds(&(InboxMessage::KIND, record_id(id))));
+                inbox.unwritten.is_empty()
+            });
+            if written {
+                open.remove(account);
             }
-            plays || !inbox.unwritten.is_empty()
+            !written
         });
-        for account in again {
-            self.arrived(&account);
-        }
     }
 
     pub(crate) fn changed(&mut self) -> BTreeSet<AccountId> {

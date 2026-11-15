@@ -12,7 +12,7 @@ use crate::systems::player::errand::{self, Errand, ErrandOutcome};
 use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Departure, Players};
 use crate::systems::save::{self, Checkpoints};
-use crate::systems::society::{self, ServerSociety};
+use crate::systems::society::{self, ServerSociety, SocietyAsk};
 use crate::systems::{player, stat, step_area};
 
 /// Which of a server's worlds: the one everyone in `area` shares, or an instance of it.
@@ -102,46 +102,70 @@ pub fn tick(
 
 /// What the worlds settle between ticks, the only time one hand holds them all: who plays where
 /// on the server, every errand a world asked be done to a player in another, what their players
-/// asked of society, and the checkpoint that saves them all as they stand at this one instant. Each errand is answered, whatever
-/// became of its player. Says which characters left their world since the worlds last conferred.
+/// asked of society, and the checkpoint that saves them all as they stand at this one instant.
+/// Each errand is answered, whatever became of its player. Says which characters left their world
+/// since the worlds last conferred.
 pub fn confer(
     views: &mut [Option<&mut World>],
     above: &mut AboveWorlds,
     now: UnixMillis,
 ) -> Vec<Departure> {
-    for (asking, errand) in enroll(views, &above.roster) {
+    let heard = hear(views, above);
+    for (asking, errand) in heard.errands {
         let outcome = carry(views, errand.to, errand.deed);
         if let Some(world) = views[asking].as_deref_mut() {
             (errand.then)(world, outcome);
         }
     }
-    society::settle(views, above, now);
-    save::checkpoint(views, &mut above.checkpoints, now)
+    society::settle(views, above, heard.asked, now);
+    save::checkpoint(views, &mut above.checkpoints, heard.gone, now)
 }
 
-/// Lists everyone on `roster`, each world enrolling its own players on a core of its own, and
-/// takes the errands each world asked for since, with the world that asked.
-fn enroll(views: &mut [Option<&mut World>], roster: &ServerRoster) -> Vec<(usize, Errand)> {
+/// What the worlds had to say since they last conferred.
+#[derive(Default)]
+struct Heard {
+    /// The errands each world asked for, with the world that asked.
+    errands: Vec<(usize, Errand)>,
+    /// What each world's players asked of society.
+    asked: Vec<(ClientId, SocietyAsk)>,
+    /// The characters that left a world.
+    gone: Vec<Departure>,
+}
+
+/// Hears every world out, each once and on a core of its own, and lists everyone on the roster.
+/// This is everything a conference asks of a world that nothing happened in, so a world is
+/// visited once and what follows costs only what did happen.
+fn hear(views: &mut [Option<&mut World>], above: &AboveWorlds) -> Heard {
+    let (roster, society) = (&above.roster, &above.society);
+    let saving = above.checkpoints.saving();
     // A world lets its last enrollment go as it enrolls anew, which frees it there and then only
     // once the roster no longer lists it: the roster is emptied first, or one core would free
     // every world's.
     roster.list(Vec::new());
-    let settled: Vec<(Enrollment, Vec<(usize, Errand)>)> = views
+    let said: Vec<(Enrollment, Heard)> = views
         .par_iter_mut()
         .enumerate()
         .filter_map(|(asking, world)| Some((asking, world.as_deref_mut()?)))
         .map(|(asking, world)| {
-            let asked = errand::take(world)
-                .into_iter()
-                .map(|errand| (asking, errand))
-                .collect();
-            (roster::enroll(world, roster), asked)
+            let errands = errand::take(world).into_iter();
+            let heard = Heard {
+                errands: errands.map(|errand| (asking, errand)).collect(),
+                asked: society::take_asks(world, society),
+                gone: save::hear(world, saving),
+            };
+            (roster::enroll(world, roster), heard)
         })
         .collect();
-    let (enrolled, asked): (Vec<Enrollment>, Vec<Vec<(usize, Errand)>>) =
-        settled.into_iter().unzip();
+    let mut all = Heard::default();
+    let mut enrolled = Vec::with_capacity(said.len());
+    for (enrollment, mut heard) in said {
+        enrolled.push(enrollment);
+        all.errands.append(&mut heard.errands);
+        all.asked.append(&mut heard.asked);
+        all.gone.append(&mut heard.gone);
+    }
     roster.list(enrolled);
-    asked.into_iter().flatten().collect()
+    all
 }
 
 fn carry(

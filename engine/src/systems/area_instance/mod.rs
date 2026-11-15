@@ -479,22 +479,21 @@ pub fn leave(world: &mut World, character: Entity) {
 /// plays nowhere any longer lost their player inside, and one nobody is inside counts its time
 /// from here.
 pub(crate) fn look(settling: &mut Settling) {
-    let listed = settling.roster.all();
-    let now = settling.now;
+    if settling.society.instances.live.is_empty() {
+        return;
+    }
+    let mut listed: BTreeMap<AreaInstanceId, BTreeSet<AccountId>> = BTreeMap::new();
+    settling.roster.each(|enrolled| {
+        if let (Some(instance), Some(account)) = (enrolled.instance, &enrolled.account) {
+            listed.entry(instance).or_default().insert(account.clone());
+        }
+    });
+    let (roster, now) = (settling.roster, settling.now);
     let mut changed: Vec<AccountId> = Vec::new();
     for instance in settling.society.instances.live.values_mut() {
-        let inside: BTreeSet<AccountId> = listed
-            .iter()
-            .filter(|enrolled| enrolled.instance == Some(instance.id))
-            .filter_map(|enrolled| enrolled.account.clone())
-            .collect();
-        let plays = |account: &AccountId| {
-            listed
-                .iter()
-                .any(|enrolled| enrolled.account.as_ref() == Some(account))
-        };
+        let inside = listed.remove(&instance.id).unwrap_or_default();
         for left in instance.inside.difference(&inside) {
-            if !plays(left) {
+            if roster.account(left).is_none() {
                 instance.dropped.insert(left.clone());
             }
         }
@@ -555,6 +554,9 @@ pub(crate) fn enter(
 /// once they are all met, its time kept, whoever must leave sent out, and one that is done with
 /// gone.
 pub(crate) fn keep(settling: &mut Settling, content: &Content) {
+    if settling.society.instances.live.is_empty() {
+        return;
+    }
     tally(settling, content);
     let ids: Vec<AreaInstanceId> = settling.society.instances.live.keys().copied().collect();
     for id in ids {

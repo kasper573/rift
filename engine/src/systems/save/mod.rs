@@ -207,15 +207,10 @@ impl Checkpoints {
 
     /// Takes in the characters that left `views` since the worlds last conferred, and says whose
     /// clients they were.
-    pub fn take_in(&mut self, views: &mut [Option<&mut World>]) -> Vec<Departure> {
-        let mut gone = Vec::new();
-        for world in views.iter_mut().flatten() {
-            let Some(mut departures) = world.get_resource_mut::<player::Departures>() else {
-                continue;
-            };
-            gone.append(&mut departures.0);
-        }
-        for departure in &gone {
+    /// Takes in the characters that left their worlds: memory holds each as it left, and the
+    /// store is to hold it.
+    fn take_in(&mut self, gone: &[Departure]) {
+        for departure in gone {
             let Some(saved) = &departure.left else {
                 continue;
             };
@@ -231,7 +226,15 @@ impl Checkpoints {
                 },
             );
         }
-        gone
+    }
+
+    /// How saving stands, as every world tells its players.
+    pub fn saving(&self) -> ServerSaving {
+        ServerSaving {
+            failing_since: (self.failures >= TOLD_AFTER)
+                .then(|| self.last_saved.or(self.began))
+                .flatten(),
+        }
     }
 
     /// Hears how the checkpoint being written went, once it is known.
@@ -322,35 +325,36 @@ impl Checkpoints {
         });
         self.due = Some(now.after(self.every));
     }
+}
 
-    /// What every world is told of how saving stands.
-    fn tell(&mut self, views: &mut [Option<&mut World>]) {
-        let telling = ServerSaving {
-            failing_since: (self.failures >= TOLD_AFTER)
-                .then(|| self.last_saved.or(self.began))
-                .flatten(),
-        };
-        for world in views.iter_mut().flatten() {
-            if world.get_resource::<ServerSaving>() != Some(&telling) {
-                world.insert_resource(telling);
-            }
+/// Hears `world` out as the worlds confer: the characters that left it since they last did.
+/// Tells it how `saving` stands, for its players to be told.
+pub fn hear(world: &mut World, saving: ServerSaving) -> Vec<Departure> {
+    if world.get_resource::<ServerSaving>() != Some(&saving) {
+        world.insert_resource(saving);
+    }
+    match world.get_resource::<player::Departures>() {
+        Some(departures) if !departures.0.is_empty() => {
+            std::mem::take(&mut world.resource_mut::<player::Departures>().0)
         }
+        _ => Vec::new(),
     }
 }
 
-/// In `worlds::confer`, once society has settled: takes in whoever left, hears how the last
-/// checkpoint went and, when the interval is up and none is being written, takes the next.
+/// In `worlds::confer`, once society has settled: takes in whoever is `gone` from a world, hears
+/// how the last checkpoint went and, when the interval is up and none is being written, takes
+/// the next.
 pub fn checkpoint(
     views: &mut [Option<&mut World>],
     checkpoints: &mut Checkpoints,
+    gone: Vec<Departure>,
     now: UnixMillis,
 ) -> Vec<Departure> {
-    let gone = checkpoints.take_in(views);
+    checkpoints.take_in(&gone);
     checkpoints.hear(views, false);
     if checkpoints.link.is_some() && checkpoints.writing.is_none() && checkpoints.due(now) {
         checkpoints.take(views, now);
     }
-    checkpoints.tell(views);
     gone
 }
 
@@ -364,7 +368,13 @@ pub fn save_all(
     if checkpoints.link.is_none() {
         return Ok(());
     }
-    checkpoints.take_in(views);
+    let saving = checkpoints.saving();
+    let gone: Vec<Departure> = views
+        .iter_mut()
+        .flatten()
+        .flat_map(|world| hear(world, saving))
+        .collect();
+    checkpoints.take_in(&gone);
     checkpoints.hear(views, true);
     checkpoints.take(views, now);
     checkpoints.hear(views, true);

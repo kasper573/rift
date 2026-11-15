@@ -192,6 +192,26 @@ impl AppMessageExt for App {
     }
 }
 
+/// Which ends of the protocol an app is, so it holds each message only as its end handles it: a
+/// server as `FromClient` and `ToClient`, a client as the message itself. Every world updates
+/// every message it holds on every tick, so one it never reads or writes is pure cost. An app
+/// that declares a message before it is given an end holds it both ways.
+struct ProtocolSide {
+    serves: bool,
+    plays: bool,
+}
+
+impl ProtocolSide {
+    fn of(app: &App) -> ProtocolSide {
+        let serves = app.world().contains_resource::<crate::server::LastSend>();
+        let plays = app.world().contains_resource::<ServerEntities>();
+        ProtocolSide {
+            serves: serves || !plays,
+            plays: plays || !serves,
+        }
+    }
+}
+
 /// Every kind a server and its clients replicate, numbered by its place.
 #[derive(Resource, Default)]
 pub(crate) struct Protocol {
@@ -259,7 +279,13 @@ fn add_component<C: Replicable>(app: &mut App, rule: Rule) -> &mut App {
 }
 
 fn add_client_message<M: Message>(app: &mut App, rule: ClientMessageRule) -> &mut App {
-    app.add_message::<M>().add_message::<FromClient<M>>();
+    let side = ProtocolSide::of(app);
+    if side.plays {
+        app.add_message::<M>();
+    }
+    if side.serves {
+        app.add_message::<FromClient<M>>();
+    }
     app.world_mut()
         .get_resource_or_init::<Protocol>()
         .client_messages
@@ -268,7 +294,13 @@ fn add_client_message<M: Message>(app: &mut App, rule: ClientMessageRule) -> &mu
 }
 
 fn add_server_message<M: Message>(app: &mut App, rule: ServerMessageRule) -> &mut App {
-    app.add_message::<M>().add_message::<ToClient<M>>();
+    let side = ProtocolSide::of(app);
+    if side.plays {
+        app.add_message::<M>();
+    }
+    if side.serves {
+        app.add_message::<ToClient<M>>();
+    }
     app.world_mut()
         .get_resource_or_init::<Protocol>()
         .server_messages

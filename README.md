@@ -337,7 +337,9 @@ The runtimes know no infrastructure, only protocols:
   servers serve them beside their own routes. The game server's tell how saving goes:
   `rift_last_checkpoint_timestamp_seconds`, the last save that worked and the one to alert on,
   `rift_records_unwritten`, what stopping right now would lose, `rift_checkpoints_total` by
-  `outcome`, `rift_checkpoint_duration_seconds` and `rift_checkpoint_records_written_total`.
+  `outcome`, `rift_checkpoint_duration_seconds`, `rift_checkpoint_records_written_total`, and
+  `rift_sign_ins_total` by where each `character` was found (`in_play`, `memory`, `store`,
+  `refused`).
 - **Logs** go to stdout.
 - **The probe.** A game client started with `RIFT_CLIENT_PROBE=<host:port>` connects there and
   answers questions about what it shows, one JSON line each: a frame's snapshot, a picture of its
