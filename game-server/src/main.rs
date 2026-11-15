@@ -24,6 +24,7 @@ use engine::core::net::SessionRequest;
 use engine::core::net::auth::TokenClaims;
 use engine::core::net::transport::{STREAM, token_text};
 use engine::core::os::StdinClosed;
+use engine::core::store::RecordStore;
 use engine::core::time::{UtcHour, WallClock};
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::area::{self, transition};
@@ -58,6 +59,15 @@ fn main() {
     let udp_bind = SocketAddr::new(config.bind, config.udp_port);
 
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+    let _store = runtime
+        .block_on(RecordStore::open(&config.store))
+        .unwrap_or_else(|problem| {
+            eprintln!(
+                "the server did not start: nothing can be saved to {}: {problem}",
+                config.store
+            );
+            std::process::exit(2);
+        });
 
     let content = load_content(
         Arc::new(FilesystemFolder(config.content_dir.clone())),

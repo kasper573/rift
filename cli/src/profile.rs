@@ -27,15 +27,14 @@ pub fn run(game: Option<&Path>, out: &Path) {
         }
     };
     fs::create_dir_all(out).expect("a folder for the profile");
-    let server = GameServer::start(
-        &binaries::beside(GAME_SERVER_PROFILING),
-        &ServerConfig {
+    let server = GameServer::start(&binaries::beside(GAME_SERVER_PROFILING), |run| {
+        ServerConfig {
             max_clients: MAX_CLIENTS,
             player_spawn_policy: SpawnPolicy::Dist,
             test_characters: false,
-            ..bench_config(&game)
-        },
-    );
+            ..bench_config(&game, run)
+        }
+    });
     let mut load = loadtest::run_dyn(&server.http_url()).unwrap_or_else(|failure| {
         eprintln!("{failure}");
         std::process::exit(1);

@@ -52,7 +52,9 @@ impl Playtest {
     ) -> Result<Playtest, String> {
         let folder = tempfile::tempdir().expect("a folder for the client's desktop and log");
         settings::save_video(&Profile(profile.to_path_buf()), video);
-        let server = GameServer::start(&binaries::beside(GAME_SERVER), &bench_config(game));
+        let server = GameServer::start(&binaries::beside(GAME_SERVER), |run| {
+            bench_config(game, run)
+        });
         if let Some(character) = character.or_else(|| content.ids::<CharacterSnapshot>().next()) {
             let request = TestCharacterRequest {
                 test_character: character.path(content).to_owned(),

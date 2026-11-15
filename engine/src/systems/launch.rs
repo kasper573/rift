@@ -13,8 +13,9 @@ use serde_json::Value;
 
 use crate::core::content::version;
 use crate::core::net::auth::TokenClaims;
+use crate::core::store::RecordStoreAddress;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
-use crate::core::units::HourOfDay;
+use crate::core::units::{HourOfDay, Seconds};
 use crate::systems::player::SpawnPolicy;
 use crate::systems::script::Place;
 use crate::systems::staging::Staging;
@@ -167,6 +168,10 @@ pub struct ServerConfig {
     pub auth: AuthMode,
     pub test_characters: bool,
     pub exit_on_stdin_eof: bool,
+    /// Where the game is saved.
+    pub store: RecordStoreAddress,
+    /// How long the game plays on between two saves of it.
+    pub checkpoint_every: Seconds,
 }
 
 impl ServerConfig {
@@ -179,9 +184,10 @@ impl ServerConfig {
     }
 
     /// A server for a tool on this machine to play `content_dir` on alone: on any free ports of
-    /// the loopback, signing players in without asking, handing out test characters and stopping
-    /// with the tool that started it.
-    pub fn local(content_dir: PathBuf) -> ServerConfig {
+    /// the loopback, signing players in without asking, handing out test characters, stopping
+    /// with the tool that started it and saving to a file in `run`, the folder that goes with the
+    /// run.
+    pub fn local(content_dir: PathBuf, run: &Path) -> ServerConfig {
         let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
         ServerConfig {
             bind: loopback,
@@ -200,9 +206,14 @@ impl ServerConfig {
             auth: AuthMode::Fake,
             test_characters: true,
             exit_on_stdin_eof: true,
+            store: RecordStoreAddress::file(&run.join(LOCAL_STORE)),
+            checkpoint_every: LOCAL_CHECKPOINT_EVERY,
         }
     }
 }
+
+const LOCAL_STORE: &str = "records.sqlite";
+const LOCAL_CHECKPOINT_EVERY: Seconds = Seconds(30.0);
 
 /// How a server runs the game's day: as its daylight says, held at `hour` where that is fixed.
 #[derive(Clone, Copy, Debug, PartialEq)]

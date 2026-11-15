@@ -52,6 +52,7 @@ mod spawned;
 mod spawner;
 mod staging;
 mod stance;
+mod store;
 mod summon;
 mod switching;
 mod terminal;

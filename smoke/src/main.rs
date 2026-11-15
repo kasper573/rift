@@ -73,7 +73,8 @@ async fn main() {
         jwks_uri: provider.endpoints.jwks.clone(),
     };
 
-    let (_game_server, game_server) = game_server(&binaries.join("game-server"), &sign_in);
+    let (_game_server, game_server) =
+        game_server(&binaries.join("game-server"), &sign_in, scratch.path());
     // Held until now so the servers started before the site's don't take its port for their own.
     drop(reserved);
     let _web_server = web_server(
@@ -383,7 +384,11 @@ fn game_client(
 }
 
 /// The game server on the game, taking the seeded player's tokens, once players can connect.
-fn game_server(binary: &Path, sign_in: &oidc::TokenCheckSettings) -> (Running, ServerReady) {
+fn game_server(
+    binary: &Path,
+    sign_in: &oidc::TokenCheckSettings,
+    run: &Path,
+) -> (Running, ServerReady) {
     let config = ServerConfig {
         player_immortal: true,
         daylight: ServerDaylight::Still,
@@ -391,7 +396,7 @@ fn game_server(binary: &Path, sign_in: &oidc::TokenCheckSettings) -> (Running, S
         rng_seed: Some(SEED),
         auth: AuthMode::Oidc,
         test_characters: false,
-        ..ServerConfig::local(std::path::absolute(game()).expect("the game"))
+        ..ServerConfig::local(std::path::absolute(game()).expect("the game"), run)
     };
     let (child, ready) = launch::start_game_server(
         binary,

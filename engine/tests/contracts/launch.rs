@@ -1,7 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
+use engine::core::store::RecordStoreAddress;
 use engine::core::time::UtcHour;
+use engine::core::units::Seconds;
 use engine::systems::launch::{
     AuthMode, CLIENT_ENV_PREFIX, ClientConfig, LAUNCH_FILE, LaunchSettings, SERVER_ENV_PREFIX,
     ServerConfig, ServerDaylight, ServerWeather, env_of,
@@ -26,6 +28,8 @@ fn server_config(rng_seed: Option<u64>) -> ServerConfig {
         auth: AuthMode::Fake,
         test_characters: true,
         exit_on_stdin_eof: true,
+        store: RecordStoreAddress::new("postgres://game:secret@database/records"),
+        checkpoint_every: Seconds(30.0),
     }
 }
 

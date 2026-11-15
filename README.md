@@ -297,9 +297,12 @@ required unless it says otherwise, and a binary refuses to start without one.
   `DAYLIGHT` (`turning`; `still`, which holds the game's day at its start hour for tests that
   compare how the world looks; or `fixed`, which holds it at `HOUR`, 0 to 24), `WEATHER` (`turning`,
   or `still`, which holds every area's weather at its first spell), `DAILY_RESET_UTC_HOUR`, `AUTH` (`oidc`, or `fake`, which takes a token's claims without checking
-  its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`
-  and, optionally, `RNG_SEED`. Started on port 0 it picks free ports, and prints them on stdout
-  once players can connect.
+  its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`,
+  where the game is saved (`STORE`: `postgres://…` for a database server, or `sqlite://…` for a
+  file, in which it makes its one table when there is none), how many seconds it plays on between
+  two saves (`CHECKPOINT_EVERY`) and, optionally, `RNG_SEED`. Started on port 0 it picks free
+  ports, and prints them on stdout once players can connect. It does not start when it cannot
+  reach its store.
 - **`game-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`),
   `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN` and `PROBE`.
 - **`web-server`** reads `RIFT_WEB_SERVER_*`: `BIND`, `PORT`, `REDIRECT_URI`, the game server as

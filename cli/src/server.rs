@@ -7,6 +7,7 @@ use engine::core::units::{Bytes, HourOfDay};
 use engine::systems::launch::{
     self, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight, ServerReady, ServerWeather,
 };
+use tempfile::TempDir;
 
 pub const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -17,8 +18,8 @@ pub const BENCH_CLIENTS: usize = 64;
 
 /// A server playing `game` on any free ports, as the benches run it: seeded, its players
 /// immortal and signed in without asking, its day held at noon and its weather at each area's
-/// first spell, so runs compare. A bench says what else it needs.
-pub fn bench_config(game: &Path) -> ServerConfig {
+/// first spell, so runs compare, saving into `run`. A bench says what else it needs.
+pub fn bench_config(game: &Path, run: &Path) -> ServerConfig {
     ServerConfig {
         max_clients: BENCH_CLIENTS,
         player_immortal: true,
@@ -26,7 +27,7 @@ pub fn bench_config(game: &Path) -> ServerConfig {
         hour: Some(HourOfDay::NOON),
         weather: ServerWeather::Still,
         rng_seed: Some(SEED),
-        ..ServerConfig::local(absolute(game))
+        ..ServerConfig::local(absolute(game), run)
     }
 }
 
@@ -34,17 +35,25 @@ pub fn bench_config(game: &Path) -> ServerConfig {
 pub struct GameServer {
     process: Child,
     ready: ServerReady,
+    /// The folder it saves into, gone with it.
+    _run: TempDir,
 }
 
 impl GameServer {
-    pub fn start(binary: &Path, config: &ServerConfig) -> GameServer {
+    /// The server `config` describes, given the folder that goes with its run.
+    pub fn start(binary: &Path, config: impl FnOnce(&Path) -> ServerConfig) -> GameServer {
+        let run = tempfile::tempdir().expect("a folder for what the server saves");
         let (process, ready) = launch::start_game_server(
             binary,
-            launch::env_of(SERVER_ENV_PREFIX, config),
+            launch::env_of(SERVER_ENV_PREFIX, &config(run.path())),
             READY_WITHIN,
         )
         .unwrap_or_else(|problem| panic!("{problem}"));
-        GameServer { process, ready }
+        GameServer {
+            process,
+            ready,
+            _run: run,
+        }
     }
 
     pub fn id(&self) -> u32 {
