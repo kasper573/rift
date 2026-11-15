@@ -5,7 +5,7 @@ use ui::drag;
 use ui::egui;
 use ui::egui::{Align, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, Vec2};
 use ui::face::{self, TextRole};
-use ui::sheet::{self, Depth, Tab, TabSize};
+use ui::sheet::{self, Tab, TabSize};
 use ui::{card, ink};
 
 use super::{OfferView, SaleQuote, SaleVerdict, ShopId, ShopRequest, ShopView, WareRefusal};
@@ -371,7 +371,7 @@ fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware
         ui,
         |ui| {
             if let Some(ware) = ware {
-                item::card::show(ui, world, ware.item, CARD_LOOK);
+                item::card::show(ui, world, ware.item, CardLook::DOCKED);
             }
         },
         |ui| {
@@ -389,11 +389,6 @@ fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware
         InterfaceSound::UiPick.play(world);
     }
 }
-
-const CARD_LOOK: CardLook = CardLook {
-    closable: false,
-    depth: Depth::Front,
-};
 
 fn trade_button(ui: &mut Ui, content: &Content, ware: &Ware, waiting: bool) -> egui::Response {
     let label = match &ware.refusal {
@@ -459,7 +454,7 @@ fn sale_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane) {
         ui,
         |ui| match shelf.offered {
             Some((_, held)) => {
-                item::card::show(ui, world, held.item, CARD_LOOK);
+                item::card::show(ui, world, held.item, CardLook::DOCKED);
             }
             None => {
                 ui.add_space(16.0);

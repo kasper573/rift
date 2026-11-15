@@ -139,7 +139,12 @@ pub(crate) fn is_piece(name: &str) -> bool {
 }
 
 pub(crate) fn keeps_place(name: &str) -> bool {
-    is_piece(name) || [item::card::WINDOW_KEY, skill::card::WINDOW_KEY].contains(&name)
+    let cards = [
+        item::card::WINDOW_KEY,
+        skill::card::WINDOW_KEY,
+        quest::card::WINDOW_KEY,
+    ];
+    is_piece(name) || cards.contains(&name)
 }
 
 pub(crate) fn window_layer(key: &'static str) -> LayerId {

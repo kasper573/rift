@@ -1,34 +1,39 @@
 use bevy::prelude::*;
-use ui::card::{self, Card, CardAction, CardResponse, Plate};
+use bevy_egui::EguiPrimaryContextPass;
+use ui::card::{self, Card, CardAction, CardResponse, CardTilt, Plate};
 use ui::controls::{self, Pill};
-use ui::egui::{Align, Label, Layout, Response, Sense, Ui};
+use ui::egui::{Align, Label, Layout, Rect, Response, Sense, Ui};
 use ui::face::{self, TextRole};
 use ui::glyph::{self, CardKind, Mark};
 use ui::ink;
 use ui::motion;
 
 use super::{
-    ActiveQuest, Objective, ObjectiveProgress, Parties, QuestDef, QuestId, QuestLog, clock_label,
-    resets_label,
+    ActiveQuest, Objective, ObjectiveProgress, Parties, QuestDef, QuestId, QuestLog, QuestResult,
+    clock_label, resets_label,
 };
 use crate::core::card::CardStyleDef;
 use crate::core::content::Content;
-use crate::core::gui::ImageSource;
-use crate::core::stage::card::{self as card_stage, StagedCard};
+use crate::core::gui::{Band, ImageSource};
+use crate::core::stage::card::{self as card_stage, HungCardLamp, StagedCard};
 use crate::core::time::UnixMillis;
 use crate::systems::chat::ChatEmbed;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
 use crate::systems::dialogue::{ChoiceReveal, Conversation, ConversationPanel};
 use crate::systems::hud;
+use crate::systems::item::card::CardLook;
 use crate::systems::item::widget::{SlotLook, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemStack};
 use crate::systems::player::session;
+use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
 use crate::systems::terminal::chat;
 
 const ICON: f32 = 20.0;
 const MARK: f32 = 13.0;
 const CHIP_ICON: f32 = 16.0;
+
+pub(crate) const WINDOW_KEY: &str = "Quest";
 
 pub struct QuestCardPlugin;
 
@@ -41,20 +46,70 @@ impl Plugin for QuestCardPlugin {
                 show: show_docked,
             },
         );
+        app.init_resource::<hud::Pinned<QuestId>>()
+            .add_systems(
+                Update,
+                hud::raise_pinned::<QuestId>(WINDOW_KEY).run_if(in_state(ClientScreen::Area)),
+            )
+            .add_systems(
+                EguiPrimaryContextPass,
+                draw_card
+                    .in_set(Band::Hud)
+                    .run_if(in_state(ClientScreen::Area)),
+            )
+            .add_systems(OnExit(ClientScreen::Area), hud::forget_pinned::<QuestId>);
     }
 }
 
-/// A quest's card: its face, what `action` offers in its band, and whatever `plate` writes
-/// under the overview.
+/// Pins the card of `quest`, dealt from `from`.
+pub fn open(world: &mut World, quest: QuestId, from: Option<Rect>) {
+    hud::pin(world, quest, from);
+}
+
+pub fn close(world: &mut World) -> bool {
+    hud::unpin::<QuestId>(world)
+}
+
+/// How far the pinned card is turned toward the pointer.
+pub fn tilt(world: &World) -> CardTilt {
+    hud::pinned_tilt(world, WINDOW_KEY)
+}
+
+/// The lamp the pinned card is lit by, while it is on the stage.
+pub fn lamp(world: &World) -> Option<HungCardLamp> {
+    hud::pinned_lamp(world, WINDOW_KEY)
+}
+
+/// The quest whose card is pinned, and where the card is drawn.
+pub fn shown(world: &World) -> Option<(QuestId, Rect)> {
+    Some((
+        hud::pinned::<QuestId>(world)?,
+        hud::pinned_rect::<QuestId>(world)?,
+    ))
+}
+
+/// How a quest's card is shown: at which `moment` of a conversation, when at one, what `action`
+/// its band offers, and how it stands among the windows.
+pub struct QuestCardLook<'a> {
+    pub moment: Option<QuestMoment>,
+    pub action: Option<CardAction<'a>>,
+    pub look: CardLook,
+}
+
+/// A quest's card: its face, and whatever `plate` writes under the overview.
 pub fn show<I: ImageSource + ?Sized>(
     ui: &mut Ui,
     images: &mut I,
     content: &Content,
     quest: QuestId,
-    moment: Option<QuestMoment>,
-    action: Option<CardAction<'_>>,
+    shown_as: QuestCardLook<'_>,
     plate: impl FnOnce(&mut Ui, &mut I, Plate),
 ) -> CardResponse {
+    let QuestCardLook {
+        moment,
+        action,
+        look,
+    } = shown_as;
     let def = quest.get(content);
     let band = match moment {
         Some(moment) => format!("{} · {}", moment.band(), def.category.to_lowercase()),
@@ -66,6 +121,8 @@ pub fn show<I: ImageSource + ?Sized>(
     shown.band = &band;
     shown.picture = icon;
     shown.action = action;
+    shown.closable = look.closable;
+    shown.depth = look.depth;
     shown.show(ui, |ui, written| {
         if written.name_cut {
             card::full_name(ui, &def.title);
@@ -86,30 +143,64 @@ pub fn offer<I: ImageSource + ?Sized>(
     inventory: Option<&Inventory>,
     plate: Plate,
 ) -> Vec<(Response, ItemId)> {
+    let reader = QuestReader {
+        log: &QuestLog::default(),
+        inventory,
+    };
+    let shown = terms(ui, images, content, parties, quest, reader, plate);
+    card::foot(ui, "Accept or decline in the conversation");
+    shown
+}
+
+/// Who reads a quest's card: the quests they hold and have finished, and what they carry.
+#[derive(Clone, Copy)]
+struct QuestReader<'a> {
+    log: &'a QuestLog,
+    inventory: Option<&'a Inventory>,
+}
+
+/// What a quest asks, as far as its reader is with it, and what it gives when the quest lets
+/// on. Answers the rewards shown, for a reader who may inspect them.
+fn terms<I: ImageSource + ?Sized>(
+    ui: &mut Ui,
+    images: &mut I,
+    content: &Content,
+    parties: &Parties,
+    quest: QuestId,
+    reader: QuestReader<'_>,
+    plate: Plate,
+) -> Vec<(Response, ItemId)> {
     let def = quest.get(content);
+    let fresh = ActiveQuest::fresh(content, quest);
     let progress = def.progress(
         content,
         parties,
-        &ActiveQuest::fresh(content, quest),
-        inventory,
+        reader.log.active(quest).unwrap_or(&fresh),
+        reader.inventory,
     );
+    let finished = reader.log.finished(quest).map(|finished| finished.result);
+    let standing = match finished {
+        Some(QuestResult::Completed) => Standing::Done,
+        Some(QuestResult::Failed) => Standing::Failed,
+        None => Standing::Open,
+    };
     card::overview(ui, &def.meta(parties, quest));
     card::heading(ui, plate, "objectives");
-    for (index, (objective, progress)) in def.objectives().zip(&progress).enumerate() {
+    for (index, (objective, mut progress)) in def.objectives().zip(progress).enumerate() {
+        progress.counted &= finished.is_none();
         ui.push_id(("objective", index), |ui| {
-            objective_row(ui, images, content, objective, progress, Standing::Open);
+            objective_row(ui, images, content, objective, &progress, standing);
         });
     }
     let mut shown = Vec::new();
     if def.reveals(ChoiceReveal::Gains) {
         card::heading(ui, plate, "rewards");
         shown.extend(reward_chips(ui, images, content, def));
-        if !def.pick_one().is_empty() {
+        if !def.pick_one().is_empty() && finished.is_none() {
             card::heading(ui, plate, "pick one when you return");
             shown.extend(picks(ui, images, content, def));
         }
     }
-    card::foot(ui, "Accept or decline in the conversation");
     shown
 }
 
@@ -160,33 +251,30 @@ fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
     let parties = world.resource::<Parties>().clone();
     let painted = ui.layer_id();
     let since = motion::mark(ui.ctx(), painted);
-    let shown = show(
-        ui,
-        world,
-        &content,
-        quest,
-        Some(moment),
-        Some(chat::card_action()),
-        |ui, world, plate| {
-            let shown = match moment {
-                QuestMoment::Offer => offer(
-                    ui,
-                    world,
-                    &content,
-                    &parties,
-                    quest,
-                    Some(&inventory),
-                    plate,
-                ),
-                QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory, plate),
-                QuestMoment::Decision => {
-                    decision(ui, &content, quest);
-                    Vec::new()
-                }
-            };
-            inspectable(world, shown);
-        },
-    );
+    let shown_as = QuestCardLook {
+        moment: Some(moment),
+        action: Some(chat::card_action()),
+        look: CardLook::DOCKED,
+    };
+    let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
+        let shown = match moment {
+            QuestMoment::Offer => offer(
+                ui,
+                world,
+                &content,
+                &parties,
+                quest,
+                Some(&inventory),
+                plate,
+            ),
+            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory, plate),
+            QuestMoment::Decision => {
+                decision(ui, &content, quest);
+                Vec::new()
+            }
+        };
+        inspectable(world, shown);
+    });
     chat::offered(world, &shown, ChatEmbed::Quest(quest));
     let staged = StagedCard {
         key: ui.id().with("docked quest card"),
@@ -199,6 +287,44 @@ fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
             .clone(),
     };
     card_stage::stage(world, ui.ctx(), staged, painted);
+}
+
+fn draw_card(world: &mut World) {
+    let material = |world: &World, quest: &QuestId| {
+        let content = world.resource::<Content>();
+        CardStyleDef::of(content, quest.get(content).card_style)
+            .material
+            .clone()
+    };
+    hud::draw_pinned::<QuestId>(world, WINDOW_KEY, material, |ui, world, quest, depth| {
+        let quest = *quest;
+        let content = world.resource::<Content>().clone();
+        let parties = world.resource::<Parties>().clone();
+        let me = session::me(world);
+        let log = me
+            .and_then(|me| world.get::<QuestLog>(me))
+            .cloned()
+            .unwrap_or_default();
+        let inventory = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+        let shown_as = QuestCardLook {
+            moment: None,
+            action: Some(chat::card_action()),
+            look: CardLook {
+                depth,
+                ..CardLook::PINNED
+            },
+        };
+        let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
+            let reader = QuestReader {
+                log: &log,
+                inventory: inventory.as_ref(),
+            };
+            let shown = terms(ui, world, &content, &parties, quest, reader, plate);
+            inspectable(world, shown);
+        });
+        chat::offered(world, &shown, ChatEmbed::Quest(quest));
+        shown
+    });
 }
 
 /// Lets the reader inspect each item a card shows.

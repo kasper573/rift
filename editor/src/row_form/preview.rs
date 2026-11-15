@@ -19,11 +19,12 @@ use engine::systems::actor::{Action, Appearance, Motion, Pose as BodyPose, appea
 use engine::systems::class::ClassDef;
 use engine::systems::equipment::{self, Equipment};
 use engine::systems::item::ItemId;
+use engine::systems::item::card::CardLook;
 use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
-use engine::systems::quest::card::QuestMoment;
+use engine::systems::quest::card::{QuestCardLook, QuestMoment};
 use engine::systems::quest::{self, Parties, QuestDef};
 use engine::systems::script::{EffectReach, RiftScripts};
 use engine::systems::skill::SkillDef;
@@ -638,18 +639,14 @@ pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Cont
     let width = ui.available_width();
     ui.vertical(|ui| {
         ui.set_width(width);
-        let moment = Some(QuestMoment::Offer);
-        quest::card::show(
-            ui,
-            images,
-            content,
-            quest,
-            moment,
-            None,
-            |ui, images, plate| {
-                quest::card::offer(ui, images, content, &parties, quest, None, plate);
-            },
-        );
+        let shown_as = QuestCardLook {
+            moment: Some(QuestMoment::Offer),
+            action: None,
+            look: CardLook::DOCKED,
+        };
+        quest::card::show(ui, images, content, quest, shown_as, |ui, images, plate| {
+            quest::card::offer(ui, images, content, &parties, quest, None, plate);
+        });
     });
 }
 

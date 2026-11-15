@@ -39,8 +39,11 @@ use crate::systems::command::input::{InputKind, SlotPart, options as input_optio
 use crate::systems::hud::{self, SizedPiece};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::input::scope;
+use crate::systems::item;
 use crate::systems::player::{ClientId, session};
+use crate::systems::quest;
 use crate::systems::settings::{Placed, UserSettings};
+use crate::systems::skill;
 
 pub const CHAT: &str = "chat";
 
@@ -357,7 +360,9 @@ pub(super) fn draw(world: &mut World) {
             if typing {
                 tabs(ui, world, &mut view, strip, &look);
             }
-            lines(ui, world, &mut view, log, &look);
+            if let Some((embed, from)) = lines(ui, world, &mut view, log, &look) {
+                inspect(world, embed, from);
+            }
             field_row(ui, world, &mut view, row, &look);
             handles
         });
@@ -436,9 +441,10 @@ impl EmbedLooks {
         EmbedLooks(looks)
     }
 
-    /// The look of what a line sent over a terminal holds.
-    fn sent(&self, content: &Content, sent: &TerminalEmbed) -> Option<&EmbedLook> {
-        self.0.get(&ChatEmbed::read(content, sent)?)
+    /// What a line sent over a terminal holds, and its look.
+    fn sent(&self, content: &Content, sent: &TerminalEmbed) -> Option<(ChatEmbed, &EmbedLook)> {
+        let embed = ChatEmbed::read(content, sent)?;
+        Some((embed, self.0.get(&embed)?))
     }
 }
 
@@ -653,7 +659,14 @@ fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
 }
 
 /// The lines of the tab shown while chat is typed in, and of every channel together at rest.
-fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &ChatLook) {
+/// Answers the thing of a line whose card the player asked for, and where they clicked it.
+fn lines(
+    ui: &mut Ui,
+    world: &World,
+    view: &mut ChatView,
+    room: Rect,
+    look: &ChatLook,
+) -> Option<(ChatEmbed, Rect)> {
     let log = world.resource::<TerminalLog>();
     let speakers = world.resource::<ChatSpeakers>();
     let portraits = world.resource::<ActorPortraits>();
@@ -685,8 +698,7 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
             let covers = |place: usize, kind: ChatEmbedKind| {
                 look.covered.contains(&kind) && !revealed.contains(&(id, place))
             };
-            let (job, icons, covered) =
-                line_job(line, &said, content, look, width, row_tall, &covers);
+            let (job, embeds) = line_job(line, &said, content, look, width, row_tall, &covers);
             let plain = job.text.clone();
             let portrait = pictured.and_then(|speaker| portraits.of(&speaker.appearance));
             let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
@@ -695,8 +707,7 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
                 galley,
                 plain,
                 portrait,
-                icons,
-                covered,
+                embeds,
             }
         })
         .collect();
@@ -705,6 +716,7 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
         .map(|line| line.galley.size().y + LINE_GAP)
         .sum();
     let mut uncovered = Vec::new();
+    let mut asked_for = None;
     let (source, bar) = if typing {
         (
             ScrollSource {
@@ -762,13 +774,22 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
                                 let at = Rect::from_min_size(rect.min, Vec2::splat(row_tall));
                                 ui.painter().image(portrait, at, whole, Color32::WHITE);
                             }
-                            embed_icons(ui.painter(), rect.min, &line.galley, &line.icons);
-                            let bars: Vec<(usize, Vec<Rect>)> = line
+                            let embeds = &line.embeds;
+                            embed_icons(ui.painter(), rect.min, &line.galley, &embeds.icons);
+                            let bars: Vec<(usize, Vec<Rect>)> = embeds
                                 .covered
                                 .iter()
                                 .map(|cover| {
                                     let bars = letters_rects(&line.galley, cover.letters.clone());
                                     (cover.place, bars)
+                                })
+                                .collect();
+                            let links: Vec<(&ShownEmbed, Vec<Rect>)> = embeds
+                                .shown
+                                .iter()
+                                .map(|shown| {
+                                    let names = letters_rects(&line.galley, shown.letters.clone());
+                                    (shown, names)
                                 })
                                 .collect();
                             dusk::lettering(
@@ -782,6 +803,12 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
                                 let key = ui.id().with(("covered", line.id, place));
                                 if cover_bars(ui, world, rect.min, key, &bars) {
                                     uncovered.push((line.id, place));
+                                }
+                            }
+                            for (shown, names) in links {
+                                let key = ui.id().with(("shown", line.id, shown.letters.start));
+                                if let Some(from) = embed_link(ui, rect.min, key, &names, shown) {
+                                    asked_for = Some((shown.embed, from));
                                 }
                             }
                         }
@@ -823,6 +850,17 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
         .count();
     if unread > 0 && unread_pill(ui, room, unread).clicked() {
         view.catching_up = true;
+    }
+    asked_for
+}
+
+/// Shows the card of a thing a line holds, dealt from where the player clicked it.
+fn inspect(world: &mut World, embed: ChatEmbed, from: Rect) {
+    let from = Some(from);
+    match embed {
+        ChatEmbed::Item(item) => item::card::open(world, item, from),
+        ChatEmbed::Quest(quest) => quest::card::open(world, quest, from),
+        ChatEmbed::Skill(skill) => skill::card::open(world, skill, from),
     }
 }
 
@@ -886,10 +924,9 @@ fn line_job(
     width: f32,
     icon_side: f32,
     covers: &dyn Fn(usize, ChatEmbedKind) -> bool,
-) -> (LayoutJob, Vec<EmbedIcon>, Vec<CoveredEmbed>) {
+) -> (LayoutJob, LineEmbeds) {
     let mut job = LayoutJob::default();
-    let mut icons = Vec::new();
-    let mut covered = Vec::new();
+    let mut embeds = LineEmbeds::default();
     job.wrap.max_width = width;
     let format = |color: Color32| TextFormat {
         font_id: look.font.clone(),
@@ -914,16 +951,22 @@ fn line_job(
             for (place, words) in line.text.split(EMBED).enumerate() {
                 if place > 0 {
                     match held.next().and_then(|sent| look.embeds.sent(content, sent)) {
-                        Some(embed) if covers(place - 1, embed.kind) => {
+                        Some((_, shown)) if covers(place - 1, shown.kind) => {
                             let starts = job.text.chars().count();
                             job.append(COVERED, 0.0, format(Color32::TRANSPARENT));
-                            covered.push(CoveredEmbed {
+                            embeds.covered.push(CoveredEmbed {
                                 place: place - 1,
                                 letters: starts..starts + COVERED.chars().count(),
                             });
                         }
-                        Some(embed) => {
-                            append_embed(&mut job, &mut icons, embed, &look.font, icon_side);
+                        Some((embed, shown)) => {
+                            let starts = job.text.chars().count();
+                            append_embed(&mut job, &mut embeds.icons, shown, &look.font, icon_side);
+                            embeds.shown.push(ShownEmbed {
+                                embed,
+                                name: shown.name.clone(),
+                                letters: starts..job.text.chars().count(),
+                            });
                         }
                         None => job.append("?", 0.0, format(dusk::TEXT)),
                     }
@@ -934,7 +977,7 @@ fn line_job(
         LineKind::Notice => job.append(&line.text, 0.0, format(dusk::NOTICE)),
         LineKind::Failed => job.append(&line.text, 0.0, format(dusk::DANGER)),
     }
-    (job, icons, covered)
+    (job, embeds)
 }
 
 /// A line of the log laid out to draw.
@@ -943,8 +986,23 @@ struct LaidLine {
     galley: Arc<Galley>,
     plain: String,
     portrait: Option<egui::TextureId>,
+    embeds: LineEmbeds,
+}
+
+/// The things a laid-out line holds: the icons drawn before their names, the things chat
+/// covers and the things it shows.
+#[derive(Default)]
+struct LineEmbeds {
     icons: Vec<EmbedIcon>,
     covered: Vec<CoveredEmbed>,
+    shown: Vec<ShownEmbed>,
+}
+
+/// A thing a line shows by its name: the thing, and the letters its name is written in.
+struct ShownEmbed {
+    embed: ChatEmbed,
+    name: String,
+    letters: Range<usize>,
 }
 
 /// A thing a line holds that chat covers: which of the line's things it is, and the letters
@@ -975,6 +1033,36 @@ fn cover_bars(ui: &mut Ui, world: &World, origin: Pos2, key: Id, bars: &[Rect]) 
         asked |= response.clicked();
     }
     asked
+}
+
+/// Lets the player ask for the card of a thing shown in the line drawn at `origin`, by a click
+/// on its name or its icon: `names` is where its name stands, a rect for each row it runs over.
+/// Where it was clicked, once it is.
+fn embed_link(
+    ui: &mut Ui,
+    origin: Pos2,
+    key: Id,
+    names: &[Rect],
+    shown: &ShownEmbed,
+) -> Option<Rect> {
+    let mut clicked = None;
+    for (row, name) in names.iter().enumerate() {
+        let icon = if row == 0 {
+            name.height() + ICON_GAP
+        } else {
+            0.0
+        };
+        let at = Rect::from_min_max(name.min - Vec2::new(icon, 0.0), name.max)
+            .translate(origin.to_vec2());
+        let response = ui
+            .interact(at, key.with(row), Sense::click())
+            .on_hover_cursor(CursorIcon::PointingHand);
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &shown.name));
+        if response.clicked() {
+            clicked = Some(at);
+        }
+    }
+    clicked
 }
 
 /// How much of its row's height a bar leaves clear above and below itself.

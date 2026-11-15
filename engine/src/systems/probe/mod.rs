@@ -105,7 +105,7 @@ use crate::systems::npc::{Npc, NpcId};
 use crate::systems::party::{self, page::ShownParty};
 use crate::systems::player::{Away, PlayedBy, commands_locked, session};
 use crate::systems::prompt;
-use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
+use crate::systems::quest::{self, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
 use crate::systems::save::{self, notice::ShownSaving};
@@ -381,6 +381,7 @@ pub struct ProbeSnapshot {
     pub crafting: Option<ProbeCrafting>,
     pub item_card: Option<ProbeItemCard>,
     pub skill_card: Option<ProbeSkillCard>,
+    pub quest_card: Option<ProbeQuestCard>,
     pub bag: Vec<ProbeStack>,
     pub quests: ProbeQuests,
     pub bar_slots: Vec<SlotReport>,
@@ -851,6 +852,15 @@ pub struct ProbeSkillCard {
     pub lamp: Option<ProbeCardLamp>,
 }
 
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+pub struct ProbeQuestCard {
+    pub quest: QuestId,
+    #[schemars(with = "RectSchema")]
+    pub rect: Rect<WindowPx>,
+    pub tilt: ProbeCardTilt,
+    pub lamp: Option<ProbeCardLamp>,
+}
+
 /// How far a card is turned toward the pointer: `aside` about its upright axis and `above` about
 /// its level one, so the part under the pointer sinks back.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
@@ -1284,6 +1294,12 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 tilt: skill::card::tilt(world).into(),
                 lamp: skill::card::lamp(world).map(Into::into),
             }),
+        quest_card: quest::card::shown(world).map(|(quest, rect)| ProbeQuestCard {
+            quest,
+            rect: gui::window_rect(rect),
+            tilt: quest::card::tilt(world).into(),
+            lamp: quest::card::lamp(world).map(Into::into),
+        }),
         prompt: prompt::tray::view(world).map(|view| ProbePrompt {
             title: view.title.clone(),
             text: view

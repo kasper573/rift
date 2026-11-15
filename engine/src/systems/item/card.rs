@@ -323,6 +323,12 @@ impl CardLook {
         closable: true,
         depth: Depth::Front,
     };
+
+    /// A card that is part of what stands around it, and goes when that does.
+    pub const DOCKED: CardLook = CardLook {
+        closable: false,
+        depth: Depth::Front,
+    };
 }
 
 pub fn foot(ui: &mut Ui, world: &World, hint: &StyledLine) {
