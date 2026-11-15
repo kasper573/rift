@@ -53,9 +53,7 @@ impl InputAction {
             | InputAction::Choice7
             | InputAction::Choice8
             | InputAction::Choice9 => &[Conversation],
-            InputAction::AcceptRequest | InputAction::DeclineRequest => {
-                &[Conversation, Menu, World]
-            }
+            InputAction::AcceptRequest | InputAction::DenyRequest => &[Conversation, Menu, World],
             InputAction::Respawn
             | InputAction::TurnLeft
             | InputAction::TurnRight
@@ -101,7 +99,8 @@ impl InputAction {
             | InputAction::LowerRank
             | InputAction::InspectSkill
             | InputAction::UseSlot
-            | InputAction::SlotOptions => &[Typing, Modal, Conversation, Menu, World],
+            | InputAction::SlotOptions
+            | InputAction::ItemOptions => &[Typing, Modal, Conversation, Menu, World],
         }
     }
 }

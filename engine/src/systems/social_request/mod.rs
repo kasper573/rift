@@ -1,4 +1,4 @@
-//! A request between two players: one asks, the other says yes or no. Friendship, an invitation
+//! A request between two players: one asks, the other accepts or denies. Friendship, an invitation
 //! and a seat are all requests, each a kind the system that owns it brings, and every one of
 //! them passes the same gate on its way out.
 
@@ -93,7 +93,7 @@ pub struct SocialRequestSource {
     /// Whether the first account may ask the second, by the kind's own rules, once the gate
     /// every request passes has let it through.
     pub may_send: fn(&Society, &GameSettings, &AccountId, &AccountId) -> Result<(), RequestUnsent>,
-    /// What a yes does.
+    /// What accepting does.
     pub accepted: fn(&mut Settling, &GameSettings, &SocialRequest) -> Result<(), RequestUnaccepted>,
     /// Whether one that waits still may, by the kind's own rules. One that may not ends with
     /// nobody told.
@@ -109,10 +109,10 @@ pub enum RequestUnsent {
     Told(String),
 }
 
-/// Why a yes did not do what its kind does, in the game's words.
+/// Why accepting did not do what its kind does, in the game's words.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RequestUnaccepted {
-    /// The request waits on, and the player who said yes is told why.
+    /// The request waits on, and the player who accepted is told why.
     Waits(String),
     /// The request is over, and both are told why.
     Over(String),
@@ -128,11 +128,11 @@ pub struct SocialRequestWords<'a> {
     pub asked: &'a str,
     /// What the asker is told as it is sent, for a kind that tells them.
     pub sent: Option<&'a str>,
-    /// What the asker is told on a yes, for a kind that tells them.
+    /// What the asker is told when it is accepted, for a kind that tells them.
     pub accepted: Option<&'a str>,
-    /// What the asker is told on a no. A kind that does not tell them keeps a request that was
-    /// declined waiting as far as its asker sees, until its time is up.
-    pub declined: Option<&'a str>,
+    /// What the asker is told when it is denied. A kind that does not tell them keeps a request that was
+    /// denied waiting as far as its asker sees, until its time is up.
+    pub denied: Option<&'a str>,
     /// What the asker is told as its time is up unanswered, for a kind that tells them.
     pub lapsed: Option<&'a str>,
 }
@@ -157,9 +157,9 @@ pub struct SocialRequest {
     pub shown_until: UnixMillis,
     /// Until when it waits.
     pub until: UnixMillis,
-    /// Whether the player asked said no, of a kind that does not tell the asker.
+    /// Whether the player asked denied it, of a kind that does not tell the asker.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub declined: bool,
+    pub denied: bool,
 }
 
 impl Record for SocialRequest {
@@ -242,11 +242,11 @@ impl SocialRequests {
         self.waiting.insert(request.id, request);
     }
 
-    /// Notes that the player asked said no to a request that waits on: the request as it then
+    /// Notes that the player asked denied a request that waits on: the request as it then
     /// is.
-    fn decline(&mut self, id: SocialRequestId) -> Option<SocialRequest> {
+    fn deny(&mut self, id: SocialRequestId) -> Option<SocialRequest> {
         let request = self.waiting.get_mut(&id)?;
-        request.declined = true;
+        request.denied = true;
         Some(request.clone())
     }
 
@@ -329,11 +329,11 @@ pub enum SocialRequestAsk {
         about: Option<String>,
     },
     Accept(SocialRequestId),
-    Decline(SocialRequestId),
+    Deny(SocialRequestId),
     TakeBack(SocialRequestId),
 }
 
-/// A player's answer to a request on their card: a yes or a no from the one asked, or the asker
+/// A player's answer to a request on their card: accepting or denying by the one asked, or the asker
 /// taking it back.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnswerSocialRequest {
@@ -344,7 +344,7 @@ pub struct AnswerSocialRequest {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestAnswer {
     Accept,
-    Decline,
+    Deny,
     TakeBack,
 }
 
@@ -368,7 +368,7 @@ pub fn requests(world: &mut World) {
         |world, player, answer| {
             let ask = match answer.answer {
                 RequestAnswer::Accept => SocialRequestAsk::Accept(answer.request),
-                RequestAnswer::Decline => SocialRequestAsk::Decline(answer.request),
+                RequestAnswer::Deny => SocialRequestAsk::Deny(answer.request),
                 RequestAnswer::TakeBack => SocialRequestAsk::TakeBack(answer.request),
             };
             if let Some(client) = client(world, player) {
@@ -416,16 +416,16 @@ pub(crate) fn settle(
         }
         SocialRequestAsk::Accept(id) => {
             if waits_for(settling, id, |request| {
-                request.asked == *by && !request.declined
+                request.asked == *by && !request.denied
             }) {
                 accept(settling, settings, id);
             }
         }
-        SocialRequestAsk::Decline(id) => {
+        SocialRequestAsk::Deny(id) => {
             if waits_for(settling, id, |request| {
-                request.asked == *by && !request.declined
+                request.asked == *by && !request.denied
             }) {
-                decline(settling, settings, id);
+                deny(settling, settings, id);
             }
         }
         SocialRequestAsk::TakeBack(id) => {
@@ -443,7 +443,7 @@ pub(crate) fn lapse(settling: &mut Settling, settings: &GameSettings) {
             continue;
         };
         let lapsed = words_of(settling, settings, request.kind).and_then(|says| says.lapsed);
-        if let Some(lapsed) = lapsed.filter(|_| !request.declined) {
+        if let Some(lapsed) = lapsed.filter(|_| !request.denied) {
             let text = lapsed.replace("{name}", &settling.name(&request.asked));
             let told = Notification::feed(HistoryTopic::Notification, text).failed();
             settling.tell(&request.asker, told);
@@ -479,9 +479,9 @@ pub(crate) fn end_unless(
     }
 }
 
-/// Declines every other request of its kind that the player `accepted` was asked of has
-/// waiting, as a yes to one is a no to the rest.
-pub(crate) fn decline_others(
+/// Denies every other request of its kind that the player `accepted` was asked of has
+/// waiting, as accepting one denies the rest.
+pub(crate) fn deny_others(
     settling: &mut Settling,
     settings: &GameSettings,
     accepted: &SocialRequest,
@@ -498,7 +498,7 @@ pub(crate) fn decline_others(
         .map(|request| request.id)
         .collect();
     for id in others {
-        decline(settling, settings, id);
+        deny(settling, settings, id);
     }
 }
 
@@ -537,7 +537,7 @@ fn send(
     if requests.between(kind, asker, asked).is_some() {
         return;
     }
-    // Two who ask each other for the same thing have both said yes.
+    // Two who ask each other for the same thing have both accepted.
     if let Some(answered) = requests
         .between(kind, asked, asker)
         .map(|request| request.id)
@@ -574,7 +574,7 @@ fn send(
         about,
         shown_until,
         until,
-        declined: false,
+        denied: false,
     });
     settling.society.changed(asker);
     settling.society.changed(asked);
@@ -612,7 +612,7 @@ fn accept(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId)
     }
 }
 
-fn decline(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId) {
+fn deny(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId) {
     let Some(said) = settling
         .society
         .requests
@@ -621,8 +621,8 @@ fn decline(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId
     else {
         return;
     };
-    let Some(declined) = words_of(settling, settings, said).and_then(|says| says.declined) else {
-        if let Some(request) = settling.society.requests.decline(id) {
+    let Some(denied) = words_of(settling, settings, said).and_then(|says| says.denied) else {
+        if let Some(request) = settling.society.requests.deny(id) {
             settling.society.changed(&request.asked);
             let saved = settling.society.source(request.kind);
             if saved.is_some_and(|source| source.reaches_offline) {
@@ -634,7 +634,7 @@ fn decline(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId
     let Some(request) = end(settling, id) else {
         return;
     };
-    let text = declined.replace("{name}", &settling.name(&request.asked));
+    let text = denied.replace("{name}", &settling.name(&request.asked));
     let told = Notification::feed(HistoryTopic::Notification, text).failed();
     settling.tell(&request.asker, told);
 }

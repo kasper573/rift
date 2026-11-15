@@ -8,7 +8,7 @@ use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::item::{self, UseItemRequest};
 use engine::systems::mount::seat::MountRequest;
 use engine::systems::mount::{self, MountDef, MountKind, Riding, SeatIndex};
-use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
+use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::probe::{ProbeGame, ProbeGameQuestion, answer};
@@ -124,11 +124,16 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
             "a boat is called onto water within the skill's range, never walked toward"
         );
     }
+    let jumps = |server: &Server| {
+        let placed = server.village.world.get::<Position>(wren);
+        placed.expect("placed").jumps
+    };
+    let ashore_jumps = jumps(&server);
     cast(&mut server, 1, "call_boat", CastAim::Point(OFFSHORE));
     assert_eq!(
-        (seat(&server, wren), at(&server, wren)),
-        (Some(("boat", 0)), OFFSHORE),
-        "a good spot launches: the caster is on the water there, aboard"
+        (seat(&server, wren), at(&server, wren), jumps(&server)),
+        (Some(("boat", 0)), OFFSHORE, ashore_jumps),
+        "a good spot launches: the caster is on the water there, aboard, with no jump to cut their view for"
     );
     walk(&mut server, 1, BEACH);
     assert!(
@@ -154,11 +159,12 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
         "afloat, the skill that called the boat picks the ground to step onto, within its reach"
     );
     let ashore = Pos::new(12.5, 6.0);
+    let afloat_jumps = jumps(&server);
     cast(&mut server, 1, "call_boat", CastAim::Point(ashore));
     assert_eq!(
-        (seat(&server, wren), at(&server, wren)),
-        (None, ashore),
-        "the driver lands on the spot they picked, and the boat is gone"
+        (seat(&server, wren), at(&server, wren), jumps(&server)),
+        (None, ashore, afloat_jumps),
+        "the driver lands on the spot they picked, the boat is gone, and stepping off is no jump either"
     );
 }
 
@@ -176,7 +182,7 @@ fn a_mount_is_refused_before_anything_is_spent() {
     cast(&mut server, 2, "call_crow", CastAim::None);
     assert_eq!(
         (seat(&server, hale), server.forest.errors(2)),
-        (None, vec!["Mounts of this kind are barred here".to_owned()]),
+        (None, vec!["This area does not allow mounts".to_owned()]),
         "an area bars the kinds of mount it names"
     );
     server.later(31.0);
@@ -252,14 +258,14 @@ fn a_seat_is_asked_of_the_driver_and_lets_its_rider_do_what_it_allows() {
     assert_eq!(
         seat(&server, wren),
         None,
-        "nobody boards without the driver's yes"
+        "nobody boards unless the driver accepts"
     );
     server.answer(2, RequestAnswer::Accept);
     server.step();
     assert_eq!(
         (seat(&server, wren), at(&server, wren)),
         (Some(("boat", 1)), OFFSHORE),
-        "a yes seats the asker in the first free seat, where the driver is"
+        "accepting seats the asker in the first free seat, where the driver is"
     );
 
     let onward = Pos::new(18.0, 6.0);
@@ -573,6 +579,7 @@ fn a_warp_takes_a_mount_and_everyone_on_it_or_leaves_the_mount_behind() {
         "a passenger warped alone leaves their seat, and the mount stays with its driver"
     );
 
+    let told = server.told(2).len();
     warp(&mut server.forest, hale, "village", FAR_OUT);
     server.forest.hand_over(&mut server.village);
     server.step();
@@ -582,43 +589,51 @@ fn a_warp_takes_a_mount_and_everyone_on_it_or_leaves_the_mount_behind() {
             seat(&server, hale),
             walkable(&server, at(&server, hale)),
             pace(&server.village, hale),
-            server.told(2).last().map(String::as_str),
+            server.told(2).len(),
         ),
-        (None, true, on_foot, Some("Your Grey Mare could not follow")),
-        "a mount that cannot stand where its driver lands in another area is left behind, with all it did"
+        (None, true, on_foot, told),
+        "a mount that cannot stand where its driver lands in another area is left behind with all it did, and nothing is said of it"
     );
 
     let mut server = server_of(game());
     let wren = server.sign_in(1, "Wren", "village");
     let hale = server.sign_in(2, "Hale", "village");
     aboard(&mut server, (2, hale), (1, wren));
+    let told = [1, 2].map(|client| server.told(client).len());
     warp(&mut server.village, hale, "village", landing);
     for client in [1, 2] {
         server.send(client, AreaDrawn);
     }
-    for (client, rider) in [(1, wren), (2, hale)] {
+    for rider in [wren, hale] {
         assert!(
             seat(&server, rider).is_none()
                 && walkable(&server, at(&server, rider))
                 && at(&server, rider).distance(landing) < Meters(2.0),
             "where the mount cannot stand, everyone arrives on foot around the landing"
         );
-        assert_eq!(
-            server.told(client).last().map(String::as_str),
-            Some("Your Rowboat could not follow")
-        );
     }
+    assert_eq!(
+        [1, 2].map(|client| server.told(client).len()),
+        told,
+        "and nobody is told a thing about it"
+    );
 
     server.village.give(hale, "feather", 1);
     cast(&mut server, 2, "call_crow", CastAim::None);
+    let told = server.told(2).len();
     warp(&mut server.village, hale, "forest", landing);
+    assert_eq!(
+        rides(&server.village, hale),
+        None,
+        "a rider who warps into an area that bars their mount is on foot before they leave"
+    );
     server.village.hand_over(&mut server.forest);
     server.step();
     let hale = server.forest.player(2);
     assert_eq!(
-        (rides(&server.forest, hale), server.told(2).last().cloned()),
-        (None, Some("Your Stormcrow could not follow".to_owned())),
-        "and so does a rider who warps into an area that bars their mount"
+        (rides(&server.forest, hale), server.told(2).len()),
+        (None, told),
+        "and arrives on foot, told nothing"
     );
 }
 

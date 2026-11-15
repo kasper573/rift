@@ -14,6 +14,7 @@ use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::stage::card::HungCardLamp;
 use crate::core::text::{self, StyledLine, TextLook};
+use crate::systems::chat::ChatEmbed;
 use crate::systems::class::{self, ClassId, NodeKey};
 use crate::systems::crafting;
 use crate::systems::equipment::Equipment;
@@ -25,6 +26,7 @@ use crate::systems::screen::ClientScreen;
 use crate::systems::script::condition;
 use crate::systems::skill::Learned;
 use crate::systems::stat::{self, Vital};
+use crate::systems::terminal::chat;
 use ui::words;
 use ui::words::counted;
 
@@ -172,8 +174,9 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
     shown.tally = Some(&tally);
     shown.picture = icon;
     shown.closable = look.closable;
+    shown.action = Some(chat::card_action());
     shown.depth = look.depth;
-    shown.show(ui, |ui, plate| {
+    let response = shown.show(ui, |ui, plate| {
         if plate.name_cut {
             card::full_name(ui, &def.name);
         }
@@ -215,7 +218,9 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
         for (line, met) in needs {
             card::requirement(ui, met, &line);
         }
-    })
+    });
+    chat::offered(world, &response, ChatEmbed::Skill(card.skill));
+    response
 }
 
 /// What a skill's card says under its name. Its band already says its kind and its rank, and

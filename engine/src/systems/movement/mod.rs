@@ -4,8 +4,8 @@ mod predict;
 mod spots;
 
 pub use berth::{
-    Aim, Approach, ApproachPlan, Berths, approach, place_beside, reachable, relocate_beside,
-    settle, vacant_near,
+    Aim, Approach, ApproachPlan, Berths, approach, hop_beside, place_beside, reachable,
+    relocate_beside, settle, vacant_near,
 };
 pub use navmesh::{Island, NavMesh, SEAM_SNAP, TileLayer, kept_clear};
 pub use predict::{request_walk, walk_ahead};
@@ -49,6 +49,11 @@ pub struct Position {
     /// Counts each time the server put the entity somewhere rather than walked it there, so a client
     /// shows it there at once rather than a walk that never happened.
     pub jumps: Jumps,
+    /// Counts each time the server put the entity on a spot close by, as onto a mount or off it.
+    /// A client shows it there at once as well, but where it looked already: its surroundings
+    /// are the ones it stood in.
+    #[serde(default)]
+    pub hops: Jumps,
 }
 
 impl Position {
@@ -56,7 +61,14 @@ impl Position {
         Position {
             pos,
             jumps: Jumps::default(),
+            hops: Jumps::default(),
         }
+    }
+
+    /// A count that changes whenever the entity was put somewhere rather than walked there,
+    /// near or far.
+    pub fn put(&self) -> Jumps {
+        Jumps(self.jumps.0.wrapping_add(self.hops.0))
     }
 }
 
@@ -119,7 +131,7 @@ impl Interpolate for RenderPosition {
     }
 
     fn jumps(position: &Position) -> Jumps {
-        position.jumps
+        position.put()
     }
 }
 
@@ -250,6 +262,17 @@ pub fn relocate(world: &mut World, entity: Entity, pos: Pos<Meters>) {
     if let Some(mut position) = world.get_mut::<Position>(entity) {
         position.pos = pos;
         position.jumps = position.jumps.next();
+        spots::claim(world, entity, pos);
+    }
+}
+
+/// Puts the actor on a spot close by, as onto a mount or off it: it is there at once, and its
+/// player's view stays on the surroundings it stood in.
+pub fn hop(world: &mut World, entity: Entity, pos: Pos<Meters>) {
+    world.entity_mut(entity).remove::<(MoveTarget, Path)>();
+    if let Some(mut position) = world.get_mut::<Position>(entity) {
+        position.pos = pos;
+        position.hops = position.hops.next();
         spots::claim(world, entity, pos);
     }
 }

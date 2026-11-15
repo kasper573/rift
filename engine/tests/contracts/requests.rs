@@ -49,11 +49,11 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
 
     server.answer(1, RequestAnswer::Accept);
     server.step();
-    assert_eq!(server.cards(2).len(), 1, "only the player asked says yes");
+    assert_eq!(server.cards(2).len(), 1, "only the player asked accepts");
     server.answer(2, RequestAnswer::Accept);
     server.step();
     assert_eq!((server.cards(1), server.cards(2)), (vec![], vec![]));
-    assert_eq!(rides(&server, wren), 1, "a yes does what the kind does");
+    assert_eq!(rides(&server, wren), 1, "accepting does what the kind does");
     assert_eq!(server.told(1), ["Hale let you aboard"]);
 
     server.ask(1, SocialRequestKind::Seat, "Hale");
@@ -63,7 +63,7 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     assert_eq!(
         rides(&server, wren),
         1,
-        "a yes the kind refuses does nothing"
+        "accepting what the kind refuses does nothing"
     );
     for client in [1, 2] {
         assert_eq!(
@@ -75,13 +75,13 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
 
     server.ask(2, SocialRequestKind::Seat, "Wren");
     server.step();
-    server.answer(1, RequestAnswer::Decline);
+    server.answer(1, RequestAnswer::Deny);
     server.step();
     assert_eq!((server.cards(1), server.cards(2)), (vec![], vec![]));
     assert_eq!(
         server.told(2),
-        ["Wren said no"],
-        "a no is told to the asker"
+        ["Wren denied"],
+        "a denial is told to the asker"
     );
 
     server.ask(2, SocialRequestKind::Seat, "Wren");
@@ -102,7 +102,7 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
         (vec![], vec![]),
         "it is gone when its wait is over"
     );
-    assert_eq!(server.told(2), ["Wren said no"], "and nobody is told");
+    assert_eq!(server.told(2), ["Wren denied"], "and nobody is told");
 
     server.ask(1, SocialRequestKind::Friendship, "Hale");
     server.ask(2, SocialRequestKind::Friendship, "Wren");
@@ -110,7 +110,7 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     assert_eq!(
         (server.cards(1), server.cards(2)),
         (vec![], vec![]),
-        "two who ask each other for the same thing have both said yes"
+        "two who ask each other for the same thing have both accepted"
     );
     assert_eq!(
         server.told(1),
@@ -176,7 +176,7 @@ fn every_request_passes_one_gate() {
         1,
         "the player asked takes requests from their friends, and the asker is one"
     );
-    server.answer(2, RequestAnswer::Decline);
+    server.answer(2, RequestAnswer::Deny);
     server.send(2, ChooseAcceptsRequests(AcceptsRequestsFrom::Everyone));
     server.step();
 
@@ -347,7 +347,7 @@ fn sources() -> Vec<SocialRequestSource> {
                 asked: "You asked {name} for a seat",
                 sent: None,
                 accepted: Some("{name} let you aboard"),
-                declined: Some("{name} said no"),
+                denied: Some("{name} denied"),
                 lapsed: None,
             },
             may_send: |_, _, _, _| Ok(()),

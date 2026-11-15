@@ -22,6 +22,7 @@ fn main() {
             .unwrap_or_else(|| panic!("the {name} package in the workspace"))
     };
     check_crate(package("engine"), &mut violations);
+    check_mapped_messages(package("engine"), &mut violations);
     for package in metadata
         .packages
         .iter()
@@ -32,7 +33,9 @@ fn main() {
     check_standalone(&metadata, &mut violations);
 
     if violations.is_empty() {
-        println!("lint: layering, standalone crates, content keys and JSON keys OK");
+        println!(
+            "lint: layering, standalone crates, content keys, JSON keys and mapped messages OK"
+        );
         return;
     }
     for violation in &violations {
@@ -75,6 +78,27 @@ fn check_json_keys(package: &Package, out: &mut Vec<String>) {
             out.push(format!(
                 "[{name}] src/{rel}:{line}: `{access}` — JSON by literal key: read and write it as the type that declares the field"
             ));
+        }
+    }
+}
+
+/// A message that names entities reaches the other side naming the same ones only when it is
+/// registered as mapped. Registered plainly it compiles, and arrives naming whatever the sender's
+/// ids stand for on the receiver.
+fn check_mapped_messages(package: &Package, out: &mut Vec<String>) {
+    let name = &package.name;
+    let files: Vec<(String, PathBuf)> = rust_files(package).collect();
+    let mapped: BTreeSet<String> = files
+        .iter()
+        .flat_map(|(_, file)| visited(file, EntityMappers::default()).types)
+        .collect();
+    for (rel, file) in &files {
+        for (line, method, message) in visited(file, PlainMessages::default()).hits {
+            if mapped.contains(&message) {
+                out.push(format!(
+                    "[{name}] src/{rel}:{line}: `{method}::<{message}>` — the message names entities: register it mapped"
+                ));
+            }
         }
     }
 }
@@ -185,6 +209,70 @@ fn use_reaches_systems(tree: &UseTree) -> bool {
         UseTree::Rename(rename) => rename.ident == "systems",
         UseTree::Group(group) => group.items.iter().any(use_reaches_systems),
         UseTree::Glob(_) => false,
+    }
+}
+
+#[derive(Default)]
+struct EntityMappers {
+    types: BTreeSet<String>,
+}
+
+impl<'ast> Visit<'ast> for EntityMappers {
+    fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+        if derives_map_entities(&item.attrs) {
+            self.types.insert(item.ident.to_string());
+        }
+        visit::visit_item_struct(self, item);
+    }
+
+    fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
+        if derives_map_entities(&item.attrs) {
+            self.types.insert(item.ident.to_string());
+        }
+        visit::visit_item_enum(self, item);
+    }
+}
+
+fn derives_map_entities(attrs: &[syn::Attribute]) -> bool {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("derive"))
+        .any(|attr| {
+            let mut found = false;
+            let parsed = attr.parse_nested_meta(|meta| {
+                found |= meta
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|last| last.ident == "MapEntities");
+                Ok(())
+            });
+            parsed.is_ok() && found
+        })
+}
+
+const PLAIN_MESSAGES: &[&str] = &["add_client_message", "add_server_message"];
+
+#[derive(Default)]
+struct PlainMessages {
+    hits: Vec<(usize, String, String)>,
+}
+
+impl<'ast> Visit<'ast> for PlainMessages {
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        if PLAIN_MESSAGES.contains(&call.method.to_string().as_str())
+            && let Some(turbofish) = &call.turbofish
+            && let Some(syn::GenericArgument::Type(syn::Type::Path(message))) =
+                turbofish.args.first()
+            && let Some(last) = message.path.segments.last()
+        {
+            self.hits.push((
+                call.method.span().start().line,
+                call.method.to_string(),
+                last.ident.to_string(),
+            ));
+        }
+        visit::visit_expr_method_call(self, call);
     }
 }
 

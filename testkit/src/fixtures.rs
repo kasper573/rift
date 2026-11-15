@@ -29,10 +29,8 @@ impl Game {
                 .asset(&image, png(1, 1))
         });
         let game = each::<ChatChannel>(game, |game, key, _| {
-            let sign = format!("icons/interface/{key}_chat.png");
-            let channel = json!({ "name": key, "sign": sign, "color": [255, 255, 255] });
+            let channel = json!({ "name": key, "color": [255, 255, 255] });
             game.row("chat_channel", key, channel)
-                .asset(&sign, png(1, 1))
         });
         let game = each::<VfxFixture>(game, |game, key, _| game.vfx(key));
         let game = each::<VfxShaderFixture>(game, |game, key, locks| {

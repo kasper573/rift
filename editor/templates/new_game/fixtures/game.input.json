@@ -154,7 +154,7 @@
       ]
     },
     "accept_request": {
-      "label": "Say yes to the request in front",
+      "label": "Accept the request in front",
       "bindings": [
         {
           "type": "key",
@@ -162,8 +162,8 @@
         }
       ]
     },
-    "decline_request": {
-      "label": "Say no to the request in front",
+    "deny_request": {
+      "label": "Deny the request in front",
       "bindings": [
         {
           "type": "key",
@@ -607,6 +607,17 @@
           "type": "click",
           "button": "Right",
           "times": 1
+        }
+      ]
+    },
+    "item_options": {
+      "label": "Open an item's options",
+      "bindings": [
+        {
+          "type": "click",
+          "button": "Right",
+          "times": 1,
+          "ctrl": true
         }
       ]
     },

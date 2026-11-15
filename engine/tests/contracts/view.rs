@@ -17,7 +17,7 @@ use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{
-    Animator, CameraPreferences, CameraRig, Shot, capsule_hit, facing_rotation, ground_pos,
+    Animator, CameraPreferences, CameraRig, Orbit, Shot, capsule_hit, facing_rotation, ground_pos,
     world_point,
 };
 use engine::core::text::Typewriter;
@@ -34,7 +34,7 @@ use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
 use serde_json::json;
-use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, WALK_PACE, path, png};
+use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, RUN_PACE, WALK_PACE, path, png};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -54,6 +54,19 @@ fn hill_among(heights: HeightRange) -> Heightfield {
         let y = row as f32 / SAMPLES_PER_METER as f32;
         let out = ((x - 16.0).powi(2) + (y - 16.0).powi(2)).sqrt();
         Meters((4.0 - out / 2.0).max(0.0))
+    })
+}
+
+/// Ground that rises toward the south, a bump at every other sample.
+fn rough_slope() -> Heightfield {
+    let size = GroundSize {
+        width: 64,
+        height: 64,
+    };
+    Heightfield::from_fn(size, HEIGHTS, |column, row| {
+        let south = row as f32 / SAMPLES_PER_METER as f32;
+        let bump = if (column + row) % 2 == 0 { 0.15 } else { 0.0 };
+        Meters(south * 0.15 + bump)
     })
 }
 
@@ -181,6 +194,7 @@ fn glides_onto_a_shot_and_back(at: Pos<Meters>) {
 /// The camera never stands under the ground. Where the ground rises between it and what it looks
 /// at, it tilts further down at once, until its line of sight passes over; over level ground it
 /// stands just as it was asked; and once the ground is out of its way it settles back as asked.
+/// Over rough ground it glides: it keeps over the ground without following every bump of it.
 #[test]
 fn the_camera_tilts_over_ground_that_would_stand_in_its_sight() {
     let heights = hill();
@@ -246,6 +260,48 @@ fn the_camera_tilts_over_ground_that_would_stand_in_its_sight() {
     assert!(
         tilted > 0 && kept > 0,
         "the hill stands in the camera's sight from some sides only: {tilted} tilted, {kept} kept"
+    );
+
+    let rough = rough_slope();
+    let framing = testkit::look().camera;
+    let frame = Seconds(1.0 / 60.0);
+    let mut rig = CameraRig::new(framing);
+    rig.tilt(Degrees(-90.0));
+    rig.ease(Seconds(60.0), preferences);
+    let (mut glided, mut followed) = (Vec::new(), Vec::new());
+    for step in 0..240 {
+        let at = Pos::new(32.0, 24.0 - RUN_PACE.0.0 * frame.0 * step as f32);
+        let height = rough.height_at(at) + Meters(1.0);
+        rig.look_at(at, height);
+        rig.stand_over(&rough, frame, preferences);
+        let eye = rig.eye();
+        assert!(
+            over(rig.target(), eye).all(|point| point.y > rough.height_at(ground_pos(point)).0),
+            "walking rough ground, the line of sight from {eye} passes over it"
+        );
+        glided.push(rig.pitch().0);
+        let following = Orbit {
+            target: world_point(at, height),
+            yaw: Radians(0.0),
+            pitch: framing.lowest_pitch.radians(),
+            distance: framing.zooms.middle,
+        };
+        followed.push(following.over(&rough).pitch.0);
+    }
+    let roughest = |pitches: &[f32]| {
+        pitches[60..]
+            .windows(3)
+            .map(|trio| (trio[2] - 2.0 * trio[1] + trio[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    assert!(
+        followed
+            .iter()
+            .any(|pitch| *pitch > framing.lowest_pitch.radians().0)
+            && roughest(&glided) < roughest(&followed) / 4.0,
+        "the camera glides over bumps a camera held to the ground would be shaken by: {} for {}",
+        roughest(&glided),
+        roughest(&followed)
     );
 }
 

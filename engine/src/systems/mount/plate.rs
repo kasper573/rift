@@ -1,18 +1,18 @@
-//! The mount plate: a piece of the HUD shown while the player rides, naming the mount and the
-//! seat they hold, with the way off it and, for a driver, who sits where and a way to set each
-//! of them down.
+//! The mount plate: a piece of the HUD shown while the player rides, naming the mount, with the
+//! way off it and, for a driver, a way to set down each passenger aboard. It is as small as what
+//! it holds, and rests in the bottom right corner of the screen however large that makes it.
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, Vec2};
-use ui::{controls, dialog, face, ink};
+use ui::egui::{self, Align2, Margin, Pos2, Rect, Ui, Vec2};
+use ui::{controls, dialog, face, sheet};
 
 use super::seat::MountRequest;
 use super::{MountId, MountKind, Riding, SeatIndex, Travels};
 use crate::core::content::Content;
 use crate::systems::actor::Name;
-use crate::systems::hud::HudWidget;
+use crate::systems::hud::{self, HudWidget};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::notification;
 use crate::systems::player::session;
@@ -45,12 +45,13 @@ pub fn shown(world: &mut World) -> Option<ShownMount> {
     let riding = riding(world)?;
     let def = riding.mount.get(world.resource::<Content>());
     let (kind, seats) = (MountKind::from(def.travels), def.seats.len());
-    let mut sat = vec![Some(named(world, riding.driver))];
-    sat.extend(
-        seated(world, riding.driver, seats)
-            .into_iter()
-            .map(|(_, rider)| rider),
-    );
+    let mut sat = vec![None; seats.max(1)];
+    sat[0] = Some(named(world, riding.driver));
+    for (seat, rider) in passengers(world, riding.driver) {
+        if let Some(held) = sat.get_mut(usize::from(seat.0)) {
+            *held = Some(rider);
+        }
+    }
     Some(ShownMount {
         mount: riding.mount,
         kind,
@@ -62,7 +63,11 @@ pub fn shown(world: &mut World) -> Option<ShownMount> {
 
 impl HudWidget for MountPlateWidget {
     fn fallback(&self, _: &World, screen: Rect) -> Pos2 {
-        screen.center_bottom() + Vec2::new(-WIDTH / 2.0, -FROM_BOTTOM)
+        screen.right_bottom() - Vec2::splat(hud::MARGIN)
+    }
+
+    fn rests_by(&self) -> Align2 {
+        Align2::RIGHT_BOTTOM
     }
 
     fn hidden(&self, world: &World) -> bool {
@@ -74,50 +79,34 @@ impl HudWidget for MountPlateWidget {
         let riding = riding(world)?;
         let content = world.resource::<Content>().clone();
         let def = riding.mount.get(&content);
-        let (title, tag, seats) = if riding.drives() {
-            let kind = MountKind::from(def.travels).label().to_owned();
-            (def.name.clone(), kind, seated(world, me, def.seats.len()))
+        let (title, aboard) = if riding.drives() {
+            (def.name.clone(), passengers(world, me))
         } else {
             let driver = named(world, riding.driver);
-            let seat = format!("Seat {}", riding.seat.0 + 1);
-            (format!("{driver}'s {}", def.name), seat, Vec::new())
+            (format!("{driver}'s {}", def.name), Vec::new())
         };
         let shut = shut(world, me);
         let key = world.resource::<InputMap>().name(InputAction::StepOff);
         let mut asked = None;
-        dialog::note(ui, WIDTH, |ui| {
+        sheet::note(ui, Margin::same(dialog::PADDING), |ui| {
             ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let leave = controls::keyed(ui, "Step off", key.as_deref(), shut.is_none());
-                    let leave = match &shut {
-                        Some(why) => leave.on_hover_text(why.as_str()),
-                        None => leave,
-                    };
-                    if leave.clicked() {
-                        asked = Some(Asked::StepOff);
-                    }
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        ui.add(egui::Label::new(face::bold(title.as_str())).truncate());
-                        controls::pill(ui, &tag, controls::Pill::Ink);
-                    });
-                });
+                ui.add(egui::Label::new(face::bold(title.as_str())).extend());
+                let leave = controls::keyed(ui, "Step off", key.as_deref(), shut.is_none());
+                let leave = match &shut {
+                    Some(why) => leave.on_hover_text(why.as_str()),
+                    None => leave,
+                };
+                if leave.clicked() {
+                    asked = Some(Asked::StepOff);
+                }
             });
-            for (seat, rider) in &seats {
+            if !aboard.is_empty() {
                 ui.horizontal(|ui| {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if rider.is_some() && controls::button(ui, "Set down").clicked() {
+                    for (seat, rider) in &aboard {
+                        if controls::button(ui, format!("Set down {rider}")).clicked() {
                             asked = Some(Asked::SetDown(*seat));
                         }
-                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                            controls::key_hint(ui, &(seat.0 + 1).to_string());
-                            match rider {
-                                Some(rider) => {
-                                    ui.add(egui::Label::new(face::body(rider.as_str())).truncate())
-                                }
-                                None => ui.label(face::body("free").color(ink::INK3)),
-                            };
-                        });
-                    });
+                    }
                 });
             }
         });
@@ -183,18 +172,11 @@ fn shut(world: &World, rider: Entity) -> Option<String> {
     super::landing(world, rider, None).err()
 }
 
-/// Every passenger seat of the mount `driver` drives, each with the name of whoever sits in it.
-fn seated(world: &mut World, driver: Entity, seats: usize) -> Vec<(SeatIndex, Option<String>)> {
-    let taken = super::passengers(world, driver);
-    (1..seats)
-        .filter_map(|seat| u8::try_from(seat).ok().map(SeatIndex))
-        .map(|seat| {
-            let rider = taken
-                .iter()
-                .find(|(_, held)| *held == seat)
-                .map(|(rider, _)| named(world, *rider));
-            (seat, rider)
-        })
+/// Everyone `driver` carries by name, each with the seat they hold, in the order of the seats.
+fn passengers(world: &mut World, driver: Entity) -> Vec<(SeatIndex, String)> {
+    super::passengers(world, driver)
+        .into_iter()
+        .map(|(rider, seat)| (seat, named(world, rider)))
         .collect()
 }
 
@@ -204,6 +186,3 @@ fn named(world: &World, character: Entity) -> String {
         .map(|name| name.name.clone())
         .unwrap_or_default()
 }
-
-const WIDTH: f32 = 300.0;
-const FROM_BOTTOM: f32 = 190.0;

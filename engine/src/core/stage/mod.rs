@@ -23,6 +23,7 @@ use crate::core::units::Degrees;
 
 pub mod card;
 pub mod globe;
+pub mod still;
 
 /// The light of the sky over the player, where one stands. Whatever shows the sky tells it, and
 /// tells it anew only once the light has changed to the eye; a lamp that follows the sky is hung

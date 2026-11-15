@@ -377,23 +377,30 @@ impl From<InputBinding> for ProbeGesture {
 
 /// What the game answers to `question`, as the line the probe answers with.
 pub fn answer(content: &Content, question: &ProbeGameQuestion) -> String {
+    // The ground a question is answered on stays held until the whole answer is given, so a
+    // batch asking about the same ground over and over lays its meshes once.
+    let mut held = Vec::new();
     let (answer, _) = with_content(ContentScope::of(content), || {
-        answer_in_scope(content, question)
+        answer_in_scope(content, question, &mut held)
     });
     answer.to_string()
 }
 
-fn answer_in_scope(content: &Content, question: &ProbeGameQuestion) -> Value {
+fn answer_in_scope(
+    content: &Content,
+    question: &ProbeGameQuestion,
+    held: &mut Vec<area::GroundHold>,
+) -> Value {
     match question {
         ProbeGameQuestion::Game => json(&game(content)),
         ProbeGameQuestion::Batch { questions } => Value::Array(
             questions
                 .iter()
-                .map(|question| answer_in_scope(content, question))
+                .map(|question| answer_in_scope(content, question, held))
                 .collect(),
         ),
         &ProbeGameQuestion::Walkable { area, riding, at } => {
-            json(&mesh(content, area, riding, &[at]).is_some_and(|mesh| mesh.walkable(at)))
+            json(&mesh(content, area, riding, &[at], held).is_some_and(|mesh| mesh.walkable(at)))
         }
         &ProbeGameQuestion::Connects {
             area,
@@ -401,7 +408,7 @@ fn answer_in_scope(content: &Content, question: &ProbeGameQuestion) -> Value {
             from,
             to,
         } => {
-            let mesh = mesh(content, area, riding, &[from, to]);
+            let mesh = mesh(content, area, riding, &[from, to], held);
             json(&mesh.is_some_and(|mesh| mesh.connects(from, to)))
         }
         &ProbeGameQuestion::Route {
@@ -410,11 +417,11 @@ fn answer_in_scope(content: &Content, question: &ProbeGameQuestion) -> Value {
             from,
             to,
         } => {
-            let mesh = mesh(content, area, riding, &[from, to]);
+            let mesh = mesh(content, area, riding, &[from, to], held);
             json(&mesh.and_then(|mesh| mesh.route(from, to)))
         }
         &ProbeGameQuestion::Nearest { area, riding, at } => {
-            json(&mesh(content, area, riding, &[at]).and_then(|mesh| mesh.nearest(at)))
+            json(&mesh(content, area, riding, &[at], held).and_then(|mesh| mesh.nearest(at)))
         }
         &ProbeGameQuestion::ReachableNear {
             area,
@@ -423,7 +430,7 @@ fn answer_in_scope(content: &Content, question: &ProbeGameQuestion) -> Value {
             goal,
             spacing,
         } => {
-            let reached = mesh(content, area, riding, &[from, goal]).and_then(|mesh| {
+            let reached = mesh(content, area, riding, &[from, goal], held).and_then(|mesh| {
                 let from = mesh.nearest(from)?;
                 mesh.nearest_where(goal, spacing, |point| mesh.connects(from, point))
             });
@@ -600,17 +607,18 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
 }
 
 /// The mesh a walker goes on in the area, or someone `riding` a mount, over the tiles around
-/// `points`, held first, and whatever a route between them may take in besides: a tile's width
-/// around them. None for a mount the area bars or has no water for.
+/// `points`, held first in `held`, and whatever a route between them may take in besides: a
+/// tile's width around them. None for a mount the area bars or has no water for.
 fn mesh(
     content: &Content,
     id: AreaId,
     riding: Option<MountId>,
     points: &[Pos<Meters>],
+    held: &mut Vec<area::GroundHold>,
 ) -> Option<area::HeldMesh> {
     let area = area::load(content, id);
     let around = Rect::from_points(points.iter().copied()).inflate(TILE_SIDE.0, TILE_SIDE.0);
-    let _held = area.hold(area.ground_size().tiles_within(around));
+    held.push(area.hold(area.ground_size().tiles_within(around)));
     match riding {
         Some(mount) => mount::mesh_in(content, id, mount.get(content).travels),
         None => Some(area.mesh()),

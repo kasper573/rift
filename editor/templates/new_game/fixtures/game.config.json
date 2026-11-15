@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "8fddfd1b",
+  "content_version": "6cb44dc5",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -164,7 +164,7 @@
     "sent_in_a_message": "It was sent to you in a message",
     "party_invite_asks": "{name} invites you to their party",
     "party_invite_asked": "You invited {name} to your party",
-    "party_invite_declined": "{name} declined your invitation",
+    "party_invite_denied": "{name} denied your invitation",
     "party_invite_lapsed": "{name} did not answer your invitation",
     "party_full": "The party is full",
     "in_a_party": "{name} is in a party",
@@ -178,16 +178,15 @@
     "you_joined_party": "You joined {name}'s party",
     "you_left_party": "You left the party",
     "chat_too_fast": "You are writing too fast",
-    "mount_barred_here": "Mounts of this kind are barred here",
+    "mount_barred_here": "This area does not allow mounts",
     "no_water_in_reach": "No water deep enough within reach",
     "step_off_first": "Step off first",
     "no_ground_in_reach": "No ground to step onto within reach",
     "spot_too_far": "That spot is too far away",
     "not_from_mount": "Not from the {mount}",
-    "mount_left_behind": "Your {mount} could not follow",
     "seat_asks": "{name} asks for a seat on your {about}",
     "seat_asked": "You asked {name} for a seat",
-    "seat_declined": "{name} has no seat for you",
+    "seat_denied": "{name} has no seat for you",
     "seat_lapsed": "{name} did not answer about a seat",
     "seats_taken": "Every seat is taken",
     "seat_out_of_reach": "Too far from the mount for a seat",
@@ -412,7 +411,54 @@
   },
   "chat": {
     "lines": 5,
-    "within": 10.0
+    "within": 10.0,
+    "name_colors": [
+      [
+        232,
+        121,
+        113
+      ],
+      [
+        158,
+        214,
+        112
+      ],
+      [
+        146,
+        160,
+        245
+      ],
+      [
+        240,
+        167,
+        92
+      ],
+      [
+        102,
+        205,
+        170
+      ],
+      [
+        196,
+        146,
+        240
+      ],
+      [
+        233,
+        205,
+        98
+      ],
+      [
+        104,
+        186,
+        236
+      ],
+      [
+        240,
+        146,
+        202
+      ]
+    ]
   },
   "friends": {
     "most": 100,

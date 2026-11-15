@@ -7,7 +7,7 @@ use ui::drag;
 use ui::egui::{self, Sense, Ui, Vec2};
 
 use super::widget::{SLOT, SlotLook, slot};
-use super::{Inventory, ItemId, ItemStack};
+use super::{Inventory, ItemId, ItemStack, card};
 use crate::core::content::Content;
 use crate::systems::hud::{self, Carried};
 
@@ -199,6 +199,7 @@ pub fn tray_slots(
                     } else {
                         vec!["Click to take it back".to_owned()]
                     };
+                    card::options(world, &response, &[placed.stack.item]);
                     hud::tooltip(&response, world, &def.name, &lines, None);
                 }
             });

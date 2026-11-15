@@ -639,9 +639,17 @@ pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Cont
     ui.vertical(|ui| {
         ui.set_width(width);
         let moment = Some(QuestMoment::Offer);
-        quest::card::show(ui, images, content, quest, moment, |ui, images, plate| {
-            quest::card::offer(ui, images, content, &parties, quest, None, plate);
-        });
+        quest::card::show(
+            ui,
+            images,
+            content,
+            quest,
+            moment,
+            None,
+            |ui, images, plate| {
+                quest::card::offer(ui, images, content, &parties, quest, None, plate);
+            },
+        );
     });
 }
 

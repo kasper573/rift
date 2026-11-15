@@ -118,12 +118,23 @@ impl<'t> InputField<'t> {
 
 /// Puts the caret of the field `id` after the last character of `text`, the text it holds.
 pub fn caret_to_end(ctx: &egui::Context, id: Id, text: &str) {
+    caret_to(ctx, id, text.chars().count());
+}
+
+/// Puts the caret of the field `id` after character `place` of the text it holds.
+pub fn caret_to(ctx: &egui::Context, id: Id, place: usize) {
     let mut state = TextEdit::load_state(ctx, id).unwrap_or_default();
-    let end = egui::text::CCursor::new(text.chars().count());
+    let at = egui::text::CCursor::new(place);
     state
         .cursor
-        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+        .set_char_range(Some(egui::text::CCursorRange::one(at)));
     state.store(ctx, id);
+}
+
+/// How many characters of its text stand before the caret of the field `id`, once it has one.
+pub fn caret(ctx: &egui::Context, id: Id) -> Option<usize> {
+    let range = TextEdit::load_state(ctx, id)?.cursor.char_range()?;
+    Some(range.primary.index.0)
 }
 
 /// A number within `range` on a slider, beside the field it can be typed into exactly.

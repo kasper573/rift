@@ -6,8 +6,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
-use crate::core::content::{ContentFile, Fixture, ImageRef, NamedContent, Nearby, RowCheck};
+use crate::core::content::{ContentFile, Fixture, NamedContent, Nearby, RowCheck};
 use crate::core::math::Rgb;
+use crate::systems::chat::ChatSaid;
 use crate::systems::player::PlayedBy;
 use crate::systems::society::SocietyView;
 
@@ -57,13 +58,13 @@ impl ChatChannel {
     }
 }
 
-/// How a channel is told from the others: by its name on its tab, and by a sign and a colour on
-/// every line said on it, so never by its colour alone.
+/// How a channel is told from the others: by its name on its tab, and by its name in its colour
+/// before every line said on it where chat shows every channel together, so never by its colour
+/// alone.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChatChannelDef {
     pub name: String,
-    pub sign: ImageRef,
     pub color: Rgb,
 }
 
@@ -73,7 +74,6 @@ impl ContentFile for ChatChannelDef {
     fn fresh(near: &Nearby) -> Result<ChatChannelDef, String> {
         Ok(ChatChannelDef {
             name: near.name(),
-            sign: near.image()?,
             color: Rgb::WHITE,
         })
     }
@@ -100,7 +100,7 @@ pub struct ChatChannelSource {
     /// world and whenever what its player sees of society changes.
     pub open_to: fn(&World, Entity) -> bool,
     /// Carries what the player of a character said on the channel to whoever hears it.
-    pub send: fn(&mut World, Entity, String),
+    pub send: fn(&mut World, Entity, ChatSaid),
 }
 
 #[derive(Resource, Default)]

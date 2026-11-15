@@ -1,4 +1,5 @@
 pub mod channel;
+pub mod embed;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -12,22 +13,24 @@ use bevy_terminal::{
     TerminalLine, TerminalSaid,
 };
 pub use channel::{ChatChannel, ChatChannelDef, ChatChannelSource, ChatChannels, Sources, source};
+pub use embed::{ChatEmbed, ChatEmbedKind, ChatSaid, EMBED_ASK, ShownChatEmbed};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::SchemaMark;
+use crate::core::content::{Content, SchemaMark};
+use crate::core::math::Rgb;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
-use crate::systems::actor::Name as ActorName;
+use crate::systems::actor::{Appearance, Name as ActorName};
 use crate::systems::area::AreaTag;
 use crate::systems::input::map::InputMap;
 use crate::systems::movement::position;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
-use crate::systems::player::{self, ClientId, PlayedBy, Players};
+use crate::systems::player::{self, CharacterAccount, ClientId, PlayedBy, Players};
 use crate::systems::script::event::OBJECT_OR_NPC;
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, EventKind, Owner, RiftEvent, RiftInstances, RiftScripting,
@@ -43,17 +46,54 @@ pub fn register(app: &mut App) {
     app.add_client_message::<TerminalInput>()
         .add_client_message::<TerminalCompletionRequest>()
         .add_server_message::<TerminalLine>()
+        .add_server_message::<ChatSpeaker>()
         .add_server_message::<TerminalCompletions>()
         .replicate_private::<ChatChannels>();
 }
 
 /// How much a player may say: no more than `lines` lines within any stretch of `within`, on
-/// every channel alike.
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// every channel alike. And the colours players' names are written in, each player's always the
+/// same one of them, so a reader tells one speaker's lines from the next one's.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChatSettings {
     pub lines: u32,
     pub within: Seconds,
+    pub name_colors: Vec<Rgb>,
+}
+
+impl ChatSettings {
+    /// The colour the name of `account` is written in: its id as a number, counted round the
+    /// colours.
+    pub fn name_color(&self, account: &AccountId) -> Option<Rgb> {
+        let number = account.0.bytes().fold(0usize, |number, byte| {
+            number.wrapping_mul(31).wrapping_add(usize::from(byte))
+        });
+        let place = number.checked_rem(self.name_colors.len())?;
+        self.name_colors.get(place).copied()
+    }
+}
+
+/// Who typed a line, for the client of someone who hears it: the colour their name is written
+/// in and what their character looks like, by which chat tells them from other speakers.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ChatSpeaker {
+    pub typist: ClientId,
+    pub name_color: Rgb,
+    pub appearance: Appearance,
+}
+
+impl ChatSpeaker {
+    /// The player of `character` as a speaker, when an account plays it.
+    pub fn of(world: &World, character: Entity) -> Option<ChatSpeaker> {
+        let account = world.get::<CharacterAccount>(character)?;
+        let chat = &world.resource::<GameSettings>().chat;
+        Some(ChatSpeaker {
+            typist: world.get::<PlayedBy>(character)?.client,
+            name_color: chat.name_color(&account.0)?,
+            appearance: world.get::<Appearance>(character)?.clone(),
+        })
+    }
 }
 
 /// The channel everyone is in: a line said on it reaches the speaker's world, where townsfolk
@@ -85,8 +125,9 @@ pub fn hear(world: &mut World) {
 }
 
 /// Says what players typed, each line on the channel it was typed on, to whoever hears that
-/// channel. A line typed on a channel its player is not in is dropped, and one typed faster than
-/// the game lets a player speak is refused.
+/// channel. A line typed on a channel its player is not in is dropped, as is one that holds
+/// what the game does not have, and one typed faster than the game lets a player speak is
+/// refused.
 pub fn speak(world: &mut World) {
     let saids: Vec<TerminalSaid> = world
         .resource_mut::<Messages<TerminalSaid>>()
@@ -102,12 +143,21 @@ pub fn speak(world: &mut World) {
         let Some(source) = source else {
             continue;
         };
+        let content = world.resource::<Content>();
+        let held = |embed| ChatEmbed::read(content, embed).is_some();
+        if !said.embeds.iter().all(held) {
+            continue;
+        }
         if !paced(world, said.conn) {
             let refusal = world.resource::<GameSettings>().words.chat_too_fast.clone();
             bevy_terminal::reply_failure(world, said.conn, refusal);
             continue;
         }
-        (source.send)(world, speaker, said.text);
+        let said = ChatSaid {
+            text: said.text,
+            embeds: said.embeds,
+        };
+        (source.send)(world, speaker, said);
     }
 }
 
@@ -118,19 +168,20 @@ pub fn line_across(
     channel: ChatChannel,
     speaker: &AccountId,
     hearer: &AccountId,
-    text: &str,
+    said: &ChatSaid,
 ) -> Option<TerminalLine> {
     if settling.society.blocks().blocks(hearer, speaker) {
         return None;
     }
     let typist = settling.roster.account(speaker).map(|player| player.client);
     Some(TerminalLine {
-        text: text.to_owned(),
+        text: said.text.clone(),
         kind: LineKind::Said(LineSpeaker {
             name: settling.name(speaker),
             typist: typist.map(|client| u64::from(client.0)),
         }),
         channel: channel.terminal(),
+        embeds: said.embeds.clone(),
     })
 }
 
@@ -140,6 +191,7 @@ pub fn notice(channel: ChatChannel, text: &str) -> TerminalLine {
         text: text.to_owned(),
         kind: LineKind::Notice,
         channel: channel.terminal(),
+        embeds: Vec::new(),
     }
 }
 
@@ -203,7 +255,8 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
         typist: None,
     };
     let everyone = hearers(world, None);
-    bevy_terminal::say(world, &everyone, ChatChannel::Area.terminal(), voice, words);
+    let area = ChatChannel::Area.terminal();
+    bevy_terminal::say(world, &everyone, area, voice, words, &[]);
     let kind = match world.get::<Npc>(speaker) {
         Some(npc) => NotificationKind::Speech { speaker: npc.def },
         None => NotificationKind::Narration {
@@ -295,8 +348,8 @@ fn spoken_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn say_to_area(world: &mut World, speaker: Entity, text: String) {
-    raise_heard(world, speaker, &text);
+fn say_to_area(world: &mut World, speaker: Entity, said: ChatSaid) {
+    raise_heard(world, speaker, &said.text);
     let client = world.get::<PlayedBy>(speaker).map(|by| by.client);
     let name = world
         .get::<ActorName>(speaker)
@@ -307,8 +360,18 @@ fn say_to_area(world: &mut World, speaker: Entity, text: String) {
         name,
         typist: client.map(|client| u64::from(client.0)),
     };
+    let seen = ChatSpeaker::of(world, speaker);
     let hearers = hearers(world, Some(speaker));
-    bevy_terminal::say(world, &hearers, ChatChannel::Area.terminal(), voice, text);
+    if let Some(seen) = seen {
+        for &conn in &hearers {
+            world.write_message(ToClient {
+                client: conn,
+                message: seen.clone(),
+            });
+        }
+    }
+    let area = ChatChannel::Area.terminal();
+    bevy_terminal::say(world, &hearers, area, voice, said.text, &said.embeds);
 }
 
 /// The connections of this world that hear `speaker`: every one whose player does not keep the
@@ -346,14 +409,15 @@ struct LinesSaid(VecDeque<Seconds>);
 
 /// Whether the connection `conn` may say a line now, which then counts as said.
 fn paced(world: &mut World, conn: Entity) -> bool {
-    let rules = world.resource::<GameSettings>().chat;
+    let rules = &world.resource::<GameSettings>().chat;
+    let (lines, within) = (rules.lines, rules.within);
     let now = time::uptime(world);
     let Ok(mut conn) = world.get_entity_mut(conn) else {
         return false;
     };
     let mut said = conn.take::<LinesSaid>().unwrap_or_default();
-    said.0.retain(|at| now.0 - at.0 < rules.within.0);
-    let room = said.0.len() < rules.lines as usize;
+    said.0.retain(|at| now.0 - at.0 < within.0);
+    let room = said.0.len() < lines as usize;
     if room {
         said.0.push_back(now);
     }

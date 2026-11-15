@@ -22,6 +22,7 @@ use crate::core::gui::{self, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::Seconds;
+use crate::systems::chat::ChatEmbed;
 use crate::systems::equipment::{self, EquipmentPlace, UnequipRequest};
 use crate::systems::hud::{self, Carried, Confirm};
 use crate::systems::input::map::{
@@ -39,6 +40,7 @@ use crate::systems::script::condition;
 use crate::systems::settings::{BarKey, BarShape, UserSettings};
 use crate::systems::skill::{CastAim, aim};
 use crate::systems::stat::{self, Vital};
+use crate::systems::terminal::chat;
 use crate::systems::{GameSettings, notification};
 use ui::paint;
 use ui::panel::{self, GripCorner};
@@ -594,6 +596,15 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
                 entry: HotbarEntry::Empty,
             });
             ui.close();
+        }
+        match entry {
+            HotbarEntry::Empty => {}
+            HotbarEntry::Skill(skill) => {
+                chat::menu_entry(ui, world, chat::ADD_TO_CHAT, ChatEmbed::Skill(skill));
+            }
+            HotbarEntry::Item(item) => {
+                chat::menu_entry(ui, world, chat::ADD_TO_CHAT, ChatEmbed::Item(item));
+            }
         }
         ui.separator();
         let mut said = vec![TextPiece::text(format!(

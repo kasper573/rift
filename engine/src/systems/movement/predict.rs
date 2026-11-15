@@ -50,8 +50,9 @@ pub(super) struct Stride {
     facing: Radians,
     /// The latest [`MoveRequest`] sent for this character, to compare with its [`HeardMove`].
     sent: MoveSeq,
-    /// The server's count of the character's jumps when the stride last looked.
-    jumps: Jumps,
+    /// The server's count of the times it put the character somewhere when the stride last
+    /// looked.
+    put: Jumps,
 }
 
 /// Shows the client's own character where its [`Stride`] has walked it, turned and posed as it
@@ -109,7 +110,7 @@ impl Stride {
             target: None,
             facing,
             sent: MoveSeq::default(),
-            jumps: server.jumps,
+            put: server.put(),
         }
     }
 
@@ -155,7 +156,7 @@ impl Stride {
     /// Shows the character where the server put it, should it have jumped: walking there would only
     /// show a walk that never happened.
     fn track(&mut self, server: &Position) {
-        if std::mem::replace(&mut self.jumps, server.jumps) != server.jumps {
+        if std::mem::replace(&mut self.put, server.put()) != server.put() {
             self.snap(server.pos);
         }
     }

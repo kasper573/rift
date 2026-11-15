@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use ui::card::{self, Card, CardResponse, Plate};
+use ui::card::{self, Card, CardAction, CardResponse, Plate};
 use ui::controls::{self, Pill};
 use ui::egui::{Align, Label, Layout, Response, Sense, Ui};
 use ui::face::{self, TextRole};
@@ -16,6 +16,7 @@ use crate::core::content::Content;
 use crate::core::gui::ImageSource;
 use crate::core::stage::card::{self as card_stage, StagedCard};
 use crate::core::time::UnixMillis;
+use crate::systems::chat::ChatEmbed;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
 use crate::systems::dialogue::{ChoiceReveal, Conversation, ConversationPanel};
 use crate::systems::hud;
@@ -23,6 +24,7 @@ use crate::systems::item::widget::{SlotLook, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemStack};
 use crate::systems::player::session;
 use crate::systems::settings::UserSettings;
+use crate::systems::terminal::chat;
 
 const ICON: f32 = 20.0;
 const MARK: f32 = 13.0;
@@ -42,13 +44,15 @@ impl Plugin for QuestCardPlugin {
     }
 }
 
-/// A quest's card: its face, and whatever `plate` writes under the overview.
+/// A quest's card: its face, what `action` offers in its band, and whatever `plate` writes
+/// under the overview.
 pub fn show<I: ImageSource + ?Sized>(
     ui: &mut Ui,
     images: &mut I,
     content: &Content,
     quest: QuestId,
     moment: Option<QuestMoment>,
+    action: Option<CardAction<'_>>,
     plate: impl FnOnce(&mut Ui, &mut I, Plate),
 ) -> CardResponse {
     let def = quest.get(content);
@@ -61,6 +65,7 @@ pub fn show<I: ImageSource + ?Sized>(
     shown.dress = CardStyleDef::of(content, def.card_style).dress(images, None);
     shown.band = &band;
     shown.picture = icon;
+    shown.action = action;
     shown.show(ui, |ui, written| {
         if written.name_cut {
             card::full_name(ui, &def.title);
@@ -161,6 +166,7 @@ fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
         &content,
         quest,
         Some(moment),
+        Some(chat::card_action()),
         |ui, world, plate| {
             let shown = match moment {
                 QuestMoment::Offer => offer(
@@ -181,6 +187,7 @@ fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
             inspectable(world, shown);
         },
     );
+    chat::offered(world, &shown, ChatEmbed::Quest(quest));
     let staged = StagedCard {
         key: ui.id().with("docked quest card"),
         runs: motion::lifted(ui.ctx(), painted, since),

@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use bevy_ecs::prelude::*;
 
 use super::spots::{Bodies, Spots, crowding, spot_of};
-use super::{MoveTarget, NavMesh, goto, mesh_in, moving, position, relocate, speed_of};
+use super::{MoveTarget, NavMesh, goto, hop, mesh_in, moving, position, relocate, speed_of};
 use crate::core::math::{Offset, Pos};
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::area::{AreaId, AreaTag};
@@ -316,15 +316,28 @@ pub fn place_beside(world: &World, area: AreaId, mesh: &NavMesh, spot: Pos<Meter
 
 /// Puts the actor down at `spot`, or beside it when someone else rests there.
 pub fn relocate_beside(world: &mut World, entity: Entity, spot: Pos<Meters>) {
+    let at = free_beside(world, entity, spot);
+    relocate(world, entity, at);
+}
+
+/// Puts the actor down at `spot` close by, or beside it when someone else rests there, as
+/// [`hop`] does.
+pub fn hop_beside(world: &mut World, entity: Entity, spot: Pos<Meters>) {
+    let at = free_beside(world, entity, spot);
+    hop(world, entity, at);
+}
+
+/// `spot`, or the free ground beside it when someone else rests there, the actor's own spot
+/// given up.
+fn free_beside(world: &mut World, entity: Entity, spot: Pos<Meters>) -> Pos<Meters> {
     world.entity_mut(entity).remove::<super::Spot>();
-    let at = match (
+    match (
         world.get::<AreaTag>(entity).map(|tag| tag.area),
         mesh_in(world, entity),
     ) {
         (Some(area), Some(mesh)) => place_beside(world, area, &mesh, spot),
         _ => spot,
-    };
-    relocate(world, entity, at);
+    }
 }
 
 /// `spot` while some point within `reach` of it is free for the actor, else the nearest free point

@@ -17,7 +17,7 @@ use ui::float;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use ui::egui::{Color32, Id, LayerId, Pos2, Rect, Sense, Ui, Vec2};
+use ui::egui::{Align2, Color32, Id, LayerId, Pos2, Rect, Sense, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::{controls, ink, paint, sheet};
 
@@ -68,6 +68,10 @@ impl Plugin for HudPlugin {
 
 pub trait HudWidget: Send + Sync {
     fn fallback(&self, world: &World, screen: Rect) -> Pos2;
+    /// The corner of the widget that rests at its fallback, and so stays put as it grows.
+    fn rests_by(&self) -> Align2 {
+        Align2::LEFT_TOP
+    }
     fn hidden(&self, _world: &World) -> bool {
         false
     }
@@ -283,10 +287,8 @@ fn draw_hud(world: &mut World) {
         if shown.hidden(world) {
             continue;
         }
-        let fallback = shown.fallback(world, screen);
-        let past = widget(world, &gui, name, fallback, |ui, world| {
-            shown.show(ui, world)
-        });
+        let rest = (shown.rests_by(), shown.fallback(world, screen));
+        let past = widget(world, &gui, name, rest, |ui, world| shown.show(ui, world));
         if let Some(past) = past
             && let Some(drawn) = world.resource_mut::<WidgetRects>().0.get_mut(name)
         {

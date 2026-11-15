@@ -405,6 +405,7 @@ fn recipe_row(
             format!("Recipe: {name}, {status}"),
         )
     });
+    item::card::options(world, &response, &made_items(&row.recipe.makes));
     response
 }
 
@@ -492,7 +493,7 @@ fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
             count: made.count,
             ..SlotLook::of(&content, made.item)
         };
-        let response = slot(ui, world, look, Sense::hover());
+        let response = slot(ui, world, look, Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Label,
@@ -500,6 +501,7 @@ fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
                 format!("Result: {}", made.describe(&content)),
             )
         });
+        item::card::options(world, &response, &[made.item]);
         item::card::tooltip_noted(world, &response, made.item, crafts_note(result), None);
     }
     let name = match result.makes.as_slice() {
@@ -567,7 +569,12 @@ fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
             choose(world, result.recipe.clone());
             InterfaceSound::UiMove.play(world);
         }
+        item::card::options(world, &response, &made_items(&result.makes));
     }
+}
+
+fn made_items(makes: &[ItemStack]) -> Vec<ItemId> {
+    makes.iter().map(|made| made.item).collect()
 }
 
 fn lacks_mastery(world: &World, craftable: &Craftable) -> bool {

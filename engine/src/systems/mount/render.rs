@@ -10,8 +10,9 @@ use super::{MountDef, Riding, Travels};
 use crate::core::content::Content;
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::world::afloat::Afloat;
 use crate::core::render::world::body::Body;
-use crate::core::render::{CameraRigSystems, GroundHeights};
+use crate::core::render::{CameraRigSystems, GroundHeights, facing_rotation};
 use crate::core::units::{Meters, PlaybackRate, Seconds};
 use crate::systems::actor::render::{self as bodies, RenderActor, Seated};
 use crate::systems::actor::{Action, Actor, ActorModel, Aloft, Appearance, Pose};
@@ -85,6 +86,7 @@ fn carry(world: &mut World) {
     for (rider, riding) in &riders {
         let shown = world.get::<RenderPosition>(riding.driver).copied();
         let aloft = heights.get(&riding.driver).copied().flatten();
+        let floats = matches!(riding.mount.get(&content).travels, Travels::Floating { .. });
         let mut rider = world.entity_mut(*rider);
         if let (false, Some(shown)) = (riding.drives(), shown) {
             rider.insert(shown);
@@ -93,13 +95,18 @@ fn carry(world: &mut World) {
             Some(aloft) => rider.insert(aloft),
             None => rider.remove::<Aloft>(),
         };
+        if floats {
+            rider.insert(Afloat);
+        } else {
+            rider.remove::<Afloat>();
+        }
     }
     let landed: Vec<Entity> = world
         .query_filtered::<Entity, (With<Aloft>, With<Actor>, Without<Riding>, Without<Steed>)>()
         .iter(world)
         .collect();
     for landed in landed {
-        world.entity_mut(landed).remove::<Aloft>();
+        world.entity_mut(landed).remove::<(Aloft, Afloat)>();
     }
 }
 
@@ -189,6 +196,10 @@ fn lead(world: &mut World, steed: Entity, driver: Entity, def: &MountDef) {
         Some(aloft) => steed.insert(aloft),
         None => steed.remove::<Aloft>(),
     };
+    match def.travels {
+        Travels::Floating { .. } => steed.insert(Afloat),
+        Travels::Riding | Travels::Flying { .. } => steed.remove::<Afloat>(),
+    };
     if let Some(area) = area {
         steed.insert(area);
     }
@@ -229,7 +240,12 @@ fn seat(world: &mut World) {
             Some(on_mount) => stands.compute_affine() * on_mount,
             None => stands.compute_affine(),
         };
-        let (_, rotation, translation) = sits.to_scale_rotation_translation();
+        let (_, seated, translation) = sits.to_scale_rotation_translation();
+        // Whoever strikes, casts or works from a seat turns on it to what they aim at.
+        let rotation = world
+            .get::<RenderActor>(rider)
+            .filter(|shown| shown.action == Action::Attack)
+            .map_or(seated, |shown| facing_rotation(shown.facing));
         if let Some(mut placed) = world.get_mut::<Transform>(rider) {
             let scale = placed.scale;
             placed.set_if_neq(Transform {

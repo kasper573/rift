@@ -6,7 +6,7 @@ use engine::core::math::{Offset, Pos, Rgb};
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
 use engine::systems::area::{self, AreaDef};
-use engine::systems::chat::ChatChannel;
+use engine::systems::chat::{ChatChannel, ChatSpeaker};
 use engine::systems::combat::{self, Attitude};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::history::{History, HistoryTopic, RecordTally};
@@ -577,6 +577,7 @@ fn area(game: &Content, key: &str) -> Sim {
         .accept::<ConversationRequest>()
         .message::<TerminalSaid>()
         .message::<ToClient<TerminalLine>>()
+        .message::<ToClient<ChatSpeaker>>()
         .add((movement::file_by_chunk, status::expire))
         .add((
             vfx::expire,
@@ -617,6 +618,7 @@ fn say(sim: &mut Sim, client: u32, text: &str) {
         conn,
         channel: ChatChannel::Area.terminal(),
         text: text.to_owned(),
+        embeds: Vec::new(),
     });
 }
 

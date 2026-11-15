@@ -336,7 +336,6 @@ pub(crate) fn picture_of(project: &Project, path: &str) -> Option<FilePicture> {
         SkillDef::TABLE => whole(&project.read::<SkillDef>(path).ok()?.icon),
         AttentionDef::TABLE => whole(&project.read::<AttentionDef>(path).ok()?.icon),
         InterfaceIconDef::TABLE => whole(&project.read::<InterfaceIconDef>(path).ok()?.image),
-        ChatChannelDef::TABLE => whole(&project.read::<ChatChannelDef>(path).ok()?.sign),
         CursorDef::TABLE => whole(&project.read::<CursorDef>(path).ok()?.image),
         _ => None,
     }

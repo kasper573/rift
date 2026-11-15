@@ -19,7 +19,7 @@ use crate::core::units::{Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
-use crate::systems::chat::{self, ChatChannel, ChatChannelSource};
+use crate::systems::chat::{self, ChatChannel, ChatChannelSource, ChatSaid, ChatSpeaker};
 use crate::systems::history::HistoryTopic;
 use crate::systems::notification::Notification;
 use crate::systems::player::RequestNeeds;
@@ -265,9 +265,9 @@ pub fn chat_channel() -> ChatChannelSource {
     ChatChannelSource {
         channel: ChatChannel::Party,
         open_to: in_one,
-        send: |world, speaker, text| {
+        send: |world, speaker, said| {
             if let Some(client) = world.get::<PlayedBy>(speaker).map(|by| by.client) {
-                society::ask(world, client, SocietyAsk::PartyLine(text));
+                society::ask(world, client, SocietyAsk::PartyLine(said));
             }
         },
     }
@@ -285,7 +285,7 @@ pub fn request_source() -> SocialRequestSource {
             asked: &words.party_invite_asked,
             sent: None,
             accepted: None,
-            declined: Some(&words.party_invite_declined),
+            denied: Some(&words.party_invite_denied),
             lapsed: Some(&words.party_invite_lapsed),
         },
         may_send,
@@ -513,12 +513,18 @@ fn lead(settling: &mut Settling, settings: &GameSettings, id: PartyId, leader: &
 }
 
 /// Says what `by` typed to every member of the party they are in.
-pub(crate) fn say(settling: &mut Settling, by: &AccountId, text: &str) {
+pub(crate) fn say(settling: &mut Settling, by: &AccountId, said: &ChatSaid) {
     let Some(party) = settling.society.parties.of_account(by).cloned() else {
         return;
     };
+    let speaker = settling
+        .reach(by)
+        .and_then(|(world, character)| ChatSpeaker::of(world, character));
     for account in party.accounts() {
-        if let Some(line) = chat::line_across(settling, ChatChannel::Party, by, account, text) {
+        if let Some(line) = chat::line_across(settling, ChatChannel::Party, by, account, said) {
+            if let Some(speaker) = &speaker {
+                settling.send(account, speaker.clone());
+            }
             settling.send(account, line);
         }
     }
@@ -620,8 +626,8 @@ fn accepted(
         .replace("{name}", &settling.name(&party.leader));
     settling.send(joiner, chat::notice(ChatChannel::Party, &said));
     changed(settling, id);
-    // A player is in one party at most: joining one declines the others.
-    social_request::decline_others(settling, settings, request);
+    // A player is in one party at most: joining one denies the others.
+    social_request::deny_others(settling, settings, request);
     Ok(())
 }
 

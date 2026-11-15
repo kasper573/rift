@@ -4,7 +4,7 @@ use bevy_terminal::{LineKind, TerminalInput};
 use engine::core::units::{Meters, Seconds};
 use engine::systems::area::AreaDef;
 use engine::systems::area_map::{self, MapMarkKind};
-use engine::systems::chat::{ChatChannel, ChatChannels};
+use engine::systems::chat::{ChatChannel, ChatChannels, ChatSpeaker};
 use engine::systems::item::{self, DropTaker, Reservation};
 use engine::systems::movement::position;
 use engine::systems::npc::{self, NpcDef};
@@ -13,12 +13,12 @@ use engine::systems::party::{ExperienceSplit, PartyRequest, SharedExperience};
 use engine::systems::player::{ClientId, Xp};
 use engine::systems::rewards::{self, KillCredited};
 use engine::systems::social_request::RequestAnswer;
-use engine::systems::{combat, request_sources, stat};
+use engine::systems::{GameSettings, combat, request_sources, stat};
 use serde_json::json;
 use testkit::{Game, Map};
 
 use crate::saves::{Saves, checkpoint};
-use crate::server::{ChatShown, Server};
+use crate::server::{ChatShown, Server, SpeakersShown};
 
 #[test]
 fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
@@ -50,7 +50,7 @@ fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
             both.map(String::from).to_vec(),
             both.map(String::from).to_vec()
         ),
-        "a yes makes one of the two, led by whoever invited, wherever each is"
+        "accepting makes one of the two, led by whoever invited, wherever each is"
     );
     assert_eq!(server.told(1), ["Hale joined the party"]);
 
@@ -67,9 +67,9 @@ fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
         [("Hale invites you to their party".to_owned(), false)],
         "any member invites, and a party invites a player once"
     );
-    server.answer(3, RequestAnswer::Decline);
+    server.answer(3, RequestAnswer::Deny);
     server.step();
-    assert_eq!(server.told(2), ["Marrow declined your invitation"]);
+    assert_eq!(server.told(2), ["Marrow denied your invitation"]);
     invite(&mut server, 1, "Marrow");
     server.later(61.0);
     assert_eq!(
@@ -409,6 +409,22 @@ fn a_party_talks_on_a_channel_of_its_own_wherever_its_members_play() {
         (Some(&line), None),
         "a line reaches nobody who keeps its speaker away, on any channel"
     );
+    let colors = &server.village.world.resource::<GameSettings>().chat;
+    let colors = colors.name_colors.clone();
+    let told: Vec<ChatSpeaker> = [&server.village, &server.forest]
+        .iter()
+        .flat_map(|sim| &sim.world.resource::<SpeakersShown>().0)
+        .map(|(_, speaker)| speaker.clone())
+        .collect();
+    assert!(
+        told.len() > 3
+            && colors.contains(&told[0].name_color)
+            && told.iter().all(|speaker| {
+                speaker.typist == ClientId(1) && speaker.name_color == told[0].name_color
+            }),
+        "whoever hears a player is told the one colour of the game's their name is written \
+         in, on every channel and in every world: {told:?}"
+    );
 
     server.send(2, PartyRequest::Leave);
     server.step();
@@ -427,6 +443,7 @@ fn say(server: &mut Server, client: u32, channel: ChatChannel, text: &str) {
     let typed = TerminalInput {
         text: text.to_owned(),
         channel: channel.terminal(),
+        embeds: Vec::new(),
     };
     server.send(client, typed);
     server.step();

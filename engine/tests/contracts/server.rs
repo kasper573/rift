@@ -5,7 +5,7 @@ use engine::core::content::Content;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::account::{AccountId, AccountIdentity};
-use engine::systems::chat;
+use engine::systems::chat::{self, ChatSpeaker};
 use engine::systems::friend::{self, AskFriendship, FindPlayers, PlayersFound, RemoveFriend};
 use engine::systems::history::HistoryNews;
 use engine::systems::inbox::{
@@ -228,7 +228,14 @@ pub fn serving(content: &Content, area: &str) -> Sim {
         .message::<TerminalSaid>()
         .message::<TerminalCommanded>()
         .message::<ToClient<TerminalLine>>()
-        .add((chat::hear, chat::speak, chat::channel::list, keep_lines))
+        .message::<ToClient<ChatSpeaker>>()
+        .add((
+            chat::hear,
+            chat::speak,
+            chat::channel::list,
+            keep_lines,
+            keep_speakers,
+        ))
         .add((
             society::view::greet,
             social_request::requests,
@@ -248,6 +255,7 @@ pub fn serving(content: &Content, area: &str) -> Sim {
     });
     chat::route_lines(&mut sim.world);
     sim.world.init_resource::<ChatShown>();
+    sim.world.init_resource::<SpeakersShown>();
     sim
 }
 
@@ -255,6 +263,16 @@ pub fn serving(content: &Content, area: &str) -> Sim {
 /// shown to.
 #[derive(Resource, Default)]
 pub struct ChatShown(pub Vec<(Entity, TerminalLine)>);
+
+/// Every speaker chat told the clients of a world of, the oldest first, by the connection told.
+#[derive(Resource, Default)]
+pub struct SpeakersShown(pub Vec<(Entity, ChatSpeaker)>);
+
+fn keep_speakers(mut sent: MessageReader<ToClient<ChatSpeaker>>, mut shown: ResMut<SpeakersShown>) {
+    for speaker in sent.read() {
+        shown.0.push((speaker.client, speaker.message.clone()));
+    }
+}
 
 fn keep_lines(mut sent: MessageReader<ToClient<TerminalLine>>, mut shown: ResMut<ChatShown>) {
     for line in sent.read() {

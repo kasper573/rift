@@ -36,6 +36,10 @@ pub const LINE_GAP: f32 = 6.0;
 pub const GRANT_ICON: f32 = 22.0;
 const CROSS_AT: Vec2 = Vec2::new(8.0, 7.0);
 const BAND_TEXT_INSET: f32 = 28.0;
+const ACTION: f32 = 18.0;
+const ACTION_GAP: f32 = 4.0;
+/// How much of its ink a card's action shows while the pointer is elsewhere.
+const ACTION_AT_REST: f32 = 0.45;
 const PANE_GAP: f32 = 10.0;
 const STRIP: f32 = 18.0;
 /// How far in from the frame's lower right corner a seal is stamped, clear of the kind's mark
@@ -203,8 +207,17 @@ pub struct Card<'a> {
     pub name: &'a str,
     pub picture: Option<TextureId>,
     pub closable: bool,
+    pub action: Option<CardAction<'a>>,
     pub depth: Depth,
     pub dress: CardDress<'a>,
+}
+
+/// Something a reader can do with what a card shows that the card does not ask for: a small
+/// button at the end of its band, quiet until the pointer is on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CardAction<'a> {
+    pub mark: Mark,
+    pub label: &'a str,
 }
 
 /// How far a card is turned toward the pointer, in degrees: `aside` about its upright axis and
@@ -283,6 +296,7 @@ pub struct CardResponse {
     pub frame: Rect,
     pub band: Response,
     pub close: Option<Response>,
+    pub action: Option<Response>,
 }
 
 impl<'a> Card<'a> {
@@ -294,6 +308,7 @@ impl<'a> Card<'a> {
             name,
             picture: None,
             closable: false,
+            action: None,
             depth: Depth::Front,
             dress: CardDress::PLAIN,
         }
@@ -362,6 +377,25 @@ impl<'a> Card<'a> {
             sheet::cross(&painter, rect, response.hovered());
             response
         });
+        let action = self.action.map(|action| {
+            let right = band_rect.right() - self.cross_room() - ACTION_GAP;
+            let rect = Rect::from_center_size(
+                Pos2::new(right - ACTION / 2.0, band_rect.center().y),
+                Vec2::splat(ACTION),
+            );
+            let response = inner.interact(rect, inner.id().with("action"), Sense::click());
+            response.widget_info(|| {
+                WidgetInfo::labeled(WidgetType::Button, inner.is_enabled(), action.label)
+            });
+            let ink = if response.hovered() {
+                painter.rect_filled(rect, 3.0, ink::ink_wash(0.1));
+                ink::INK
+            } else {
+                ink::ink_wash(ACTION_AT_REST)
+            };
+            action.mark.paint(&painter, rect.shrink(2.0), ink);
+            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        });
         let written = Rect::from_min_max(Pos2::new(frame.min.x, inner.cursor().min.y), frame.max);
         painter.extend(self.paper(written));
         let rule = SectionRule {
@@ -399,7 +433,23 @@ impl<'a> Card<'a> {
             frame,
             band,
             close,
+            action,
         }
+    }
+
+    /// How much of the far end of the band the cross that closes the card takes.
+    fn cross_room(&self) -> f32 {
+        if self.closable {
+            sheet::CROSS + 2.0
+        } else {
+            0.0
+        }
+    }
+
+    /// How much of the far end of the band its buttons take.
+    fn buttons_room(&self) -> f32 {
+        let action = self.action.map_or(0.0, |_| ACTION + ACTION_GAP);
+        self.cross_room() + action
     }
 
     /// How wide and tall the crest over the top edge is, when the card has one.
@@ -562,11 +612,8 @@ impl<'a> Card<'a> {
             ink::INK,
         );
         if let Some(tally) = self.tally {
-            let right = if self.closable {
-                band.max.x - sheet::CROSS - 10.0
-            } else {
-                band.max.x - 10.0
-            };
+            let buttons = self.buttons_room();
+            let right = band.max.x - buttons - if buttons > 0.0 { 8.0 } else { 10.0 };
             sheet::text(
                 painter,
                 Pos2::new(right, band.center().y),

@@ -2,7 +2,7 @@
 name = "lint"
 version.workspace = true
 edition.workspace = true
-description = "The repo's own lints: layering, standalone crates and JSON by literal key"
+description = "The repo's own lints: layering, standalone crates, JSON by literal key and mapped messages"
 
 [dependencies]
 cargo_metadata = "0.23"

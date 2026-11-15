@@ -165,7 +165,7 @@ pub fn request_source() -> SocialRequestSource {
             asked: &words.friendship_asked,
             sent: Some(&words.friendship_sent),
             accepted: Some(&words.friendship_accepted),
-            declined: None,
+            denied: None,
             lapsed: None,
         },
         may_send,
@@ -247,7 +247,7 @@ pub(crate) fn part(settling: &mut Settling, one: &AccountId, other: &AccountId) 
 }
 
 /// How many more friends the list of `account` has room for, counting those it has asked and
-/// waits for as friends already, so a yes always finds the room it was asked with.
+/// waits for as friends already, so accepting always finds the room it was asked with.
 fn room(society: &Society, settings: &FriendSettings, account: &AccountId) -> usize {
     let held = society.friends().count(account) + sent(society, account);
     (settings.most as usize).saturating_sub(held)

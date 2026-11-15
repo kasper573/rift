@@ -233,7 +233,7 @@ pub enum Pill {
 impl Pill {
     pub fn color(self) -> Color32 {
         match self {
-            Pill::Gold => ink::GOLD,
+            Pill::Gold => ink::OCHRE,
             Pill::Rubric => ink::RUBRIC,
             Pill::Azure => ink::AZURE,
             Pill::Verdigris => ink::VERDIGRIS,
@@ -922,7 +922,7 @@ pub(crate) fn paint_key_cap(
     painter.rect_stroke(
         rect,
         3.0,
-        Stroke::new(1.0, ink::ink_wash(0.35)),
+        Stroke::new(1.0, ink::ink_wash(0.5)),
         StrokeKind::Inside,
     );
     painter.galley(rect.center() - galley.size() / 2.0, galley, color);

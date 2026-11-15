@@ -3,9 +3,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui;
 use ui::egui::Stroke;
-use ui::face::{self, TextRole};
-use ui::glyph::{self, Halo};
-use ui::{dialog, ink};
+use ui::egui::emath::TSTransform;
+use ui::face::{self, Face, TextRole};
+use ui::{dialog, dusk, ink};
 
 use super::{CastAim, Rank, SkillId, Targeting, UseSkillRequest, casting};
 use crate::core::content::{Content, Fixture};
@@ -260,8 +260,8 @@ impl Claimant for AimClaimant {
 
 /// How far what is armed reaches around the character, drawn as a ring. An area lies on the
 /// ground, kept by `surface`, and says on its own what it takes; a spot is marked where the
-/// pointer points, good or with a cross and what it has against it, under a prompt that names
-/// what is being picked.
+/// pointer points, washed gold where it will do and red with what it has against it where it will
+/// not, under a prompt that names what is being picked.
 pub fn draw_aim(world: &mut World) {
     let Some(aimed) = aiming(world) else {
         return;
@@ -305,24 +305,24 @@ pub fn draw_aim(world: &mut World) {
         let Some((ring, refused, said)) = mark else {
             return;
         };
-        let color = if refused { ink::VERMILION } else { ink::GOLD2 };
+        let (ground, words) = if refused {
+            (ink::VERMILION, dusk::DANGER)
+        } else {
+            (ink::GOLD2, ink::GOLD2)
+        };
         let middle = egui::Rect::from_points(&ring);
-        if refused {
-            for (from, to) in [(0, ring.len() / 2), (ring.len() / 4, ring.len() * 3 / 4)] {
-                painter.line_segment([ring[from], ring[to]], Stroke::new(2.0, color));
-            }
-        }
-        painter.add(egui::Shape::closed_line(ring, Stroke::new(2.0, color)));
+        // The pointer is the one crosshair of an aim: the spot under it is only washed.
+        painter.add(egui::Shape::convex_polygon(
+            ring,
+            ink::wash(ground, SPOT_WASH),
+            Stroke::NONE,
+        ));
         if let Some(said) = said {
-            glyph::haloed(
-                painter,
-                middle.center_bottom() + egui::Vec2::new(0.0, 4.0),
-                egui::Align2::CENTER_TOP,
-                &said,
-                TextRole::Small.font_id(),
-                color,
-                SPOT_HALO,
-            );
+            let galley =
+                painter.layout_no_wrap(said, Face::BookBold.id(TextRole::Body.size()), words);
+            let at = egui::Align2::CENTER_TOP
+                .anchor_size(middle.center_bottom() + SPOT_WORDS_BELOW, galley.size());
+            dusk::lettering(painter, at.min, galley, dusk::EDGED, TSTransform::IDENTITY);
         }
     });
     if aimed.targeting(world.resource::<Content>()) == Targeting::Spot {
@@ -332,10 +332,9 @@ pub fn draw_aim(world: &mut World) {
 
 /// How wide a spot is marked.
 const SPOT_RADIUS: Meters = Meters(0.6);
-const SPOT_HALO: Halo = Halo {
-    color: ink::CREAM,
-    width: 1.0,
-};
+const SPOT_WASH: f32 = 0.45;
+/// Under the spot and clear of the pointer resting on it.
+const SPOT_WORDS_BELOW: egui::Vec2 = egui::Vec2::new(0.0, 14.0);
 /// How far over the bottom of the window the prompt of an aim stands, clear of the bar.
 const PROMPT_FROM_BOTTOM: f32 = 140.0;
 const PROMPT_WIDTH: f32 = 380.0;

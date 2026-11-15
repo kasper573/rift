@@ -1,7 +1,11 @@
 use bevy_ecs::message::MessageCursor;
 use bevy_replication::ToClient;
+use engine::core::content::Content;
+use engine::systems::GameSettings;
 use engine::systems::area::AreaDef;
 use engine::systems::friend::{self, AskFriendship, FindPlayers, PlayersFound, RemoveFriend};
+use engine::systems::player;
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::social_request::RequestAnswer;
 use serde_json::json;
 use testkit::{Game, Map};
@@ -21,7 +25,7 @@ fn friends_are_made_by_a_request_and_parted_by_either() {
         [("Wren wants to be your friend".to_owned(), false)],
         "it reaches the player asked in whatever world they are"
     );
-    server.answer(2, RequestAnswer::Decline);
+    server.answer(2, RequestAnswer::Deny);
     server.step();
     befriend(&mut server, 1, "Hale");
     assert_eq!(
@@ -30,7 +34,7 @@ fn friends_are_made_by_a_request_and_parted_by_either() {
             vec![("You asked Hale to be your friend".to_owned(), true)],
             vec![]
         ),
-        "a no is quiet: the asker sees their request wait on, and cannot ask again while it does"
+        "a denial is quiet: the asker sees their request wait on, and cannot ask again while it does"
     );
     assert_eq!(server.told(1), ["Friend request sent to Hale"]);
     assert_eq!(
@@ -42,7 +46,7 @@ fn friends_are_made_by_a_request_and_parted_by_either() {
     assert_eq!(
         (friends(&mut server, 1), friends(&mut server, 2)),
         (vec!["Hale".to_owned()], vec!["Wren".to_owned()]),
-        "the one who said no asks in turn, and the two are friends at once, on both lists"
+        "the one who denied asks in turn, and the two are friends at once, on both lists"
     );
     assert_eq!((server.cards(1), server.cards(2)), (vec![], vec![]));
     assert_eq!(
@@ -131,7 +135,7 @@ fn a_friends_list_and_the_requests_an_account_has_waiting_have_their_limits() {
     assert_eq!(
         (server.village.errors(1), server.cards(5)),
         (vec!["Your friends list is full".to_owned()], vec![]),
-        "a list holds only so many, counting those asked: a yes always finds the room it was \
+        "a list holds only so many, counting those asked: accepting always finds the room it was \
          asked with"
     );
 
@@ -169,15 +173,16 @@ fn a_friends_list_and_the_requests_an_account_has_waiting_have_their_limits() {
 #[test]
 fn a_player_is_found_by_the_start_of_their_name() {
     let mut server = Server::of(game(100, 20), vec![friend::request_source()]);
-    for (client, name) in [
-        (1, "Wren"),
-        (2, "Hanne"),
-        (3, "halvard"),
-        (4, "Hale"),
-        (5, "Osric"),
-    ] {
+    for (client, name) in [(1, "Wren"), (2, "Hanne"), (3, "halvard"), (4, "Hale")] {
         server.sign_in(client, name, "village");
     }
+    let content = server.village.world.resource::<Content>().clone();
+    let staged = JoinAs {
+        snapshot: CharacterSnapshot::of_player(&content, "Zofia", player::def(&content)),
+        start: content.built::<GameSettings>().initial_spawn,
+        origin: JoinOrigin::Staged,
+    };
+    server.sign_in_as(5, "Osric", "village", Some(staged));
     server.village.disconnect(4);
     server.later(31.0);
     server.block(2, "Wren", true);
@@ -213,6 +218,11 @@ fn a_player_is_found_by_the_start_of_their_name() {
         "one letter is no search"
     );
     assert_eq!(find(&mut server, "zz"), (vec![], 0));
+    assert_eq!(
+        (find(&mut server, "zo"), find(&mut server, "os")),
+        ((vec!["Zofia".to_owned()], 1), (vec![], 0)),
+        "a player goes by the name their character plays under, whatever they signed in as"
+    );
 }
 
 /// The player of `client` asks the player called `name` to be their friend.

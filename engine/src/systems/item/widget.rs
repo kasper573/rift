@@ -426,6 +426,7 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&m
     }
     let notes = filled.notes.iter().cloned().chain(verdict);
     let hint = StyledLine::new(map::hints(filled.hints.iter().cloned()));
+    card::options(world, &response, &[filled.stack.item]);
     card::tooltip_noted(world, &response, filled.stack.item, notes, Some(&hint));
     if let Some(selected) = selected
         && map::clicked(world, InputAction::Select, &response)
@@ -527,5 +528,6 @@ fn hints(map: &InputMap, takeovers: &[SlotAction], def: &ItemDef) -> Vec<(InputA
         .map(|takeover| (takeover.action, format!(" to {}", takeover.verb)))
         .chain(inspect)
         .chain(usage)
+        .chain([(InputAction::ItemOptions, " for options".to_owned())])
         .collect()
 }

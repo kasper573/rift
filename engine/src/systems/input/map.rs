@@ -50,10 +50,10 @@ pub enum InputAction {
     OpenHistory,
     OpenSocial,
     OpenSettings,
-    /// Says yes to the request on the card in front.
+    /// Accepts the request on the card in front.
     AcceptRequest,
-    /// Says no to the request on the card in front.
-    DeclineRequest,
+    /// Denies the request on the card in front.
+    DenyRequest,
     Dismiss,
     SubmitText,
     /// Takes the selected way to go on with what is being typed.
@@ -104,6 +104,7 @@ pub enum InputAction {
     InspectSkill,
     UseSlot,
     SlotOptions,
+    ItemOptions,
     /// Held, to keep the wheel of emotes open round the player's character.
     Emotes,
     /// Held or tapped, to name the items lying round the player's character.
@@ -180,7 +181,8 @@ impl InputAction {
             | InputAction::LowerRank
             | InputAction::InspectSkill
             | InputAction::UseSlot
-            | InputAction::SlotOptions => &[ActionReading::Click],
+            | InputAction::SlotOptions
+            | InputAction::ItemOptions => &[ActionReading::Click],
             InputAction::CarryItem => &[ActionReading::Drag],
             InputAction::SubmitText
             | InputAction::CompleteText

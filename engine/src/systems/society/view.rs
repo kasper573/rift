@@ -126,7 +126,7 @@ impl SocietyView {
         blocked.sort_by(|a, b| (&a.name, a.account).cmp(&(&b.name, b.account)));
         let card = |request: &SocialRequest| {
             let mine = request.asker == *account;
-            if request.declined && !mine {
+            if request.denied && !mine {
                 return None;
             }
             let other = member(if mine { &request.asked } else { &request.asker })?;

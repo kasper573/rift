@@ -8,7 +8,7 @@ pub const HONEY2: Color32 = Color32::from_rgb(0xD2, 0xB6, 0x76);
 pub const INK: Color32 = Color32::from_rgb(0x2A, 0x1F, 0x15);
 pub const FRAME: Color32 = Color32::from_rgb(0x2B, 0x21, 0x18);
 pub const INK2: Color32 = Color32::from_rgb(0x5E, 0x4A, 0x33);
-pub const INK3: Color32 = Color32::from_rgb(0x8E, 0x7B, 0x60);
+pub const INK3: Color32 = Color32::from_rgb(0x66, 0x56, 0x42);
 pub const RUBRIC: Color32 = Color32::from_rgb(0x8E, 0x1F, 0x14);
 pub const AZURE: Color32 = Color32::from_rgb(0x2D, 0x4E, 0x8C);
 pub const VERDIGRIS: Color32 = Color32::from_rgb(0x2E, 0x62, 0x45);
@@ -24,7 +24,7 @@ pub const VEIL: Color32 = Color32::from_rgb(0x12, 0x12, 0x12);
 
 const PLACE: Color32 = AZURE;
 pub const NAME: Color32 = VERDIGRIS;
-pub const ITEM: Color32 = GOLD;
+pub const ITEM: Color32 = OCHRE;
 pub const MAGIC: Color32 = TYRIAN;
 
 /// What text is laid on: the paper of sheets, slips and cards, or the dusk of the notices that float

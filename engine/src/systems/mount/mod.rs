@@ -27,9 +27,7 @@ use crate::systems::actor::model::{ActorModel, ModelId};
 use crate::systems::actor::skeleton::{self, Declared, JointName, MoveName, SkeletonDef};
 use crate::systems::actor::{Actor, Appearance, Hitbox};
 use crate::systems::area::{self, AreaId, AreaTag, HeldMesh};
-use crate::systems::history::HistoryTopic;
 use crate::systems::movement::{self, Position, Spot};
-use crate::systems::notification::{self, Notification};
 use crate::systems::player::{self, ClientId, PlayedBy, Players};
 use crate::systems::region;
 use crate::systems::script::{
@@ -43,7 +41,7 @@ use crate::systems::status::aspect;
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
     app.replicate::<Riding>()
-        .add_client_message::<seat::MountRequest>();
+        .add_mapped_client_message::<seat::MountRequest>();
 }
 
 pub type MountId = ContentId<MountDef>;
@@ -83,16 +81,6 @@ pub enum Travels {
     Flying { height: Meters, eases: Seconds },
     /// Wherever water stands at least `draught` deep.
     Floating { draught: Meters },
-}
-
-impl MountKind {
-    pub fn label(self) -> &'static str {
-        match self {
-            MountKind::Riding => "Riding",
-            MountKind::Flying => "Flying",
-            MountKind::Floating => "Floating",
-        }
-    }
 }
 
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -323,11 +311,7 @@ pub fn draughts(content: &Content) -> Vec<Meters> {
 /// The mesh a mount that travels as `travels` goes on in `area`, as far as the tiles held: none
 /// in an area that bars its kind.
 pub fn mesh_in(content: &Content, area: AreaId, travels: Travels) -> Option<HeldMesh> {
-    if area
-        .get(content)
-        .bars_mounts
-        .contains(&MountKind::from(travels))
-    {
+    if !welcome_in(content, area, travels) {
         return None;
     }
     let area = area::load(content, area);
@@ -431,10 +415,10 @@ fn unwelcome(world: &World, caster: Entity, mount: MountId) -> Option<String> {
     if world.get::<Riding>(caster).is_some() {
         return Some(words.step_off_first.clone());
     }
-    let kind = MountKind::from(mount.get(content).travels);
+    let travels = mount.get(content).travels;
     let welcome = world
         .get::<AreaTag>(caster)
-        .is_some_and(|tag| !tag.area.get(content).bars_mounts.contains(&kind));
+        .is_some_and(|tag| welcome_in(content, tag.area, travels));
     (!welcome).then(|| words.mount_barred_here.clone())
 }
 
@@ -451,7 +435,7 @@ pub fn call(world: &mut World, caster: Entity, mount: MountId, aim: CastAim) -> 
     };
     let travels = mount.get(world.resource::<Content>()).travels;
     match (travels, aim) {
-        (Travels::Floating { .. }, CastAim::Point(spot)) => movement::relocate(world, caster, spot),
+        (Travels::Floating { .. }, CastAim::Point(spot)) => movement::hop(world, caster, spot),
         _ => movement::halt(world, caster),
     }
     drive(world, caster, riding);
@@ -535,8 +519,8 @@ pub fn crossing(world: &World, rider: Entity) -> Option<CrossingRide> {
 }
 
 /// Seats `rider` as they sat before they crossed into this world: a driver where the mount may
-/// be ridden here, and a passenger beside a driver who arrived driving. Anyone else is told
-/// their mount could not follow, and stands on the ground nearest where they arrived.
+/// be ridden here, and a passenger beside a driver who arrived driving. Anyone else arrives on
+/// foot, on the ground nearest where they came in.
 pub fn arrive(world: &mut World, rider: Entity, ride: CrossingRide) {
     let content = world.resource::<Content>().clone();
     let def = ride.mount.get(&content);
@@ -563,16 +547,13 @@ pub fn arrive(world: &mut World, rider: Entity, ride: CrossingRide) {
     match riding {
         Some(riding) if riding.drives() => drive(world, rider, riding),
         Some(riding) => seat_beside(world, rider, riding),
-        None => {
-            movement::relocate_beside(world, rider, at);
-            left_behind(world, rider, def);
-        }
+        None => movement::hop_beside(world, rider, at),
     }
 }
 
 /// Who goes through a warp to `to` with `actor`: the passengers of a driver, still on the mount
-/// where it may be ridden at `to` and on foot where it may not. A passenger who warps alone
-/// leaves their seat first.
+/// where it may be ridden at `to`. Where it may not, everyone on it is on foot before they
+/// leave. A passenger who warps alone leaves their seat first.
 pub fn warping(world: &mut World, actor: Entity, to: Place) -> Vec<Entity> {
     let Some(riding) = world.get::<Riding>(actor).copied() else {
         return Vec::new();
@@ -587,15 +568,17 @@ pub fn warping(world: &mut World, actor: Entity, to: Place) -> Vec<Entity> {
         .collect();
     let content = world.resource::<Content>().clone();
     let def = riding.mount.get(&content);
-    // Whether a mount may be ridden where it lands in another world is settled there, as its
-    // riders arrive.
-    if world.get::<AreaTag>(actor).map(|tag| tag.area) == Some(to.area) {
+    // Only the world of an area holds its ground, so whether the ground a mount lands on in
+    // another world carries it is settled there, as its riders arrive.
+    let carried = if world.get::<AreaTag>(actor).map(|tag| tag.area) == Some(to.area) {
         region::hold_around(world, to.at);
-        if !rides_at(&content, to.area, def.travels, to.at) {
-            for rider in along.iter().copied().chain([actor]) {
-                unseat(world, rider);
-                left_behind(world, rider, def);
-            }
+        rides_at(&content, to.area, def.travels, to.at)
+    } else {
+        welcome_in(&content, to.area, def.travels)
+    };
+    if !carried {
+        for rider in along.iter().copied().chain([actor]) {
+            unseat(world, rider);
         }
     }
     along
@@ -743,11 +726,12 @@ fn rides_at(content: &Content, area: AreaId, travels: Travels, at: Pos<Meters>) 
     mesh_in(content, area, travels).is_some_and(|mesh| mesh.walkable(at))
 }
 
-fn left_behind(world: &mut World, rider: Entity, def: &MountDef) {
-    let words = &world.resource::<GameSettings>().words;
-    let said = words.mount_left_behind.replace("{mount}", &def.name);
-    let told = Notification::feed(HistoryTopic::Notification, said);
-    notification::notify(world, rider, None, told);
+/// Whether `area` lets in mounts that travel as `travels`.
+fn welcome_in(content: &Content, area: AreaId, travels: Travels) -> bool {
+    !area
+        .get(content)
+        .bars_mounts
+        .contains(&MountKind::from(travels))
 }
 
 /// Seats `driver` on the mount `riding` names, where they are: what a pointer lands on is the
@@ -773,7 +757,7 @@ fn leave(world: &mut World, rider: Entity, riding: Riding, near: Pos<Meters>) {
 
 fn stand(world: &mut World, rider: Entity, near: Pos<Meters>) {
     unseat(world, rider);
-    movement::relocate_beside(world, rider, near);
+    movement::hop_beside(world, rider, near);
 }
 
 /// Takes `rider` out of their seat where they are: they are themselves to hit again, and a
@@ -807,7 +791,7 @@ pub(crate) fn seat_beside(world: &mut World, rider: Entity, riding: Riding) {
     movement::halt(world, rider);
     world.entity_mut(rider).remove::<Spot>().insert(riding);
     if let Some(at) = movement::position(world, riding.driver) {
-        movement::relocate(world, rider, at);
+        movement::hop(world, rider, at);
         world.entity_mut(rider).remove::<Spot>();
     }
 }

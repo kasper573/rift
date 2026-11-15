@@ -19,6 +19,7 @@ use crate::systems::GameSettings;
 use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::area::AreaId;
 use crate::systems::area_instance::{self, AreaInstanceEntry, AreaInstances};
+use crate::systems::chat::ChatSaid;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
 use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
 use crate::systems::mount;
@@ -182,6 +183,7 @@ impl Society {
     fn note_playing(&mut self, roster: &ServerRoster, unwritten: &mut Unwritten, now: UnixMillis) {
         if roster.moved() {
             let mut playing: HashMap<AccountId, Playing> = HashMap::new();
+            let mut called: Vec<(AccountId, String)> = Vec::new();
             roster.each(|enrolled| {
                 if let Some(account) = &enrolled.account {
                     let playing_as = Playing {
@@ -189,8 +191,12 @@ impl Society {
                         away: enrolled.away,
                     };
                     playing.insert(account.clone(), playing_as);
+                    called.push((account.clone(), enrolled.name.clone()));
                 }
             });
+            for (account, name) in called {
+                self.call(&account, name, unwritten);
+            }
             let before = std::mem::replace(&mut self.playing, playing);
             for gone in before
                 .keys()
@@ -224,6 +230,31 @@ impl Society {
             }
         }
         self.inboxes.keep(unwritten);
+    }
+}
+
+impl Society {
+    /// Has `account` go by `name`, the name its character plays under, and shows it to everyone
+    /// who lists the account.
+    fn call(&mut self, account: &AccountId, name: String, unwritten: &mut Unwritten) {
+        if self
+            .accounts
+            .get(account)
+            .is_none_or(|known| known.name == name)
+        {
+            return;
+        }
+        if let Some(renamed) = self.accounts.change(account, |known| known.name = name) {
+            unwritten.put(renamed.clone());
+        }
+        let friends = self.friends.of_account(account);
+        let party = self.parties.of_account(account);
+        let listing: Vec<AccountId> = friends
+            .chain(party.into_iter().flat_map(PlayerParty::accounts))
+            .cloned()
+            .collect();
+        self.changed.extend(listing);
+        self.changed.insert(account.clone());
     }
 }
 
@@ -285,7 +316,7 @@ pub enum SocietyAsk {
     Inbox(InboxAsk),
     Party(PartyRequest),
     /// A line said to the party the player is in.
-    PartyLine(String),
+    PartyLine(ChatSaid),
     /// To be let into their instance of an area.
     EnterInstance(AreaInstanceEntry),
 }
@@ -413,7 +444,7 @@ pub fn settle(
             SocietyAsk::Friend(ask) => friend::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Inbox(ask) => inbox::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Party(ask) => party::settle(&mut settling, settings, &by, ask),
-            SocietyAsk::PartyLine(text) => party::say(&mut settling, &by, &text),
+            SocietyAsk::PartyLine(said) => party::say(&mut settling, &by, &said),
             SocietyAsk::EnterInstance(entry) => {
                 area_instance::enter(&mut settling, content, &by, entry);
             }

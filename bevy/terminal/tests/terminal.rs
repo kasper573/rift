@@ -2,8 +2,8 @@ use bevy_app::App;
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_terminal::{
-    LineKind, TerminalChannel, TerminalCommanded, TerminalInput, TerminalLine, TerminalSaid,
-    best_matches, hear, register, reply,
+    EMBED, LineKind, LineSpeaker, TerminalChannel, TerminalCommanded, TerminalEmbed, TerminalInput,
+    TerminalLine, TerminalSaid, best_matches, hear, register, reply, say,
 };
 
 fn server() -> App {
@@ -27,14 +27,32 @@ fn send(world: &mut World, conn: Entity, text: &str) {
 }
 
 fn send_on(world: &mut World, conn: Entity, channel: TerminalChannel, text: &str) {
+    send_holding(world, conn, channel, text, &[]);
+}
+
+fn send_holding(
+    world: &mut World,
+    conn: Entity,
+    channel: TerminalChannel,
+    text: &str,
+    embeds: &[TerminalEmbed],
+) {
     hear(
         world,
         conn,
         &TerminalInput {
             text: text.to_owned(),
             channel,
+            embeds: embeds.to_vec(),
         },
     );
+}
+
+fn thing(key: &str) -> TerminalEmbed {
+    TerminalEmbed {
+        kind: "item".to_owned(),
+        key: key.to_owned(),
+    }
 }
 
 fn said(world: &mut World) -> Vec<TerminalSaid> {
@@ -106,7 +124,8 @@ fn chat_line_is_said_trimmed_and_not_replied_to_and_a_blank_one_is_not_said() {
         vec![TerminalSaid {
             conn,
             channel: TerminalChannel::default(),
-            text: "hello there".to_owned()
+            text: "hello there".to_owned(),
+            embeds: Vec::new(),
         }]
     );
     assert!(replies(world).is_empty());
@@ -129,13 +148,15 @@ fn a_line_is_said_on_the_channel_it_was_typed_on_and_answered_there() {
         vec![TerminalSaid {
             conn,
             channel: party,
-            text: "on my way".to_owned()
+            text: "on my way".to_owned(),
+            embeds: Vec::new(),
         }]
     );
     let line = |text: &str, channel| TerminalLine {
         text: text.to_owned(),
         kind: LineKind::Notice,
         channel,
+        embeds: Vec::new(),
     };
     assert_eq!(
         replies(world),
@@ -147,5 +168,72 @@ fn a_line_is_said_on_the_channel_it_was_typed_on_and_answered_there() {
             ),
         ],
         "an answer lands where its question was typed, and on the first channel before any was"
+    );
+}
+
+#[test]
+fn a_line_holds_a_thing_at_every_mark_of_it_or_is_not_taken_and_each_stays_with_its_line() {
+    let mut app = server();
+    let world = app.world_mut();
+    let conn = connect(world);
+    let channel = TerminalChannel::default();
+    let (sword, shield, helm) = (thing("sword"), thing("shield"), thing("helm"));
+
+    send_holding(
+        world,
+        conn,
+        channel,
+        &format!("selling {EMBED} cheap"),
+        std::slice::from_ref(&sword),
+    );
+    send_holding(world, conn, channel, &format!("selling {EMBED} cheap"), &[]);
+    send_holding(
+        world,
+        conn,
+        channel,
+        "selling nothing",
+        std::slice::from_ref(&sword),
+    );
+
+    assert_eq!(
+        said(world),
+        vec![TerminalSaid {
+            conn,
+            channel,
+            text: format!("selling {EMBED} cheap"),
+            embeds: vec![sword.clone()],
+        }],
+        "a line whose marks and things do not match one to one is not taken"
+    );
+
+    let speaker = LineSpeaker {
+        name: "trader".to_owned(),
+        typist: None,
+    };
+    say(
+        world,
+        &[conn],
+        channel,
+        speaker.clone(),
+        format!("a {EMBED} today\nand a {EMBED} with a {EMBED}"),
+        &[sword.clone(), shield.clone(), helm.clone()],
+    );
+
+    let line = |text: String, embeds| TerminalLine {
+        text,
+        kind: LineKind::Said(speaker.clone()),
+        channel,
+        embeds,
+    };
+    assert_eq!(
+        replies(world),
+        vec![
+            (conn, line(format!("a {EMBED} today"), vec![sword])),
+            (
+                conn,
+                line(format!("and a {EMBED} with a {EMBED}"), vec![shield, helm])
+            ),
+        ],
+        "what is said over several lines reaches a terminal with each thing in the line that marks it"
     );
 }

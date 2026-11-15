@@ -1,9 +1,9 @@
-//! The party frames: a piece of the HUD that shows the other members of the player's party,
-//! each with their health while they are in sight and where they are while they are not.
-
 use bevy::prelude::*;
-use ui::egui::{self, Align, Layout, Pos2, Rect, Sense, Ui, Vec2};
-use ui::{controls, dialog, face, ink};
+use ui::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
+use ui::face::{Face, TextRole};
+use ui::glyph::Mark;
+use ui::ink;
+use ui::tracker::{self, INDENT, ROW_GAP, TrackerHeading, TrackerLine, TrackerTone, WIDTH};
 
 use super::{PartyMemberRow, PartyShown};
 use crate::core::content::Content;
@@ -11,11 +11,20 @@ use crate::core::time::{self, UnixMillis};
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::mount::{Riding, SeatIndex};
 use crate::systems::player::{ClientId, PlayedBy, session};
+use crate::systems::settings::UserSettings;
 use crate::systems::social_request::card::time_left;
 use crate::systems::society::SocietyView;
 use crate::systems::stat::{self, Vital};
 
 pub const PARTY_FRAMES: &str = "party";
+
+pub struct PartyFramesPlugin;
+
+impl Plugin for PartyFramesPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Folded>();
+    }
+}
 
 pub struct PartyFramesWidget;
 
@@ -31,18 +40,33 @@ impl HudWidget for PartyFramesWidget {
     fn show(&self, ui: &mut Ui, world: &mut World) -> Option<Rect> {
         let view = session::my_character(world)?.get::<SocietyView>()?.clone();
         let party = view.party.as_ref()?;
+        let others: Vec<&PartyMemberRow> = party
+            .members
+            .iter()
+            .filter(|member| member.player.account != view.account)
+            .collect();
         let now = time::server_now(world);
-        dialog::note(ui, WIDTH, |ui| {
-            ui.label(face::small("Party").color(ink::INK3));
-            for member in &party.members {
-                if member.player.account != view.account {
-                    frame(ui, world, party, member, now);
-                }
-            }
+        let folded = world.resource::<Folded>().0;
+        let opacity = world.resource::<UserSettings>().tracker_backing();
+        let heading = TrackerHeading {
+            title: "Party",
+            listed: others.len(),
+            lists: "party members",
+        };
+        let shown = tracker::show(ui, heading, folded, opacity.0 / 100.0, |ui, at| {
+            others.iter().fold(at.y, |foot, member| {
+                frame(ui, world, party, member, now, Pos2::new(at.x, foot))
+            })
         });
-        None
+        if shown.toggled {
+            world.resource_mut::<Folded>().0 = !folded;
+        }
+        Some(shown.drawn)
     }
 }
+
+#[derive(Resource, Default)]
+struct Folded(bool);
 
 /// How a member of the party stands, as the frames and the Party page say it.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,15 +109,6 @@ pub(super) fn character_of(world: &mut World, client: ClientId) -> Option<Entity
         .map(|(character, _)| character)
 }
 
-/// A bar as full of health as `health` says, from none to all.
-pub(super) fn health_bar(ui: &mut Ui, health: f32, width: f32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, BAR_HEIGHT), Sense::hover());
-    let painter = ui.painter();
-    painter.rect_filled(rect, BAR_HEIGHT / 2.0, ink::ink_wash(0.25));
-    let full = Rect::from_min_size(rect.min, Vec2::new(rect.width() * health, rect.height()));
-    painter.rect_filled(full, BAR_HEIGHT / 2.0, ink::WAX);
-}
-
 /// What `standing` says in words, to whoever reads the interface.
 pub(super) fn said(standing: &Standing, now: Option<UnixMillis>) -> String {
     match standing {
@@ -121,35 +136,68 @@ fn frame(
     party: &PartyShown,
     member: &PartyMemberRow,
     now: Option<UnixMillis>,
-) {
+    at: Pos2,
+) -> f32 {
     let standing = standing(world, member);
     let seat = shared_seat(world, member);
-    let name = super::page::named(party, member);
-    let row = ui.horizontal(|ui| {
-        ui.set_width(WIDTH);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            match &standing {
-                Standing::Seen { health } => health_bar(ui, *health, BAR_WIDTH),
-                other => {
-                    ui.label(face::small(said(other, now)).color(ink::INK3));
-                }
-            }
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                let name = face::body(name.as_str());
-                let name = match standing {
-                    Standing::Seen { .. } => name,
-                    _ => name.color(ink::INK3),
-                };
-                ui.add(egui::Label::new(name).truncate());
-                if let Some(seat) = seat {
-                    controls::pill(ui, &format!("seat {}", seat.0 + 1), controls::Pill::Ink);
-                }
-            });
-        });
-    });
-    let said = format!("{name}, {}", said(&standing, now));
-    row.response
+    let id = ui.id().with(("party member", member.player.account));
+    let top = at.y + tracker::ENTRY_GAP;
+    let rows = Pos2::new(at.x + INDENT, top);
+    tracker::bullet(ui, Pos2::new(at.x, top));
+    let leads = party.leader == member.player.account;
+    let mut foot = TrackerLine {
+        at: rows,
+        width: WIDTH - INDENT,
+        mark: leads.then_some((Mark::Crown, ink::GOLD2)),
+        text: &member.player.name,
+        font: Face::BookBold.id(TextRole::Body.size()),
+        color: Color32::WHITE,
+    }
+    .letter(ui, id.with("name"))
+    .bottom();
+    let row = |ui: &mut Ui, foot: f32, text: &str, tone: TrackerTone, which: &str| {
+        TrackerLine {
+            at: Pos2::new(rows.x, foot + ROW_GAP),
+            width: WIDTH - INDENT,
+            mark: tone.mark().map(|mark| (mark, tone.color())),
+            text,
+            font: TextRole::Small.font_id(),
+            color: tone.color(),
+        }
+        .letter(ui, id.with(which))
+        .bottom()
+    };
+    foot = match &standing {
+        Standing::Seen { health } => {
+            health_over_the_world(ui, Pos2::new(rows.x, foot + BAR_GAP), *health).bottom()
+        }
+        Standing::Elsewhere(_) => row(ui, foot, &said(&standing, now), TrackerTone::Plain, "at"),
+        Standing::Away(_) => row(ui, foot, &said(&standing, now), TrackerTone::Timed, "at"),
+    };
+    if let Some(seat) = seat {
+        let seat = format!("seat {}", seat.0 + 1);
+        foot = row(ui, foot, &seat, TrackerTone::Plain, "seat");
+    }
+    let said = format!(
+        "{}, {}",
+        super::page::named(party, member),
+        said(&standing, now)
+    );
+    let entry = Rect::from_min_max(Pos2::new(at.x, top), Pos2::new(at.x + WIDTH, foot));
+    ui.interact(entry, id, Sense::hover())
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
+    foot
+}
+
+/// A bar as full of health as `health` says, edged to read over whatever the world shows.
+fn health_over_the_world(ui: &Ui, at: Pos2, health: f32) -> Rect {
+    let rect = Rect::from_min_size(at, Vec2::new(BAR_WIDTH, BAR_HEIGHT));
+    let painter = ui.painter();
+    painter.rect_filled(rect.expand(1.5), BAR_HEIGHT, Color32::BLACK);
+    painter.rect_filled(rect, BAR_HEIGHT / 2.0, Color32::from_gray(60));
+    let full = Rect::from_min_size(rect.min, Vec2::new(rect.width() * health, rect.height()));
+    painter.rect_filled(full, BAR_HEIGHT / 2.0, ink::VERMILION);
+    rect
 }
 
 /// The seat `member` holds on the mount the player's character rides, where they ride together.
@@ -162,7 +210,7 @@ fn shared_seat(world: &mut World, member: &PartyMemberRow) -> Option<SeatIndex> 
         .map(|riding| riding.seat)
 }
 
-const WIDTH: f32 = 230.0;
-const BAR_WIDTH: f32 = 110.0;
+const BAR_WIDTH: f32 = 120.0;
 const BAR_HEIGHT: f32 = 6.0;
+const BAR_GAP: f32 = 5.0;
 const FROM_TOP: f32 = 96.0;

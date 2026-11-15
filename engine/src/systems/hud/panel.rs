@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use ui::egui;
 
 use bevy::prelude::*;
-use ui::egui::{Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
+use ui::egui::{Align2, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
 use ui::motion::{SheetClock, SheetPose};
 use ui::panel::{self, GripCorner};
 use ui::sheet::{self, Depth, Sheet};
@@ -25,15 +25,16 @@ pub(crate) fn widget<R>(
     world: &mut World,
     gui: &egui::Context,
     key: &'static str,
-    start: Pos2,
+    (corner, start): (Align2, Pos2),
     add: impl FnOnce(&mut Ui, &mut World) -> R,
 ) -> R {
     let id = widget_id(key);
-    let saved = world
-        .resource::<UserSettings>()
-        .widget_pos(key)
-        .map(|pos| Pos2::new(pos.x, pos.y));
-    let rest = Rect::from_min_size(saved.unwrap_or(start), drawn_size(gui, id));
+    let size = drawn_size(gui, id);
+    let saved = world.resource::<UserSettings>().widget_pos(key);
+    let rest = match saved {
+        Some(at) => Rect::from_min_size(Pos2::new(at.x, at.y), size),
+        None => corner.anchor_size(start, size),
+    };
     let at = standing(world, gui, key, rest, Limits::NONE).min;
     let shown = egui::Area::new(id)
         .order(Order::Background)

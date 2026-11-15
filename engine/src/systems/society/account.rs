@@ -75,7 +75,8 @@ impl Accounts {
         self.numbered.get((number.0 as usize).checked_sub(1)?)
     }
 
-    /// Notes that `id` signed in as `name` at `now`: the account as it then is.
+    /// Notes that `id` signed in at `now`: the account as it then is. One new to the server goes
+    /// by `name` until its character plays under another.
     pub fn signed_in(&mut self, id: &AccountId, name: &str, now: UnixMillis) -> &Account {
         if !self.known.contains_key(id) {
             self.add(Account {
@@ -86,11 +87,8 @@ impl Accounts {
                 accepts_requests_from: None,
             });
         }
-        self.change(id, |account| {
-            account.name = name.to_owned();
-            account.last_seen = now;
-        })
-        .expect("the account was just made known")
+        self.change(id, |account| account.last_seen = now)
+            .expect("the account was just made known")
     }
 
     /// Changes the account under `id`, when there is one: the account as it then is.

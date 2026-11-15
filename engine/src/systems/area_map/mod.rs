@@ -11,6 +11,7 @@ use ui::egui::emath::TSTransform;
 use ui::egui::epaint::{Mesh, Vertex};
 use ui::egui::{self, Align2, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use ui::face::{Face, TextRole};
+use ui::glyph::{self, Mark};
 use ui::{dusk, float, ink};
 
 use crate::core::content::{Content, ImageRef, RowCheck};
@@ -382,6 +383,8 @@ fn chart(ui: &mut Ui, world: &mut World, view: &MapView) {
 const ROUND: usize = 72;
 const BEAD: f32 = 9.0;
 const BUTTON: f32 = 8.5;
+/// How large a round button's sign is drawn.
+const SIGN: f32 = 11.0;
 const WEDGE_HALF: f32 = 0.5;
 const WEDGE_REACH: f32 = 0.62;
 const PERSON: f32 = 4.5;
@@ -701,13 +704,7 @@ fn north_bead(ui: &mut Ui, world: &mut World, at: Pos2) {
     };
     ui.painter()
         .circle(at, BEAD, ink::FRAME, Stroke::new(1.5, rim));
-    ui.painter().text(
-        at,
-        Align2::CENTER_CENTER,
-        "N",
-        Face::BookBold.id(12.0),
-        ink::GOLD2,
-    );
+    glyph::centered(ui.painter(), at, "N", Face::BookBold.id(12.0), ink::GOLD2);
     float::tooltip(&bead, |ui| {
         ui.label(TextRole::Tooltip.rich("North · click to face it"));
     });
@@ -721,22 +718,20 @@ fn north_bead(ui: &mut Ui, world: &mut World, at: Pos2) {
 fn reach_buttons(ui: &mut Ui, view: &MapView, places: [Pos2; 2]) -> Option<MapReachStep> {
     let closer = (view.step.0 > 0).then(|| MapReachStep(view.step.0 - 1));
     let wider = (view.step < view.last_step).then(|| MapReachStep(view.step.0 + 1));
-    let pressed = [("+", "closer", closer), ("−", "wider", wider)]
-        .into_iter()
-        .zip(places)
-        .map(|((sign, steps, step), at)| {
-            let said = format!("{} {steps}", view.title());
-            let button = round_button(ui, at, &said, step.is_some());
-            ui.painter().text(
-                at,
-                Align2::CENTER_CENTER,
-                sign,
-                Face::BookBold.id(13.0),
-                button.ink,
-            );
-            step.filter(|_| button.response.clicked())
-        })
-        .collect::<Vec<_>>();
+    let pressed = [
+        (Mark::Plus, "closer", closer),
+        (Mark::Minus, "wider", wider),
+    ]
+    .into_iter()
+    .zip(places)
+    .map(|((sign, steps, step), at)| {
+        let said = format!("{} {steps}", view.title());
+        let button = round_button(ui, at, &said, step.is_some());
+        let spot = egui::Rect::from_center_size(at, Vec2::splat(SIGN));
+        sign.paint(ui.painter(), spot, button.ink);
+        step.filter(|_| button.response.clicked())
+    })
+    .collect::<Vec<_>>();
     pressed.into_iter().flatten().next()
 }
 

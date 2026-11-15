@@ -11,6 +11,7 @@ use ui::egui::{Rect, Response, Ui};
 use ui::face::{self, TextRole};
 use ui::glyph::CardKind;
 use ui::ink;
+use ui::menu;
 use ui::sheet::Depth;
 
 use crate::core::card::CardStyleDef;
@@ -20,6 +21,7 @@ use crate::core::math::ColorGradient;
 use crate::core::stage::card::HungCardLamp;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::GameSettings;
+use crate::systems::chat::ChatEmbed;
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
@@ -29,6 +31,7 @@ use crate::systems::script::{Condition, condition};
 use crate::systems::skill::{self, SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status;
+use crate::systems::terminal::chat;
 
 pub(crate) const WINDOW_KEY: &str = "Item";
 
@@ -101,8 +104,29 @@ pub fn inspect(world: &mut World, response: Response, item: ItemId) -> Response 
     if map::clicked(world, InputAction::InspectItem, &response) {
         open(world, item, Some(response.rect));
     }
+    options(world, &response, &[item]);
     tooltip(world, &response, item);
     response
+}
+
+/// The menu of what else a player can do with the items `response` shows, wherever items are
+/// drawn: opened at the pointer, and naming each item where there are several. `response` must
+/// sense clicks.
+pub fn options(world: &mut World, response: &Response, items: &[ItemId]) {
+    if items.is_empty() {
+        return;
+    }
+    let content = world.resource::<Content>().clone();
+    let open = map::clicked(world, InputAction::ItemOptions, response);
+    menu::at_pointer(response, open, |ui| {
+        for &item in items {
+            let label = match items {
+                [_] => chat::ADD_TO_CHAT.to_owned(),
+                _ => format!("{}: {}", chat::ADD_TO_CHAT, item.get(&content).name),
+            };
+            chat::menu_entry(ui, world, &label, ChatEmbed::Item(item));
+        }
+    });
 }
 
 pub fn tooltip(world: &mut World, response: &Response, item: ItemId) {
@@ -153,7 +177,9 @@ fn worn_as(wear: &Wear) -> String {
 pub fn inspect_hint() -> Vec<TextPiece> {
     vec![
         input(InputAction::InspectItem),
-        TextPiece::text(" for more information"),
+        TextPiece::text(" for more information · "),
+        input(InputAction::ItemOptions),
+        TextPiece::text(" for options"),
     ]
 }
 
@@ -173,8 +199,36 @@ pub fn kind(def: &ItemDef) -> CardKind {
     }
 }
 
+/// An item's card, the same wherever it shows: a view that has more to say of the item says it
+/// beside the card, never on it.
 pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> CardResponse {
-    show_noted(ui, world, item, look, &[])
+    let content = world.resource::<Content>().clone();
+    let def = item.get(&content);
+    let held = session::me(world)
+        .and_then(|me| world.get::<Inventory>(me))
+        .map_or(0, |bag| bag.count(item));
+    let tally = (def.stack_max() > 1 && held > 0).then(|| format!("{held} held"));
+    let mut card = face_of(&content, world, item, look);
+    card.tally = tally.as_deref();
+    card.action = Some(chat::card_action());
+    let shown = card.show(ui, |ui, plate| {
+        summary(ui, &content, item, plate);
+        let viewer = session::me(world);
+        details(ui, &content, item, |requirement| {
+            let viewer = viewer?;
+            Some(condition::holds(world, viewer, requirement))
+        });
+        grants(ui, world, &content, item, plate);
+        if let Some(verb) = use_verb(def) {
+            let hint = StyledLine::new(vec![
+                input(InputAction::UseItem),
+                TextPiece::text(format!(" in your inventory to {verb}")),
+            ]);
+            foot(ui, world, &hint);
+        }
+    });
+    chat::offered(world, &shown, ChatEmbed::Item(item));
+    shown
 }
 
 /// The colour behind the picture on an item's card, by the type of item: it stands in place of
@@ -195,61 +249,6 @@ impl ItemTypeArtColors {
             ItemKind::Resource => self.resource,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ItemCardNote {
-    pub text: String,
-    pub tone: CardNoteTone,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CardNoteTone {
-    Plain,
-    Strong,
-    Warning,
-}
-
-pub fn show_noted(
-    ui: &mut Ui,
-    world: &mut World,
-    item: ItemId,
-    look: CardLook,
-    notes: &[ItemCardNote],
-) -> CardResponse {
-    let content = world.resource::<Content>().clone();
-    let def = item.get(&content);
-    let held = session::me(world)
-        .and_then(|me| world.get::<Inventory>(me))
-        .map_or(0, |bag| bag.count(item));
-    let tally = (def.stack_max() > 1 && held > 0).then(|| format!("{held} held"));
-    let mut card = face_of(&content, world, item, look);
-    card.tally = tally.as_deref();
-    card.show(ui, |ui, plate| {
-        summary(ui, &content, item, plate);
-        // Ahead of the item's own lines, so a long card never cuts off what the view has to say.
-        for note in notes {
-            let text = match note.tone {
-                CardNoteTone::Plain => TextRole::CardBody.rich(&note.text).color(ink::INK),
-                CardNoteTone::Strong => face::bold(&note.text).size(TextRole::CardBody.size()),
-                CardNoteTone::Warning => TextRole::CardBody.rich(&note.text).color(ink::RUBRIC),
-            };
-            ui.add(egui::Label::new(text).wrap());
-        }
-        let viewer = session::me(world);
-        details(ui, &content, item, |requirement| {
-            let viewer = viewer?;
-            Some(condition::holds(world, viewer, requirement))
-        });
-        grants(ui, world, &content, item, plate);
-        if let Some(verb) = use_verb(def) {
-            let hint = StyledLine::new(vec![
-                input(InputAction::UseItem),
-                TextPiece::text(format!(" in your inventory to {verb}")),
-            ]);
-            foot(ui, world, &hint);
-        }
-    })
 }
 
 /// The face of an item's card: drawn in the style its rarity names, on its item type's colour

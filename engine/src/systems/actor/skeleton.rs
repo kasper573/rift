@@ -226,6 +226,10 @@ pub struct SkeletonDef {
     pub builds: Vec<BuildName>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<BodyRegion>,
+    /// The regions a portrait of a body shows, such as its head and its hair: the portrait is
+    /// of the parts that cover any of them. A skeleton that names none has no portraits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub portrait: Vec<BodyRegion>,
     /// The places items are worn besides the hands, in the order their parts are laid over the
     /// body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -951,6 +955,7 @@ impl ContentFile for SkeletonDef {
             groups: BTreeMap::new(),
             builds: Vec::new(),
             regions: Vec::new(),
+            portrait: Vec::new(),
             slots: Vec::new(),
             tints: Vec::new(),
             base: ClipSet::default(),
@@ -997,6 +1002,16 @@ impl ContentFile for SkeletonDef {
         check_sources(&self.sources, cx);
         check_names(cx, "builds", "build twice", &self.builds);
         check_names(cx, "regions", "region twice", &self.regions);
+        for (index, region) in self.portrait.iter().enumerate() {
+            if !self.regions.contains(region) {
+                cx.error(
+                    format!("/portrait/{index}"),
+                    "unknown region",
+                    region.as_str(),
+                    "one of the skeleton's regions",
+                );
+            }
+        }
         check_names(cx, "slots", "slot twice", &self.slots);
         let mut tints = BTreeSet::new();
         for (index, tint) in self.tints.iter().enumerate() {

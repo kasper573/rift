@@ -262,7 +262,7 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
             name,
             name_font(),
             plate.label.color,
-            dusk::SMALL_TEXT_SHADOW,
+            dusk::EDGED,
             TSTransform::IDENTITY,
         );
     }
@@ -276,7 +276,7 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
             &line,
             role_font(),
             Color32::WHITE.gamma_multiply(0.7),
-            dusk::SMALL_TEXT_SHADOW,
+            dusk::EDGED,
             TSTransform::IDENTITY,
         );
     }

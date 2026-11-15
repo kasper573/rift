@@ -18,6 +18,7 @@ use crate::core::time::LocalClock;
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::item;
 use crate::systems::item::widget::{SlotLook, slot};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -400,6 +401,7 @@ fn attachments(ui: &mut Ui, world: &mut World, row: &InboxRow) -> Option<Done> {
             if takes {
                 done = Some(Done::Take(row.id, Some(index as u32)));
             }
+            item::card::options(world, &response, &[stack.item]);
             hud::tooltip(
                 &response,
                 world,
@@ -415,7 +417,7 @@ fn attachments(ui: &mut Ui, world: &mut World, row: &InboxRow) -> Option<Done> {
     done
 }
 
-/// Asks the player whether to delete the message titled `title`, and deletes it on a yes.
+/// Asks the player whether to delete the message titled `title`, and deletes it once they confirm.
 fn delete(world: &mut World, id: MessageId, title: String) {
     hud::confirm(
         world,

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter;
 use ui::egui;
 use ui::float::Hinted;
@@ -20,6 +20,7 @@ use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{LettersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
 use crate::systems::area_map::MapReachStep;
+use crate::systems::chat::ChatEmbedKind;
 use crate::systems::hud;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{InputAction, KeyGesture};
@@ -424,6 +425,21 @@ fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
         let label = ui.label("Chat text size");
         chat_text_slider(ui, settings, label.id);
         ui.end_row();
+        let label = ui.label("Show embedded chat content");
+        ui.horizontal(|ui| {
+            for &kind in ChatEmbedKind::VARIANTS {
+                let mut shown = settings.shows_chat_embeds(kind);
+                if ui
+                    .checkbox(&mut shown, kind.plural())
+                    .labelled_by(label.id)
+                    .hinted("Off, chat covers them with a black bar until you click it")
+                    .changed()
+                {
+                    settings.show_chat_embeds(kind, shown);
+                }
+            }
+        });
+        ui.end_row();
     });
 }
 
@@ -734,6 +750,19 @@ impl UserSettings {
         self.ui.chat.hidden = !self.ui.chat.hidden;
     }
 
+    /// Whether chat shows the things of `kind` its lines hold, rather than covering them.
+    pub(crate) fn shows_chat_embeds(&self, kind: ChatEmbedKind) -> bool {
+        !self.ui.chat.embeds_hidden.contains(&kind)
+    }
+
+    fn show_chat_embeds(&mut self, kind: ChatEmbedKind, shown: bool) {
+        if shown {
+            self.ui.chat.embeds_hidden.remove(&kind);
+        } else {
+            self.ui.chat.embeds_hidden.insert(kind);
+        }
+    }
+
     pub(crate) fn chat_background(&self) -> Percent {
         self.ui.chat.background.unwrap_or(CHAT_BACKGROUND)
     }
@@ -850,6 +879,9 @@ struct ChatSettings {
     background: Option<Percent>,
     #[serde(default)]
     text_size: Option<WindowPx>,
+    /// The kinds of thing a line can hold that chat covers until the player asks to see one.
+    #[serde(default)]
+    embeds_hidden: BTreeSet<ChatEmbedKind>,
 }
 
 const CHAT_BACKGROUND: Percent = Percent(35.0);

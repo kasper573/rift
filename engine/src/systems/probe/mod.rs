@@ -2125,7 +2125,10 @@ pub fn interface_elements(
                 .iter()
                 .find_map(|by| labels.get(by))
                 .map(|label| label.to_string());
-            let editable = role == accesskit::Role::TextInput;
+            let editable = matches!(
+                role,
+                accesskit::Role::TextInput | accesskit::Role::MultilineTextInput
+            );
             if text.is_none() && image.is_none() && !editable && slider.is_none() {
                 return None;
             }
@@ -2157,6 +2160,7 @@ fn shown_role(role: accesskit::Role) -> bool {
             | Role::ComboBox
             | Role::Slider
             | Role::TextInput
+            | Role::MultilineTextInput
             | Role::Image
             | Role::Link
             | Role::Splitter

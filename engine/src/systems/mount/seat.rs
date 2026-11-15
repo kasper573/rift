@@ -152,7 +152,7 @@ pub fn boarding(world: &mut World, intents: &mut reach::Intents) {
 }
 
 /// A seat on a mount as a kind of request: it lives as long as its card, needs both players
-/// here, and seats the asker the moment the driver says yes.
+/// here, and seats the asker the moment the driver accepts.
 pub fn request_source() -> SocialRequestSource {
     SocialRequestSource {
         kind: SocialRequestKind::Seat,
@@ -163,7 +163,7 @@ pub fn request_source() -> SocialRequestSource {
             asked: &words.seat_asked,
             sent: None,
             accepted: None,
-            declined: Some(&words.seat_declined),
+            denied: Some(&words.seat_denied),
             lapsed: Some(&words.seat_lapsed),
         },
         may_send: |_, _, _, _| Ok(()),

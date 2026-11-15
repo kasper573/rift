@@ -4,7 +4,8 @@
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::egui::{self, Align, Layout, Sense, Ui};
+use ui::egui::{self, Align, Layout, Rect, Sense, Ui, Vec2};
+use ui::glyph::{self, Mark};
 use ui::{controls, face, form, ink, input, sheet};
 
 use super::frames::{self, Standing};
@@ -135,14 +136,26 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(OnExit(ClientScreen::Area), forget);
 }
 
-/// A member's name as the party's lists say it: its leader's carries a star.
+/// A member's name as the party's lists show it: its leader's wears a crown.
+pub(super) fn name(ui: &mut Ui, party: &PartyShown, member: &PartyMemberRow, name: egui::RichText) {
+    ui.horizontal(|ui| {
+        ui.add(egui::Label::new(name).truncate());
+        if party.leader == member.player.account {
+            glyph::show(ui, Mark::Crown, CROWN, ink::GOLD);
+        }
+    });
+}
+
+/// A member's name as the party's lists read it out: its leader's says so.
 pub(super) fn named(party: &PartyShown, member: &PartyMemberRow) -> String {
     if party.leader == member.player.account {
-        format!("{} ★", member.player.name)
+        format!("{}, {}", member.player.name, Mark::Crown.word())
     } else {
         member.player.name.clone()
     }
 }
+
+const CROWN: f32 = 13.0;
 
 /// Who the player looks for to invite, and the member of their party they chose.
 #[derive(Resource, Default)]
@@ -246,8 +259,8 @@ fn no_party(ui: &mut Ui, world: &World, view: &SocietyView) -> Option<Done> {
         let left = now.map_or_else(String::new, |now| time_left(card.until, now));
         ui.push_id(("invitation", card.id.0), |ui| {
             line(ui, &format!("{name} · {left}"), false, |ui| {
-                if named_button(controls::button(ui, "Decline"), "Decline", name).clicked() {
-                    done = Some(Done::Answer(card.id, RequestAnswer::Decline));
+                if named_button(controls::button(ui, "Deny"), "Deny", name).clicked() {
+                    done = Some(Done::Answer(card.id, RequestAnswer::Deny));
                 }
                 if named_button(controls::primary(ui, "Accept"), "Accept", name).clicked() {
                     done = Some(Done::Answer(card.id, RequestAnswer::Accept));
@@ -357,10 +370,10 @@ fn member_row(
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if let Standing::Seen { health } = standing {
-                    frames::health_bar(ui, health, BAR_WIDTH);
+                    health_bar(ui, health, BAR_WIDTH);
                 }
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                    ui.add(egui::Label::new(face::bold(name.as_str())).truncate());
+                    self::name(ui, party, member, face::bold(member.player.name.as_str()));
                     ui.add(
                         egui::Label::new(face::small(state.as_str()).color(ink::INK3)).truncate(),
                     );
@@ -491,7 +504,7 @@ fn invite_row(
     done
 }
 
-/// Asks the leader whether to end the party, and ends it on a yes.
+/// Asks the leader whether to end the party, and ends it once they confirm.
 fn disband(world: &mut World) {
     hud::confirm(
         world,
@@ -539,8 +552,18 @@ fn caption(ui: &mut Ui, text: &str) {
 }
 
 const PARTY_WIDTH: f32 = 520.0;
+/// A bar as full of health as `health` says, from none to all.
+fn health_bar(ui: &mut Ui, health: f32, width: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, BAR_HEIGHT), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, BAR_HEIGHT / 2.0, ink::ink_wash(0.25));
+    let full = Rect::from_min_size(rect.min, Vec2::new(rect.width() * health, rect.height()));
+    painter.rect_filled(full, BAR_HEIGHT / 2.0, ink::WAX);
+}
+
 const BAR_WIDTH: f32 = 110.0;
 const GAP: f32 = 8.0;
 const LINE_HEIGHT: f32 = 28.0;
 /// How long the typing rests before the server is asked, so it is never asked on every key.
 const TYPING_PAUSE: f64 = 0.3;
+const BAR_HEIGHT: f32 = 6.0;

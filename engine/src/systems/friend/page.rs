@@ -366,8 +366,8 @@ fn waiting(ui: &mut Ui, view: &SocietyView) -> Option<Done> {
             let name = &card.other.name;
             ui.push_id(("asking", card.id.0), |ui| {
                 line(ui, name, false, |ui| {
-                    if named(controls::button(ui, "Decline"), "Decline", name).clicked() {
-                        done = Some(Done::Answer(card.id, RequestAnswer::Decline));
+                    if named(controls::button(ui, "Deny"), "Deny", name).clicked() {
+                        done = Some(Done::Answer(card.id, RequestAnswer::Deny));
                     }
                     if named(controls::primary(ui, "Accept"), "Accept", name).clicked() {
                         done = Some(Done::Answer(card.id, RequestAnswer::Accept));
@@ -513,7 +513,7 @@ fn friend_row(
     crate::systems::input::map::clicked(world, InputAction::Select, &response)
 }
 
-/// Asks the player whether to end the friendship with `player`, and ends it on a yes.
+/// Asks the player whether to end the friendship with `player`, and ends it once they confirm.
 fn remove(world: &mut World, player: SocietyMember) {
     let name = &player.name;
     hud::confirm(

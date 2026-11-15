@@ -8,6 +8,7 @@ pub mod model;
 pub mod part;
 pub mod plate;
 pub mod playing;
+pub mod portrait;
 pub mod render;
 pub mod rigging;
 pub mod skeleton;

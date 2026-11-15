@@ -15,10 +15,10 @@ use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead}
 use crate::systems::hud::{self, Carried, Confirm, day_clock};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::card::{CardLook, CardNoteTone, ItemCardNote};
+use crate::systems::item::card::CardLook;
 use crate::systems::item::widget::{
     InventoryPane, SlotAction, SlotVerdict, inventory_pane, inventory_room, listed_icon,
-    slot_action, slot_notes, slot_verdict_source,
+    slot_action, slot_verdict_source,
 };
 use crate::systems::item::{self, Inventory, ItemCategory, ItemId, ItemStack};
 use crate::systems::player::session;
@@ -211,7 +211,7 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
             browse.ware = 0;
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            sheet::label(ui, TextRole::Small, &wants_note(&wants), ink::GOLD);
+            sheet::label(ui, TextRole::Small, &wants_note(&wants), ink::INK3);
         });
     });
     ui.add_space(PAGE_GAP);
@@ -346,6 +346,7 @@ fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name)
     });
+    item::card::options(world, &response, &[ware.item]);
     response
 }
 
@@ -370,13 +371,15 @@ fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware
         ui,
         |ui| {
             if let Some(ware) = ware {
-                let notes = ware.notes(&content);
-                item::card::show_noted(ui, world, ware.item, CARD_LOOK, &notes);
+                item::card::show(ui, world, ware.item, CARD_LOOK);
             }
         },
         |ui| {
             if let Some(ware) = ware {
                 pressed = trade_button(ui, &content, ware, shelf.waiting).clicked();
+                if let Some(why) = ware.wait() {
+                    beside_action(ui, &why);
+                }
             }
         },
     );
@@ -450,16 +453,13 @@ fn sale_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane) {
         .offered
         .and_then(|(_, held)| quote(&shelf.shown, held.item))
         .map(|quote| &quote.verdict);
-    let notes: Vec<ItemCardNote> = shelf
-        .offered
-        .map(|(_, held)| sale_notes(world, held, verdict))
-        .unwrap_or_default();
+    let refused = sale_refusal(verdict);
     let mut pressed = None;
     pane.show(
         ui,
         |ui| match shelf.offered {
             Some((_, held)) => {
-                item::card::show_noted(ui, world, held.item, CARD_LOOK, &notes);
+                item::card::show(ui, world, held.item, CARD_LOOK);
             }
             None => {
                 ui.add_space(16.0);
@@ -472,6 +472,9 @@ fn sale_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane) {
         |ui| {
             if let Some((offered, held)) = shelf.offered {
                 pressed = sale_actions(ui, &content, offered, held, verdict, shelf.waiting);
+                if let Some(refused) = &refused {
+                    beside_action(ui, refused);
+                }
             }
         },
     );
@@ -492,33 +495,18 @@ fn sale_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane) {
     }
 }
 
-fn sale_notes(world: &World, held: ItemStack, verdict: Option<&SaleVerdict>) -> Vec<ItemCardNote> {
-    let content = world.resource::<Content>();
-    let said = match verdict {
-        Some(SaleVerdict::Pays(pays)) => Some(ItemCardNote {
-            text: if held.count > 1 {
-                format!("Sells for {} each", stacks_text(content, pays, 1))
-            } else {
-                format!("Sells for {}", stacks_text(content, pays, 1))
-            },
-            tone: CardNoteTone::Strong,
-        }),
-        Some(SaleVerdict::Refused(reason)) => Some(ItemCardNote {
-            text: reason.clone(),
-            tone: CardNoteTone::Warning,
-        }),
-        None => None,
-    };
-    said.into_iter()
-        .chain(
-            slot_notes(world, held)
-                .into_iter()
-                .map(|text| ItemCardNote {
-                    text,
-                    tone: CardNoteTone::Warning,
-                }),
-        )
-        .collect()
+/// Why the shop won't take what is offered, in its own words.
+fn sale_refusal(verdict: Option<&SaleVerdict>) -> Option<String> {
+    match verdict {
+        Some(SaleVerdict::Refused(reason)) => Some(reason.clone()),
+        Some(SaleVerdict::Pays(_)) | None => None,
+    }
+}
+
+/// What stands in the way of a pane's action, said beside its button: the card above shows the
+/// item alone, as it does everywhere.
+fn beside_action(ui: &mut Ui, why: &str) {
+    ui.add(egui::Label::new(face::small(why).color(ink::RUBRIC)).truncate());
 }
 
 fn sale_actions(
@@ -675,29 +663,17 @@ impl Ware {
         }
     }
 
-    fn notes(&self, content: &Content) -> Vec<ItemCardNote> {
-        let text = match &self.refusal {
-            Some(WareRefusal::Unaffordable(_)) => format!(
-                "Costs {}. You hold {}.",
-                stacks_text(content, &self.price, 1),
-                self.price
-                    .iter()
-                    .zip(&self.held)
-                    .map(|(stack, held)| ItemStack::new(stack.item, *held).describe(content))
-                    .collect::<Vec<_>>()
-                    .join(" + ")
-            ),
-            Some(refusal @ WareRefusal::NoRoom { .. }) => refusal.describe(content),
-            Some(WareRefusal::SoldOut | WareRefusal::Unavailable(_)) => match self.unavailable() {
-                Some(out) => out.to_string(),
-                None => return Vec::new(),
-            },
-            None => return Vec::new(),
-        };
-        vec![ItemCardNote {
-            text,
-            tone: CardNoteTone::Warning,
-        }]
+    /// What a ware that can't be had right now waits for, where the shop says: the trade
+    /// button itself says that it can't.
+    fn wait(&self) -> Option<String> {
+        match &self.refusal {
+            Some(WareRefusal::SoldOut) => self
+                .restocks_in
+                .as_ref()
+                .map(|restocks| format!("Back in {restocks}")),
+            Some(WareRefusal::Unavailable(reason)) => Some(reason.to_string()),
+            Some(WareRefusal::Unaffordable(_) | WareRefusal::NoRoom { .. }) | None => None,
+        }
     }
 }
 

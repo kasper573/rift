@@ -2,6 +2,7 @@
 //! fades every scene is built from. What stands in the world is the game's to spawn; this module
 //! only knows how it is drawn.
 
+pub mod afloat;
 pub mod billboard;
 pub mod body;
 pub mod clouds;
@@ -103,6 +104,7 @@ impl Plugin for WorldScenePlugin {
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
+        .init_resource::<afloat::OverSheetMaterials>()
         .init_resource::<cover::CoverVariants>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)
@@ -140,6 +142,7 @@ impl Plugin for WorldScenePlugin {
             (
                 let_depth_be_read,
                 opacity::thin,
+                afloat::draw_over_sheets,
                 plumb::hang
                     .after(layers::run)
                     .before(bevy::transform::TransformSystems::Propagate),

@@ -1,5 +1,6 @@
-//! The request cards: a piece of the HUD that shows a player the requests they are asked and
-//! the ones they asked, the oldest in front, and takes their answer.
+//! The request cards: a piece of the HUD that shows a player the requests they are asked, the
+//! oldest in front, and takes their answer. What a player asked of others shows only on the
+//! pages that list it.
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
@@ -58,10 +59,8 @@ impl HudWidget for RequestCardsWidget {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ShownRequestCard {
     pub says: String,
-    /// The other player of the two.
+    /// The player who asked.
     pub with: String,
-    /// Whether the player it is shown to is the one who asked.
-    pub mine: bool,
     /// How long it still waits for its answer.
     pub left: Seconds,
     /// Whether it is the card in front, which the keys answer.
@@ -78,14 +77,13 @@ pub fn shown(world: &World) -> Vec<ShownRequestCard> {
         .map(|(index, card)| ShownRequestCard {
             says: card.says,
             with: card.other.name,
-            mine: card.mine,
             left: card.until.since(now),
             front: index == 0,
         })
         .collect()
 }
 
-/// Asks the player whether to block `player`, and blocks them on a yes.
+/// Asks the player whether to block `player`, and blocks them once they confirm.
 pub(crate) fn block(world: &mut World, player: SocietyMember) {
     let name = &player.name;
     hud::confirm(
@@ -129,7 +127,7 @@ enum Done {
     Block,
 }
 
-/// The cards the HUD shows now, the oldest first.
+/// The cards the HUD shows now, the oldest first: the requests the player is asked.
 fn on_hud(world: &World) -> Vec<RequestCard> {
     let Some(now) = time::server_now(world) else {
         return Vec::new();
@@ -139,7 +137,7 @@ fn on_hud(world: &World) -> Vec<RequestCard> {
         .map(|view| {
             view.requests
                 .iter()
-                .filter(|card| now < card.shown_until)
+                .filter(|card| !card.mine && now < card.shown_until)
                 .cloned()
                 .collect()
         })
@@ -156,19 +154,13 @@ fn front_card(ui: &mut Ui, world: &World, card: &RequestCard, now: UnixMillis) -
         });
     });
     ui.horizontal(|ui| {
-        if card.mine {
-            if controls::button(ui, "Take it back").clicked() {
-                done = Some(Done::Answer(RequestAnswer::TakeBack));
-            }
-            return;
-        }
         let accept = keys.name(InputAction::AcceptRequest);
         if controls::keyed(ui, "Accept", accept.as_deref(), true).clicked() {
             done = Some(Done::Answer(RequestAnswer::Accept));
         }
-        let decline = keys.name(InputAction::DeclineRequest);
-        if controls::keyed(ui, "Decline", decline.as_deref(), true).clicked() {
-            done = Some(Done::Answer(RequestAnswer::Decline));
+        let deny = keys.name(InputAction::DenyRequest);
+        if controls::keyed(ui, "Deny", deny.as_deref(), true).clicked() {
+            done = Some(Done::Answer(RequestAnswer::Deny));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if controls::button(ui, "Block").clicked() {
@@ -186,16 +178,16 @@ fn answer_card(world: &mut World, card: &RequestCard, answer: RequestAnswer) {
     });
 }
 
-/// The keys answer the card in front, when it is one the player is asked.
+/// The keys answer the card in front.
 fn answer_keys(world: &mut World) {
     let answer = if map::just_pressed(world, InputAction::AcceptRequest) {
         RequestAnswer::Accept
-    } else if map::just_pressed(world, InputAction::DeclineRequest) {
-        RequestAnswer::Decline
+    } else if map::just_pressed(world, InputAction::DenyRequest) {
+        RequestAnswer::Deny
     } else {
         return;
     };
-    if let Some(front) = on_hud(world).first().filter(|card| !card.mine) {
+    if let Some(front) = on_hud(world).first() {
         answer_card(world, front, answer);
     }
 }

@@ -299,6 +299,13 @@ pub struct InputOption {
     key: String,
 }
 
+impl InputOption {
+    /// The file the option stands for, where it stands for one.
+    pub fn file(&self) -> Option<&str> {
+        (!self.key.is_empty()).then_some(self.key.as_str())
+    }
+}
+
 const YES: &str = "yes";
 const NO: &str = "no";
 

@@ -463,8 +463,8 @@ pub struct GameWords {
     pub party_invite_asks: String,
     /// What an invitation to a party says to the player who invited `{name}`.
     pub party_invite_asked: String,
-    /// What a player is told as `{name}` declines their invitation to a party.
-    pub party_invite_declined: String,
+    /// What a player is told as `{name}` denies their invitation to a party.
+    pub party_invite_denied: String,
     /// What a player is told as their invitation to `{name}` runs out unanswered.
     pub party_invite_lapsed: String,
     /// What a player is told inviting someone to a party that has no room.
@@ -503,14 +503,12 @@ pub struct GameWords {
     pub spot_too_far: String,
     /// What a rider is told doing what their seat on `{mount}` does not let them.
     pub not_from_mount: String,
-    /// What a rider is told arriving somewhere their `{mount}` could not follow them to.
-    pub mount_left_behind: String,
     /// What a request for a seat on their `{about}` from `{name}` says to its driver.
     pub seat_asks: String,
     /// What a request for a seat says to the player who asked `{name}` for one.
     pub seat_asked: String,
-    /// What a player is told as `{name}` declines them a seat.
-    pub seat_declined: String,
+    /// What a player is told as `{name}` denies them a seat.
+    pub seat_denied: String,
     /// What a player is told as their request for a seat from `{name}` runs out unanswered.
     pub seat_lapsed: String,
     /// What a player is told asking for a seat on a mount that has none free.
@@ -853,8 +851,11 @@ pub fn client_app(
         .add_plugins((
             screen::ClientScreenPlugin { credentials },
             area::render::AreaRenderPlugin,
-            actor::render::ActorRenderPlugin,
-            actor::plate::PlatePlugin,
+            (
+                actor::render::ActorRenderPlugin,
+                actor::portrait::PortraitPlugin,
+                actor::plate::PlatePlugin,
+            ),
             movement::MovementRenderPlugin,
             combat::render::CombatRenderPlugin,
             (
@@ -889,6 +890,7 @@ pub fn client_app(
         ))
         .add_plugins((
             area_map::AreaMapPlugin,
+            party::frames::PartyFramesPlugin,
             save::notice::SavingNoticePlugin,
             social_request::card::plugin,
             society::tab::plugin,
@@ -1145,6 +1147,12 @@ fn check_settings(loading: &mut Loading) {
     );
     check.at_least("/chat/lines", settings.chat.lines, 1, "lines");
     check.at_least("/chat/within", settings.chat.within.0, 0.0, "seconds");
+    check.at_least(
+        "/chat/name_colors",
+        settings.chat.name_colors.len(),
+        1,
+        "colors",
+    );
     if let Some(friends) = &settings.friends {
         check.at_least("/friends/most", friends.most, 1, "friends");
         check.at_least("/friends/requests", friends.requests, 1, "requests");
@@ -1239,10 +1247,7 @@ fn check_settings(loading: &mut Loading) {
         ("sent_in_a_message", &settings.words.sent_in_a_message),
         ("party_invite_asks", &settings.words.party_invite_asks),
         ("party_invite_asked", &settings.words.party_invite_asked),
-        (
-            "party_invite_declined",
-            &settings.words.party_invite_declined,
-        ),
+        ("party_invite_denied", &settings.words.party_invite_denied),
         ("party_invite_lapsed", &settings.words.party_invite_lapsed),
         ("party_full", &settings.words.party_full),
         ("in_a_party", &settings.words.in_a_party),
@@ -1262,10 +1267,9 @@ fn check_settings(loading: &mut Loading) {
         ("no_ground_in_reach", &settings.words.no_ground_in_reach),
         ("spot_too_far", &settings.words.spot_too_far),
         ("not_from_mount", &settings.words.not_from_mount),
-        ("mount_left_behind", &settings.words.mount_left_behind),
         ("seat_asks", &settings.words.seat_asks),
         ("seat_asked", &settings.words.seat_asked),
-        ("seat_declined", &settings.words.seat_declined),
+        ("seat_denied", &settings.words.seat_denied),
         ("seat_lapsed", &settings.words.seat_lapsed),
         ("seats_taken", &settings.words.seats_taken),
         ("seat_out_of_reach", &settings.words.seat_out_of_reach),
