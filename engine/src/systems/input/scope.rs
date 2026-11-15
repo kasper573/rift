@@ -100,7 +100,7 @@ impl InputAction {
             | InputAction::InspectSkill
             | InputAction::UseSlot
             | InputAction::SlotOptions
-            | InputAction::ItemOptions => &[Typing, Modal, Conversation, Menu, World],
+            | InputAction::AddToChat => &[Typing, Modal, Conversation, Menu, World],
         }
     }
 }

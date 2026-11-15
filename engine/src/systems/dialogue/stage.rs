@@ -978,15 +978,8 @@ fn choices(ui: &mut Ui, world: &mut World, before: &StageDrawn) {
             {
                 card::open(world, item, Some(chip));
             }
-            let named: Vec<ItemId> = choice
-                .chips
-                .iter()
-                .filter_map(|chip| match chip {
-                    ChoiceChip::Pays { item, .. } | ChoiceChip::Gets { item, .. } => Some(*item),
-                    ChoiceChip::Needs { .. } => None,
-                })
-                .collect();
-            card::options(world, &response, &named);
+            let pointed: Vec<ItemId> = chip_item.iter().map(|(item, _)| *item).collect();
+            card::chat_shortcut(world, &response, &pointed);
             world
                 .resource_mut::<StageDrawn>()
                 .choices

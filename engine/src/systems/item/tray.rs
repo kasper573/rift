@@ -199,7 +199,7 @@ pub fn tray_slots(
                     } else {
                         vec!["Click to take it back".to_owned()]
                     };
-                    card::options(world, &response, &[placed.stack.item]);
+                    card::chat_shortcut(world, &response, &[placed.stack.item]);
                     hud::tooltip(&response, world, &def.name, &lines, None);
                 }
             });

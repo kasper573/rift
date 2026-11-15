@@ -346,7 +346,7 @@ fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name)
     });
-    item::card::options(world, &response, &[ware.item]);
+    item::card::chat_shortcut(world, &response, &[ware.item]);
     response
 }
 

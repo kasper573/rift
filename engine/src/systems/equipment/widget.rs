@@ -245,7 +245,7 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
     if matches!(place.slot, EquipmentPlace::Hand(_)) && fights_unarmed(world) {
         lines.push("Its stance has no set here: you fight as unarmed".to_owned());
     }
-    card::options(world, &response, &[item]);
+    card::chat_shortcut(world, &response, &[item]);
     card::tooltip_noted(world, &response, item, lines, Some(&hint));
 }
 

@@ -104,7 +104,7 @@ pub enum InputAction {
     InspectSkill,
     UseSlot,
     SlotOptions,
-    ItemOptions,
+    AddToChat,
     /// Held, to keep the wheel of emotes open round the player's character.
     Emotes,
     /// Held or tapped, to name the items lying round the player's character.
@@ -182,7 +182,7 @@ impl InputAction {
             | InputAction::InspectSkill
             | InputAction::UseSlot
             | InputAction::SlotOptions
-            | InputAction::ItemOptions => &[ActionReading::Click],
+            | InputAction::AddToChat => &[ActionReading::Click],
             InputAction::CarryItem => &[ActionReading::Drag],
             InputAction::SubmitText
             | InputAction::CompleteText

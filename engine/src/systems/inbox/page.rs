@@ -401,7 +401,7 @@ fn attachments(ui: &mut Ui, world: &mut World, row: &InboxRow) -> Option<Done> {
             if takes {
                 done = Some(Done::Take(row.id, Some(index as u32)));
             }
-            item::card::options(world, &response, &[stack.item]);
+            item::card::chat_shortcut(world, &response, &[stack.item]);
             hud::tooltip(
                 &response,
                 world,

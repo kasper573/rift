@@ -69,6 +69,8 @@ const ROW_WASH: f32 = 0.55;
 const ICON_GAP: f32 = 3.0;
 /// How wide the name of a thing being looked for is typed.
 const SEARCH_WIDTH: f32 = 110.0;
+/// The least room the name looked for is typed in, where the line leaves little.
+const SEARCH_LEAST: f32 = 60.0;
 
 #[derive(Resource, Default)]
 pub(crate) struct ChatView {
@@ -153,12 +155,26 @@ pub fn offered(world: &mut World, shown: &CardResponse, embed: ChatEmbed) {
     }
 }
 
-/// The entry of an open menu, labeled `label`, that sets `embed` in chat.
-pub fn menu_entry(ui: &mut Ui, world: &mut World, label: &str, embed: ChatEmbed) {
-    if ui.button(label).clicked() {
-        add(world, embed);
-        ui.close();
+/// Sets `embeds` in chat once the player asks for it on `response`, which shows them and must
+/// sense clicks.
+pub fn shortcut(
+    world: &mut World,
+    response: &egui::Response,
+    embeds: impl IntoIterator<Item = ChatEmbed>,
+) {
+    if map::clicked(world, InputAction::AddToChat, response) {
+        for embed in embeds {
+            add(world, embed);
+        }
     }
+}
+
+/// What a tooltip says of the shortcut, after what else it says.
+pub fn shortcut_hint() -> Vec<TextPiece> {
+    vec![
+        map::input(InputAction::AddToChat),
+        TextPiece::text(" to add it to chat"),
+    ]
 }
 
 /// Gives the keyboard back from chat: from the search for a thing to the line it is set in
@@ -949,7 +965,7 @@ fn cover_bars(ui: &mut Ui, world: &World, origin: Pos2, key: Id, bars: &[Rect]) 
     for (row, bar) in bars.iter().enumerate() {
         let bar = bar
             .translate(origin.to_vec2())
-            .shrink2(Vec2::new(-COVER_OVERHANG, bar.height() * COVER_INSET));
+            .shrink2(Vec2::new(0.0, bar.height() * COVER_INSET));
         let response = ui
             .interact(bar, key.with(row), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
@@ -961,9 +977,6 @@ fn cover_bars(ui: &mut Ui, world: &World, origin: Pos2, key: Id, bars: &[Rect]) 
     asked
 }
 
-/// How far a bar reaches past the letters it covers on each side, so the shadow under them
-/// stays under it.
-const COVER_OVERHANG: f32 = 2.0;
 /// How much of its row's height a bar leaves clear above and below itself.
 const COVER_INSET: f32 = 0.12;
 
@@ -1129,19 +1142,15 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 .iter()
                 .map(|found| Suggestion {
                     text: &found.name,
-                    detail: &found.detail,
+                    detail: "",
                 })
                 .collect();
             (format!("Show {kind} in the message"), listed)
         }
-        (None, Some(asked), _) => {
+        (None, Some(_), _) => {
             let listed = kinds
                 .iter()
-                .zip(&asked.kinds)
-                .map(|(text, kind)| Suggestion {
-                    text,
-                    detail: kind.hint(),
-                })
+                .map(|text| Suggestion { text, detail: "" })
                 .collect();
             ("Show in the message".to_owned(), listed)
         }
@@ -1300,7 +1309,7 @@ fn typed_field(
 }
 
 /// The search for a thing to set in the line, typed in the line where the thing will stand:
-/// the words before it, the name being looked for, and the words after.
+/// the words before it, the name being looked for, and the words after, all within `room`.
 fn sought_field(
     ui: &mut Ui,
     draft: &ChatDraft,
@@ -1318,34 +1327,34 @@ fn sought_field(
         .filter(|(held, _)| held.start >= at)
         .map(|(held, embed)| (held.start - at..held.end - at, embed))
         .collect();
-    let words = |ui: &mut Ui, text: String, held: &[(Range<usize>, ChatEmbed)], room: f32| {
-        if text.is_empty() {
+    let laid = |ui: &Ui, text: String, held: &[(Range<usize>, ChatEmbed)]| {
+        let (job, icons) = draft_job(&text, held, look, side);
+        (ui.fonts_mut(|fonts| fonts.layout_job(job)), icons)
+    };
+    // What does not fit is cut at the far end from the search, which stays in sight.
+    let words = |ui: &mut Ui, (galley, icons): (Arc<Galley>, Vec<EmbedIcon>), room: f32| {
+        let size = Vec2::new(galley.size().x.min(room.max(0.0)), galley.size().y);
+        if size.x <= 0.0 {
             return;
         }
-        let (job, icons) = draft_job(&text, held, look, side);
-        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-        let size = Vec2::new(galley.size().x.min(room.max(0.0)), galley.size().y);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        // What does not fit is cut at the far end from the search, which stays in sight.
         let from = Pos2::new(rect.right() - galley.size().x, rect.top());
         let painter = ui.painter().with_clip_rect(rect);
         embed_icons(&painter, from, &galley, &icons);
         painter.galley(from, galley, dusk::TEXT);
     };
     ui.spacing_mut().item_spacing.x = 2.0;
+    let starts = ui.cursor().left();
     let kind = format!("{}:", seeking.kind.name());
     let kind_wide = ui
         .painter()
         .layout_no_wrap(kind.clone(), look.font.clone(), dusk::NOTICE)
         .size()
         .x;
-    let search_room = kind_wide + SEARCH_WIDTH + 4.0 * ICON_GAP;
-    words(
-        ui,
-        letters[..at].iter().collect(),
-        &before,
-        room - search_room,
-    );
+    let said_before = laid(ui, letters[..at].iter().collect(), &before);
+    let around = kind_wide + 4.0 * ICON_GAP;
+    let search = (room - around - said_before.0.size().x).clamp(SEARCH_LEAST, SEARCH_WIDTH);
+    words(ui, said_before, room - around - search);
     let field = egui::Frame::new()
         .fill(dusk::FILL)
         .stroke(Stroke::new(1.0, dusk::BORDER))
@@ -1364,13 +1373,14 @@ fn sought_field(
                     .frame(egui::Frame::NONE)
                     .font(look.font.clone())
                     .text_color(dusk::TEXT)
-                    .desired_width(SEARCH_WIDTH)
+                    .desired_width(search)
                     .lock_focus(true),
             )
         })
         .inner;
-    let left = ui.available_width();
-    words(ui, letters[at..].iter().collect(), &after, left);
+    let left = room - (ui.cursor().left() - starts);
+    let said_after = laid(ui, letters[at..].iter().collect(), &after);
+    words(ui, said_after, left);
     field
 }
 
@@ -1465,7 +1475,6 @@ impl EmbedKindsAsked {
 struct FoundEmbed {
     embed: ChatEmbed,
     name: String,
-    detail: String,
 }
 
 /// The things of the kind looked for whose names match what is typed best, as a command line
@@ -1484,7 +1493,6 @@ fn found(world: &World, seeking: &EmbedSearch) -> Vec<FoundEmbed> {
             Some(FoundEmbed {
                 embed: ChatEmbed::of(content, seeking.kind, option.file()?)?,
                 name: option.text.clone(),
-                detail: option.detail.clone(),
             })
         })
         .collect()

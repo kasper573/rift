@@ -581,6 +581,12 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     {
         drag::carry(ui.ctx(), Carried::BarEntry { from: index, entry });
     }
+    let held = match entry {
+        HotbarEntry::Empty => None,
+        HotbarEntry::Skill(skill) => Some(ChatEmbed::Skill(skill)),
+        HotbarEntry::Item(item) => Some(ChatEmbed::Item(item)),
+    };
+    chat::shortcut(world, &response, held);
     let options = map::clicked(world, InputAction::SlotOptions, &response);
     menu::at_pointer(&response, options, |ui| {
         if ui.button("Rebind key").clicked() {
@@ -596,15 +602,6 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
                 entry: HotbarEntry::Empty,
             });
             ui.close();
-        }
-        match entry {
-            HotbarEntry::Empty => {}
-            HotbarEntry::Skill(skill) => {
-                chat::menu_entry(ui, world, chat::ADD_TO_CHAT, ChatEmbed::Skill(skill));
-            }
-            HotbarEntry::Item(item) => {
-                chat::menu_entry(ui, world, chat::ADD_TO_CHAT, ChatEmbed::Item(item));
-            }
         }
         ui.separator();
         let mut said = vec![TextPiece::text(format!(

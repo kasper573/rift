@@ -610,8 +610,8 @@
         }
       ]
     },
-    "item_options": {
-      "label": "Open an item's options",
+    "add_to_chat": {
+      "label": "Add what the pointer is on to the chat message",
       "bindings": [
         {
           "type": "click",

@@ -11,7 +11,6 @@ use ui::egui::{Rect, Response, Ui};
 use ui::face::{self, TextRole};
 use ui::glyph::CardKind;
 use ui::ink;
-use ui::menu;
 use ui::sheet::Depth;
 
 use crate::core::card::CardStyleDef;
@@ -104,29 +103,15 @@ pub fn inspect(world: &mut World, response: Response, item: ItemId) -> Response 
     if map::clicked(world, InputAction::InspectItem, &response) {
         open(world, item, Some(response.rect));
     }
-    options(world, &response, &[item]);
+    chat_shortcut(world, &response, &[item]);
     tooltip(world, &response, item);
     response
 }
 
-/// The menu of what else a player can do with the items `response` shows, wherever items are
-/// drawn: opened at the pointer, and naming each item where there are several. `response` must
-/// sense clicks.
-pub fn options(world: &mut World, response: &Response, items: &[ItemId]) {
-    if items.is_empty() {
-        return;
-    }
-    let content = world.resource::<Content>().clone();
-    let open = map::clicked(world, InputAction::ItemOptions, response);
-    menu::at_pointer(response, open, |ui| {
-        for &item in items {
-            let label = match items {
-                [_] => chat::ADD_TO_CHAT.to_owned(),
-                _ => format!("{}: {}", chat::ADD_TO_CHAT, item.get(&content).name),
-            };
-            chat::menu_entry(ui, world, &label, ChatEmbed::Item(item));
-        }
-    });
+/// Sets the items `response` shows in chat once the player asks for it there, wherever items
+/// are drawn. `response` must sense clicks.
+pub fn chat_shortcut(world: &mut World, response: &Response, items: &[ItemId]) {
+    chat::shortcut(world, response, items.iter().copied().map(ChatEmbed::Item));
 }
 
 pub fn tooltip(world: &mut World, response: &Response, item: ItemId) {
@@ -175,12 +160,12 @@ fn worn_as(wear: &Wear) -> String {
 }
 
 pub fn inspect_hint() -> Vec<TextPiece> {
-    vec![
+    let mut hint = vec![
         input(InputAction::InspectItem),
         TextPiece::text(" for more information · "),
-        input(InputAction::ItemOptions),
-        TextPiece::text(" for options"),
-    ]
+    ];
+    hint.extend(chat::shortcut_hint());
+    hint
 }
 
 pub fn use_verb(def: &ItemDef) -> Option<&'static str> {

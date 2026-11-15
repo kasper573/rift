@@ -39,7 +39,7 @@ const BAND_TEXT_INSET: f32 = 28.0;
 const ACTION: f32 = 18.0;
 const ACTION_GAP: f32 = 4.0;
 /// How much of its ink a card's action shows while the pointer is elsewhere.
-const ACTION_AT_REST: f32 = 0.45;
+const ACTION_AT_REST: f32 = 0.55;
 const PANE_GAP: f32 = 10.0;
 const STRIP: f32 = 18.0;
 /// How far in from the frame's lower right corner a seal is stamped, clear of the kind's mark
