@@ -137,6 +137,7 @@ impl Sim {
         self.world.entity_mut(player).insert(Crossing {
             dest_area,
             dest: at,
+            instance: None,
         });
         self.hand_over(to)
     }

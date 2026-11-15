@@ -32,7 +32,7 @@ use crate::systems::item::{Inventory, ItemId};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
-use crate::systems::{equipment, item, mount, party, quest, skill, social_request};
+use crate::systems::{area_instance, equipment, item, mount, party, quest, skill, social_request};
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
 pub(crate) const MARGIN: f32 = 8.0;
@@ -221,6 +221,10 @@ static WIDGETS: &[(&str, &dyn HudWidget)] = &[
         &party::frames::PartyFramesWidget,
     ),
     (mount::plate::MOUNT_PLATE, &mount::plate::MountPlateWidget),
+    (
+        area_instance::plate::INSTANCE_PLATE,
+        &area_instance::plate::InstancePlateWidget,
+    ),
 ];
 
 #[derive(Resource, Default)]

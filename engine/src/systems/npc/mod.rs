@@ -157,6 +157,11 @@ fn check_held(
     }
 }
 
+/// What a goal of defeating `npc` reads as.
+pub fn defeat_label(content: &Content, npc: NpcId) -> String {
+    format!("Defeat the {}", npc.get(content).name)
+}
+
 pub fn can_be_fought(scripts: &RiftScripts, npc: NpcId) -> bool {
     scripts
         .may_do(OwnerRow::of_row(npc))

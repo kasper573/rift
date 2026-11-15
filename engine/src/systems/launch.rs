@@ -156,6 +156,8 @@ pub struct ServerConfig {
     /// a client that came by another address can't connect.
     pub public_ip: IpAddr,
     pub max_clients: usize,
+    /// How many instances of the game's instanced areas run at once.
+    pub max_instances: u32,
     pub content_dir: PathBuf,
     pub player_spawn_policy: SpawnPolicy,
     pub player_immortal: bool,
@@ -195,6 +197,7 @@ impl ServerConfig {
             udp_port: 0,
             public_ip: loopback,
             max_clients: 8,
+            max_instances: 8,
             content_dir,
             player_spawn_policy: SpawnPolicy::Map,
             player_immortal: false,

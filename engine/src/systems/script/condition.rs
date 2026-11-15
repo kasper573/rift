@@ -256,6 +256,10 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> Wording {
         RiftQuery::MastersRecipe { recipe, .. } => format!("{} mastery", recipe.recipe.0),
         RiftQuery::InParty { .. } => "in a party".to_owned(),
         RiftQuery::Riding { .. } => "riding".to_owned(),
+        RiftQuery::InInstance { .. } => "in an instance".to_owned(),
+        RiftQuery::InstanceHolds { area, .. } => {
+            format!("inside their {}", content.name_of(*area))
+        }
         RiftQuery::FreeSlots { .. } => "free slots".to_owned(),
         RiftQuery::Offered { item, .. } => match item {
             Some(item) => format!("{} offered", content.name_of(*item)),

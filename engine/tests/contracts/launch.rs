@@ -17,6 +17,7 @@ fn server_config(rng_seed: Option<u64>) -> ServerConfig {
         udp_port: 4001,
         public_ip: IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),
         max_clients: 8,
+        max_instances: 4,
         content_dir: PathBuf::from("/games/example"),
         player_spawn_policy: SpawnPolicy::Dist,
         player_immortal: true,

@@ -1066,6 +1066,12 @@ fn words() -> GameWords {
         seat_out_of_reach: "Too far from the mount for a seat".to_owned(),
         set_down_by: "{name} set you down".to_owned(),
         seat_free: "Seat free".to_owned(),
+        instance_full: "{area} holds no more than {holds}".to_owned(),
+        instances_busy: "There is no room right now".to_owned(),
+        instance_timed_out: "Time ran out in {area}".to_owned(),
+        instance_not_yours: "You are no longer of this party".to_owned(),
+        instance_rewards_title: "Your rewards from {area}".to_owned(),
+        instance_rewards_text: "Your bag had no room for these.".to_owned(),
     }
 }
 

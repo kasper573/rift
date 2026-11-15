@@ -140,6 +140,11 @@ impl PlayerParties {
         self.parties.get(self.of.get(account)?)
     }
 
+    /// Whether there is a party `id`.
+    pub fn holds(&self, id: PartyId) -> bool {
+        self.parties.contains_key(&id)
+    }
+
     /// Whether the two are in one party.
     pub fn together(&self, one: &AccountId, other: &AccountId) -> bool {
         self.of

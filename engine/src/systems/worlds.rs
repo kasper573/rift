@@ -1,4 +1,5 @@
-//! The worlds a server runs: one for each area, in one list, stepped together each tick.
+//! The worlds a server runs: one for each area and one for each instance of one, stepped
+//! together each tick.
 
 use bevy_ecs::prelude::{Entity, World};
 use rayon::prelude::*;
@@ -6,12 +7,30 @@ use rayon::prelude::*;
 use crate::core::content::Content;
 use crate::core::time::{UnixMillis, WallClock};
 use crate::systems::area::{AreaDef, AreaId};
+use crate::systems::area_instance::AreaInstanceId;
 use crate::systems::player::errand::{self, Errand, ErrandOutcome};
 use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Departure, Players};
 use crate::systems::save::{self, Checkpoints};
 use crate::systems::society::{self, ServerSociety};
 use crate::systems::{player, stat, step_area};
+
+/// Which of a server's worlds: the one everyone in `area` shares, or an instance of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WorldName {
+    pub area: AreaId,
+    pub instance: Option<AreaInstanceId>,
+}
+
+impl WorldName {
+    /// The world everyone in `area` shares.
+    pub fn shared(area: AreaId) -> WorldName {
+        WorldName {
+            area,
+            instance: None,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Worlds {
@@ -31,12 +50,17 @@ impl Worlds {
         self.areas.iter().copied()
     }
 
-    /// The first world running `area`.
-    pub fn world_of(&self, area: AreaId) -> usize {
-        self.areas
-            .iter()
-            .position(|&running| running == area)
-            .expect("every area has a world")
+    /// What tells `name` from every other world the server has run since it started: an area's
+    /// place in the list, and past the list an instance's.
+    pub fn ordinal(&self, name: WorldName) -> u64 {
+        match name.instance {
+            Some(instance) => self.areas.len() as u64 + u64::from(instance.0),
+            None => self
+                .areas
+                .iter()
+                .position(|&running| running == name.area)
+                .expect("every area has a world") as u64,
+        }
     }
 }
 

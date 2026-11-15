@@ -63,6 +63,7 @@ use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, GridDims, MeterSize, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
+use crate::systems::area_instance::AreaInstanceRules;
 use crate::systems::mount::MountKind;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
@@ -185,6 +186,10 @@ pub struct AreaDef {
     /// arrives on foot.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bars_mounts: Vec<MountKind>,
+    /// With it, the area is never shared: it is only ever entered as an instance, a copy of it
+    /// that is one party's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<AreaInstanceRules>,
     #[serde(skip)]
     pub scene: Vec<SceneNode>,
     #[serde(skip)]
@@ -219,6 +224,7 @@ impl ContentFile for AreaDef {
             lighting: Lighting::day(),
             climate: Climate::always(Weather::breezy()),
             bars_mounts: Vec::new(),
+            instance: None,
             scene: vec![SceneNode::Module(scene::ModuleNode::new(AreaModule::Fog(
                 FogBank::light_over(size.bounds()),
             )))],
@@ -249,6 +255,9 @@ impl ContentFile for AreaDef {
         );
         self.lighting.check("/lighting", cx);
         self.climate.check("/climate", cx);
+        if let Some(rules) = &self.instance {
+            rules.check("/instance", cx);
+        }
     }
 }
 

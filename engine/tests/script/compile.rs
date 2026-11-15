@@ -346,6 +346,8 @@ fn every_capability() -> Vec<Value> {
         json!({ "type": "set_attitude", "attitude": "hostile" }),
         json!({ "type": "spawn_npcs", "npc": "fighter.npc.json", "count": 1, "spread": 1.5, "near": "subject", "shown": "everyone" }),
         json!({ "type": "despawn" }),
+        json!({ "type": "leave_instance" }),
+        json!({ "type": "complete_goal", "task": "open_the_gate" }),
         json!({ "type": "play_sound", "sfx": "fixtures/interface/ui_pick.sfx", "for": "subject" }),
     ]
 }

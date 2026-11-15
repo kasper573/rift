@@ -36,9 +36,14 @@ pub struct Server {
 impl Server {
     /// A server of `game`, whose players ask each other for what `sources` bring.
     pub fn of(game: Game, sources: Vec<SocialRequestSource>) -> Server {
+        Server::hosting(game, sources, 0)
+    }
+
+    /// A server of `game` that runs at most `instances` instances at once.
+    pub fn hosting(game: Game, sources: Vec<SocialRequestSource>, instances: u32) -> Server {
         let content = game.load();
         let above = AboveWorlds {
-            society: ServerSociety::of(Society::new(sources)),
+            society: ServerSociety::of(Society::new(sources).hosting(instances)),
             ..AboveWorlds::unsaved()
         };
         Server::with(&content, above)
@@ -200,7 +205,8 @@ impl Server {
     }
 }
 
-fn serving(content: &Content, area: &str) -> Sim {
+/// A world of `area` that plays what players ask of each other.
+pub fn serving(content: &Content, area: &str) -> Sim {
     let mut sim = Sim::new(content.clone());
     sim.serve(area)
         .message::<ToClient<HistoryNews>>()

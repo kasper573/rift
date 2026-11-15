@@ -9,6 +9,7 @@ use super::{Away, CharacterAccount, ClientId, Players};
 use crate::systems::account::AccountId;
 use crate::systems::actor::Name;
 use crate::systems::area::AreaTag;
+use crate::systems::area_instance::{AreaInstanceId, AreaInstanceWorld};
 use crate::systems::movement;
 use crate::systems::script::Place;
 
@@ -30,6 +31,8 @@ pub struct Enrolled {
     pub account: Option<AccountId>,
     pub name: String,
     pub place: Place,
+    /// The instance their world is, unless it is one everyone in its area shares.
+    pub instance: Option<AreaInstanceId>,
     /// Whether the character stands in the world without its player.
     pub away: bool,
 }
@@ -90,6 +93,7 @@ pub fn enroll(world: &mut World, roster: &ServerRoster) -> Enrollment {
 }
 
 fn enrolled(world: &World) -> Vec<Enrolled> {
+    let instance = world.get_resource::<AreaInstanceWorld>().map(|run| run.id);
     let mut enrolled: Vec<Enrolled> = world
         .resource::<Players>()
         .0
@@ -101,6 +105,7 @@ fn enrolled(world: &World) -> Vec<Enrolled> {
                     .get::<CharacterAccount>(character)
                     .map(|account| account.0.clone()),
                 away: world.get::<Away>(character).is_some(),
+                instance,
                 name: world.get::<Name>(character)?.name.clone(),
                 place: Place {
                     area: world.get::<AreaTag>(character)?.area,

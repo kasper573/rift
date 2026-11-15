@@ -1,6 +1,6 @@
 mod transport;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -27,7 +27,7 @@ use engine::core::os::StdinClosed;
 use engine::core::store::{Record, RecordId, RecordStore, RecordStoreProblem};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::systems::account::{AccountId, AccountIdentity};
-use engine::systems::area::{self, transition};
+use engine::systems::area::{self, AreaDef, AreaId, transition};
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, ReadyLine, SERVER_ENV_PREFIX,
     ServerConfig, ServerDaylight, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC,
@@ -41,7 +41,7 @@ use engine::systems::save::{
 };
 use engine::systems::society::{ServerSociety, Society};
 use engine::systems::staging::{self, STAGING_ROUTE, Staging};
-use engine::systems::worlds::{self, AboveWorlds, Worlds};
+use engine::systems::worlds::{self, AboveWorlds, WorldName, Worlds};
 use engine::systems::{GameSettings, TICK_HZ, load_content, server_app, start_server};
 use metrics::{counter, gauge, histogram};
 use renet2::{DisconnectReason, ServerEvent};
@@ -111,7 +111,7 @@ fn main() {
         });
     let above = AboveWorlds {
         roster: Default::default(),
-        society: ServerSociety::of(society),
+        society: ServerSociety::of(society.hosting(config.max_instances)),
         checkpoints: Checkpoints::to(
             store.clone(),
             runtime.handle().clone(),
@@ -154,8 +154,11 @@ fn main() {
     let http_addr = listener.local_addr().expect("bound http address");
     let areas = Worlds::of(&content);
     let lobby = Lobby {
-        spawn: areas.world_of(settings.initial_spawn.area),
-        areas: areas.clone(),
+        spawn: WorldName::shared(settings.initial_spawn.area),
+        dealt: content
+            .ids::<AreaDef>()
+            .filter(|area| area.get(&content).instance.is_none())
+            .collect(),
         content: content.clone(),
         policy: config.player_spawn_policy,
         online,
@@ -178,13 +181,12 @@ fn main() {
         "{SERVER_ENV_PREFIX}HOUR: a fixed daylight names the hour it holds at"
     );
     let weather = config.weather.course(wall_clock(reset).now);
-    let running: Vec<_> = areas.iter().collect();
     let mut worlds = AreaWorlds {
-        apps: running.iter().map(|_| None).collect(),
-        make: Box::new(move |ordinal| {
+        apps: BTreeMap::new(),
+        make: Box::new(move |name| {
             let mut app = server_app(
-                running[ordinal],
-                ordinal as u64,
+                name.area,
+                areas.ordinal(name),
                 rng_seed,
                 wall_clock(reset),
                 day,
@@ -214,46 +216,51 @@ fn main() {
     runtime.shutdown_background();
 }
 
-/// The world of every area, each made when a client first comes to it: a game of many areas
-/// costs only the worlds its players have been to.
+/// The worlds the server runs, each made when a player first comes to it: a game of many areas
+/// costs only the worlds its players have been to, and an instance its world only while society
+/// holds it.
 struct AreaWorlds {
-    apps: Vec<Option<App>>,
-    make: Box<dyn Fn(usize) -> App>,
+    apps: BTreeMap<WorldName, App>,
+    make: Box<dyn Fn(WorldName) -> App>,
 }
 
 impl AreaWorlds {
-    /// The world of area `index`, made now if it wasn't.
-    fn app(&mut self, index: usize) -> &mut App {
+    /// The world `name`, made now if it wasn't.
+    fn app(&mut self, name: WorldName) -> &mut App {
         let make = &self.make;
-        self.apps[index].get_or_insert_with(|| make(index))
-    }
-
-    fn count(&self) -> usize {
-        self.apps.len()
+        self.apps.entry(name).or_insert_with(|| make(name))
     }
 
     fn made(&mut self) -> impl Iterator<Item = &mut App> {
-        self.apps.iter_mut().flatten()
+        self.apps.values_mut()
     }
 
-    /// Every area's world as a tick takes them, none for those not made.
+    /// Every world made, as a tick takes them.
     fn views(&mut self) -> Vec<Option<&mut World>> {
-        self.apps
-            .iter_mut()
-            .map(|app| app.as_mut().map(App::world_mut))
-            .collect()
+        self.made().map(|app| Some(app.world_mut())).collect()
+    }
+
+    /// Lets go of the world of every instance `society` holds no longer.
+    fn close_instances(&mut self, society: &ServerSociety) {
+        let society = society.read();
+        self.apps.retain(|name, _| {
+            name.instance
+                .is_none_or(|instance| society.instances().get(instance).is_some())
+        });
     }
 }
 
 struct Lobby {
     /// The world of the game's initial spawn.
-    spawn: usize,
-    areas: Worlds,
+    spawn: WorldName,
+    /// The areas new characters are dealt across, on a server that deals them: every area that
+    /// is not only ever entered as an instance.
+    dealt: Vec<AreaId>,
     content: Content,
     policy: SpawnPolicy,
     online: Online,
     /// The world each character stands in, its player there or gone.
-    places: HashMap<ClientId, usize>,
+    places: HashMap<ClientId, WorldName>,
     test_characters: Option<TestCharacters>,
     next_client: u32,
     next_dealt: usize,
@@ -263,7 +270,7 @@ struct Lobby {
 /// unless it makes or shares one, and what the game changing did to that character.
 struct Admitted {
     client: ClientId,
-    world: usize,
+    world: WorldName,
     join_as: Option<JoinAs>,
     changes: Vec<GameChange>,
 }
@@ -278,7 +285,6 @@ impl Lobby {
         identity: &AccountIdentity,
         found: SessionCharacter,
         above: &mut AboveWorlds,
-        worlds: usize,
         now: UnixMillis,
     ) -> Option<Admitted> {
         let mut accounts = self.online.0.lock().expect("online lock");
@@ -312,11 +318,11 @@ impl Lobby {
             .society
             .signed_in(identity, now, &mut above.checkpoints.unwritten);
         let world = match (&join_as, self.policy) {
-            (Some(join_as), _) => self.areas.world_of(join_as.start.area),
+            (Some(join_as), _) => WorldName::shared(join_as.start.area),
             (None, SpawnPolicy::Dist) => {
-                let world = self.next_dealt % worlds;
+                let area = self.dealt[self.next_dealt % self.dealt.len()];
                 self.next_dealt += 1;
-                world
+                WorldName::shared(area)
             }
             (None, SpawnPolicy::Map) => self.spawn,
         };
@@ -379,7 +385,6 @@ fn simulate(
                         &session.identity,
                         session.found,
                         &mut above,
-                        worlds.count(),
                         wall_clock(reset).now,
                     ) else {
                         transport.disconnect(client_id);
@@ -448,6 +453,7 @@ fn simulate(
             lobby.leave(departure.client);
         }
         travel(&mut worlds, &mut conns, &mut lobby);
+        worlds.close_instances(&above.society);
 
         for (&network_id, conn) in &conns {
             let world = worlds.app(conn.world).world_mut();
@@ -654,7 +660,7 @@ impl Stop {
 }
 
 struct Conn {
-    world: usize,
+    world: WorldName,
     entity: Entity,
     client: ClientId,
 }
@@ -678,14 +684,20 @@ fn spawn_conn(
 }
 
 /// Every travelling player's character placed in the world of the place it is bound for, its
-/// connections with it.
+/// connections with it: the instance it was let into, or the world everyone in the area shares.
 fn travel(worlds: &mut AreaWorlds, conns: &mut HashMap<u64, Conn>, lobby: &mut Lobby) {
     let travelers: Vec<_> = worlds
         .made()
         .flat_map(|app| transition::departing(app.world_mut()))
         .collect();
     for traveler in travelers {
-        let dest = lobby.areas.world_of(traveler.dest_area);
+        let dest = WorldName {
+            area: traveler.dest_area,
+            instance: traveler.instance.map(|run| run.id),
+        };
+        if let Some(run) = traveler.instance {
+            worlds.app(dest).insert_resource(run);
+        }
         let client = traveler.played.client;
         move_client(worlds, conns, client, dest);
         lobby.places.insert(client, dest);
@@ -699,7 +711,7 @@ fn move_client(
     worlds: &mut AreaWorlds,
     conns: &mut HashMap<u64, Conn>,
     client: ClientId,
-    dest: usize,
+    dest: WorldName,
 ) {
     for conn in conns.values_mut().filter(|conn| conn.client == client) {
         let mut leaving = worlds.app(conn.world).world_mut().entity_mut(conn.entity);
@@ -972,6 +984,10 @@ async fn test_character(State(http): State<Http>, headers: HeaderMap, body: Stri
         .unwrap_or_else(|| snapshot::start_of(content, character.get(content)));
     if let Err(problem) = area::check_place(content, start) {
         return (StatusCode::BAD_REQUEST, format!("bad start: {problem}")).into_response();
+    }
+    if start.area.get(content).instance.is_some() {
+        let refusal = "bad start: an instanced area is entered through what lets players in";
+        return (StatusCode::BAD_REQUEST, refusal).into_response();
     }
     if characters
         .online

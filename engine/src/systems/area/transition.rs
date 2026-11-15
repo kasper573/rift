@@ -6,6 +6,7 @@ use super::AreaId;
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
+use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
 use crate::systems::mount::{self, CrossingRide};
 use crate::systems::npc::Npc;
@@ -17,6 +18,8 @@ use crate::systems::text::LineText;
 pub struct Crossing {
     pub dest_area: AreaId,
     pub dest: Pos<Meters>,
+    /// The instance of the area they are bound for, or the world everyone there shares.
+    pub instance: Option<AreaInstanceWorld>,
 }
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
@@ -44,6 +47,8 @@ pub struct Traveler {
     pub played: Played,
     pub dest_area: AreaId,
     pub dest: Pos<Meters>,
+    /// The instance of the area they are bound for, or the world everyone there shares.
+    pub instance: Option<AreaInstanceWorld>,
     pub state: CharacterState,
     /// The mount they rode out on, and where on it they sat.
     pub ride: Option<CrossingRide>,
@@ -123,6 +128,7 @@ fn leave(
         played: Played::of(world, entity)?,
         dest_area: crossing.dest_area,
         dest: crossing.dest,
+        instance: crossing.instance,
         state,
         ride,
     };

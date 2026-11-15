@@ -79,6 +79,7 @@ use crate::systems::actor::{
 };
 use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayName};
+use crate::systems::area_instance::{self, plate::ShownAreaInstance};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::crafting::{self, RecipeId};
@@ -368,6 +369,8 @@ pub struct ProbeSnapshot {
     pub chat: ShownChat,
     /// The mount the player's character rides, the seat they hold and who sits where.
     pub mount: Option<ShownMount>,
+    /// The instance the player's character is inside, as the plate shows it.
+    pub instance: Option<ShownAreaInstance>,
     /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
     /// spot has against it.
     pub spot_aim: Option<SpotAim>,
@@ -1250,6 +1253,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         party: party::page::shown(world),
         chat: terminal::chat::shown(world),
         mount: mount::plate::shown(world),
+        instance: area_instance::plate::shown(world),
         spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
         history: ProbeHistory {

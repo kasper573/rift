@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "8903ca00",
+  "content_version": "8fddfd1b",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -192,7 +192,13 @@
     "seats_taken": "Every seat is taken",
     "seat_out_of_reach": "Too far from the mount for a seat",
     "set_down_by": "{name} set you down",
-    "seat_free": "Seat free"
+    "seat_free": "Seat free",
+    "instance_full": "{area} holds no more than {holds}",
+    "instances_busy": "There is no room right now",
+    "instance_timed_out": "Time ran out in {area}",
+    "instance_not_yours": "You are no longer of this party",
+    "instance_rewards_title": "Your rewards from {area}",
+    "instance_rewards_text": "Your bag had no room for these."
   },
   "typing": {
     "pace": 45.0,

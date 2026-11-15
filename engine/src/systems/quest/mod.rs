@@ -272,9 +272,7 @@ impl QuestDef {
     ) -> String {
         match objective {
             Objective::Hold(stack) => stack.item.get(content).name.to_owned(),
-            Objective::Defeat { npc, .. } => {
-                format!("Defeat the {}", npc.get(content).name)
-            }
+            Objective::Defeat { npc, .. } => crate::systems::npc::defeat_label(content, *npc),
             Objective::Task { label, .. } | Objective::Decide { label, .. } => (*label).to_owned(),
             Objective::Deliver { item } => format!(
                 "Bring {} to {}",

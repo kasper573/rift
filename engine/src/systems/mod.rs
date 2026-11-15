@@ -1,6 +1,7 @@
 pub mod account;
 pub mod actor;
 pub mod area;
+pub mod area_instance;
 pub mod area_map;
 pub mod attention;
 pub mod belongings;
@@ -119,6 +120,7 @@ pub fn protocol(app: &mut App) {
     inbox::register(app);
     party::register(app);
     mount::register(app);
+    area_instance::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -183,6 +185,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<player::errand::Errands>();
     world.init_resource::<society::ServerSociety>();
     world.init_resource::<society::SocietyAsks>();
+    world.init_resource::<area_instance::AreaInstanceTally>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
@@ -517,6 +520,22 @@ pub struct GameWords {
     pub set_down_by: String,
     /// What the plate of a driver says under their name while their mount has a seat free.
     pub seat_free: String,
+    /// What a player is told at the door of their party's instance of `{area}`, which holds
+    /// `{holds}` and does already.
+    pub instance_full: String,
+    /// What a player is told at a door that would open an instance, while the server runs as
+    /// many as it is set to.
+    pub instances_busy: String,
+    /// What everyone inside an instance of `{area}` is told as its time runs out uncleared.
+    pub instance_timed_out: String,
+    /// What a player inside an instance reads once it is no longer theirs to be in.
+    pub instance_not_yours: String,
+    /// The title of the message the game sends a player whose bag had no room for what clearing
+    /// an instance of `{area}` gave them.
+    pub instance_rewards_title: String,
+    /// The text of the message the game sends a player whose bag had no room for what clearing
+    /// an instance of `{area}` gave them.
+    pub instance_rewards_text: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -673,7 +692,13 @@ pub fn server_app(
                     skill::reset::expire,
                     (actor::playing::progress, resource::swings, crafting::moves).chain(),
                     reach::mirror_engaged,
-                    (rewards::grant, quest::credit, npc::defeated).chain(),
+                    (
+                        rewards::grant,
+                        quest::credit,
+                        npc::defeated,
+                        area_instance::count_defeats,
+                    )
+                        .chain(),
                 )
                     .chain(),
                 tick::run,
@@ -697,6 +722,7 @@ pub fn server_app(
                         inbox::overflow,
                         party::requests,
                         mount::seat::requests,
+                        area_instance::requests,
                         chat::channel::list,
                     ),
                     player::linger,
@@ -870,6 +896,7 @@ pub fn client_app(
             party::page::plugin,
             mount::render::MountRenderPlugin,
             mount::plate::plugin,
+            area_instance::plate::plugin,
         ));
     app
 }
@@ -1243,6 +1270,18 @@ fn check_settings(loading: &mut Loading) {
         ("seat_out_of_reach", &settings.words.seat_out_of_reach),
         ("set_down_by", &settings.words.set_down_by),
         ("seat_free", &settings.words.seat_free),
+        ("instance_full", &settings.words.instance_full),
+        ("instances_busy", &settings.words.instances_busy),
+        ("instance_timed_out", &settings.words.instance_timed_out),
+        ("instance_not_yours", &settings.words.instance_not_yours),
+        (
+            "instance_rewards_title",
+            &settings.words.instance_rewards_title,
+        ),
+        (
+            "instance_rewards_text",
+            &settings.words.instance_rewards_text,
+        ),
     ]
     .into_iter()
     .chain(inbox::words(&settings.words))
@@ -1283,6 +1322,7 @@ fn check_settings(loading: &mut Loading) {
     for error in check.into_errors() {
         loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
     }
+    area_instance::check_all(loading, &content, settings);
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);
     }

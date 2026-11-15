@@ -325,6 +325,13 @@ pub enum EffectReach {
     Casts(SkillId),
     /// Seats someone as the driver of the mount.
     Mounts(MountId),
+    /// Lets someone into an instance of the area `to` is in, which they leave for `return_to`,
+    /// and whether clearing it gives items.
+    EntersInstance {
+        to: Place,
+        return_to: Place,
+        items: bool,
+    },
     ResetsSkills,
     Animates,
     ShowsVfx,
@@ -766,18 +773,27 @@ pub fn check_all(loading: &mut Loading) {
         let may_do = scripts.may_do(*row);
         for reach in &may_do.reaches {
             match reach {
-                EffectReach::Warp(place) if thorough => {
-                    if let Err(problem) = area::check_place(&content, *place) {
-                        loading.json_error(
-                            &site.file,
-                            &site.pointer,
-                            ContentProblem::new(
-                                problem.rule,
-                                format!("{label} warps to {}", problem.found),
-                                problem.expected,
-                            )
-                            .near(problem.nearest),
-                        );
+                EffectReach::Warp(_) | EffectReach::EntersInstance { .. } if thorough => {
+                    let leads = match reach {
+                        EffectReach::EntersInstance { to, return_to, .. } => {
+                            vec![("enters an instance at", *to), ("returns to", *return_to)]
+                        }
+                        EffectReach::Warp(place) => vec![("warps to", *place)],
+                        _ => Vec::new(),
+                    };
+                    for (does, place) in leads {
+                        if let Err(problem) = area::check_place(&content, place) {
+                            loading.json_error(
+                                &site.file,
+                                &site.pointer,
+                                ContentProblem::new(
+                                    problem.rule,
+                                    format!("{label} {does} {}", problem.found),
+                                    problem.expected,
+                                )
+                                .near(problem.nearest),
+                            );
+                        }
                     }
                 }
                 EffectReach::Speaks(npc) => {

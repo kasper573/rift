@@ -19,6 +19,7 @@ use crate::systems::actor::ActorModel;
 use crate::systems::actor::skeleton::BuildName;
 use crate::systems::actor::stance::{self, StanceId};
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, PropId};
+use crate::systems::area_instance::AreaInstanceRules;
 use crate::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers, WheelTurn};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{ItemDef, ItemId};
@@ -225,6 +226,8 @@ pub struct ProbeArea {
     pub props: Vec<ProbeProp>,
     #[schemars(with = "Vec<PosSchema>")]
     pub lights: Vec<Pos<Meters>>,
+    /// What the area asks of those inside, where it is only ever entered as an instance.
+    pub instance: Option<AreaInstanceRules>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -592,6 +595,7 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
         objects,
         props,
         lights: area.lights.iter().map(|light| light.at).collect(),
+        instance: id.get(content).instance.clone(),
     }
 }
 

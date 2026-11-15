@@ -14,6 +14,7 @@ use crate::core::units::Seconds;
 use crate::systems::account::AccountId;
 use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
 use crate::systems::area::{self, AreaId, transition::Discovered};
+use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::class::{Class, ClassId, NodeKey};
 use crate::systems::crafting::{self, RecipeKey, RecipeMasteries};
 use crate::systems::dialogue::Heard;
@@ -642,6 +643,12 @@ impl CharacterSnapshot {
         let area = world.resource::<WorldArea>().0;
         let at = world.get::<Position>(player)?.pos;
         let state = CharacterState::of(world, player, world.get::<SpawnPoint>(player)?.0)?;
+        // An instance is a run, gone with the server: whoever is saved inside one comes back
+        // where leaving it leads.
+        let (start, rises_at) = match world.get_resource::<AreaInstanceWorld>() {
+            Some(run) => (run.return_to, run.return_to.at),
+            None => (Place { area, at }, state.spawn.0),
+        };
         let log = &state.quests;
         let active = log.active.iter().map(|active| SnapshotQuest {
             quest: active.quest,
@@ -807,10 +814,10 @@ impl CharacterSnapshot {
                 })
                 .collect(),
             rises_at: Some(SnapshotSpot {
-                x: state.spawn.0.x,
-                y: state.spawn.0.y,
+                x: rises_at.x,
+                y: rises_at.y,
             }),
-            start: CharacterStart::At(Place { area, at }),
+            start: CharacterStart::At(start),
         };
         snapshot.keep_aside(&state.kept_aside);
         Some(snapshot)

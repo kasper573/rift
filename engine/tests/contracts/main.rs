@@ -21,6 +21,7 @@ mod gpu;
 mod grass;
 mod haze;
 mod impostor;
+mod instances;
 mod interaction;
 mod kill_credit;
 mod launch;

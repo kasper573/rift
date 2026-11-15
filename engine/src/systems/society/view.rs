@@ -6,10 +6,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{AccountNumber, ServerSociety, Society};
+use crate::core::content::Content;
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
+use crate::systems::area_instance::AreaInstanceShown;
 use crate::systems::inbox;
 use crate::systems::party::PartyShown;
 use crate::systems::player::CharacterAccount;
@@ -39,6 +41,8 @@ pub struct SocietyView {
     pub friends: Vec<FriendRow>,
     /// The party the account is in.
     pub party: Option<PartyShown>,
+    /// The instance the account's character is inside.
+    pub instance: Option<AreaInstanceShown>,
 }
 
 /// A friend, as the player whose friend they are sees them.
@@ -104,6 +108,7 @@ pub(crate) fn show(world: &mut World, character: Entity, society: &Society) {
         return;
     };
     view.party = PartyShown::of(society, &account.0, settings, client_of);
+    view.instance = AreaInstanceShown::of(society, &account.0, world.resource::<Content>());
     if world.get::<SocietyView>(character) != Some(&view) {
         world.entity_mut(character).insert(view);
     }
@@ -173,6 +178,7 @@ impl SocietyView {
                 .collect(),
             friends,
             party: None,
+            instance: None,
         })
     }
 }

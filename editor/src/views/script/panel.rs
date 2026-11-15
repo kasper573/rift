@@ -632,6 +632,13 @@ pub(crate) fn describe_reach(content: &Content, reach: &EffectReach) -> String {
             place_coords(place)
         ),
         EffectReach::Mounts(mount) => format!("calls {}", shown_path(mount.path(content))),
+        EffectReach::EntersInstance { to, return_to, .. } => format!(
+            "enters an instance of {} {}, returning to {} {}",
+            to.area.path(content),
+            place_coords(to),
+            return_to.area.path(content),
+            place_coords(return_to)
+        ),
         EffectReach::Takes(item) => format!("takes {}", shown_path(item.path(content))),
         EffectReach::Gives(item) => format!("gives {}", shown_path(item.path(content))),
         EffectReach::Drops(item) => format!("drops {}", shown_path(item.path(content))),

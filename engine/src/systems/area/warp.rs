@@ -8,6 +8,7 @@ use crate::core::content::{Content, SchemaMark};
 use crate::core::math::Pos;
 use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault};
 use crate::core::units::Meters;
+use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::npc::Npc;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{self, SpawnPoint};
@@ -66,6 +67,12 @@ impl EffectDef<RiftScripting> for Warp {
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let to = cx.place(&self.to)?;
+        if to.area.get(cx.content).instance.is_some() {
+            return Err(ScriptFault::new(
+                "warps into an instance",
+                "an enter_instance effect, the only way into an instanced area",
+            ));
+        }
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_anywhere(world, cx, &who);
             effects::reach(
@@ -148,6 +155,10 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
     if here != Some(to.area) && world.get::<Npc>(actor).is_some() {
         return Err("Npcs stay in their area".to_owned());
     }
+    let instanced = to.area.get(world.resource::<Content>()).instance.is_some();
+    if here != Some(to.area) && instanced {
+        return Err("Nobody is followed into an instance".to_owned());
+    }
     dialogue::close_for(world, actor);
     reach::forget(world, actor);
     let along = mount::warping(world, actor, to);
@@ -159,10 +170,28 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
             world.entity_mut(warped).insert(Crossing {
                 dest_area: to.area,
                 dest: to.at,
+                instance: None,
             });
         }
     }
     Ok(())
+}
+
+/// Sends a player's character on foot to `to` in another world: the instance `instance` of the
+/// place's area, or the world everyone in that area shares. Whatever they rode stays behind,
+/// and nobody who rode with them is taken along.
+pub fn cross(world: &mut World, character: Entity, to: Place, instance: Option<AreaInstanceWorld>) {
+    dialogue::close_for(world, character);
+    reach::forget(world, character);
+    mount::set_down(world, character);
+    world.entity_mut(character).insert((
+        SpawnPoint(to.at),
+        Crossing {
+            dest_area: to.area,
+            dest: to.at,
+            instance,
+        },
+    ));
 }
 
 /// Puts an actor down at `at` in its own area, or beside it when someone else rests there. A
