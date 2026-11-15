@@ -5,19 +5,15 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use bevy_ecs::prelude::*;
 
-use super::{ClientId, Players};
-use crate::core::content::Content;
-use crate::core::script::{ValueType, VariableType};
+use super::{Away, CharacterAccount, ClientId, Players};
+use crate::systems::account::AccountId;
 use crate::systems::actor::Name;
 use crate::systems::area::AreaTag;
-use crate::systems::memory::MemoryDef;
 use crate::systems::movement;
-use crate::systems::script::{Place, ScriptDef};
+use crate::systems::script::Place;
 
 /// Everyone playing on the server, world by world, as they stood when its worlds last
-/// conferred: one roster, which every world of the server holds. Only the worlds of a game whose
-/// scripts take a global player hold it: any other game never asks who plays beyond a world's
-/// own players.
+/// conferred: one roster, which every world of the server holds.
 #[derive(Resource, Clone, Default)]
 pub struct ServerRoster(Arc<ArcSwap<Vec<Enrollment>>>);
 
@@ -25,12 +21,17 @@ pub struct ServerRoster(Arc<ArcSwap<Vec<Enrollment>>>);
 #[derive(Resource, Clone, Default)]
 pub struct Enrollment(Arc<[Enrolled]>);
 
-/// One player of the roster: who they are and where their character stands.
+/// One player of the roster: who they are, where their character stands, and whether they are
+/// at it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Enrolled {
     pub client: ClientId,
+    /// The account the character is played for, when its client signed in as one.
+    pub account: Option<AccountId>,
     pub name: String,
     pub place: Place,
+    /// Whether the character stands in the world without its player.
+    pub away: bool,
 }
 
 impl ServerRoster {
@@ -61,6 +62,11 @@ impl ServerRoster {
         self.find(|enrolled| enrolled.client == client)
     }
 
+    /// The player whose character is played for `account`.
+    pub fn account(&self, account: &AccountId) -> Option<Enrolled> {
+        self.find(|enrolled| enrolled.account.as_ref() == Some(account))
+    }
+
     fn find(&self, mut is: impl FnMut(&Enrolled) -> bool) -> Option<Enrolled> {
         self.0
             .load()
@@ -69,27 +75,6 @@ impl ServerRoster {
             .find(|enrolled| is(enrolled))
             .cloned()
     }
-}
-
-/// Whether the game's scripts take or keep a global player, or a memory holds one, so its worlds
-/// must know who plays in the others.
-pub fn wanted(content: &Content) -> bool {
-    let scripted = content.table::<ScriptDef>().iter().any(|(_, script)| {
-        script
-            .variables
-            .values()
-            .any(|variable| variable.ty == VariableType::GlobalPlayer)
-            || script
-                .state
-                .values()
-                .chain(script.locals.values())
-                .any(|ty| *ty == ValueType::GlobalPlayer)
-    });
-    let remembered = content
-        .table::<MemoryDef>()
-        .iter()
-        .any(|(_, memory)| memory.ty == ValueType::GlobalPlayer);
-    scripted || remembered
 }
 
 /// Enrolls the players of `world` as they stand now, in the `roster` the world holds from here
@@ -112,6 +97,10 @@ fn enrolled(world: &World) -> Vec<Enrolled> {
         .filter_map(|(&client, &character)| {
             Some(Enrolled {
                 client,
+                account: world
+                    .get::<CharacterAccount>(character)
+                    .map(|account| account.0.clone()),
+                away: world.get::<Away>(character).is_some(),
                 name: world.get::<Name>(character)?.name.clone(),
                 place: Place {
                     area: world.get::<AreaTag>(character)?.area,

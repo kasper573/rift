@@ -10,7 +10,7 @@ use engine::systems::area::AreaId;
 use engine::systems::from_client;
 use engine::systems::movement::Position;
 use engine::systems::npc::Npc;
-use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, start_of};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, start_of};
 use engine::systems::player::{ClientId, Players};
 use engine::systems::script::Place;
 use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
@@ -36,7 +36,7 @@ pub fn join_as(world: &mut World, conn: Entity, character: &(CharacterSnapshot, 
     world.entity_mut(conn).insert(JoinAs {
         snapshot,
         start,
-        taken: None,
+        origin: JoinOrigin::Staged,
     });
 }
 

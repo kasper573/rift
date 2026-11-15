@@ -4,11 +4,13 @@ use bevy_ecs::prelude::{Entity, World};
 use rayon::prelude::*;
 
 use crate::core::content::Content;
-use crate::core::time::WallClock;
+use crate::core::time::{UnixMillis, WallClock};
 use crate::systems::area::{AreaDef, AreaId};
 use crate::systems::player::errand::{self, Errand, ErrandOutcome};
 use crate::systems::player::roster::{self, Enrollment, ServerRoster};
-use crate::systems::player::{ClientId, Players};
+use crate::systems::player::{ClientId, Departure, Players};
+use crate::systems::save::{self, Checkpoints};
+use crate::systems::society::Society;
 use crate::systems::{player, stat, step_area};
 
 #[derive(Clone)]
@@ -38,33 +40,58 @@ impl Worlds {
     }
 }
 
-/// One tick of the worlds a client is connected to, each on its own, across all cores, once they
-/// have conferred. A world with no one connected stands still, untouched, until someone comes.
-pub fn tick(views: &mut [Option<&mut World>], clock: WallClock) {
-    confer(views);
+/// What a server keeps above its worlds: who plays where, society, and what saving has under
+/// way.
+pub struct AboveWorlds {
+    pub roster: ServerRoster,
+    pub society: Society,
+    pub checkpoints: Checkpoints,
+}
+
+impl AboveWorlds {
+    /// With a society that holds nothing yet, saving nothing.
+    pub fn unsaved() -> AboveWorlds {
+        AboveWorlds {
+            roster: ServerRoster::default(),
+            society: Society::default(),
+            checkpoints: Checkpoints::none(),
+        }
+    }
+}
+
+/// One tick of the worlds anything of a player is in, each on its own, across all cores, once
+/// they have conferred: the characters that left a world since the last tick. A world with no
+/// client connected and no character in it stands still, untouched, until someone comes.
+pub fn tick(
+    views: &mut [Option<&mut World>],
+    clock: WallClock,
+    above: &mut AboveWorlds,
+) -> Vec<Departure> {
+    let gone = confer(views, above, clock.now);
     views
         .par_iter_mut()
         .filter_map(|world| world.as_deref_mut())
-        .filter(|world| player::any_connected(world))
+        .filter(|world| player::any_present(world))
         .for_each(|world| step_area(world, clock));
+    gone
 }
 
 /// What the worlds settle between ticks, the only time one hand holds them all: who plays where
-/// on the server, and every errand a world asked be done to a player in another. Each errand is
-/// answered, whatever became of its player. The worlds of a server play one game, so they keep
-/// a roster all alike: where the first keeps none, none has anything to settle, and the one the
-/// first keeps is the server's.
-pub fn confer(views: &mut [Option<&mut World>]) {
-    let first = views.iter().flatten().next();
-    let Some(roster) = first.and_then(|world| world.get_resource::<ServerRoster>().cloned()) else {
-        return;
-    };
-    for (asking, errand) in enroll(views, &roster) {
+/// on the server, every errand a world asked be done to a player in another, and the checkpoint
+/// that saves them all as they stand at this one instant. Each errand is answered, whatever
+/// became of its player. Says which characters left their world since the worlds last conferred.
+pub fn confer(
+    views: &mut [Option<&mut World>],
+    above: &mut AboveWorlds,
+    now: UnixMillis,
+) -> Vec<Departure> {
+    for (asking, errand) in enroll(views, &above.roster) {
         let outcome = carry(views, errand.to, errand.deed);
         if let Some(world) = views[asking].as_deref_mut() {
             (errand.then)(world, outcome);
         }
     }
+    save::checkpoint(views, &mut above.checkpoints, now)
 }
 
 /// Lists everyone on `roster`, each world enrolling its own players on a core of its own, and

@@ -613,7 +613,7 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
                     .map(|(slot, item)| (slot.clone(), *item))
                     .collect(),
                 hands: equipment::hands(&equipment),
-                plate: Some(PlateLabel::player(&snapshot.name)),
+                plate: Some(PlateLabel::player(&snapshot.name, None)),
             })
         }
         _ => None,

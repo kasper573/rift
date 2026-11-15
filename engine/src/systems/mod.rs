@@ -33,12 +33,14 @@ pub mod reach;
 pub mod region;
 pub mod resource;
 pub mod rewards;
+pub mod save;
 pub mod screen;
 pub mod script;
 pub mod settings;
 pub mod shop;
 pub mod skill;
 pub mod sleep;
+pub mod society;
 pub mod spawner;
 pub mod staging;
 pub mod stat;
@@ -105,6 +107,7 @@ pub fn protocol(app: &mut App) {
     status::register(app);
     equipment::register(app);
     history::register(app);
+    save::notice::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -151,11 +154,10 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<player::Players>();
     world.init_resource::<player::Connected>();
     world.init_resource::<player::Unwelcomed>();
-    if player::roster::wanted(content) {
-        world.init_resource::<player::roster::ServerRoster>();
-        world.init_resource::<player::roster::Enrollment>();
-        world.init_resource::<player::errand::Errands>();
-    }
+    world.init_resource::<player::Departures>();
+    world.init_resource::<player::roster::ServerRoster>();
+    world.init_resource::<player::roster::Enrollment>();
+    world.init_resource::<player::errand::Errands>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
@@ -250,6 +252,9 @@ pub struct GameSettings {
     pub history_merges_within: Seconds,
     /// How many ways to go on the terminal offers at the most for a command being typed.
     pub suggestions: u32,
+    /// How long a character stays in the world once its player is gone, however they left. At
+    /// zero it is gone at once.
+    pub lingers_for: Seconds,
 }
 
 /// How much a player keeps.
@@ -336,6 +341,34 @@ pub struct GameWords {
     pub command_refuses: String,
     /// What a player is told typing more than a command takes: `{usage}` spells it out.
     pub command_takes: String,
+    /// The heading over what a player is told the game changing did to their character.
+    pub game_changed: String,
+    /// What a player is told of something they had that the game no longer has: the file `{name}` of the type `{kind}`.
+    pub gone: String,
+    /// What became of something the game has no place for: it is kept, and returns when it has.
+    pub kept_aside: String,
+    /// What a player is told as their bag, now `{slots}` slots, is one stack short of what they carried.
+    pub stack_did_not_fit: String,
+    /// What a player is told as their bag, now `{slots}` slots, is `{stacks}` stacks short of what they carried.
+    pub stacks_did_not_fit: String,
+    /// What a player is told as the class `{class}` no longer allows the skills they had learned.
+    pub skills_rearranged: String,
+    /// What became of skills a class no longer allows: all `{points}` points are handed back.
+    pub points_returned: String,
+    /// The button a player puts away what they were told the game changing did with.
+    pub carry_on: String,
+    /// What the plate of a character says whose player is gone.
+    pub away: String,
+    /// The heading of what players are told while the game cannot save.
+    pub not_saving: String,
+    /// What players are told is at stake while the game cannot save: everything since `{time}`.
+    pub not_saving_since: String,
+    /// What players are told they may do while the game cannot save.
+    pub play_on: String,
+    /// The heading of what players are told as the game saves again.
+    pub saved: String,
+    /// What players are told as the game saves again.
+    pub saved_again: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -505,6 +538,8 @@ pub fn server_app(
                     (prompt::hold, crafting::hold, crafting::work).chain(),
                     item::expire_drops,
                     player::join,
+                    (save::notice::tell_returned, save::notice::tell_saving),
+                    player::linger,
                     player::respawn,
                     (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
                     combat::defeats,
@@ -663,7 +698,7 @@ pub fn client_app(
             terminal::TerminalPlugin,
             frame_rate::FrameRatePlugin,
         ))
-        .add_plugins(area_map::AreaMapPlugin);
+        .add_plugins((area_map::AreaMapPlugin, save::notice::SavingNoticePlugin));
     app
 }
 
@@ -922,6 +957,20 @@ fn check_settings(loading: &mut Loading) {
         ("command_needs", &settings.words.command_needs),
         ("command_refuses", &settings.words.command_refuses),
         ("command_takes", &settings.words.command_takes),
+        ("game_changed", &settings.words.game_changed),
+        ("gone", &settings.words.gone),
+        ("kept_aside", &settings.words.kept_aside),
+        ("stack_did_not_fit", &settings.words.stack_did_not_fit),
+        ("stacks_did_not_fit", &settings.words.stacks_did_not_fit),
+        ("skills_rearranged", &settings.words.skills_rearranged),
+        ("points_returned", &settings.words.points_returned),
+        ("carry_on", &settings.words.carry_on),
+        ("away", &settings.words.away),
+        ("not_saving", &settings.words.not_saving),
+        ("not_saving_since", &settings.words.not_saving_since),
+        ("play_on", &settings.words.play_on),
+        ("saved", &settings.words.saved),
+        ("saved_again", &settings.words.saved_again),
     ] {
         check.text(format!("/words/{field}"), said, 1, 80);
     }

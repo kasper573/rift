@@ -40,7 +40,7 @@ pub use load::{
 pub use mark::SchemaMark;
 pub use reader::{FolderReader, Unreadable, WrittenFiles};
 pub use report::{ContentProblem, ErrorPlace, LoadError, LoadReport, MISSING_FILE};
-pub use saved::SavedList;
+pub use saved::{MissingFile, SavedList, SetAside};
 pub use table::{
     AnyTable, Content, ContentBuilder, ContentFile, ContentNames, MODULES, ModuleRule, ModuleSet,
     NamedContent, ReadRow, Table,

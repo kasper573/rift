@@ -98,11 +98,12 @@ use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Rese
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
 use crate::systems::npc::{Npc, NpcId};
-use crate::systems::player::{PlayedBy, commands_locked, session};
+use crate::systems::player::{Away, PlayedBy, commands_locked, session};
 use crate::systems::prompt;
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
+use crate::systems::save::{self, notice::ShownSaving};
 use crate::systems::script::{RiftScripts, sky};
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
@@ -346,6 +347,8 @@ pub struct ProbeSnapshot {
     pub notifications: ProbeNotifications,
     pub feed: Vec<String>,
     pub feed_place: feed::FeedPlace,
+    /// What the interface shows of saving.
+    pub saving: ShownSaving,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -481,6 +484,8 @@ pub struct ProbeBody {
     pub appearance: Appearance,
     pub flies: bool,
     pub player: bool,
+    /// Whether it is a character whose player is gone, standing in the world without them.
+    pub away: bool,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
     /// Where it shows on screen, which runs behind `at` for others and ahead of it for the player's
@@ -1216,6 +1221,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         notifications: notifications(world),
         feed: feed::rows(world),
         feed_place: feed::place(world),
+        saving: save::notice::shown(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),
@@ -1703,6 +1709,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         appearance,
         flies,
         player: entity.contains::<PlayedBy>(),
+        away: entity.contains::<Away>(),
         at,
         drawn,
         aim: at,

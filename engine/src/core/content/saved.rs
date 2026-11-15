@@ -16,13 +16,33 @@ use super::id;
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedList<T> {
     here: Vec<T>,
-    set_aside: Vec<serde_json::Value>,
+    set_aside: Vec<SetAside>,
+}
+
+/// An entry of a saved list kept as it was saved, apart from those the game has.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SetAside {
+    pub entry: serde_json::Value,
+    /// The files it names that the game no longer has.
+    pub missing: Vec<MissingFile>,
+}
+
+/// A file something saved names and the game no longer has: its type, and its path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingFile {
+    pub table: &'static str,
+    pub path: String,
 }
 
 impl<T> SavedList<T> {
-    /// The entries naming files the game no longer has, as they were saved.
-    pub fn set_aside(&self) -> &[serde_json::Value] {
+    /// The entries set aside, as they were saved.
+    pub fn set_aside(&self) -> &[SetAside] {
         &self.set_aside
+    }
+
+    /// The entries set aside, to put back those a list written from the game's own is without.
+    pub fn set_aside_mut(&mut self) -> &mut Vec<SetAside> {
+        &mut self.set_aside
     }
 
     /// Whether it holds nothing at all, set aside or not.
@@ -30,9 +50,13 @@ impl<T> SavedList<T> {
         self.here.is_empty() && self.set_aside.is_empty()
     }
 
-    /// Keeps `entry` as it would be saved, apart from the entries the game has.
+    /// Keeps `entry` as it would be saved, apart from the entries the game has, though it names
+    /// no missing file.
     pub fn put_aside(&mut self, entry: serde_json::Value) {
-        self.set_aside.push(entry);
+        self.set_aside.push(SetAside {
+            entry,
+            missing: Vec::new(),
+        });
     }
 }
 
@@ -80,8 +104,8 @@ impl<T: Serialize> Serialize for SavedList<T> {
         for entry in &self.here {
             entries.serialize_element(entry)?;
         }
-        for entry in &self.set_aside {
-            entries.serialize_element(entry)?;
+        for aside in &self.set_aside {
+            entries.serialize_element(&aside.entry)?;
         }
         entries.end()
     }
@@ -96,10 +120,11 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for SavedList<T> {
         for entry in Vec::<serde_json::Value>::deserialize(deserializer)? {
             let met = id::references_met();
             let read = T::deserialize(&entry).map_err(de::Error::custom)?;
-            if id::forget_missing_since(met) {
-                list.set_aside.push(entry);
-            } else {
+            let missing = id::forget_missing_since(met);
+            if missing.is_empty() {
                 list.here.push(read);
+            } else {
+                list.set_aside.push(SetAside { entry, missing });
             }
         }
         Ok(list)

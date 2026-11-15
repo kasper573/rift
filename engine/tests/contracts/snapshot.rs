@@ -19,9 +19,9 @@ use engine::systems::item::{Inventory, ItemDef, ItemStack};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::Position;
 use engine::systems::player::snapshot::{
-    AtInitialSpawn, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, MemoryValue, QuestState,
-    RunningStatus, ShopStock, SnapshotBeat, SnapshotCooldown, SnapshotMemory, SnapshotQuest,
-    SnapshotRecord, SnapshotShop, SnapshotSkill, SnapshotSlot, SnapshotStatus,
+    AtInitialSpawn, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, JoinOrigin, MemoryValue,
+    QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCooldown, SnapshotMemory,
+    SnapshotQuest, SnapshotRecord, SnapshotShop, SnapshotSkill, SnapshotSlot, SnapshotStatus,
 };
 use engine::systems::player::{CharacterState, SpawnPoint, SpawnPolicy, SpawnRules, Xp};
 use engine::systems::quest::{QuestDef, QuestLog, QuestResult};
@@ -53,7 +53,7 @@ fn a_character_joined_from_a_row_is_that_character() {
         JoinAs {
             snapshot: snapshot.clone(),
             start,
-            taken: None,
+            origin: JoinOrigin::Staged,
         },
     );
     let world = &sim.world;
@@ -153,7 +153,7 @@ fn a_start_of_its_own_moves_the_character_and_nothing_else() {
         JoinAs {
             snapshot: snapshot.clone(),
             start: here,
-            taken: None,
+            origin: JoinOrigin::Staged,
         },
     );
     let world = &sim.world;
@@ -182,7 +182,7 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
         JoinAs {
             snapshot: tess(&content, start),
             start,
-            taken: None,
+            origin: JoinOrigin::Staged,
         },
     );
     let blessed = village.id::<StatusEffectDef>("blessed");
@@ -260,7 +260,10 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
         JoinAs {
             snapshot: read,
             start: place,
-            taken: Some(clock.now),
+            origin: JoinOrigin::Saved {
+                at: clock.now,
+                told: Vec::new(),
+            },
         },
     );
     again.tick();
@@ -314,7 +317,10 @@ fn what_runs_on_the_clock_ran_while_a_saved_character_was_away_and_its_effects_w
         JoinAs {
             snapshot,
             start,
-            taken: Some(now.before(away)),
+            origin: JoinOrigin::Saved {
+                at: now.before(away),
+                told: Vec::new(),
+            },
         },
     );
     forest.run(1.5);

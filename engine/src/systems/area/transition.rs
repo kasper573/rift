@@ -8,7 +8,7 @@ use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
 use crate::systems::npc::Npc;
-use crate::systems::player::{CharacterState, ClientId, PlayedBy, Players};
+use crate::systems::player::{CharacterState, Played, Players};
 use crate::systems::script::{EventKind, RiftEvent, RiftInstances, area_owner};
 use crate::systems::text::LineText;
 
@@ -40,7 +40,7 @@ impl Discovered {
 }
 
 pub struct Traveler {
-    pub client: ClientId,
+    pub played: Played,
     pub dest_area: AreaId,
     pub dest: Pos<Meters>,
     pub state: CharacterState,
@@ -63,7 +63,7 @@ pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
     let first_visit = traveler.state.discovered.discover(traveler.dest_area);
     let entity = crate::systems::player::place(
         world,
-        traveler.client,
+        traveler.played,
         traveler.dest_area,
         traveler.dest,
         traveler.state,
@@ -106,13 +106,16 @@ fn leave(
     let mut state = CharacterState::of(world, entity, dest)?;
     state.memory.leave_area(&content);
     let traveler = Traveler {
-        client: world.get::<PlayedBy>(entity)?.client,
+        played: Played::of(world, entity)?,
         dest_area,
         dest,
         state,
     };
     raise_area(world, EventKind::Left, entity);
-    world.resource_mut::<Players>().0.remove(&traveler.client);
+    world
+        .resource_mut::<Players>()
+        .0
+        .remove(&traveler.played.client);
     world.despawn(entity);
     Some(traveler)
 }

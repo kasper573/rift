@@ -4,13 +4,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::content::{
-    Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, SavedList, id,
-    serial,
+    Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, SavedList,
+    SetAside, id, serial,
 };
 use crate::core::math::Pos;
 use crate::core::script::{Value, ValueType};
 use crate::core::time::{GameDay, UnixMillis, WallClock};
 use crate::core::units::Seconds;
+use crate::systems::account::AccountId;
 use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
 use crate::systems::area::{self, AreaId, transition::Discovered};
 use crate::systems::class::{Class, ClassId, NodeKey};
@@ -21,7 +22,9 @@ use crate::systems::history::{History, HistoryEntry};
 use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::memory::{Memory, MemoryId};
 use crate::systems::movement::Position;
-use crate::systems::player::{CharacterState, PlayerDef, SpawnPoint, Xp, def};
+use crate::systems::player::{
+    CharacterAccount, CharacterState, PlayerDef, SpawnPoint, StandIn, Xp, def,
+};
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::script::Place;
 use crate::systems::shop::{Sale, ShopId, ShopLedger};
@@ -344,13 +347,128 @@ pub struct SnapshotSpot {
     pub y: f32,
 }
 
-/// The character a connection joins as, where it starts, and when its snapshot was taken, unless
-/// that is the moment it joins.
+/// An account's own character as it is saved: the snapshot, the moment it was taken, and what
+/// its player has been told the game changing did to it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavedCharacter {
+    pub account: AccountId,
+    pub saved_at: UnixMillis,
+    pub character: CharacterSnapshot,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub told: Vec<GameChange>,
+}
+
+impl SavedCharacter {
+    /// `character` as it stands, when it is an account's own and no stand-in for it.
+    pub fn of_live(world: &World, character: Entity) -> Option<SavedCharacter> {
+        if world.get::<StandIn>(character).is_some() {
+            return None;
+        }
+        Some(SavedCharacter {
+            account: world.get::<CharacterAccount>(character)?.0.clone(),
+            saved_at: world.resource::<WallClock>().now,
+            character: CharacterSnapshot::of_live(world, character)?,
+            told: world
+                .get::<KeptAside>(character)
+                .map(|kept| kept.told.clone())
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// Something a player comes back to that is not as they left it, because the game changed.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum GameChange {
+    /// Something they had names a file the game no longer has, and is kept aside as it was saved:
+    /// the type of the file, and the name it went by.
+    Gone { table: String, name: String },
+    /// Their bag holds fewer stacks than they carried, and these are kept aside.
+    DidNotFit { slots: u32, stacks: u32 },
+    /// Their class's skills no longer allow what they had learned, so every point is theirs to
+    /// spend again.
+    SkillsReset { class: String, points: u32 },
+}
+
+/// What a character was saved with that the game it came back to has no place for, kept as it
+/// was saved so every save writes it back, and what its player has been told of that.
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct KeptAside {
+    lists: Vec<(&'static str, Vec<SetAside>)>,
+    pub told: Vec<GameChange>,
+}
+
+/// Every list of `$snapshot` that sets entries aside, by its field, read through `$of`.
+macro_rules! saved_lists {
+    ($snapshot:expr, $of:ident) => {
+        [
+            ("recipe_masteries", $snapshot.recipe_masteries.$of()),
+            ("hotbar", $snapshot.hotbar.$of()),
+            ("bag", $snapshot.bag.$of()),
+            ("equipped", $snapshot.equipped.$of()),
+            ("known_areas", $snapshot.known_areas.$of()),
+            ("quests", $snapshot.quests.$of()),
+            ("memories", $snapshot.memories.$of()),
+            ("shops", $snapshot.shops.$of()),
+            ("statuses", $snapshot.statuses.$of()),
+            ("cooldowns", $snapshot.cooldowns.$of()),
+        ]
+    };
+}
+
+impl CharacterSnapshot {
+    /// What its lists hold set aside.
+    fn kept_aside(&self) -> KeptAside {
+        let tracked = self
+            .tracked_quests
+            .as_ref()
+            .map(|tracked| (TRACKED_QUESTS, tracked.set_aside()));
+        KeptAside {
+            lists: saved_lists!(self, set_aside)
+                .into_iter()
+                .chain(tracked)
+                .filter(|(_, aside)| !aside.is_empty())
+                .map(|(list, aside)| (list, aside.to_vec()))
+                .collect(),
+            told: Vec::new(),
+        }
+    }
+
+    /// Puts back what `kept` holds of its lists.
+    fn keep_aside(&mut self, kept: &KeptAside) {
+        let tracked = self
+            .tracked_quests
+            .as_mut()
+            .map(|tracked| (TRACKED_QUESTS, tracked.set_aside_mut()));
+        for (list, aside) in saved_lists!(self, set_aside_mut).into_iter().chain(tracked) {
+            if let Some((_, held)) = kept.lists.iter().find(|(of, _)| *of == list) {
+                aside.clone_from(held);
+            }
+        }
+    }
+}
+
+const TRACKED_QUESTS: &str = "tracked_quests";
+
+/// The character a connection joins as, where it starts, and where the character is from.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct JoinAs {
     pub snapshot: CharacterSnapshot,
     pub start: Place,
-    pub taken: Option<UnixMillis>,
+    pub origin: JoinOrigin,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JoinOrigin {
+    /// Staged from the game's content: it stands in for the account's own character, its
+    /// snapshot counts from the moment it joins, and it is never saved.
+    Staged,
+    /// The account's own, as it was saved `at` that moment, its player `told` this much of what
+    /// the game changing did to it.
+    Saved {
+        at: UnixMillis,
+        told: Vec<GameChange>,
+    },
 }
 
 pub fn start_of(content: &Content, snapshot: &CharacterSnapshot) -> Place {
@@ -470,6 +588,7 @@ pub fn materialize(
         ),
         statuses,
         carried,
+        kept_aside: snapshot.kept_aside(),
     }
 }
 
@@ -546,7 +665,7 @@ impl CharacterSnapshot {
                 equipped.push(item);
             }
         }
-        Some(CharacterSnapshot {
+        let mut snapshot = CharacterSnapshot {
             name: state.name.name.clone(),
             class: state.class.def,
             appearance: state.appearance.clone(),
@@ -651,7 +770,9 @@ impl CharacterSnapshot {
                 y: state.spawn.0.y,
             }),
             start: CharacterStart::At(Place { area, at }),
-        })
+        };
+        snapshot.keep_aside(&state.kept_aside);
+        Some(snapshot)
     }
 }
 

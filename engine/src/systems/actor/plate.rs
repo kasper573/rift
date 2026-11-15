@@ -16,13 +16,14 @@ use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::window_point;
 use crate::core::render::world::opacity::Opacity;
 use crate::core::units::Meters;
+use crate::systems::GameSettings;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
 use crate::systems::attention;
 use crate::systems::combat::Attitude;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
-use crate::systems::player::{PlayedBy, session};
+use crate::systems::player::{Away, PlayedBy, session};
 use crate::systems::resource;
 use crate::systems::screen::ClientScreen;
 use ui::paint;
@@ -94,11 +95,12 @@ impl PlateLabel {
         }
     }
 
-    pub fn player(name: &str) -> PlateLabel {
+    /// A player's plate, under its name what is `said` of a character whose player is gone.
+    pub fn player(name: &str, said: Option<&str>) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
             role: None,
-            state: None,
+            state: said.map(str::to_owned),
             color: dusk::PLAYER,
         }
     }
@@ -111,6 +113,7 @@ pub fn label_of(world: &World, content: &Content, actor: Entity) -> Option<Plate
         world.get::<Name>(actor),
         world.get::<Npc>(actor),
         world.get::<PlayedBy>(actor),
+        world.get::<Away>(actor).is_some(),
         world.get::<Attitude>(actor),
         world.get::<AreaObject>(actor).is_some(),
     )
@@ -162,6 +165,7 @@ pub fn draw_plates(world: &mut World) {
             Option<&Name>,
             Option<&Npc>,
             Option<&PlayedBy>,
+            Has<Away>,
             Option<&Attitude>,
             Has<AreaObject>,
             Option<&RenderPosition>,
@@ -173,8 +177,8 @@ pub fn draw_plates(world: &mut World) {
         .filter(|(actor, ..)| viewer != Some(*actor))
         .filter(|(.., body)| body.is_none_or(|body| body.action != Action::Dead))
         .filter_map(
-            |(actor, name, npc, owner, attitude, object, rendered, at, hitbox, _)| {
-                let label = label(&content, name, npc, owner, attitude, object)?;
+            |(actor, name, npc, owner, away, attitude, object, rendered, at, hitbox, _)| {
+                let label = label(&content, name, npc, owner, away, attitude, object)?;
                 let at = rendered.map_or(at.pos, |rendered| rendered.0);
                 Some((actor, label, at, *hitbox))
             },
@@ -304,6 +308,7 @@ fn label(
     name: Option<&Name>,
     npc: Option<&Npc>,
     owner: Option<&PlayedBy>,
+    away: bool,
     attitude: Option<&Attitude>,
     object: bool,
 ) -> Option<PlateLabel> {
@@ -322,7 +327,13 @@ fn label(
                 PlateLabel::npc(&def.name, role, matches!(attitude, Some(Attitude::Hostile)))
             })
         }
-        (None, Some(_)) => Some(PlateLabel::player(&name?.name)),
+        (None, Some(_)) => {
+            let words = &content.built::<GameSettings>().words;
+            Some(PlateLabel::player(
+                &name?.name,
+                away.then_some(words.away.as_str()),
+            ))
+        }
         (None, None) => None,
     }
 }

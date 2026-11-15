@@ -5,22 +5,25 @@ pub mod session;
 pub mod sheet;
 pub mod snapshot;
 
+use std::any::TypeId;
 use std::collections::HashMap;
 
 use bevy_app::App;
+use bevy_ecs::bundle::Bundle;
+use bevy_ecs::change_detection::Tick;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::DeferredWorld;
 use bevy_replication::Replicated;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use snapshot::{CharacterSnapshot, JoinAs};
+use snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, KeptAside, SavedCharacter};
 
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::time::{self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock};
 use crate::core::units::{HourOfDay, Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
-use crate::systems::account::AccountIdentity;
+use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
 use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::weather::ServerSky;
@@ -28,7 +31,7 @@ use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::class::{Class, ClassId};
 use crate::systems::combat::{self, VitalRegen};
 use crate::systems::crafting::RecipeMasteries;
-use crate::systems::dialogue::Heard;
+use crate::systems::dialogue::{self, Heard};
 use crate::systems::equipment::Equipment;
 use crate::systems::history::History;
 use crate::systems::item::Inventory;
@@ -41,7 +44,9 @@ use crate::systems::skill::{BasicAttack, Cooldowns, Hotbar, Learned};
 use crate::systems::stat::{self, Immortal, Stats};
 use crate::systems::status::{self, CarriedStatuses, Statuses};
 use crate::systems::visibility;
-use crate::systems::{GameSettings, WorldArea, belongings, drain_requests, notification, region};
+use crate::systems::{
+    GameSettings, WorldArea, belongings, drain_requests, notification, reach, region, resource,
+};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -49,6 +54,7 @@ pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
 
     app.replicate_once::<PlayedBy>()
+        .replicate::<Away>()
         .replicate::<Xp>()
         .replicate_private::<CommandLock>()
         .replicate_private::<ArrivalHold>()
@@ -111,6 +117,36 @@ impl Connected {
 pub struct PlayedBy {
     pub client: ClientId,
 }
+
+/// The account a character is played for. It stays with the character while no client plays it.
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+#[component(immutable)]
+pub struct CharacterAccount(pub AccountId);
+
+/// A character staged from the game's content, standing in for the account's own: it is never
+/// saved.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StandIn;
+
+/// A character whose player is gone. It stands in its world until `until`, as open to whatever
+/// was after it as before, and does nothing of its own. A client of its account that connects
+/// meanwhile plays it on.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Away {
+    pub until: UnixMillis,
+}
+
+/// A character that left its world, for whoever runs the server's worlds to take: the client
+/// that played it and, unless it stood in for the account's own, the account and the character
+/// as it left.
+pub struct Departure {
+    pub client: ClientId,
+    pub left: Option<SavedCharacter>,
+}
+
+/// The characters that left this world since the server's worlds last conferred.
+#[derive(Resource, Default)]
+pub struct Departures(pub Vec<Departure>);
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Xp {
@@ -228,6 +264,21 @@ pub fn any_connected(world: &World) -> bool {
     world
         .get_resource::<Connected>()
         .is_some_and(|connected| !connected.0.is_empty())
+}
+
+/// Whether anything of a player is in this world: a client, or a character, its player there or
+/// gone.
+pub fn any_present(world: &World) -> bool {
+    any_connected(world)
+        || world
+            .get_resource::<Players>()
+            .is_some_and(|players| !players.0.is_empty())
+}
+
+/// Whether a player is at their character: it is theirs to command, and is there for whatever
+/// asks for a player's presence.
+pub fn attended(world: &World, character: Entity) -> bool {
+    world.get::<Away>(character).is_none()
 }
 
 pub fn commands_locked(world: &World, player: Entity) -> bool {
@@ -363,17 +414,95 @@ pub fn welcome(world: &mut World) {
     }
 }
 
+/// As a client's last connection closes, its character stays behind for as long as the game has
+/// characters linger.
 pub fn client_left(
     remove: On<Remove<ClientId>>,
     clients: Query<(Entity, &ClientId)>,
-    mut players: ResMut<Players>,
+    players: Res<Players>,
     mut commands: Commands,
 ) {
     if let Some(id) = last_connection(remove.entity, &clients)
-        && let Some(entity) = players.0.remove(&id)
+        && let Some(&character) = players.0.get(&id)
     {
-        commands.entity(entity).despawn();
+        commands.queue(move |world: &mut World| leave_behind(world, character));
     }
+}
+
+/// Keeps who is away as it is: a character no client plays is away, whichever way it lost its
+/// player, one whose player is back is not, and one away for as long as the game has characters
+/// linger leaves the world.
+pub fn linger(world: &mut World, characters: &mut QueryState<(Entity, &PlayedBy, Option<&Away>)>) {
+    let now = world.resource::<WallClock>().now;
+    let connected = world.resource::<Connected>();
+    let mut back = Vec::new();
+    let mut left = Vec::new();
+    let mut gone = Vec::new();
+    for (character, played, away) in characters.iter(world) {
+        match (connected.connection(played.client).is_some(), away) {
+            (true, Some(_)) => back.push(character),
+            (false, None) => left.push(character),
+            (false, Some(away)) if away.until <= now => gone.push(character),
+            _ => {}
+        }
+    }
+    for character in back {
+        world.entity_mut(character).remove::<Away>();
+    }
+    for character in left {
+        leave_behind(world, character);
+    }
+    for character in gone {
+        depart(world, character);
+    }
+}
+
+/// Takes `character` out of the world, leaving it for whoever runs the server's worlds as it
+/// stood.
+pub fn depart(world: &mut World, character: Entity) {
+    let Some(client) = world.get::<PlayedBy>(character).map(|played| played.client) else {
+        return;
+    };
+    let left = SavedCharacter::of_live(world, character);
+    world.resource_mut::<Players>().0.remove(&client);
+    world.despawn(character);
+    if let Some(mut departures) = world.get_resource_mut::<Departures>() {
+        departures.0.push(Departure { client, left });
+    }
+}
+
+/// Whether anything `character` is, or where it stands, changed since the world's change tick
+/// was `since`.
+pub fn changed_since(world: &World, character: Entity, since: Tick) -> bool {
+    let Ok(character) = world.get_entity(character) else {
+        return false;
+    };
+    let now = world.read_change_tick();
+    let position = world.components().get_valid_id(TypeId::of::<Position>());
+    CharacterState::get_component_ids(world.components())
+        .chain([position])
+        .flatten()
+        .filter_map(|part| character.get_change_ticks_by_id(part))
+        .any(|ticks| ticks.changed.is_newer_than(since, now))
+}
+
+/// Leaves `character` in the world without its player: whatever it was doing ends, and it is
+/// away for as long as the game has characters linger, or gone at once where they don't.
+fn leave_behind(world: &mut World, character: Entity) {
+    if world.get_entity(character).is_err() {
+        return;
+    }
+    let lingers_for = world.resource::<GameSettings>().lingers_for;
+    if lingers_for <= Seconds(0.0) {
+        depart(world, character);
+        return;
+    }
+    movement::halt(world, character);
+    dialogue::close_for(world, character);
+    reach::forget(world, character);
+    resource::stop(world, character);
+    let until = world.resource::<WallClock>().now.after(lingers_for);
+    world.entity_mut(character).insert(Away { until });
 }
 
 /// The client a closing connection belongs to, unless the client is still connected another way.
@@ -415,23 +544,31 @@ pub fn join(world: &mut World) {
         let Some(&client) = world.get::<ClientId>(client_entity) else {
             continue;
         };
-        if world.resource::<Players>().0.contains_key(&client) {
+        if let Some(&character) = world.resource::<Players>().0.get(&client) {
+            world.entity_mut(character).remove::<Away>();
             continue;
         }
         let clock = *world.resource::<WallClock>();
-        let (at, state) = match world.get::<JoinAs>(client_entity) {
+        let identity = world.get::<AccountIdentity>(client_entity).cloned();
+        let (at, state, stand_in) = match world.get::<JoinAs>(client_entity) {
             Some(joining) if joining.start.area == zone => {
                 let (snapshot, start) = (joining.snapshot.clone(), joining.start);
-                let taken = joining.taken.unwrap_or(clock.now);
+                let (taken, told, stand_in) = match joining.origin.clone() {
+                    JoinOrigin::Staged => (clock.now, Vec::new(), true),
+                    JoinOrigin::Saved { at, told } => (at, told, false),
+                };
                 region::hold_around(world, start.at);
+                let mut state = snapshot::materialize(&content, &snapshot, start, clock, taken);
+                state.kept_aside.told = told;
                 (
                     movement::place_beside(world, zone, &area.mesh(), start.at),
-                    snapshot::materialize(&content, &snapshot, start, clock, taken),
+                    state,
+                    stand_in,
                 )
             }
             _ => {
-                let name = world
-                    .get::<AccountIdentity>(client_entity)
+                let name = identity
+                    .as_ref()
                     .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
                 let spawn = spawn_position(world, policy, zone, area);
                 region::hold_around(world, spawn);
@@ -439,11 +576,37 @@ pub fn join(world: &mut World) {
                 let fresh = CharacterSnapshot::of_player(&content, &name, def(&content));
                 let start = Place { area: zone, at };
                 let state = snapshot::materialize(&content, &fresh, start, clock, clock.now);
-                (at, state)
+                (at, state, false)
             }
         };
-        let entity = place(world, client, zone, at, state);
+        let played = Played {
+            client,
+            account: identity.map(|identity| identity.id),
+            stand_in,
+        };
+        let entity = place(world, played, zone, at, state);
         spawned(world, entity);
+    }
+}
+
+/// Whose a character is: the client that plays it, the account it is played for, and whether it
+/// stands in for the account's own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Played {
+    pub client: ClientId,
+    pub account: Option<AccountId>,
+    pub stand_in: bool,
+}
+
+impl Played {
+    pub fn of(world: &World, character: Entity) -> Option<Played> {
+        Some(Played {
+            client: world.get::<PlayedBy>(character)?.client,
+            account: world
+                .get::<CharacterAccount>(character)
+                .map(|account| account.0.clone()),
+            stand_in: world.get::<StandIn>(character).is_some(),
+        })
     }
 }
 
@@ -500,6 +663,7 @@ pub struct CharacterState {
     pub cooldowns: Cooldowns,
     pub statuses: Statuses,
     pub carried: CarriedStatuses,
+    pub kept_aside: KeptAside,
 }
 
 impl CharacterState {
@@ -532,17 +696,19 @@ impl CharacterState {
             cooldowns: world.get::<Cooldowns>(entity).cloned().unwrap_or_default(),
             statuses: world.get::<Statuses>(entity).cloned().unwrap_or_default(),
             carried: status::aspect::carried(world, entity),
+            kept_aside: world.get::<KeptAside>(entity).cloned().unwrap_or_default(),
         })
     }
 }
 
 pub(crate) fn place(
     world: &mut World,
-    client: ClientId,
+    played: Played,
     zone: AreaId,
     at: Pos<Meters>,
     state: CharacterState,
 ) -> Entity {
+    let client = played.client;
     let content = world.resource::<Content>().clone();
     let hitbox = Hitbox(ActorModel::get(&content, state.appearance.model).hitbox());
     let entity = world
@@ -564,6 +730,12 @@ pub(crate) fn place(
             state,
         ))
         .id();
+    if let Some(account) = played.account {
+        world.entity_mut(entity).insert(CharacterAccount(account));
+    }
+    if played.stand_in {
+        world.entity_mut(entity).insert(StandIn);
+    }
     hold_arrival(world, entity);
     let belongings = belongings::of(world, entity);
     world.entity_mut(entity).insert(belongings);

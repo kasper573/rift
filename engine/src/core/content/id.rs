@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use super::SchemaMark;
 use super::files::{bundle_of, name_of, table_of};
 use super::report::ContentProblem;
+use super::saved::MissingFile;
 use super::table::{Content, ContentFile};
 
 /// In files the path of a content file from the game folder, in memory and on the wire the index
@@ -500,18 +501,26 @@ pub(super) fn references_met() -> usize {
     })
 }
 
-/// Forgets the references met since `met` of them had been when any names a missing file, and
-/// says whether one did.
-pub(super) fn forget_missing_since(met: usize) -> bool {
+/// The files the references met since `met` of them had been name and the game lacks. When
+/// there are any, those references are forgotten, so the scope reports none of them.
+pub(super) fn forget_missing_since(met: usize) -> Vec<MissingFile> {
     SCOPE.with(|scope| {
         let mut scope = scope.borrow_mut();
         let Some(scope) = scope.as_mut() else {
-            return false;
+            return Vec::new();
         };
-        let missing = scope.leaves[met..]
+        let missing: Vec<MissingFile> = scope.leaves[met..]
             .iter()
-            .any(|leaf| leaf.problem.is_some());
-        if missing {
+            .filter(|leaf| leaf.problem.is_some())
+            .filter_map(|leaf| match leaf.kind {
+                LeafKind::Row(table) => Some(MissingFile {
+                    table,
+                    path: leaf.value.clone(),
+                }),
+                LeafKind::Asset => None,
+            })
+            .collect();
+        if !missing.is_empty() {
             scope.leaves.truncate(met);
         }
         missing

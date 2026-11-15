@@ -1877,6 +1877,25 @@ pub fn check_islands(
     problems
 }
 
+/// `place` when a character can be put there, else the nearest place of its area where one can:
+/// on walkable ground, outside every warp object. None where the area has no such place.
+pub fn standable(content: &Content, place: script::Place) -> Option<script::Place> {
+    if check_place(content, place).is_ok() {
+        return Some(place);
+    }
+    let area = loaded(content, place.area)?;
+    let warps = warp_objects(content, place.area);
+    let at = area
+        .survey()
+        .nearest_where(place.at, area.bodies.spacing(), |at| {
+            !warps.iter().any(|(_, object)| object.shape.covers(at))
+        })?;
+    Some(script::Place {
+        area: place.area,
+        at,
+    })
+}
+
 pub fn check_place(content: &Content, place: script::Place) -> Result<(), ContentProblem> {
     let Some(area) = loaded(content, place.area) else {
         return Ok(());

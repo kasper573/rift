@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "b370b294",
+  "content_version": "8e5c32ba",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -125,7 +125,21 @@
     "unknown_command": "There is no command {command}",
     "command_needs": "{usage} needs its {input}",
     "command_refuses": "{value} is no {input}",
-    "command_takes": "{usage} takes no more than that"
+    "command_takes": "{usage} takes no more than that",
+    "game_changed": "The game has changed since you were here",
+    "gone": "The {kind} {name} is no longer in the game.",
+    "kept_aside": "Kept aside for you, in case it returns.",
+    "stack_did_not_fit": "Your inventory now holds {slots}. One stack did not fit.",
+    "stacks_did_not_fit": "Your inventory now holds {slots}. {stacks} stacks did not fit.",
+    "skills_rearranged": "The {class}'s skills were rearranged.",
+    "points_returned": "Your {points} skill points are yours to spend again.",
+    "carry_on": "Carry on",
+    "away": "Away",
+    "not_saving": "The game cannot save right now",
+    "not_saving_since": "What you have done since {time} may be lost if the server stops.",
+    "play_on": "You can go on playing.",
+    "saved": "Saved",
+    "saved_again": "Everything up to now is kept."
   },
   "typing": {
     "pace": 45.0,
@@ -331,5 +345,6 @@
     "npcs_apart": "enemy"
   },
   "history_merges_within": 10.0,
-  "suggestions": 10
+  "suggestions": 10,
+  "lingers_for": 30.0
 }

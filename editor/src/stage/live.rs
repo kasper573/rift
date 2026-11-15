@@ -22,7 +22,7 @@ use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
 use engine::systems::launch::{ServerDay, ServerWeather};
 use engine::systems::movement::Position;
 use engine::systems::npc::{self, NpcDef};
-use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, SnapshotSkill};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, SnapshotSkill};
 use engine::systems::player::{ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules};
 use engine::systems::script::{Condition, Place, RiftQuery};
 use engine::systems::skill::casting::{self, CastAim};
@@ -288,7 +288,7 @@ pub fn join(
             JoinAs {
                 snapshot,
                 start,
-                taken: None,
+                origin: JoinOrigin::Staged,
             },
         ))
         .id();

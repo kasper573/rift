@@ -5,16 +5,20 @@ use bevy_ecs::prelude::*;
 use bevy_replication::FromClient;
 use engine::core::content::Content;
 use engine::core::math::Pos;
+use engine::core::time::WallClock;
 use engine::core::units::Meters;
+use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::area::AreaDef;
 use engine::systems::area::transition::{self, Crossing};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::npc::{self, Pack};
+use engine::systems::player::roster::ServerRoster;
 use engine::systems::player::snapshot::JoinAs;
 use engine::systems::player::{
     self, AreaDrawn, ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules,
 };
-use engine::systems::{GameSettings, WorldArea, from_client, worlds};
+use engine::systems::worlds::{self, AboveWorlds};
+use engine::systems::{GameSettings, WorldArea, from_client};
 use engine::systems::{identity, region};
 
 use crate::Sim;
@@ -25,9 +29,18 @@ struct Packs(HashMap<u32, Pack>);
 /// Has the servers of several areas confer, as a game server's worlds do between ticks: each
 /// learns who plays in the others, and what one asked be done to a player of another is done.
 pub fn confer(sims: &mut [&mut Sim]) {
+    let now = sims
+        .first()
+        .map(|sim| sim.world.resource::<WallClock>().now)
+        .expect("a world to confer");
+    let roster = sims[0].world.resource::<ServerRoster>().clone();
+    let mut above = AboveWorlds {
+        roster,
+        ..AboveWorlds::unsaved()
+    };
     let mut views: Vec<Option<&mut World>> =
         sims.iter_mut().map(|sim| Some(&mut sim.world)).collect();
-    worlds::confer(&mut views);
+    worlds::confer(&mut views, &mut above, now);
 }
 
 impl Sim {
@@ -78,8 +91,32 @@ impl Sim {
         self.enter(client, conn)
     }
 
+    /// A client signed in as `account` connected and joined, as the character it brought along
+    /// when it brought one: its character, which a client of the account that connects while it
+    /// is in the world plays on.
+    pub fn sign_in(&mut self, client: u32, account: &str, join_as: Option<JoinAs>) -> Entity {
+        let conn = self.connect(client);
+        let mut signed_in = self.world.entity_mut(conn);
+        signed_in.insert(AccountIdentity {
+            id: AccountId(account.to_owned()),
+            name: account.to_owned(),
+            roles: Vec::new(),
+        });
+        if let Some(join_as) = join_as {
+            signed_in.insert(join_as);
+        }
+        self.enter(client, conn)
+    }
+
     pub fn connect(&mut self, client: u32) -> Entity {
         self.world.spawn(ClientId(client)).id()
+    }
+
+    /// The connection of `client` closes, however it did.
+    pub fn disconnect(&mut self, client: u32) {
+        let conn = self.conn(client);
+        self.world.despawn(conn);
+        self.world.flush();
     }
 
     /// Lets clients send `M`, so a system answering it may run before any client has.
@@ -115,7 +152,7 @@ impl Sim {
             to.world.resource::<WorldArea>().0,
             "the traveler is bound for the area they are handed to"
         );
-        let client = traveler.client;
+        let client = traveler.played.client;
         to.connect(client.0);
         let arrived = transition::arrive(&mut to.world, traveler);
         let conn = to.conn(client.0);

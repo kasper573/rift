@@ -23,6 +23,7 @@ use engine::core::units::{Degrees, Radians, RadiansPerSec};
 use engine::core::units::{Meters, MetersPerSec, Stops};
 use engine::core::units::{Millis, Seconds};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
+use engine::systems::GameWords;
 use engine::systems::actor::Action;
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
@@ -268,33 +269,7 @@ impl Game {
                 },
                 "reading": { "glance": 2.0, "per_word": 0.3 },
                 "notices": { "pops_last": 1.0, "intro_after": 0.3 },
-                "words": {
-                    "accept_quest": "Accept",
-                    "decline_quest": "Decline",
-                    "not_yet": "Not yet.",
-                    "locked": "You can't do that yet.",
-                    "no_longer": "You can't do that any more.",
-                    "quest_log_full": "Your quest log is full.",
-                    "needs_more": "Needs {count} more {item}",
-                    "needs_a_slot": "Needs 1 free slot",
-                    "needs_slots": "Needs {slots} free slots",
-                    "needs_tool": "Needs a {tool}",
-                    "no_room": "No room",
-                    "bag_room": "No room in your bag",
-                    "ran_out": "It ran out",
-                    "confirm": "Confirm",
-                    "craft": "Craft",
-                    "cancel_craft": "Cancel",
-                    "recipes": "Recipes",
-                    "no_recipe": "No recipe",
-                    "choose_result": "Choose a result",
-                    "craft_failed": "Crafting failed",
-                    "requires_mastery": "Requires mastery",
-                    "unknown_command": "There is no command {command}",
-                    "command_needs": "{usage} needs its {input}",
-                    "command_refuses": "{value} is no {input}",
-                    "command_takes": "{usage} takes no more than that",
-                },
+                "words": words(),
                 "typing": typing(),
                 "lettering": lettering(),
                 "speech": speech(),
@@ -308,6 +283,7 @@ impl Game {
                 },
                 "history_merges_within": 10.0,
                 "suggestions": 10,
+                "lingers_for": 0.0,
                 "look": look(),
                 "dialogue_shots": {
                     "shoulder": { "back": 1.6, "aside": 0.7, "up": 0.95, "aim": 0.75 },
@@ -962,6 +938,53 @@ pub fn typing() -> Typing {
         slowest: LettersPerSecond(15.0),
         fastest: LettersPerSecond(120.0),
         slow_by: 2.5,
+    }
+}
+
+/// What every test game says where the engine has the game word it.
+fn words() -> GameWords {
+    GameWords {
+        accept_quest: "Accept".to_owned(),
+        decline_quest: "Decline".to_owned(),
+        not_yet: "Not yet.".to_owned(),
+        locked: "You can't do that yet.".to_owned(),
+        no_longer: "You can't do that any more.".to_owned(),
+        quest_log_full: "Your quest log is full.".to_owned(),
+        needs_more: "Needs {count} more {item}".to_owned(),
+        needs_a_slot: "Needs 1 free slot".to_owned(),
+        needs_slots: "Needs {slots} free slots".to_owned(),
+        needs_tool: "Needs a {tool}".to_owned(),
+        no_room: "No room".to_owned(),
+        bag_room: "No room in your bag".to_owned(),
+        ran_out: "It ran out".to_owned(),
+        confirm: "Confirm".to_owned(),
+        craft: "Craft".to_owned(),
+        cancel_craft: "Cancel".to_owned(),
+        recipes: "Recipes".to_owned(),
+        no_recipe: "No recipe".to_owned(),
+        choose_result: "Choose a result".to_owned(),
+        craft_failed: "Crafting failed".to_owned(),
+        requires_mastery: "Requires mastery".to_owned(),
+        unknown_command: "There is no command {command}".to_owned(),
+        command_needs: "{usage} needs its {input}".to_owned(),
+        command_refuses: "{value} is no {input}".to_owned(),
+        command_takes: "{usage} takes no more than that".to_owned(),
+        game_changed: "The game has changed since you were here".to_owned(),
+        gone: "The {kind} {name} is no longer in the game.".to_owned(),
+        kept_aside: "Kept aside for you, in case it returns.".to_owned(),
+        stack_did_not_fit: "Your inventory now holds {slots}. One stack did not fit.".to_owned(),
+        stacks_did_not_fit: "Your inventory now holds {slots}. {stacks} stacks did not fit."
+            .to_owned(),
+        skills_rearranged: "The {class}'s skills were rearranged.".to_owned(),
+        points_returned: "Your {points} skill points are yours to spend again.".to_owned(),
+        carry_on: "Carry on".to_owned(),
+        away: "Away".to_owned(),
+        not_saving: "The game cannot save right now".to_owned(),
+        not_saving_since: "What you have done since {time} may be lost if the server stops."
+            .to_owned(),
+        play_on: "You can go on playing.".to_owned(),
+        saved: "Saved".to_owned(),
+        saved_again: "Everything up to now is kept.".to_owned(),
     }
 }
 

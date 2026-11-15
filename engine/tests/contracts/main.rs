@@ -37,6 +37,7 @@ mod reach;
 mod region;
 mod residency;
 mod safe_zone;
+mod saving;
 mod scenery;
 mod scenery_chunks;
 mod scenery_picture;

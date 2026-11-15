@@ -15,7 +15,7 @@ use engine::systems::equipment::{self, Equipment, EquipmentPlace, HoldRequest};
 use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, ItemId};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
-use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::skill::{self, SkillDef};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{GameSettings, rewards, script, status};
@@ -365,7 +365,7 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
         JoinAs {
             snapshot,
             start: settings.initial_spawn,
-            taken: None,
+            origin: JoinOrigin::Staged,
         },
     );
     assert_eq!(
