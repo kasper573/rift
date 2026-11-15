@@ -21,6 +21,7 @@ use crate::systems::area::AreaId;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
 use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
 use crate::systems::notification::{self, Notification};
+use crate::systems::party::{self, PartyRequest, PlayerParties, PlayerParty};
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
 use crate::systems::save::Unwritten;
@@ -45,6 +46,7 @@ pub struct Society {
     pub(crate) blocks: BlockLists,
     pub(crate) requests: SocialRequests,
     pub(crate) inboxes: Inboxes,
+    pub(crate) parties: PlayerParties,
     sources: Vec<SocialRequestSource>,
     /// The accounts whose characters stand in a world, and where.
     playing: HashMap<AccountId, Playing>,
@@ -86,6 +88,7 @@ impl Society {
             blocks: BlockLists::of(all::<Block>(store, scope).await?),
             requests: SocialRequests::of(all::<SocialRequest>(store, scope).await?),
             inboxes: Inboxes::counted(messages, reads),
+            parties: PlayerParties::of(all::<PlayerParty>(store, scope).await?),
             sources,
             ..Society::default()
         })
@@ -111,6 +114,10 @@ impl Society {
         &self.inboxes
     }
 
+    pub fn parties(&self) -> &PlayerParties {
+        &self.parties
+    }
+
     /// Who `account` takes requests from, in a game with these `settings`.
     pub fn accepts(&self, account: &AccountId, settings: &RequestSettings) -> AcceptsRequestsFrom {
         self.accounts
@@ -124,7 +131,8 @@ impl Society {
         match self.accepts(asked, settings) {
             AcceptsRequestsFrom::Everyone => true,
             AcceptsRequestsFrom::Friends => self.friends.are(asked, asker),
-            AcceptsRequestsFrom::Party | AcceptsRequestsFrom::Nobody => false,
+            AcceptsRequestsFrom::Party => self.parties.together(asked, asker),
+            AcceptsRequestsFrom::Nobody => false,
         }
     }
 
@@ -188,7 +196,12 @@ impl Society {
                 } else if seen_in(&before, account).is_none() {
                     self.inboxes.arrived(account);
                 }
-                let watching: Vec<AccountId> = self.friends.of_account(account).cloned().collect();
+                let friends = self.friends.of_account(account);
+                let party = self.parties.of_account(account);
+                let watching: Vec<AccountId> = friends
+                    .chain(party.into_iter().flat_map(PlayerParty::accounts))
+                    .cloned()
+                    .collect();
                 self.changed.extend(watching);
             }
         }
@@ -254,6 +267,7 @@ pub enum SocietyAsk {
     Accepts(AcceptsRequestsFrom),
     Friend(FriendAsk),
     Inbox(InboxAsk),
+    Party(PartyRequest),
 }
 
 /// What a world's players asked of society since the server's worlds last conferred.
@@ -325,9 +339,13 @@ impl Settling<'_, '_> {
 /// playing what they now see of it.
 pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: UnixMillis) {
     let mut asked: Vec<(Content, ClientId, SocietyAsk)> = Vec::new();
+    let mut game: Option<Content> = None;
     for world in views.iter_mut().flatten() {
         if !world.contains_resource::<SocietyAsks>() {
             continue;
+        }
+        if game.is_none() {
+            game = world.get_resource::<Content>().cloned();
         }
         if !world.resource::<ServerSociety>().is(&above.society) {
             world.insert_resource(above.society.clone());
@@ -362,6 +380,7 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
             }
             SocietyAsk::Friend(ask) => friend::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Inbox(ask) => inbox::settle(&mut settling, settings, &by, ask),
+            SocietyAsk::Party(ask) => party::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {
                     account.accepts_requests_from = Some(from);
@@ -373,7 +392,11 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
             }
         }
     }
-    social_request::lapse(&mut settling);
+    if let Some(content) = game {
+        let settings = content.built::<GameSettings>();
+        social_request::lapse(&mut settling, settings);
+        party::keep(&mut settling, settings);
+    }
     for account in std::mem::take(&mut settling.society.changed) {
         if let Some((world, character)) = reach(settling.views, settling.roster, &account) {
             view::show(world, character, settling.society);

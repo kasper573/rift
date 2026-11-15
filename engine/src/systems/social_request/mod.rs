@@ -90,10 +90,19 @@ pub struct SocialRequestSource {
     pub reaches_offline: bool,
     pub words: fn(&GameWords) -> SocialRequestWords<'_>,
     /// Whether the first account may ask the second, by the kind's own rules, once the gate
-    /// every request passes has let it through. `Err` is what the asker is told.
-    pub may_send: fn(&Society, &GameSettings, &AccountId, &AccountId) -> Result<(), String>,
+    /// every request passes has let it through.
+    pub may_send: fn(&Society, &GameSettings, &AccountId, &AccountId) -> Result<(), RequestUnsent>,
     /// What a yes does.
     pub accepted: fn(&mut Settling, &GameSettings, &SocialRequest) -> Result<(), RequestUnaccepted>,
+}
+
+/// Why a request was not sent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RequestUnsent {
+    /// The asker is told nothing.
+    Quietly,
+    /// The asker is told why, in the game's words.
+    Told(String),
 }
 
 /// Why a yes did not do what its kind does, in the game's words.
@@ -120,6 +129,8 @@ pub struct SocialRequestWords<'a> {
     /// What the asker is told on a no. A kind that does not tell them keeps a request that was
     /// declined waiting as far as its asker sees, until its time is up.
     pub declined: Option<&'a str>,
+    /// What the asker is told as its time is up unanswered, for a kind that tells them.
+    pub lapsed: Option<&'a str>,
 }
 
 #[derive(
@@ -406,10 +417,55 @@ pub(crate) fn settle(
     }
 }
 
-/// Ends every request whose wait is over.
-pub(crate) fn lapse(settling: &mut Settling) {
+/// Ends every request whose wait is over, under the game `settings` are of.
+pub(crate) fn lapse(settling: &mut Settling, settings: &GameSettings) {
     while let Some(id) = settling.society.requests.ended(settling.now) {
+        let Some(request) = end(settling, id) else {
+            continue;
+        };
+        let lapsed = words_of(settling, settings, request.kind).and_then(|says| says.lapsed);
+        if let Some(lapsed) = lapsed.filter(|_| !request.declined) {
+            let text = lapsed.replace("{name}", &settling.name(&request.asked));
+            let told = Notification::feed(HistoryTopic::Notification, text).failed();
+            settling.tell(&request.asker, told);
+        }
+    }
+}
+
+/// Ends every request of `kind` that `asker` has waiting, with nobody told.
+pub(crate) fn end_of(settling: &mut Settling, kind: SocialRequestKind, asker: &AccountId) {
+    let asked: Vec<SocialRequestId> = settling
+        .society
+        .requests
+        .of_account(asker)
+        .filter(|request| request.kind == kind && request.asker == *asker)
+        .map(|request| request.id)
+        .collect();
+    for id in asked {
         end(settling, id);
+    }
+}
+
+/// Declines every other request of its kind that the player `accepted` was asked of has
+/// waiting, as a yes to one is a no to the rest.
+pub(crate) fn decline_others(
+    settling: &mut Settling,
+    settings: &GameSettings,
+    accepted: &SocialRequest,
+) {
+    let others: Vec<SocialRequestId> = settling
+        .society
+        .requests
+        .of_account(&accepted.asked)
+        .filter(|request| {
+            request.kind == accepted.kind
+                && request.asked == accepted.asked
+                && request.id != accepted.id
+        })
+        .map(|request| request.id)
+        .collect();
+    for id in others {
+        decline(settling, settings, id);
     }
 }
 
@@ -465,10 +521,14 @@ fn send(
         asked,
     );
     let gate = gate
-        .map_err(|refusal| refusal.describe(&settings.words, &settling.name(asked)))
+        .map_err(|refusal| {
+            RequestUnsent::Told(refusal.describe(&settings.words, &settling.name(asked)))
+        })
         .and_then(|()| (source.may_send)(settling.society, settings, asker, asked));
-    if let Err(why) = gate {
-        settling.refuse(asker, why);
+    if let Err(unsent) = gate {
+        if let RequestUnsent::Told(why) = unsent {
+            settling.refuse(asker, why);
+        }
         return;
     }
     let until = settling.now.after(lasts);

@@ -1009,6 +1009,19 @@ fn words() -> GameWords {
         did_not_fit_text:
             "Your inventory had no room for these. They wait here until you take them.".to_owned(),
         sent_in_a_message: "It was sent to you in a message".to_owned(),
+        party_invite_asks: "{name} invites you to their party".to_owned(),
+        party_invite_asked: "You invited {name} to your party".to_owned(),
+        party_invite_declined: "{name} declined your invitation".to_owned(),
+        party_invite_lapsed: "{name} did not answer your invitation".to_owned(),
+        party_full: "The party is full".to_owned(),
+        in_a_party: "{name} is in a party".to_owned(),
+        party_joined: "{name} joined the party".to_owned(),
+        party_left: "{name} left the party".to_owned(),
+        party_removed: "{name} was removed from the party".to_owned(),
+        you_were_removed: "You were removed from the party".to_owned(),
+        party_disbanded: "{name} disbanded the party".to_owned(),
+        party_leads: "{name} leads the party now".to_owned(),
+        xp_shared: "Shared with {names}".to_owned(),
     }
 }
 

@@ -347,12 +347,10 @@ fn reading(
     }
     ui.add_space(GAP * 2.0);
     ui.horizontal(|ui| {
-        let friend = row.from.as_ref().filter(|from| {
-            society
-                .friends
-                .iter()
-                .any(|friend| friend.player.account == from.account)
-        });
+        let friend = row
+            .from
+            .as_ref()
+            .filter(|from| draft::may_write_to(society, from.account));
         match (&row.from, friend) {
             (_, Some(from)) => {
                 if controls::button(ui, "Reply").clicked() {
@@ -360,7 +358,7 @@ fn reading(
                 }
             }
             (Some(from), None) => {
-                let why = format!("{} is no longer a friend", from.name);
+                let why = format!("{} is neither a friend nor in your party", from.name);
                 controls::faded(ui, "Reply").on_hover_text(why);
             }
             (None, None) => {

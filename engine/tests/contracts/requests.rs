@@ -348,6 +348,7 @@ fn sources() -> Vec<SocialRequestSource> {
                 sent: None,
                 accepted: Some("{name} let you aboard"),
                 declined: Some("{name} said no"),
+                lapsed: None,
             },
             may_send: |_, _, _, _| Ok(()),
             accepted: seated,

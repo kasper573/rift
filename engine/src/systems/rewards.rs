@@ -10,6 +10,7 @@ use crate::systems::combat::Died;
 use crate::systems::item::{ItemId, Reservation, credited, scatter_drop};
 use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcId};
+use crate::systems::party;
 use crate::systems::visibility::Presence;
 
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
@@ -17,6 +18,8 @@ pub struct KillCredited {
     pub npc: NpcId,
     /// Where the npc fell.
     pub at: Pos<Meters>,
+    /// Who the kill counts for: whoever made it, and each member of their party who shares in
+    /// it, in a message of their own.
     pub credited: Entity,
 }
 
@@ -36,18 +39,19 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
             let reserved_by = world
                 .get::<Reservation>(died.entity)
                 .and_then(|reservation| reservation.holder(now, claims_last));
-            let rewardee = credited(world, died.entity, now);
-            if let Some(credited) = rewardee
-                && let Some(at) = position(world, died.entity)
-            {
-                world.write_message(KillCredited { npc, at, credited });
+            let fell_at = position(world, died.entity);
+            let sharers = credited(world, died.entity, now)
+                .map(|credited| party::share::sharers(world, credited, fell_at))
+                .unwrap_or_default();
+            if let Some(at) = fell_at {
+                for &credited in &sharers {
+                    world.write_message(KillCredited { npc, at, credited });
+                }
             }
             let Some(loot) = npc.get(&content).loot() else {
                 continue;
             };
-            if let Some(entity) = rewardee {
-                crate::systems::class::grant_xp(world, entity, loot.xp);
-            }
+            party::share::grant_xp(world, &sharers, loot.xp);
             let drops: Vec<(ItemId, u32)> = loot
                 .items
                 .iter()

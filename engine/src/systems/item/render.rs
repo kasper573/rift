@@ -28,9 +28,11 @@ use crate::systems::identity::Lingering;
 use crate::systems::item::plates::Landed;
 use crate::systems::item::{self, DroppedItem, ItemConsumed, ItemsDropped, Reservation};
 use crate::systems::movement::{Position, RenderPosition};
+use crate::systems::player::session::MyCharacter;
 use crate::systems::player::session::{self, MyClient};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
+use crate::systems::society::SocietyView;
 use crate::systems::visibility::Faint;
 
 const DROP_STAGGER: Seconds = Seconds(0.06);
@@ -194,9 +196,19 @@ fn start_drops(
     mut dropped: MessageReader<ItemsDropped>,
     content: Res<Content>,
     me: Res<MyClient>,
+    mine: Res<MyCharacter>,
+    parties: Query<&SocietyView>,
     drops: Query<(&DroppedItem, &Position, Option<&Reservation>)>,
     mut commands: Commands,
 ) {
+    let party = mine
+        .0
+        .and_then(|me| parties.get(me).ok())
+        .and_then(|view| view.party.as_ref());
+    let taker = item::DropTaker {
+        client: me.0,
+        party: party.map_or_else(Vec::new, |party| party.clients().collect()),
+    };
     for dropped in dropped.read() {
         let sounding = dropped
             .items
@@ -205,7 +217,7 @@ fn start_drops(
                 let (item, _, reservation) = drops.get(entity).ok()?;
                 let rarity = item.item.get(&content).rarity.get(&content);
                 let sfx = rarity.dropped.sfx?;
-                item::takeable(reservation, me.0).then_some((rarity.rank, entity, sfx))
+                item::takeable(reservation, &taker).then_some((rarity.rank, entity, sfx))
             })
             .max_by_key(|(rank, ..)| *rank);
         for (index, &entity) in dropped.items.iter().enumerate() {
@@ -285,7 +297,7 @@ fn animate_drops(world: &mut World) {
 /// warns of every item about to be gone: it pulses, and its disc fades with the time it has left.
 fn mark_drops(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    let me = session::my_id(world);
+    let me = item::DropTaker::me(world);
     let fades_for = world.resource::<GameSettings>().drops.fades_for;
     let now = time::server_now(world);
     let calm = world.resource::<CalmEffects>().0;
@@ -305,7 +317,7 @@ fn mark_drops(world: &mut World) {
         )>()
         .iter(world)
         .map(|(entity, dropped, position, reservation, flying)| {
-            let mine = item::takeable(reservation, me);
+            let mine = item::takeable(reservation, &me);
             (entity, dropped.clone(), position.pos, mine, flying)
         })
         .collect();
@@ -389,7 +401,7 @@ fn play_effects(world: &mut World) {
         world.insert_resource(CalmEffects(calm));
     }
     let content = world.resource::<Content>().clone();
-    let me = session::my_id(world);
+    let me = item::DropTaker::me(world);
     let places = content.built::<GameSettings>().drops.effects_shown as usize;
     let eye = session::me(world).and_then(|me| world.get::<Position>(me).map(|at| at.pos));
     let mut asking: Vec<(Entity, DroppedItem, f32, bool)> = world
@@ -401,7 +413,7 @@ fn play_effects(world: &mut World) {
             Has<JustLanded>,
         ), Without<DropAnim>>()
         .iter(world)
-        .filter(|(.., reservation, _)| item::takeable(*reservation, me))
+        .filter(|(.., reservation, _)| item::takeable(*reservation, &me))
         .map(|(entity, dropped, at, _, landed)| {
             let away = eye.map_or(0.0, |eye| eye.distance(at.pos).0);
             (entity, dropped.clone(), away, landed)

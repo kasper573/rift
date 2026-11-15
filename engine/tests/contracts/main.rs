@@ -29,6 +29,7 @@ mod loot_names;
 mod memory;
 mod messages;
 mod notification;
+mod parties;
 mod poses;
 mod presence;
 mod probe;

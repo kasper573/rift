@@ -21,8 +21,8 @@ use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::social_request::{
-    RequestUnaccepted, SocialRequest, SocialRequestAsk, SocialRequestKind, SocialRequestSource,
-    SocialRequestWords,
+    RequestUnaccepted, RequestUnsent, SocialRequest, SocialRequestAsk, SocialRequestKind,
+    SocialRequestSource, SocialRequestWords,
 };
 use crate::systems::society::{self, AccountNumber, Settling, Society, SocietyAsk};
 
@@ -165,6 +165,7 @@ pub fn request_source() -> SocialRequestSource {
             sent: Some(&words.friendship_sent),
             accepted: Some(&words.friendship_accepted),
             declined: None,
+            lapsed: None,
         },
         may_send,
         accepted,
@@ -214,9 +215,6 @@ pub(crate) fn settle(
     by: &AccountId,
     ask: FriendAsk,
 ) {
-    if settings.friends.is_none() {
-        return;
-    }
     match ask {
         FriendAsk::Remove(number) => {
             if let Some(friend) = settling.society.accounts().numbered(number).cloned() {
@@ -265,9 +263,9 @@ fn may_send(
     settings: &GameSettings,
     asker: &AccountId,
     asked: &AccountId,
-) -> Result<(), String> {
+) -> Result<(), RequestUnsent> {
     let Some(friends) = &settings.friends else {
-        return Err(String::new());
+        return Err(RequestUnsent::Quietly);
     };
     let words = &settings.words;
     if society.friends().are(asker, asked) {
@@ -275,13 +273,15 @@ fn may_send(
             .accounts()
             .get(asked)
             .map_or("", |asked| &asked.name);
-        return Err(words.already_friends.replace("{name}", name));
+        return Err(RequestUnsent::Told(
+            words.already_friends.replace("{name}", name),
+        ));
     }
     if room(society, friends, asker) == 0 {
-        return Err(words.friends_full.clone());
+        return Err(RequestUnsent::Told(words.friends_full.clone()));
     }
     if sent(society, asker) >= friends.requests as usize {
-        return Err(words.too_many_friend_requests.clone());
+        return Err(RequestUnsent::Told(words.too_many_friend_requests.clone()));
     }
     Ok(())
 }
@@ -291,10 +291,10 @@ fn accepted(
     settings: &GameSettings,
     request: &SocialRequest,
 ) -> Result<(), RequestUnaccepted> {
-    let Some(friends) = &settings.friends else {
-        return Err(RequestUnaccepted::Over(String::new()));
-    };
-    if room(settling.society, friends, &request.asked) == 0 {
+    let full = settings
+        .friends
+        .is_some_and(|friends| room(settling.society, &friends, &request.asked) == 0);
+    if full {
         return Err(RequestUnaccepted::Waits(
             settings.words.friends_full.clone(),
         ));

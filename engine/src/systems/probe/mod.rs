@@ -100,6 +100,7 @@ use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Rese
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
 use crate::systems::npc::{Npc, NpcId};
+use crate::systems::party::{self, page::ShownParty};
 use crate::systems::player::{Away, PlayedBy, commands_locked, session};
 use crate::systems::prompt;
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
@@ -359,6 +360,8 @@ pub struct ProbeSnapshot {
     pub friends: ShownFriends,
     /// What the Messages page shows: the inbox, the message chosen and the one being written.
     pub messages: ShownMessages,
+    /// The party the player is in, and the invitations that wait for their answer.
+    pub party: ShownParty,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -1235,6 +1238,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         social_requests: social_request::card::shown(world),
         friends: friend::page::shown(world),
         messages: inbox::page::shown(world),
+        party: party::page::shown(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),
@@ -1929,7 +1933,7 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
 
 fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
     let content = world.resource::<Content>().clone();
-    let me = session::my_id(world);
+    let me = item::DropTaker::me(world);
     world
         .query::<(
             Entity,
@@ -1946,7 +1950,7 @@ fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
             rarity: dropped.item.get(&content).rarity,
             count: dropped.count,
             at: at.pos,
-            mine: item::takeable(reservation, me),
+            mine: item::takeable(reservation, &me),
             plate: None,
             effects: false,
             outlined: false,

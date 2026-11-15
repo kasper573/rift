@@ -9,6 +9,7 @@ use engine::systems::history::HistoryNews;
 use engine::systems::inbox::{
     self, DeleteMessage, MessageAnswered, MessageText, OpenMessage, SendMessage, TakeAttached,
 };
+use engine::systems::party::{self, PartyRequest};
 use engine::systems::player::snapshot::JoinAs;
 use engine::systems::player::{self, ClientId, SpawnPolicy, SpawnRules};
 use engine::systems::social_request::{
@@ -214,12 +215,14 @@ fn serving(content: &Content, area: &str) -> Sim {
         .accept::<OpenMessage>()
         .accept::<TakeAttached>()
         .accept::<DeleteMessage>()
+        .accept::<PartyRequest>()
         .add((
             society::view::greet,
             social_request::requests,
             friend::requests,
             inbox::requests,
             inbox::overflow,
+            party::requests,
             player::linger,
         ));
     sim.world.insert_resource(WallClock {

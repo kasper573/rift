@@ -23,6 +23,7 @@ use crate::systems::item::{DroppedItem, Inventory, ItemId};
 use crate::systems::memory::{self, MemoryId};
 use crate::systems::movement::{self, Position};
 use crate::systems::npc::{Npc, NpcId, Pack, Packs, body};
+use crate::systems::party;
 use crate::systems::player::{ArrivalHold, PlayedBy};
 use crate::systems::prompt::Offer;
 use crate::systems::quest::{self, Objective, QuestId};
@@ -259,6 +260,12 @@ pub enum RiftQuery {
         of: Option<Box<Condition>>,
         recipe: RecipeKey,
     },
+    /// Whether the character's player is in a party.
+    InParty {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+    },
     FreeSlots {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
@@ -453,6 +460,7 @@ impl RiftQueryKind {
             | RiftQueryKind::HasStatus
             | RiftQueryKind::Equipped
             | RiftQueryKind::MastersRecipe
+            | RiftQueryKind::InParty
             | RiftQueryKind::SetWithin
             | RiftQueryKind::OnQuest
             | RiftQueryKind::QuestDone
@@ -493,6 +501,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::StatusCount { of, .. }
             | RiftQuery::Holding { of, .. }
             | RiftQuery::MastersRecipe { of, .. }
+            | RiftQuery::InParty { of }
             | RiftQuery::FreeSlots { of }
             | RiftQuery::Offered { of, .. }
             | RiftQuery::Equipped { of, .. }
@@ -636,6 +645,14 @@ impl QueryDef<RiftScripting> for RiftQuery {
                     Value::Bool(
                         character(world, cx, &of)
                             .is_some_and(|who| crafting::masters(world, who, &recipe)),
+                    )
+                })
+            }
+            RiftQuery::InParty { of } => {
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    Value::Bool(
+                        character(world, cx, &of).is_some_and(|who| party::in_one(world, who)),
                     )
                 })
             }

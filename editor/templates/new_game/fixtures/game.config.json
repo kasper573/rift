@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "331e825f",
+  "content_version": "bd6a4424",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -161,7 +161,20 @@
     "took_some": "{taken} of {attached} taken. The rest found no room and waits here",
     "did_not_fit_title": "What your inventory had no room for",
     "did_not_fit_text": "Your inventory had no room for these. They wait here until you take them.",
-    "sent_in_a_message": "It was sent to you in a message"
+    "sent_in_a_message": "It was sent to you in a message",
+    "party_invite_asks": "{name} invites you to their party",
+    "party_invite_asked": "You invited {name} to your party",
+    "party_invite_declined": "{name} declined your invitation",
+    "party_invite_lapsed": "{name} did not answer your invitation",
+    "party_full": "The party is full",
+    "in_a_party": "{name} is in a party",
+    "party_joined": "{name} joined the party",
+    "party_left": "{name} left the party",
+    "party_removed": "{name} was removed from the party",
+    "you_were_removed": "You were removed from the party",
+    "party_disbanded": "{name} disbanded the party",
+    "party_leads": "{name} leads the party now",
+    "xp_shared": "Shared with {names}"
   },
   "typing": {
     "pace": 45.0,
@@ -384,5 +397,15 @@
     "title_length": 60,
     "text_length": 1000,
     "a_minute": 5
+  },
+  "party": {
+    "size": 5,
+    "invite_lasts": 60.0,
+    "absent_for": 300.0,
+    "experience": {
+      "split": "even",
+      "range": 40.0,
+      "bonus": 0.0
+    }
   }
 }

@@ -437,7 +437,7 @@ pub fn from_game(
 
 /// Whether `by` may write to `to`: only to a friend or a member of their party.
 pub fn may_write(society: &Society, by: &AccountId, to: &AccountId) -> bool {
-    by != to && society.friends().are(by, to)
+    by != to && (society.friends().are(by, to) || society.parties().together(by, to))
 }
 
 /// Does what `by` asked of their messages, under the game `settings` are of.

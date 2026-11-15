@@ -42,6 +42,7 @@ use crate::systems::interface::CursorId;
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
+use crate::systems::party;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::{
@@ -300,8 +301,37 @@ impl Reservation {
         self.by.filter(|_| now - self.at < lasts)
     }
 
-    pub fn allows(&self, account: Option<ClientId>) -> bool {
-        self.by.is_none_or(|by| account == Some(by))
+    /// Whether `taker` may take what is reserved so: its holder, and whoever plays in a party
+    /// with them. What is reserved for nobody is anyone's.
+    pub fn allows(&self, taker: &DropTaker) -> bool {
+        self.by
+            .is_none_or(|by| taker.client == Some(by) || taker.party.contains(&by))
+    }
+}
+
+/// Who would take a drop: the client that plays a character, and the clients playing the
+/// characters of its party, whose drops are open to it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DropTaker {
+    pub client: Option<ClientId>,
+    pub party: Vec<ClientId>,
+}
+
+impl DropTaker {
+    pub fn of(world: &World, character: Entity) -> DropTaker {
+        DropTaker {
+            client: world.get::<PlayedBy>(character).map(|by| by.client),
+            party: party::companions(world, character),
+        }
+    }
+
+    /// The player of this client.
+    pub fn me(world: &World) -> DropTaker {
+        let me = crate::systems::player::session::me(world);
+        DropTaker {
+            client: crate::systems::player::session::my_id(world),
+            party: me.map_or_else(Vec::new, |me| party::companions(world, me)),
+        }
     }
 }
 
@@ -993,8 +1023,8 @@ pub fn pickup_request(world: &mut World) {
 
 /// The item nearest `point` within a click's reach of it that the player may take.
 pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
-    let me = crate::systems::player::session::my_id(world);
-    dropped_at(world, point, |reservation| takeable(reservation, me))
+    let me = DropTaker::me(world);
+    dropped_at(world, point, |reservation| takeable(reservation, &me))
 }
 
 /// The item nearest `point` within a click's reach of it, whoever may take it.
@@ -1021,10 +1051,10 @@ fn dropped_at(
         .map(|(entity, ..)| entity)
 }
 
-/// Whether `account` may take a dropped item reserved as `reservation` says: anyone may take
+/// Whether `taker` may take a dropped item reserved as `reservation` says: anyone may take
 /// what is reserved for nobody.
-pub fn takeable(reservation: Option<&Reservation>, account: Option<ClientId>) -> bool {
-    reservation.is_none_or(|reservation| reservation.allows(account))
+pub fn takeable(reservation: Option<&Reservation>, taker: &DropTaker) -> bool {
+    reservation.is_none_or(|reservation| reservation.allows(taker))
 }
 
 pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
@@ -1164,11 +1194,8 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     let Some(drop) = world.get::<DroppedItem>(item).cloned() else {
         return;
     };
-    let account = world.get::<PlayedBy>(player).map(|owner| owner.client);
-    if world
-        .get::<Reservation>(item)
-        .is_some_and(|reservation| !reservation.allows(account))
-    {
+    let taker = DropTaker::of(world, player);
+    if !takeable(world.get::<Reservation>(item), &taker) {
         return;
     }
     let content = world.resource::<Content>().clone();

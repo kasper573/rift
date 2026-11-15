@@ -10,6 +10,7 @@ use crate::systems::inbox::draft::WriteToPlayer;
 use crate::systems::inbox::page::MessagesPage;
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
+use crate::systems::party::page::{InviteToParty, PartyPage};
 
 /// A page of the Social tab, brought by the system it shows.
 pub trait SocialPage: Send + Sync {
@@ -117,9 +118,9 @@ pub(crate) fn plugin(app: &mut App) {
 struct LastPage(Option<&'static str>);
 
 // Their sub-tabs line up in this order.
-static PAGES: &[&dyn SocialPage] = &[&FriendsPage, &MessagesPage];
+static PAGES: &[&dyn SocialPage] = &[&FriendsPage, &MessagesPage, &PartyPage];
 
-static PLAYER_ACTIONS: &[&dyn PlayerAction] = &[&WriteToPlayer];
+static PLAYER_ACTIONS: &[&dyn PlayerAction] = &[&WriteToPlayer, &InviteToParty];
 
 /// The pages of the systems the game has on.
 fn pages(world: &World) -> Vec<&'static dyn SocialPage> {

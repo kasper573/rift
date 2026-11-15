@@ -20,13 +20,14 @@ use crate::core::render::{self, window_point};
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
+use crate::systems::actor::Name;
 use crate::systems::dialogue;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::rarity::{DropNaming, ItemRarityDef, RarityRank};
 use crate::systems::item::render::DropAnim;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
 use crate::systems::movement::{Position, position};
-use crate::systems::player::session;
+use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
 
@@ -126,6 +127,8 @@ pub struct PlateLine {
     pub count: u32,
     pub why: Named,
     pub mine: bool,
+    /// Whose it is, when it is reserved for another player: theirs alone, or their party's.
+    pub whose: Option<String>,
 }
 
 /// Which items on the ground are named now. None is while the player talks or the screen
@@ -155,7 +158,7 @@ pub fn named(world: &mut World) -> NamedItems {
         .get_resource::<OpenedPile>()
         .map(|pile| pile.0.clone())
         .unwrap_or_default();
-    let account = session::my_id(world);
+    let account = item::DropTaker::me(world);
     let now = time::uptime(world);
     let mut wanted: Vec<(Entity, Named, RarityRank, Meters)> = world
         .query_filtered::<(
@@ -170,7 +173,7 @@ pub fn named(world: &mut World) -> NamedItems {
             let rarity = dropped.item.get(&content).rarity.get(&content);
             let away = eye.distance(at.pos);
             let near = away <= drops.names_reach;
-            let mine = item::takeable(reservation, account);
+            let mine = item::takeable(reservation, &account);
             let why = if mine && asked && near && rarity.rank >= naming.from {
                 Named::ByKey
             } else if pointed == Some(entity) {
@@ -211,7 +214,7 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
     // A drop lays its items in a ring the game's scatter from where it fell, so two of one drop
     // lie up to twice that apart.
     let together = Meters(content.built::<GameSettings>().drops.scatter.0 * 2.0);
-    let account = session::my_id(world);
+    let account = item::DropTaker::me(world);
     let eye = session::me(world).and_then(|me| position(world, me));
     let mut lying: Vec<LyingItem> = named
         .shown
@@ -255,11 +258,12 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
                 column.folded.push(item.entity);
                 continue;
             };
-            let mine = item::takeable(world.get::<Reservation>(item.entity), account);
-            let line = column
-                .lines
-                .iter_mut()
-                .find(|line| line.item == item.dropped.item && line.mine == mine);
+            let reservation = world.get::<Reservation>(item.entity).cloned();
+            let mine = item::takeable(reservation.as_ref(), &account);
+            let whose = whose(world, reservation.as_ref(), &account);
+            let line = column.lines.iter_mut().find(|line| {
+                line.item == item.dropped.item && line.mine == mine && line.whose == whose
+            });
             match line {
                 Some(line) => {
                     line.items.push(item.entity);
@@ -272,6 +276,7 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
                     count: item.dropped.count,
                     why,
                     mine,
+                    whose,
                 }),
             }
         }
@@ -298,6 +303,26 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
     columns
 }
 
+/// Whose a drop reserved as `reservation` says is, to `taker`: nobody's to name when it is
+/// their own or anyone's, else its holder's, or its holder's party's when that is theirs too.
+fn whose(
+    world: &mut World,
+    reservation: Option<&Reservation>,
+    taker: &item::DropTaker,
+) -> Option<String> {
+    let holder = reservation?.by.filter(|by| Some(*by) != taker.client)?;
+    let name = world
+        .query::<(&PlayedBy, &Name)>()
+        .iter(world)
+        .find(|(by, _)| by.client == holder)
+        .map(|(_, name)| name.name.clone())?;
+    Some(if taker.party.contains(&holder) {
+        format!("{name}'s party")
+    } else {
+        format!("{name}'s")
+    })
+}
+
 /// The item a click where the pointer rests takes by its plate: the nearest of the plate's
 /// items, when they are the player's to take and the plate shows for one of `whys`.
 pub fn taken_by_plate(world: &World, whys: &[Named]) -> Option<Entity> {
@@ -305,7 +330,7 @@ pub fn taken_by_plate(world: &World, whys: &[Named]) -> Option<Entity> {
     let item = pointed
         .item
         .filter(|_| pointed.plate.is_some_and(|why| whys.contains(&why)))?;
-    item::takeable(world.get::<Reservation>(item), session::my_id(world)).then_some(item)
+    item::takeable(world.get::<Reservation>(item), &item::DropTaker::me(world)).then_some(item)
 }
 
 /// Where the plate that names `item` is drawn, when one is.
@@ -325,7 +350,7 @@ fn outline(world: &mut World, named: &NamedItems) {
     let content = world.resource::<Content>().clone();
     let drops = content.built::<GameSettings>().drops;
     let always = world.resource::<UserSettings>().outlines_items_always();
-    let account = session::my_id(world);
+    let account = item::DropTaker::me(world);
     let asked = world.resource::<NamingItems>().0;
     let pointed = world.resource::<PointedItem>().item;
     let changed: Vec<(Entity, Option<Outline>)> = world
@@ -342,7 +367,7 @@ fn outline(world: &mut World, named: &NamedItems) {
                 Some(_) if pointed == Some(entity) => Some(drops.outline_hover),
                 Some(Named::ByKey) => Some(drops.outline),
                 Some(Named::ByPointer | Named::Unprompted) | None => (folded
-                    || always && item::takeable(reservation, account))
+                    || always && item::takeable(reservation, &account))
                 .then_some(drops.outline),
             };
             let wanted = width.map(|width| Outline {
@@ -501,7 +526,8 @@ fn draw_plates(world: &mut World) {
                     hovered,
                     leaving,
                     note: (hovered && full)
-                        .then(|| content.built::<GameSettings>().words.needs_a_slot.clone()),
+                        .then(|| content.built::<GameSettings>().words.needs_a_slot.clone())
+                        .or_else(|| line.whose.clone()),
                     scale,
                 }
             })

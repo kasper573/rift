@@ -27,6 +27,7 @@ use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::{self, DroppedItem, Reservation};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
+use crate::systems::party;
 use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::RiftScripts;
@@ -102,6 +103,8 @@ pub struct MapReachStep(pub u32);
 pub enum MapMarkKind {
     Townsperson,
     Player,
+    /// A player of the viewer's party.
+    PartyMember,
     WayOut,
     /// An item on the ground whose rarity marks it, drawn as the rarity's icon.
     Loot,
@@ -127,6 +130,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
     };
     let sight = visibility::sight(world);
     let content = world.resource::<Content>().clone();
+    let party = party::companions(world, viewer);
     let seen: Vec<(Entity, MapMark)> = world
         .query::<(
             Entity,
@@ -148,8 +152,12 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
                 (Some(npc), Some(Attitude::Friendly), _) => {
                     (MapMarkKind::Townsperson, npc.def.get(&content).name.clone())
                 }
-                (None, _, Some(_)) => (
-                    MapMarkKind::Player,
+                (None, _, Some(by)) => (
+                    if party.contains(&by.client) {
+                        MapMarkKind::PartyMember
+                    } else {
+                        MapMarkKind::Player
+                    },
                     name.map(|name| name.name.clone()).unwrap_or_default(),
                 ),
                 _ => return None,
@@ -185,7 +193,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
             icon: None,
         })
         .collect();
-    let account = world.get::<PlayedBy>(viewer).map(|played| played.client);
+    let taker = item::DropTaker::of(world, viewer);
     let loot: Vec<MapMark> = world
         .query::<(
             &AreaTag,
@@ -198,7 +206,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
         .filter(|(tag, at, _, reservation, _)| {
             tag.area == area
                 && eye.distance_to(at.pos) <= sight.0
-                && item::takeable(*reservation, account)
+                && item::takeable(*reservation, &taker)
         })
         .filter_map(|(_, at, dropped, _, opacity)| {
             let def = dropped.item.get(&content);
@@ -387,6 +395,7 @@ const BLANK: Color32 = Color32::from_rgb(0xD9, 0xCB, 0xA3);
 const NO_GROUND: Color32 = Color32::from_rgb(0x4B, 0x43, 0x3A);
 const TOWNSPERSON: Color32 = Color32::from_rgb(0x6F, 0xB8, 0x74);
 const PLAYER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
+const PARTY_MEMBER: Color32 = Color32::from_rgb(0xE6, 0xC2, 0x5B);
 const EDGE: Color32 = ink::FRAME;
 
 fn picture_the_ground(world: &mut World) {
@@ -558,6 +567,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
         MapMarkKind::Loot,
         MapMarkKind::Townsperson,
         MapMarkKind::Player,
+        MapMarkKind::PartyMember,
     ] {
         for &(index, mark, at) in on_disc.iter().filter(|(_, mark, _)| mark.kind == kind) {
             let fill = |color: Color32| color.gamma_multiply(mark.opacity);
@@ -584,13 +594,20 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                     }
                     mark.name.clone()
                 }
-                MapMarkKind::Player => {
+                MapMarkKind::Player | MapMarkKind::PartyMember => {
+                    let (color, said) = match kind {
+                        MapMarkKind::PartyMember => (PARTY_MEMBER, "party member"),
+                        _ => (PLAYER, "player"),
+                    };
                     let diamond = [Vec2::UP, Vec2::RIGHT, Vec2::DOWN, Vec2::LEFT]
                         .map(|corner| at + corner * DIAMOND)
                         .to_vec();
                     ui.painter()
-                        .add(Shape::convex_polygon(diamond, fill(PLAYER), edge));
-                    format!("{} · player", mark.name)
+                        .add(Shape::convex_polygon(diamond, fill(color), edge));
+                    if kind == MapMarkKind::PartyMember {
+                        ui.painter().circle_stroke(at, DIAMOND * 1.5, edge);
+                    }
+                    format!("{} · {said}", mark.name)
                 }
             };
             let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * HOVER_REACH));

@@ -27,6 +27,7 @@ pub mod memory;
 pub mod movement;
 pub mod notification;
 pub mod npc;
+pub mod party;
 pub mod player;
 pub mod probe;
 pub mod prompt;
@@ -115,6 +116,7 @@ pub fn protocol(app: &mut App) {
     society::view::register(app);
     friend::register(app);
     inbox::register(app);
+    party::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -136,7 +138,7 @@ pub fn protocol(app: &mut App) {
 
 /// The kinds of request between players the engine's systems bring.
 pub fn request_sources() -> Vec<social_request::SocialRequestSource> {
-    vec![friend::request_source()]
+    vec![friend::request_source(), party::request_source()]
 }
 
 /// Wires each system's say into the registries other systems read, so neither names the other: what
@@ -276,6 +278,9 @@ pub struct GameSettings {
     /// How messages work. A game without it has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messages: Option<inbox::MessageSettings>,
+    /// How parties work. A game without it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub party: Option<party::PartySettings>,
 }
 
 /// How much a player keeps.
@@ -440,6 +445,32 @@ pub struct GameWords {
     /// What became of what a bag had no room for, in a game that has messages: it is sent to its
     /// player in one.
     pub sent_in_a_message: String,
+    /// What an invitation to a party from `{name}` says to the player invited.
+    pub party_invite_asks: String,
+    /// What an invitation to a party says to the player who invited `{name}`.
+    pub party_invite_asked: String,
+    /// What a player is told as `{name}` declines their invitation to a party.
+    pub party_invite_declined: String,
+    /// What a player is told as their invitation to `{name}` runs out unanswered.
+    pub party_invite_lapsed: String,
+    /// What a player is told inviting someone to a party that has no room.
+    pub party_full: String,
+    /// What a player is told inviting `{name}`, who is in a party.
+    pub in_a_party: String,
+    /// What the members of a party are told as `{name}` joins it.
+    pub party_joined: String,
+    /// What the members of a party are told as `{name}` leaves it.
+    pub party_left: String,
+    /// What the members of a party are told as its leader removes `{name}` from it.
+    pub party_removed: String,
+    /// What a player is told as the leader of their party removes them from it.
+    pub you_were_removed: String,
+    /// What the members of a party are told as its leader `{name}` ends it.
+    pub party_disbanded: String,
+    /// What the members of a party are told as `{name}` comes to lead it.
+    pub party_leads: String,
+    /// What a player is told as they share the experience of a kill with `{names}`.
+    pub xp_shared: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -617,6 +648,7 @@ pub fn server_app(
                         friend::requests,
                         inbox::requests,
                         inbox::overflow,
+                        party::requests,
                     ),
                     player::linger,
                     player::respawn,
@@ -784,6 +816,7 @@ pub fn client_app(
             society::tab::plugin,
             friend::page::plugin,
             inbox::page::plugin,
+            party::page::plugin,
         ));
     app
 }
@@ -1044,6 +1077,23 @@ fn check_settings(loading: &mut Loading) {
         check.at_least("/messages/text_length", messages.text_length, 1, "letters");
         check.at_least("/messages/a_minute", messages.a_minute, 1, "messages");
     }
+    if let Some(party) = &settings.party {
+        check.at_least("/party/size", party.size, 2, "members");
+        check.at_least("/party/invite_lasts", party.invite_lasts.0, 0.0, "seconds");
+        check.at_least("/party/absent_for", party.absent_for.0, 0.0, "seconds");
+        check.at_least(
+            "/party/experience/range",
+            party.experience.range.0,
+            0.0,
+            "meters",
+        );
+        check.at_least(
+            "/party/experience/bonus",
+            party.experience.bonus,
+            0.0,
+            "percent",
+        );
+    }
     settings.cards.check("/cards", &mut check);
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
@@ -1098,6 +1148,22 @@ fn check_settings(loading: &mut Loading) {
             &settings.words.too_many_friend_requests,
         ),
         ("sent_in_a_message", &settings.words.sent_in_a_message),
+        ("party_invite_asks", &settings.words.party_invite_asks),
+        ("party_invite_asked", &settings.words.party_invite_asked),
+        (
+            "party_invite_declined",
+            &settings.words.party_invite_declined,
+        ),
+        ("party_invite_lapsed", &settings.words.party_invite_lapsed),
+        ("party_full", &settings.words.party_full),
+        ("in_a_party", &settings.words.in_a_party),
+        ("party_joined", &settings.words.party_joined),
+        ("party_left", &settings.words.party_left),
+        ("party_removed", &settings.words.party_removed),
+        ("you_were_removed", &settings.words.you_were_removed),
+        ("party_disbanded", &settings.words.party_disbanded),
+        ("party_leads", &settings.words.party_leads),
+        ("xp_shared", &settings.words.xp_shared),
     ]
     .into_iter()
     .chain(inbox::words(&settings.words))

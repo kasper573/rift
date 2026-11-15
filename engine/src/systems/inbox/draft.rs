@@ -129,12 +129,26 @@ struct Draft {
     sending: bool,
 }
 
-/// The players a message can be written to.
+/// Whether the player `view` is of can write to `player`.
+pub(super) fn may_write_to(view: &SocietyView, player: AccountNumber) -> bool {
+    receivers(view).iter().any(|other| other.account == player)
+}
+
+/// The players a message can be written to: the player's friends, and the members of their
+/// party.
 fn receivers(view: &SocietyView) -> Vec<SocietyMember> {
-    view.friends
-        .iter()
-        .map(|friend| friend.player.clone())
-        .collect()
+    let friends = view.friends.iter().map(|friend| &friend.player);
+    let party = view.party.iter().flat_map(|party| &party.members);
+    let mut receivers: Vec<SocietyMember> = Vec::new();
+    for player in friends.chain(party.map(|member| &member.player)) {
+        let listed = receivers
+            .iter()
+            .any(|other| other.account == player.account);
+        if player.account != view.account && !listed {
+            receivers.push(player.clone());
+        }
+    }
+    receivers
 }
 
 /// The page while a message is being written: the message on the left, the bag to attach from

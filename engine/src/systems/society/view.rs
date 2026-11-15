@@ -11,7 +11,9 @@ use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::inbox;
+use crate::systems::party::PartyShown;
 use crate::systems::player::CharacterAccount;
+use crate::systems::player::roster::ServerRoster;
 use crate::systems::social_request::{
     AcceptsRequestsFrom, SocialRequest, SocialRequestId, SocialRequestKind,
 };
@@ -35,6 +37,8 @@ pub struct SocietyView {
     /// The account's friends: those playing first, by name, then the rest by when they were
     /// last seen, the latest first.
     pub friends: Vec<FriendRow>,
+    /// The party the account is in.
+    pub party: Option<PartyShown>,
 }
 
 /// A friend, as the player whose friend they are sees them.
@@ -44,6 +48,8 @@ pub struct FriendRow {
     /// The area they play in, while they are at their character.
     pub online_in: Option<AreaId>,
     pub last_seen: UnixMillis,
+    /// Whether they are in a party that is not the account's own.
+    pub in_a_party: bool,
 }
 
 /// Another player, as one player's client knows them.
@@ -91,9 +97,13 @@ pub(crate) fn show(world: &mut World, character: Entity, society: &Society) {
     let Some(account) = world.get::<CharacterAccount>(character) else {
         return;
     };
-    let Some(view) = SocietyView::of(society, &account.0, world.resource::<GameSettings>()) else {
+    let settings = world.resource::<GameSettings>();
+    let roster = world.resource::<ServerRoster>();
+    let client_of = |account: &AccountId| roster.account(account).map(|enrolled| enrolled.client);
+    let Some(mut view) = SocietyView::of(society, &account.0, settings) else {
         return;
     };
+    view.party = PartyShown::of(society, &account.0, settings, client_of);
     if world.get::<SocietyView>(character) != Some(&view) {
         world.entity_mut(character).insert(view);
     }
@@ -137,6 +147,8 @@ impl SocietyView {
                     player: member(friend)?,
                     online_in: society.playing_in(friend),
                     last_seen: society.accounts().get(friend)?.last_seen,
+                    in_a_party: society.parties().of_account(friend).is_some()
+                        && !society.parties().together(friend, account),
                 })
             })
             .collect();
@@ -160,6 +172,7 @@ impl SocietyView {
                 .filter_map(card)
                 .collect(),
             friends,
+            party: None,
         })
     }
 }
