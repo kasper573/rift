@@ -61,8 +61,8 @@ pub struct StagedCard {
 /// What every card's mesh is drawn with: Bevy's own surface, and on top of it what that lacks.
 pub type CardSurface = ExtendedMaterial<StandardMaterial, CardPrint>;
 
-/// What a card's surface is beyond Bevy's: the interface's own colours as it blends them, the
-/// clip rectangle its triangles were painted under, and a foil's colours.
+/// What a card's surface is beyond Bevy's: the interface's own colours as it blends them, and
+/// a foil's colours.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
 pub struct CardPrint {
     #[texture(100)]
@@ -77,8 +77,6 @@ pub struct CardPrint {
 
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 struct PrintLight {
-    /// The clip rectangle, in the card's own measure: its corners as the second uv gives them.
-    clip: Vec4,
     lamp: Vec3,
     /// The share of a card's light that falls on it evenly.
     even: f32,
@@ -395,7 +393,7 @@ impl SurfaceLook {
         }
     }
 
-    fn surface(&self, print: Handle<Image>, clip: Vec4, lamp: Vec3, over: usize) -> CardSurface {
+    fn surface(&self, print: Handle<Image>, lamp: Vec3, over: usize) -> CardSurface {
         ExtendedMaterial {
             base: StandardMaterial {
                 base_color: Color::WHITE,
@@ -416,7 +414,6 @@ impl SurfaceLook {
             extension: CardPrint {
                 print,
                 light: PrintLight {
-                    clip,
                     lamp,
                     even: self.even,
                     foil: self.foil.as_ref().map_or(0.0, |(_, strength)| *strength),
@@ -451,11 +448,11 @@ const SLACK: f32 = 1.1;
 const GRAIN: f32 = 32.0;
 /// How many seconds a card's picture is kept once the card is off the stage.
 const LINGER: f64 = 1.0;
-/// A card's own shader spreads its even light, and its edges are the interface's, smoothed
-/// already.
+/// A card's own shader spreads its even light. A card that is turned lays no edge of its
+/// triangles along the pixels, so they are smoothed as they are drawn.
 const PICTURE_LOOK: PictureLook = PictureLook {
     lens: Lens::FromTheEye,
-    smoothing: Msaa::Off,
+    smoothing: Msaa::Sample4,
     even: 0.0,
 };
 
@@ -545,34 +542,22 @@ fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: 
         let Some(print) = gui::texture_image(world, lifted.mesh.texture_id) else {
             continue;
         };
-        let surface = |lifted: &LiftedRun| {
-            laid.look.surface(
-                print.clone(),
-                clip_of(lifted.clip, laid.flat, laid.pixels),
-                laid.lamp,
-                over,
-            )
-        };
+        let surface = || laid.look.surface(print.clone(), laid.lamp, over);
         match staged.runs.get_mut(over) {
             Some(run) => {
                 let moved = run.flat != laid.flat || run.reach != laid.reach;
                 if moved || run.lifted != lifted {
-                    let mesh = mesh_of(&lifted, laid.flat, laid.reach);
+                    let mesh = mesh_of(&lifted, laid);
                     world
                         .resource_mut::<Assets<Mesh>>()
                         .insert(run.mesh.id(), mesh)
                         .ok();
                     relaid = true;
                 }
-                if moved
-                    || run.lifted.clip != lifted.clip
-                    || run.print != print
-                    || run.look != laid.look
-                    || run.lamp != laid.lamp
-                {
+                if run.print != print || run.look != laid.look || run.lamp != laid.lamp {
                     world
                         .resource_mut::<Assets<CardSurface>>()
-                        .insert(run.material.id(), surface(&lifted))
+                        .insert(run.material.id(), surface())
                         .ok();
                     relaid = true;
                 }
@@ -591,10 +576,8 @@ fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: 
             None => {
                 let mesh = world
                     .resource_mut::<Assets<Mesh>>()
-                    .add(mesh_of(&lifted, laid.flat, laid.reach));
-                let material = world
-                    .resource_mut::<Assets<CardSurface>>()
-                    .add(surface(&lifted));
+                    .add(mesh_of(&lifted, laid));
+                let material = world.resource_mut::<Assets<CardSurface>>().add(surface());
                 let entity = world
                     .spawn((
                         Mesh3d(mesh.clone()),
@@ -624,24 +607,26 @@ fn lay_runs(world: &mut World, staged: &mut Staged, runs: Vec<LiftedRun>, laid: 
     relaid
 }
 
-/// A run's triangles as a mesh about the middle of `flat`, facing the eye. Its first uv is the
-/// interface's, into the run's texture; its second measures the card from its top left corner in
-/// its own widths; its colours are the interface's as they are, for the surface to blend the way
-/// the interface does.
+/// A run's triangles as a mesh about the middle of the card, facing the eye, cut to the clip
+/// rectangle they were painted under. Its first uv is the interface's, into the run's texture;
+/// its second measures the card from its top left corner in its own widths; its colours are the
+/// interface's as they are, for the surface to blend the way the interface does.
 ///
 /// Bevy draws see-through meshes in the order of how far off the middle of each one's bounds
-/// is, so every run of a card is given the bounds of the whole card, `reach` to each side of its
-/// middle, by two corners no triangle uses: turned, the runs stay in the order they were
+/// is, so every run of a card is given the bounds of the whole card, its reach to each side of
+/// its middle, by two corners no triangle uses: turned, the runs stay in the order they were
 /// painted in, whatever part of the card each covers.
-fn mesh_of(run: &LiftedRun, flat: Rect, reach: egui::Vec2) -> Mesh {
+fn mesh_of(run: &LiftedRun, laid: &Laid) -> Mesh {
+    let flat = laid.flat;
     let middle = flat.center();
-    let corners = [middle - reach, middle + reach].map(|pos| egui::epaint::Vertex {
-        pos,
-        uv: egui::epaint::WHITE_UV,
-        color: egui::Color32::TRANSPARENT,
-    });
-    let vertices: Vec<egui::epaint::Vertex> =
-        run.mesh.vertices.iter().copied().chain(corners).collect();
+    let (mut vertices, indices) = cut_to_clip(run, laid.pixels);
+    vertices.extend(
+        [middle - laid.reach, middle + laid.reach].map(|pos| PrintCorner {
+            pos,
+            uv: egui::epaint::WHITE_UV,
+            color: [0.0; 4],
+        }),
+    );
     let positions: Vec<[f32; 3]> = vertices
         .iter()
         .map(|vertex| [vertex.pos.x - middle.x, middle.y - vertex.pos.y, 0.0])
@@ -654,10 +639,7 @@ fn mesh_of(run: &LiftedRun, flat: Rect, reach: egui::Vec2) -> Mesh {
         .iter()
         .map(|vertex| measured(vertex.pos, flat).to_array())
         .collect();
-    let colors: Vec<[f32; 4]> = vertices
-        .iter()
-        .map(|vertex| vertex.color.to_array().map(|part| f32::from(part) / 255.0))
-        .collect();
+    let colors: Vec<[f32; 4]> = vertices.iter().map(|vertex| vertex.color).collect();
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::RENDER_WORLD,
@@ -674,23 +656,93 @@ fn mesh_of(run: &LiftedRun, flat: Rect, reach: egui::Vec2) -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, measures)
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
-    .with_inserted_indices(Indices::U32(run.mesh.indices.clone()))
+    .with_inserted_indices(Indices::U32(indices))
+}
+
+/// A corner of a triangle the interface painted: where it is, where in the run's texture, and
+/// its colour.
+#[derive(Clone, Copy)]
+struct PrintCorner {
+    pos: Pos2,
+    uv: Pos2,
+    color: [f32; 4],
+}
+
+impl PrintCorner {
+    fn of(vertex: &egui::epaint::Vertex) -> PrintCorner {
+        PrintCorner {
+            pos: vertex.pos,
+            uv: vertex.uv,
+            color: vertex.color.to_array().map(|part| f32::from(part) / 255.0),
+        }
+    }
+
+    /// The corner `share` of the way along the edge from this one to `other`.
+    fn toward(&self, other: &PrintCorner, share: f32) -> PrintCorner {
+        let mut color = self.color;
+        for (part, to) in color.iter_mut().zip(other.color) {
+            *part += (to - *part) * share;
+        }
+        PrintCorner {
+            pos: self.pos + (other.pos - self.pos) * share,
+            uv: self.uv + (other.uv - self.uv) * share,
+            color,
+        }
+    }
+}
+
+/// A run's triangles as far as they lie inside its clip rectangle, on the whole pixels the
+/// interface cuts at: the triangles' corners, with those the cut adds, and the triangles left.
+/// Cut in its triangles and not as it is drawn, the edge of the clip is smoothed like any other.
+fn cut_to_clip(run: &LiftedRun, pixels: f32) -> (Vec<PrintCorner>, Vec<u32>) {
+    let whole = |at: Pos2| Pos2::new((at.x * pixels).round(), (at.y * pixels).round()) / pixels;
+    let clip = Rect::from_min_max(whole(run.clip.min), whole(run.clip.max));
+    let mut corners: Vec<PrintCorner> = run.mesh.vertices.iter().map(PrintCorner::of).collect();
+    let mut indices = Vec::with_capacity(run.mesh.indices.len());
+    for triangle in run.mesh.indices.as_chunks::<3>().0 {
+        let uncut = triangle.map(|at| corners.get(at as usize).copied());
+        let [Some(first), Some(second), Some(third)] = uncut else {
+            continue;
+        };
+        let uncut = [first, second, third];
+        if uncut.iter().all(|corner| clip.contains(corner.pos)) {
+            indices.extend_from_slice(triangle);
+            continue;
+        }
+        let left = cut_by(&uncut, |at| at.x - clip.min.x);
+        let left = cut_by(&left, |at| clip.max.x - at.x);
+        let left = cut_by(&left, |at| at.y - clip.min.y);
+        let left = cut_by(&left, |at| clip.max.y - at.y);
+        let first = corners.len() as u32;
+        for next in 2..left.len() as u32 {
+            indices.extend([first, first + next - 1, first + next]);
+        }
+        corners.extend(left);
+    }
+    (corners, indices)
+}
+
+/// What is left of the shape `corners` run round on the side of a line where `inside` is not
+/// negative, with a corner added wherever an edge crosses the line.
+fn cut_by(corners: &[PrintCorner], inside: impl Fn(Pos2) -> f32) -> Vec<PrintCorner> {
+    let mut left = Vec::with_capacity(corners.len() + 1);
+    for (index, from) in corners.iter().enumerate() {
+        let to = &corners[(index + 1) % corners.len()];
+        let (here, there) = (inside(from.pos), inside(to.pos));
+        if here >= 0.0 {
+            left.push(*from);
+        }
+        if (here >= 0.0) != (there >= 0.0) {
+            left.push(from.toward(to, here / (here - there)));
+        }
+    }
+    left
 }
 
 /// A point of the interface in the card's own measure.
 fn measured(at: Pos2, flat: Rect) -> Vec2 {
     let from = (at - flat.min) / flat.width();
     Vec2::new(from.x, from.y)
-}
-
-/// A clip rectangle in the card's own measure, on the whole pixels the interface cuts at.
-fn clip_of(clip: Rect, flat: Rect, pixels: f32) -> Vec4 {
-    let whole = |at: Pos2| Pos2::new((at.x * pixels).round(), (at.y * pixels).round()) / pixels;
-    let (min, max) = (
-        measured(whole(clip.min), flat),
-        measured(whole(clip.max), flat),
-    );
-    Vec4::new(min.x, min.y, max.x, max.y)
 }
 
 /// Takes every card off the stage that was not put on it this pass. Its picture is kept a while

@@ -50,6 +50,8 @@ const CREST_SUNK: f32 = 4.0;
 const BAND_ICON: f32 = 16.0;
 const BAND_ICON_GAP: f32 = 6.0;
 const INSET_STROKE: f32 = 1.5;
+/// How far the picture's ground reaches under the rules and the stroke that border it.
+const ART_BLEED: f32 = 1.0;
 const ARC_STEPS: usize = 6;
 const WATERMARK: f32 = 96.0;
 const RULE_ICON: f32 = 10.0;
@@ -353,8 +355,8 @@ impl<'a> Card<'a> {
                 .0
         });
         let painter = inner.painter().clone();
-        self.paint_kind_band(&painter, band_rect);
         self.paint_art(&painter, art_rect);
+        self.paint_kind_band(&painter, band_rect);
         if let NameBandLook::Ribbon { overhang, .. } = self.dress.name_band {
             self.paint_ribbon(ui.painter(), name_rect, overhang);
         }
@@ -631,12 +633,15 @@ impl<'a> Card<'a> {
             ArtLook::Flush => art,
             ArtLook::Inset { margin } => art.shrink(margin),
         };
+        // What borders the picture is painted over its edge. A card turned on the stage would
+        // show its paper between a ground that ends where a soft-edged rule begins.
+        let ground = picture.expand(ART_BLEED);
         painter.add(shaded(
             &[
-                picture.left_top(),
-                picture.right_top(),
-                picture.right_bottom(),
-                picture.left_bottom(),
+                ground.left_top(),
+                ground.right_top(),
+                ground.right_bottom(),
+                ground.left_bottom(),
             ],
             picture,
             [top, bottom],
