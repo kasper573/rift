@@ -12,6 +12,7 @@ use crate::core::units::Seconds;
 use crate::systems::actor::Actor;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind};
+use crate::systems::mount::{MountId, Riding};
 use crate::systems::notification;
 use crate::systems::script::effect::Audience;
 use crate::systems::script::event::RiftEvent;
@@ -21,13 +22,14 @@ use crate::systems::stat::Stat;
 use crate::systems::vfx::{self, VfxShaderFixture};
 
 /// Where the aspects of an actor or an object come from: a status it carries, an item it wears or
-/// carries as a resource, a passive skill it knows. Each is a scripted row, active while that
-/// holds.
+/// carries as a resource, a passive skill it knows, a mount it drives. Each is a scripted row,
+/// active while that holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AspectSource {
     Status(StatusEffectId),
     Item(ItemId),
     Skill(SkillId),
+    Mount(MountId),
 }
 
 impl AspectSource {
@@ -41,6 +43,7 @@ impl AspectSource {
             AspectSource::Status(id) => OwnerRow::of_row(id),
             AspectSource::Item(id) => OwnerRow::of_row(id),
             AspectSource::Skill(id) => OwnerRow::of_row(id),
+            AspectSource::Mount(id) => OwnerRow::of_row(id),
         }
     }
 }
@@ -229,6 +232,21 @@ impl Planner for TickAspects {
     }
 }
 
+/// Brings `actor` to the aspects it should have at once: for what gives or takes one outside
+/// the components a tick watches for a change, as taking or leaving a mount's seat does.
+pub(crate) fn resettle(world: &mut World, actor: Entity) {
+    if world.get::<Actor>(actor).is_none() {
+        return;
+    }
+    let (wanted, active) = (desired(world, actor), active(world, actor));
+    for gone in active.iter().filter(|aspect| !wanted.contains(aspect)) {
+        deactivate(world, actor, gone.source);
+    }
+    for new in wanted.iter().filter(|aspect| !active.contains(aspect)) {
+        activate(world, actor, *new);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct Wanted {
     source: AspectSource,
@@ -287,6 +305,9 @@ fn desired(world: &World, actor: Entity) -> Vec<Wanted> {
         if rank > Rank::NONE && skill.get(content).kind == SkillKind::Passive {
             wanted.push(held(AspectSource::Skill(skill)));
         }
+    }
+    if let Some(riding) = world.get::<Riding>(actor).filter(|riding| riding.drives()) {
+        wanted.push(held(AspectSource::Mount(riding.mount)));
     }
     wanted.retain(|aspect| {
         matches!(aspect.source, AspectSource::Status(_))

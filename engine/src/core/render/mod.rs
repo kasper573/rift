@@ -10,7 +10,8 @@ pub mod world;
 pub use camera::{
     CameraFocus, CameraFraming, CameraPreferences, CameraRig, CameraRigSystems, GroundHeights,
     Orbit, PictureGrade, Shot, View, WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray,
-    facing_rotation, ground_height, ground_pos, view_of, window_point, window_size, world_point,
+    facing_rotation, ground_height, ground_pos, surface_height, view_of, window_point, window_size,
+    world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed};
 

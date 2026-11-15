@@ -24,10 +24,12 @@ use crate::core::content::{Content, RowCheck};
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
 use crate::core::math::{Offset, Pos};
 use crate::core::par;
+use crate::core::render::Pointed;
 use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters, MetersPerSec, Radians, Seconds};
 use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_facing};
 use crate::systems::area::HeldMesh;
+use crate::systems::mount::{self, Travels};
 use crate::systems::player::{conn_player, may_command};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{GameSettings, area, drain_requests, reach};
@@ -235,7 +237,7 @@ pub fn move_request(world: &mut World) {
         if let Some(mut heard) = world.get_mut::<HeardMove>(player) {
             heard.0 = heard.0.max(request.message.seq);
         }
-        if !may_command(world, player) {
+        if !may_command(world, player) || mount::carried(world, player) {
             continue;
         }
         reach::drop_intent(world, player);
@@ -474,7 +476,7 @@ fn wading_share(world: &World, entity: Entity) -> f32 {
     let Some(wading) = content.built::<GameSettings>().wading else {
         return 1.0;
     };
-    if airborne(world, entity) {
+    if airborne(world, entity) || mount::lifted(content, world, entity) {
         return 1.0;
     }
     match (area::of_in(content, world, entity), position(world, entity)) {
@@ -484,10 +486,31 @@ fn wading_share(world: &World, entity: Entity) -> f32 {
 }
 
 /// The mesh the actor moves on: its area's ground, or its air for a flyer, the wild one when it is
-/// wild.
+/// wild. A rider moves on the mesh of what they ride: the ground, the air, or the water deep
+/// enough to float it.
 pub fn mesh_of(content: &Content, world: &World, entity: Entity) -> Option<HeldMesh> {
     let area = area::of_in(content, world, entity)?;
-    Some(area.mesh_for(area::wild(world, entity), airborne(world, entity)))
+    match mount::travels(content, world, entity) {
+        Some(Travels::Riding) => Some(area.mesh_for(false, false)),
+        Some(Travels::Flying { .. }) => Some(area.mesh_for(false, true)),
+        Some(Travels::Floating { draught }) => area.water_mesh(draught),
+        None => Some(area.mesh_for(area::wild(world, entity), airborne(world, entity))),
+    }
+}
+
+/// The point `walker` would head for where the pointer points: on the water's surface for one
+/// whose mount carries them over it, on the ground for anyone else.
+pub fn pointed_spot(world: &World, walker: Entity, pointed: &Pointed) -> Option<Pos<Meters>> {
+    if mount::lifted(world.resource::<Content>(), world, walker) {
+        pointed.surface
+    } else {
+        pointed.ground
+    }
+}
+
+/// Whether `walker` goes to `at` on what they walk: nowhere for one their driver carries.
+pub fn walks_at(world: &World, walker: Entity, at: Pos<Meters>) -> bool {
+    !mount::carried(world, walker) && mesh_in(world, walker).is_some_and(|mesh| mesh.walkable(at))
 }
 
 fn mesh_in(world: &World, entity: Entity) -> Option<HeldMesh> {

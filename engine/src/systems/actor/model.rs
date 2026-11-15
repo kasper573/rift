@@ -14,8 +14,8 @@ use super::part::{MAX_PART_BYTES, ModelPartDef, ModelPartId};
 use super::playing::Motion;
 use super::rigging::BuiltSkeleton;
 use super::skeleton::{
-    self, BuildName, Clip, ClipCell, Colours, Cue, Declared, GroupName, Hand, Naming, SkeletonDef,
-    SkeletonId,
+    self, BuildName, Clip, ClipCell, Colours, Cue, Declared, GroupName, Hand, JointName, Naming,
+    SkeletonDef, SkeletonId,
 };
 use super::stance::StanceId;
 use super::{Action, Pose};
@@ -31,6 +31,7 @@ use crate::core::render::world::body::{Figure, Skin};
 use crate::core::units::{Meters, MetersPerSec, Millis, PlaybackRate, Seconds};
 use crate::core::vfx::VfxId;
 use crate::systems::area::prop::MAX_EFFECTS;
+use crate::systems::mount::{self, MountDef};
 
 pub type ModelId = ContentId<ModelDef>;
 
@@ -73,9 +74,10 @@ impl ContentFile for ModelDef {
     const TABLE: &'static str = "model";
 
     fn fresh(near: &Nearby) -> Result<ModelDef, String> {
+        let sat = mount::sat_moves(&near.all::<MountDef>());
         let skeleton: SkeletonId = near
             .file_where("a finished skeleton", |skeleton: &SkeletonDef| {
-                skeleton.unfinished().is_empty()
+                skeleton.unfinished(&sat).is_empty()
             })?;
         let part = near.file_where(
             "a part with a mesh on that skeleton",
@@ -340,7 +342,8 @@ fn check_meshes(
 /// What a body needs of the skeleton it is made on, which may be unfinished while it is made.
 fn check_finished(content: &Content, skeleton: SkeletonId, cx: &mut RowCheck) {
     let skeleton_path = skeleton.path(content);
-    for lacking in skeleton.get(content).unfinished() {
+    let sat = mount::sat_moves(content.table::<MountDef>().rows());
+    for lacking in skeleton.get(content).unfinished(&sat) {
         cx.error(
             "/skeleton",
             "unfinished skeleton",
@@ -548,6 +551,11 @@ impl ActorModel {
 
     pub fn hitbox(&self) -> Capsule {
         self.def.hitbox
+    }
+
+    /// Whether the model's rig has a joint called `joint`.
+    pub fn has_joint(&self, joint: &JointName) -> bool {
+        self.skeleton.rig.named(joint.as_str()).is_some()
     }
 
     /// What the model is drawn as bare: its skeleton's rig and the skins of its own parts.

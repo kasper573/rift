@@ -25,8 +25,9 @@ impl Claimant for WalkClaimant {
         if !session::is_alive(world) {
             return None;
         }
-        let point = pointed?.ground?;
-        area::walkable(world, point).then_some(ClickClaim::Walk(point))
+        let me = session::me(world)?;
+        let point = movement::pointed_spot(world, me, pointed?)?;
+        movement::walks_at(world, me, point).then_some(ClickClaim::Walk(point))
     }
 
     fn drive(&self, world: &mut World, claim: Option<ClickClaim>, start: bool) {
@@ -67,7 +68,10 @@ fn repeat(world: &mut World) {
     let Some(pointed) = render::pointed(world) else {
         return;
     };
-    let Some(point) = pointed.ground else {
+    let Some(me) = session::me(world) else {
+        return;
+    };
+    let Some(point) = movement::pointed_spot(world, me, &pointed) else {
         return;
     };
     if combat::enemy_at(world, &pointed).is_some() {
@@ -76,7 +80,7 @@ fn repeat(world: &mut World) {
     let last = world
         .get_resource::<WalkState>()
         .and_then(|state| state.last);
-    if !area::walkable(world, point) || last == Some(point) {
+    if !movement::walks_at(world, me, point) || last == Some(point) {
         return;
     }
     movement::request_walk(world, point);

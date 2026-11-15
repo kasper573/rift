@@ -25,8 +25,10 @@ use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::item::{
     DropRow, Inventory, ItemDef, ItemId, ItemStack, ToolTypeDef, ToolTypeId,
 };
+use crate::systems::mount::RiderAct;
 use crate::systems::movement::{self, Bodies, Position, Spot, position};
 use crate::systems::notification;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::effect::Audience;
@@ -400,17 +402,23 @@ pub fn workable(
 }
 
 pub fn gather_request(world: &mut World) {
-    player_requests::<GatherRequest>(world, true, |world, player, request| {
-        let target = request.target;
-        if world.get::<Resource>(target).is_none() || !visibility::in_sight(world, player, target) {
-            return Ok(());
-        }
-        workable(world, player, target)?;
-        stop(world, player);
-        reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Gather);
-        Ok(())
-    });
-    player_requests::<StopGathering>(world, false, |world, player, _| {
+    player_requests::<GatherRequest>(
+        world,
+        RequestNeeds::Seat(RiderAct::Gather),
+        |world, player, request| {
+            let target = request.target;
+            if world.get::<Resource>(target).is_none()
+                || !visibility::in_sight(world, player, target)
+            {
+                return Ok(());
+            }
+            workable(world, player, target)?;
+            stop(world, player);
+            reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Gather);
+            Ok(())
+        },
+    );
+    player_requests::<StopGathering>(world, RequestNeeds::Nothing, |world, player, _| {
         stop(world, player);
         Ok(())
     });

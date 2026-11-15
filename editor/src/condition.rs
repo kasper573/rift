@@ -47,7 +47,8 @@ impl QueryGroup {
             | RiftQueryKind::SkillStat
             | RiftQueryKind::SpentSkillPoints
             | RiftQueryKind::MastersRecipe
-            | RiftQueryKind::InParty => QueryGroup::Character,
+            | RiftQueryKind::InParty
+            | RiftQueryKind::Riding => QueryGroup::Character,
             RiftQueryKind::Holding
             | RiftQueryKind::FreeSlots
             | RiftQueryKind::Offered

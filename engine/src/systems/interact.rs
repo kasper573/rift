@@ -13,6 +13,8 @@ use crate::core::units::Meters;
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::Attitude;
 use crate::systems::interface::CursorShape;
+use crate::systems::mount::RiderAct;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{player_requests, session};
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::{self, EventKind, Procedure, RiftEvent, RiftInstances};
@@ -91,21 +93,25 @@ pub fn interactable_at(world: &mut World, pointed: &Pointed) -> Option<Entity> {
 }
 
 pub fn interact_request(world: &mut World) {
-    player_requests::<InteractRequest>(world, true, |world, player, request| {
-        let target = request.target;
-        if stat::stands(world, target)
-            && interaction_of(world, target).is_some()
-            && visibility::in_sight(world, player, target)
-        {
-            reach::intend(
-                world,
-                player,
-                ReachTarget::Actor(target),
-                ReachAct::Interact,
-            );
-        }
-        Ok(())
-    });
+    player_requests::<InteractRequest>(
+        world,
+        RequestNeeds::Seat(RiderAct::Interact),
+        |world, player, request| {
+            let target = request.target;
+            if stat::stands(world, target)
+                && interaction_of(world, target).is_some()
+                && visibility::in_sight(world, player, target)
+            {
+                reach::intend(
+                    world,
+                    player,
+                    ReachTarget::Actor(target),
+                    ReachAct::Interact,
+                );
+            }
+            Ok(())
+        },
+    );
 }
 
 pub fn interactions(world: &mut World, intents: &mut reach::Intents) {

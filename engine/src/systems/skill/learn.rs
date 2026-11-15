@@ -8,6 +8,7 @@ use crate::core::content::Content;
 use crate::systems::class::{self, AccessRequirement, ClassDef, NodeKey, SkillPoints};
 use crate::systems::history::HistoryTopic;
 use crate::systems::notification::{self, Notification};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::script::{Condition, condition};
 
@@ -43,11 +44,15 @@ pub enum PlanRefusal {
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<LearnSkillsRequest>(world, true, |world, player, request| {
-        let learned = learn(world, player, &request.ranks)?;
-        announce(world, player, &learned);
-        Ok(())
-    });
+    player_requests::<LearnSkillsRequest>(
+        world,
+        RequestNeeds::Command,
+        |world, player, request| {
+            let learned = learn(world, player, &request.ranks)?;
+            announce(world, player, &learned);
+            Ok(())
+        },
+    );
 }
 
 /// Learns every rank of the plan or none: each pick within the tree and the skill's ranks, above

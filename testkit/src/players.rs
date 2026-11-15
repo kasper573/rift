@@ -141,23 +141,27 @@ impl Sim {
         self.hand_over(to)
     }
 
-    /// Hands the player on their way out of this area over to `to`'s server, the area they are
-    /// bound for, where they draw what they arrive to: the character as it arrived.
+    /// Hands everyone on their way out of this area over to `to`'s server, the area they are
+    /// bound for, where each draws what they arrive to: the first of them as they arrived, a
+    /// driver before their passengers.
     pub fn hand_over(&mut self, to: &mut Sim) -> Entity {
-        let traveler = transition::departing(&mut self.world)
-            .pop()
-            .expect("a traveler");
-        assert_eq!(
-            traveler.dest_area,
-            to.world.resource::<WorldArea>().0,
-            "the traveler is bound for the area they are handed to"
-        );
-        let client = traveler.played.client;
-        to.connect(client.0);
-        let arrived = transition::arrive(&mut to.world, traveler);
-        let conn = to.conn(client.0);
-        to.send(conn, AreaDrawn);
-        arrived
+        let arrived: Vec<Entity> = transition::departing(&mut self.world)
+            .into_iter()
+            .map(|traveler| {
+                assert_eq!(
+                    traveler.dest_area,
+                    to.world.resource::<WorldArea>().0,
+                    "the traveler is bound for the area they are handed to"
+                );
+                let client = traveler.played.client;
+                to.connect(client.0);
+                let arrived = transition::arrive(&mut to.world, traveler);
+                let conn = to.conn(client.0);
+                to.send(conn, AreaDrawn);
+                arrived
+            })
+            .collect();
+        *arrived.first().expect("a traveler")
     }
 
     pub fn player(&self, client: u32) -> Entity {

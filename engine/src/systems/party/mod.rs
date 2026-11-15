@@ -22,6 +22,7 @@ use crate::systems::area::AreaId;
 use crate::systems::chat::{self, ChatChannel, ChatChannelSource};
 use crate::systems::history::HistoryTopic;
 use crate::systems::notification::Notification;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, ClientId, PlayedBy};
 use crate::systems::social_request::{
     self, RequestUnaccepted, RequestUnsent, SocialRequest, SocialRequestAsk, SocialRequestKind,
@@ -284,26 +285,31 @@ pub fn request_source() -> SocialRequestSource {
         },
         may_send,
         accepted,
+        stands: |_, _| true,
     }
 }
 
 /// Hands what players of this world asked of parties to society.
 pub fn requests(world: &mut World) {
-    player::player_requests::<PartyRequest>(world, false, |world, player, request| {
-        let Some(client) = world.get::<PlayedBy>(player).map(|by| by.client) else {
-            return Ok(());
-        };
-        let ask = match request {
-            PartyRequest::Invite(of) => SocietyAsk::Request(SocialRequestAsk::Ask {
-                kind: SocialRequestKind::PartyInvitation,
-                of,
-                about: None,
-            }),
-            other => SocietyAsk::Party(other),
-        };
-        society::ask(world, client, ask);
-        Ok(())
-    });
+    player::player_requests::<PartyRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| {
+            let Some(client) = world.get::<PlayedBy>(player).map(|by| by.client) else {
+                return Ok(());
+            };
+            let ask = match request {
+                PartyRequest::Invite(of) => SocietyAsk::Request(SocialRequestAsk::Ask {
+                    kind: SocialRequestKind::PartyInvitation,
+                    of,
+                    about: None,
+                }),
+                other => SocietyAsk::Party(other),
+            };
+            society::ask(world, client, ask);
+            Ok(())
+        },
+    );
 }
 
 /// Does what `by` asked of parties, under the game `settings` are of.

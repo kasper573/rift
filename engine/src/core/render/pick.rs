@@ -13,6 +13,21 @@ use crate::core::units::Meters;
 pub struct Pointed {
     pub ray: Ray3d,
     pub ground: Option<Pos<Meters>>,
+    /// Where the ray meets what lies open to the sky: over water its surface, short of the bed
+    /// beneath that `ground` is.
+    pub surface: Option<Pos<Meters>>,
+}
+
+impl Pointed {
+    /// What a pointer whose ray is `ray` points at in the shown area.
+    pub fn along(world: &World, ray: Ray3d) -> Pointed {
+        let heights = world.get_resource::<GroundHeights>();
+        Pointed {
+            ray,
+            ground: heights.and_then(|ground| ground.hit(ray)),
+            surface: heights.and_then(|ground| ground.surface_hit(ray)),
+        }
+    }
 }
 
 /// Where the pointer points, while it is over the world rather than the interface. The ground under
@@ -26,10 +41,7 @@ pub fn pointed(world: &mut World) -> Option<Pointed> {
     {
         return Some(found.pointed);
     }
-    let ground = world
-        .get_resource::<GroundHeights>()
-        .and_then(|ground| ground.hit(ray));
-    let pointed = Pointed { ray, ground };
+    let pointed = Pointed::along(world, ray);
     if let Some(frame) = frame {
         world.insert_resource(PointedThisFrame { frame, pointed });
     }

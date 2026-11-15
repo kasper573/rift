@@ -30,6 +30,7 @@ use engine::systems::interface::{CursorDef, InterfaceIconDef};
 use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::item::{ItemDef, ToolTypeDef};
 use engine::systems::memory::MemoryDef;
+use engine::systems::mount::MountDef;
 use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::player::PlayerDef;
@@ -186,9 +187,11 @@ impl KindFamily {
             | StanceDef::TABLE
             | ToolTypeDef::TABLE
             | ItemRarityDef::TABLE => KindFamily::Items,
-            SkillDef::TABLE | StatusEffectDef::TABLE | VfxDef::TABLE | VfxShaderDef::TABLE => {
-                KindFamily::Abilities
-            }
+            SkillDef::TABLE
+            | StatusEffectDef::TABLE
+            | MountDef::TABLE
+            | VfxDef::TABLE
+            | VfxShaderDef::TABLE => KindFamily::Abilities,
             QuestDef::TABLE | MemoryDef::TABLE | NotificationDef::TABLE | ScriptDef::TABLE => {
                 KindFamily::Story
             }
@@ -245,6 +248,7 @@ pub fn of_table(table: &str) -> KindIcon {
         SpawnableDef::TABLE => KindIcon::plain(phosphor::TENT),
         SkillDef::TABLE => KindIcon::plain(phosphor::LIGHTNING),
         StatusEffectDef::TABLE => KindIcon::plain(phosphor::HEARTBEAT),
+        MountDef::TABLE => KindIcon::plain(phosphor::HORSE).unpictured(),
         QuestDef::TABLE => KindIcon::plain(phosphor::SCROLL),
         ShopDef::TABLE => KindIcon::plain(phosphor::STOREFRONT),
         RecipeBookDef::TABLE => KindIcon::plain(phosphor::BOOK_OPEN_TEXT),

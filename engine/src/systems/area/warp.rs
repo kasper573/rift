@@ -15,7 +15,7 @@ use crate::systems::script::effect::{self as effects, Aimed, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, Fill, OwnerRow, Place, RiftScripting, RiftScripts,
 };
-use crate::systems::{dialogue, movement, reach, region};
+use crate::systems::{dialogue, mount, movement, reach, region};
 
 pub struct WarpObject {
     pub name: String,
@@ -150,14 +150,17 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
     }
     dialogue::close_for(world, actor);
     reach::forget(world, actor);
-    world.entity_mut(actor).insert(SpawnPoint(to.at));
-    if here == Some(to.area) {
-        land(world, actor, to.at);
-    } else {
-        world.entity_mut(actor).insert(Crossing {
-            dest_area: to.area,
-            dest: to.at,
-        });
+    let along = mount::warping(world, actor, to);
+    for warped in along.into_iter().chain([actor]) {
+        world.entity_mut(warped).insert(SpawnPoint(to.at));
+        if here == Some(to.area) {
+            land(world, warped, to.at);
+        } else {
+            world.entity_mut(warped).insert(Crossing {
+                dest_area: to.area,
+                dest: to.at,
+            });
+        }
     }
     Ok(())
 }

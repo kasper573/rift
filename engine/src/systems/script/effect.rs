@@ -25,6 +25,7 @@ use crate::systems::item::effects::{
     UseItem,
 };
 use crate::systems::memory::{Forget, Remember};
+use crate::systems::mount::effect::{Dismount, Mount};
 use crate::systems::notification::{self, Notify};
 use crate::systems::npc::body::{Attack, FaceToward, Stop, WalkTo, Wander};
 use crate::systems::npc::summon::{Despawn, SetAttitude, SpawnNpcs};
@@ -129,6 +130,8 @@ effects! {
     SetAppearance(SetAppearance),
     SetHeld(SetHeld),
     UseSkill(UseSkill),
+    Mount(Mount),
+    Dismount(Dismount),
     ResetSkills(ResetSkills),
     Vfx(PlayVfx),
     SetAttitude(SetAttitude),

@@ -7,6 +7,7 @@ use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
+use crate::systems::mount::{self, CrossingRide};
 use crate::systems::npc::Npc;
 use crate::systems::player::{CharacterState, Played, Players};
 use crate::systems::script::{EventKind, RiftEvent, RiftInstances, area_owner};
@@ -44,6 +45,8 @@ pub struct Traveler {
     pub dest_area: AreaId,
     pub dest: Pos<Meters>,
     pub state: CharacterState,
+    /// The mount they rode out on, and where on it they sat.
+    pub ride: Option<CrossingRide>,
 }
 
 pub fn departing(world: &mut World) -> Vec<Traveler> {
@@ -52,10 +55,18 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
         .iter(world)
         .map(|(entity, crossing)| (entity, *crossing))
         .collect();
-    crossings
+    let rides: Vec<Option<CrossingRide>> = crossings
+        .iter()
+        .map(|(entity, _)| mount::crossing(world, *entity))
+        .collect();
+    let mut travelers: Vec<Traveler> = crossings
         .into_iter()
-        .filter_map(|(entity, crossing)| leave(world, entity, crossing.dest_area, crossing.dest))
-        .collect()
+        .zip(rides)
+        .filter_map(|((entity, crossing), ride)| leave(world, entity, crossing, ride))
+        .collect();
+    // A driver arrives before whoever rode with them, who are seated beside them as they arrive.
+    travelers.sort_by_key(|traveler| traveler.ride.map(|ride| ride.seat));
+    travelers
 }
 
 pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
@@ -68,6 +79,9 @@ pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
         traveler.dest,
         traveler.state,
     );
+    if let Some(ride) = traveler.ride {
+        mount::arrive(world, entity, ride);
+    }
     let arrived = HistoryEntry::of(
         HistoryTopic::Notification,
         LineText::plain(&*traveler.dest_area.get(&content).name),
@@ -99,17 +113,18 @@ pub fn raise_area(world: &mut World, kind: EventKind, subject: Entity) {
 fn leave(
     world: &mut World,
     entity: Entity,
-    dest_area: AreaId,
-    dest: Pos<Meters>,
+    crossing: Crossing,
+    ride: Option<CrossingRide>,
 ) -> Option<Traveler> {
     let content = world.resource::<Content>().clone();
-    let mut state = CharacterState::of(world, entity, dest)?;
+    let mut state = CharacterState::of(world, entity, crossing.dest)?;
     state.memory.leave_area(&content);
     let traveler = Traveler {
         played: Played::of(world, entity)?,
-        dest_area,
-        dest,
+        dest_area: crossing.dest_area,
+        dest: crossing.dest,
         state,
+        ride,
     };
     raise_area(world, EventKind::Left, entity);
     world

@@ -3,12 +3,13 @@
 
 use bevy::prelude::*;
 use ui::egui::{self, Align, Layout, Pos2, Rect, Sense, Ui, Vec2};
-use ui::{dialog, face, ink};
+use ui::{controls, dialog, face, ink};
 
 use super::{PartyMemberRow, PartyShown};
 use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::hud::{self, HudWidget};
+use crate::systems::mount::{Riding, SeatIndex};
 use crate::systems::player::{ClientId, PlayedBy, session};
 use crate::systems::social_request::card::time_left;
 use crate::systems::society::SocietyView;
@@ -122,6 +123,7 @@ fn frame(
     now: Option<UnixMillis>,
 ) {
     let standing = standing(world, member);
+    let seat = shared_seat(world, member);
     let name = super::page::named(party, member);
     let row = ui.horizontal(|ui| {
         ui.set_width(WIDTH);
@@ -139,12 +141,25 @@ fn frame(
                     _ => name.color(ink::INK3),
                 };
                 ui.add(egui::Label::new(name).truncate());
+                if let Some(seat) = seat {
+                    controls::pill(ui, &format!("seat {}", seat.0 + 1), controls::Pill::Ink);
+                }
             });
         });
     });
     let said = format!("{name}, {}", said(&standing, now));
     row.response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
+}
+
+/// The seat `member` holds on the mount the player's character rides, where they ride together.
+fn shared_seat(world: &mut World, member: &PartyMemberRow) -> Option<SeatIndex> {
+    let mine = session::my_character(world)?.get::<Riding>()?.driver;
+    let character = character_of(world, member.client?)?;
+    world
+        .get::<Riding>(character)
+        .filter(|riding| riding.driver == mine)
+        .map(|riding| riding.seat)
 }
 
 const WIDTH: f32 = 230.0;

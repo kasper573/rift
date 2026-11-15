@@ -69,6 +69,8 @@ pub enum ReachAct {
     Pickup,
     Interact,
     Gather,
+    /// Asking the driver of a mount for a seat on it.
+    Board,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,7 +115,7 @@ impl ReachIntent {
     pub fn cast(&self) -> Option<SkillId> {
         match self.act {
             ReachAct::Cast { skill, .. } => Some(skill),
-            ReachAct::Pickup | ReachAct::Interact | ReachAct::Gather => None,
+            ReachAct::Pickup | ReachAct::Interact | ReachAct::Gather | ReachAct::Board => None,
         }
     }
 }

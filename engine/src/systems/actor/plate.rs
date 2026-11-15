@@ -21,6 +21,7 @@ use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
 use crate::systems::attention;
 use crate::systems::combat::Attitude;
+use crate::systems::mount;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::{Away, PlayedBy, session};
@@ -58,7 +59,8 @@ pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
                 .get::<RenderPosition>(actor)
                 .map(|rendered| rendered.0)
                 .or_else(|| world.get::<Position>(actor).map(|position| position.pos))?;
-            window_point(world, at, world.get::<Hitbox>(actor)?.0.height)
+            let lift = super::lift(world, actor, at);
+            window_point(world, at, lift + world.get::<Hitbox>(actor)?.0.height)
         }
     }
 }
@@ -184,11 +186,18 @@ pub fn draw_plates(world: &mut World) {
             },
         )
         .collect();
+    let seat_free = content.built::<GameSettings>().words.seat_free.clone();
+    for (actor, label, ..) in &mut labelled {
+        if label.state.is_none() && mount::seat::free_seat(world, *actor).is_some() {
+            label.state = Some(seat_free.clone());
+        }
+    }
     labelled.extend(resource::render::plates(world));
     let plates: Vec<Plate> = labelled
         .into_iter()
         .filter_map(|(actor, label, at, hitbox)| {
-            let top = window_point(world, at, hitbox.0.height)?;
+            let lift = super::lift(world, actor, at);
+            let top = window_point(world, at, lift + hitbox.0.height)?;
             let icons: Vec<Option<GuiImage>> = attention::plate_marks(world, viewer, actor)
                 .into_iter()
                 .map(|mark| gui::image(world, &mark.get(&content).icon))

@@ -12,6 +12,7 @@ use crate::core::script::{
 use crate::systems::dialogue;
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::item::{ExchangeRefusal, Inventory, ItemStack};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, effect as effects,
@@ -274,7 +275,7 @@ pub fn submitted(
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<PromptRequest>(world, false, |world, player, request| {
+    player_requests::<PromptRequest>(world, RequestNeeds::Nothing, |world, player, request| {
         let PromptRequest::Submit { step, offer } = request;
         if hosted(world, player) {
             return Ok(());

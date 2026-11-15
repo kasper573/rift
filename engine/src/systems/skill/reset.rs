@@ -10,6 +10,7 @@ use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, Script
 use crate::systems::class::{self, SkillPoints};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::notification::{self, Notification};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, player_requests};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, effect as effects,
@@ -85,19 +86,23 @@ impl EffectDef<RiftScripting> for ResetSkills {
 }
 
 pub fn answers(world: &mut World) {
-    player_requests::<ResetAnswerRequest>(world, false, |world, player, request| {
-        let Some(flow) = world.resource_mut::<PendingResets>().0.remove(&player) else {
-            return Ok(());
-        };
-        world.entity_mut(player).remove::<ResetPrompt>();
-        if request.accepted {
-            reset(world, player);
-            answer(world, flow, ACCEPTED);
-        } else {
-            answer(world, flow, DECLINED);
-        }
-        Ok(())
-    });
+    player_requests::<ResetAnswerRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| {
+            let Some(flow) = world.resource_mut::<PendingResets>().0.remove(&player) else {
+                return Ok(());
+            };
+            world.entity_mut(player).remove::<ResetPrompt>();
+            if request.accepted {
+                reset(world, player);
+                answer(world, flow, ACCEPTED);
+            } else {
+                answer(world, flow, DECLINED);
+            }
+            Ok(())
+        },
+    );
 }
 
 /// A prompt nobody can answer any more, because its player died, left or is being moved, is

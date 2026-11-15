@@ -1345,7 +1345,8 @@ fn lay_patch(world: &mut World, piece: Entity, at: Vec3, size: Vec2) {
     let Some(heights) = world.get_resource::<GroundHeights>() else {
         return;
     };
-    let patch = terrain::patch(&heights.heights, Vec2::new(at.x, at.z), size, 0.0, LIFT);
+    let surface = |at| heights.surface_at(at);
+    let patch = terrain::patch(surface, Vec2::new(at.x, at.z), size, 0.0, LIFT);
     let mesh = world.resource_mut::<Assets<Mesh>>().add(patch);
     let mut entity = world.entity_mut(piece);
     entity.insert((Mesh3d(mesh), Patched(laid)));

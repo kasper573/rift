@@ -24,6 +24,7 @@ use crate::systems::actor::skeleton::{self, Declared, MoveName};
 use crate::systems::attention::AttentionId;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::notification;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::prompt::{self, Asked, CLOSED, PromptKind, PromptStep};
 use crate::systems::script::effect::Reaching;
@@ -652,7 +653,7 @@ pub struct CraftingSession {
 pub struct CraftingMove(MoveName);
 
 pub fn requests(world: &mut World) {
-    player_requests::<CraftingRequest>(world, false, |world, player, request| {
+    player_requests::<CraftingRequest>(world, RequestNeeds::Nothing, |world, player, request| {
         let Some(session) = world.get::<CraftingSession>(player) else {
             return Ok(());
         };

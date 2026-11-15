@@ -8,6 +8,7 @@ use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::HistoryTopic;
 use crate::systems::item::Inventory;
 use crate::systems::notification::{self, Notification};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -31,12 +32,16 @@ pub enum BasicAttackPick {
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<AssignHotbarRequest>(world, false, |world, player, request| {
-        assign(world, player, request.slot, request.entry)
-    });
-    player_requests::<AssignBasicAttackRequest>(world, false, |world, player, request| {
-        assign_basic_attack(world, player, request.pick)
-    });
+    player_requests::<AssignHotbarRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| assign(world, player, request.slot, request.entry),
+    );
+    player_requests::<AssignBasicAttackRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| assign_basic_attack(world, player, request.pick),
+    );
 }
 
 /// Puts something the player has onto a slot: a skill they know or an item they hold.

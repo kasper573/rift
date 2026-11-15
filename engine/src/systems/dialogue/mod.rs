@@ -27,6 +27,7 @@ use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::movement::Position;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{CommandLock, player_requests};
 use crate::systems::quest::QuestId;
 use crate::systems::reach::{self, Tether};
@@ -433,20 +434,24 @@ pub fn counterpart_of(world: &World, player: Entity) -> Option<Entity> {
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<ConversationRequest>(world, false, |world, player, request| {
-        match request {
-            ConversationRequest::Pick { step, choice } => pick(world, player, step, choice),
-            ConversationRequest::Leave { step } => {
-                if world
-                    .get::<ConversationSession>(player)
-                    .is_some_and(|session| session.step == step)
-                {
-                    leave(world, player);
+    player_requests::<ConversationRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| {
+            match request {
+                ConversationRequest::Pick { step, choice } => pick(world, player, step, choice),
+                ConversationRequest::Leave { step } => {
+                    if world
+                        .get::<ConversationSession>(player)
+                        .is_some_and(|session| session.step == step)
+                    {
+                        leave(world, player);
+                    }
                 }
             }
-        }
-        Ok(())
-    });
+            Ok(())
+        },
+    );
 }
 
 pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, With<ConversationSession>>) {

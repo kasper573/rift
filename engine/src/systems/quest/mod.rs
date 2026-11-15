@@ -38,6 +38,7 @@ use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{Inventory, ItemId, ItemModuleKind, ItemStack, scatter_at};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{PlayedBy, player_requests};
 use crate::systems::rewards::KillCredited;
 use crate::systems::script::condition::{self, CompiledCondition};
@@ -965,7 +966,7 @@ fn tell(
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<QuestRequest>(world, false, |world, player, request| {
+    player_requests::<QuestRequest>(world, RequestNeeds::Nothing, |world, player, request| {
         match request {
             QuestRequest::Track { quest, tracked } => track(world, player, quest, tracked),
             QuestRequest::Abandon { quest } => abandon(world, player, quest),

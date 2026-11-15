@@ -5,6 +5,7 @@ use engine::systems::area::{AreaDef, AreaModuleKind};
 use engine::systems::command::TerminalCommandDef;
 use engine::systems::crafting::RecipeBookDef;
 use engine::systems::item::ItemDef;
+use engine::systems::mount::MountDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::quest::QuestDef;
 use engine::systems::resource::ResourceDef;
@@ -186,6 +187,7 @@ pub(crate) fn runner_mark(kind: RunnerKind) -> KindMark {
         RunnerKind::RecipeBook => RecipeBookDef::TABLE,
         RunnerKind::Skill => SkillDef::TABLE,
         RunnerKind::StatusEffect => StatusEffectDef::TABLE,
+        RunnerKind::Mount => MountDef::TABLE,
         RunnerKind::Blueprint => BlueprintDef::TABLE,
         RunnerKind::Spawnable => SpawnableDef::TABLE,
         RunnerKind::Command => TerminalCommandDef::TABLE,

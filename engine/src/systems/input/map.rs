@@ -109,6 +109,8 @@ pub enum InputAction {
     /// Held or tapped, to name the items lying round the player's character.
     NameItems,
     FocusChat,
+    /// Leaves the seat of what the player's character rides.
+    StepOff,
 }
 
 /// The one file that binds every action, a fixture every game provides.

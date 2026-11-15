@@ -20,6 +20,7 @@ use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::area::AreaId;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
 use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
+use crate::systems::mount;
 use crate::systems::notification::{self, Notification};
 use crate::systems::party::{self, PartyRequest, PlayerParties, PlayerParty};
 use crate::systems::player::roster::ServerRoster;
@@ -378,6 +379,7 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
             SocietyAsk::Block(ask) => {
                 if let Some(blocked) = social_request::block::settle(&mut settling, &by, ask) {
                     friend::part(&mut settling, &by, &blocked);
+                    mount::seat::part(&mut settling, &by, &blocked);
                 }
             }
             SocietyAsk::Friend(ask) => friend::settle(&mut settling, settings, &by, ask),
@@ -399,6 +401,9 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
         let settings = content.built::<GameSettings>();
         social_request::lapse(&mut settling, settings);
         party::keep(&mut settling, settings);
+        for source in settling.society.sources.clone() {
+            social_request::end_unless(&mut settling, source.kind, source.stands);
+        }
     }
     for account in std::mem::take(&mut settling.society.changed) {
         if let Some((world, character)) = reach(settling.views, settling.roster, &account) {

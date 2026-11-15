@@ -65,7 +65,8 @@ impl InputAction {
             | InputAction::ZoomIn
             | InputAction::ZoomOut
             | InputAction::Emotes
-            | InputAction::NameItems => &[World],
+            | InputAction::NameItems
+            | InputAction::StepOff => &[World],
             InputAction::OpenCharacter
             | InputAction::OpenSkills
             | InputAction::OpenQuests

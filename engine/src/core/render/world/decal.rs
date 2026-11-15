@@ -141,7 +141,7 @@ pub(super) fn lay_decals(
         };
         if laid != Some(&placing) {
             let patch = terrain::patch(
-                &ground.heights,
+                |at| ground.surface_at(at),
                 Vec2::new(decal.at.x, decal.at.y),
                 Vec2::splat(decal.size.0),
                 decal.yaw.0,

@@ -28,6 +28,7 @@ mod looks;
 mod loot_names;
 mod memory;
 mod messages;
+mod mounts;
 mod notification;
 mod parties;
 mod poses;

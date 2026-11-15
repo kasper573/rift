@@ -636,6 +636,15 @@
           "key": "Enter"
         }
       ]
+    },
+    "step_off": {
+      "label": "Step off what you ride",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyX"
+        }
+      ]
     }
   }
 }

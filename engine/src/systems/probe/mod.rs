@@ -60,7 +60,7 @@ use crate::core::render::world::layers::Layered;
 use crate::core::render::world::outline::Outline;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::world::{OnItsWay, missing_drawn};
-use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
+use crate::core::render::{self, CameraRig, Pointed, ground_height, world_point};
 use crate::core::stage::card::HungCardLamp;
 use crate::core::time;
 use crate::core::units::{
@@ -75,7 +75,7 @@ use crate::systems::actor::render::{Hung, Puppet, RenderActor};
 use crate::systems::actor::skeleton::{Clip, Naming, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{
-    self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing, Pose,
+    self, Action, Actor, ActorModel, Aloft, Appearance, Hitbox, Motion, Playing, Pose,
 };
 use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayName};
@@ -97,6 +97,7 @@ use crate::systems::input::scope::InputScope;
 use crate::systems::interface::CursorId;
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
+use crate::systems::mount::{self, plate::ShownMount};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
 use crate::systems::npc::{Npc, NpcId};
@@ -109,7 +110,7 @@ use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
 use crate::systems::save::{self, notice::ShownSaving};
 use crate::systems::script::{RiftScripts, sky};
 use crate::systems::shop::{self, ShopId};
-use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
+use crate::systems::skill::{self, Rank, SkillId, aim::SpotAim, bar::SlotReport};
 use crate::systems::social_request::{self, card::ShownRequestCard};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
@@ -365,6 +366,11 @@ pub struct ProbeSnapshot {
     pub party: ShownParty,
     /// The tabs of chat, which is shown and how much waits on each.
     pub chat: ShownChat,
+    /// The mount the player's character rides, the seat they hold and who sits where.
+    pub mount: Option<ShownMount>,
+    /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
+    /// spot has against it.
+    pub spot_aim: Option<SpotAim>,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -1243,6 +1249,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         messages: inbox::page::shown(world),
         party: party::page::shown(world),
         chat: terminal::chat::shown(world),
+        mount: mount::plate::shown(world),
+        spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),
@@ -1524,7 +1532,7 @@ fn skills(world: &World, me: Entity) -> Option<ProbeSkills> {
             .iter()
             .map(rank)
             .collect(),
-        aiming: skill::aim::aiming(world).map(|aimed| aimed.skill),
+        aiming: skill::aim::aiming(world).and_then(skill::aim::Aimed::skill),
         reset_prompt: skill::prompt::showing(world),
         view: tree_view(world),
     })
@@ -1672,13 +1680,18 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
     let capsule = entity.get::<Hitbox>()?.0;
     let actor = entity.get::<Actor>()?;
     let drawn = entity.get::<RenderPosition>().map_or(at, |drawn| drawn.0);
-    let ground = world
-        .get::<AreaTag>(entity.id())
-        .map_or(Meters(0.0), |tag| {
-            area::load(world.resource::<Content>(), tag.area)
-                .heights
-                .height_at(drawn)
-        });
+    let ground = entity.get::<Aloft>().map_or_else(
+        || {
+            world
+                .get::<AreaTag>(entity.id())
+                .map_or(Meters(0.0), |tag| {
+                    area::load(world.resource::<Content>(), tag.area)
+                        .heights
+                        .height_at(drawn)
+                })
+        },
+        |aloft| aloft.0,
+    );
     let appearance = entity.get::<Appearance>()?.clone();
     let built = ActorModel::get(world.resource::<Content>(), appearance.model);
     let flies = built.airborne();
@@ -1866,17 +1879,14 @@ fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> 
         return at;
     };
     let eye = view.eye();
-    let foot = ground_height(world, at);
+    let foot = actor::foot_height(world, entity, at);
     for share in HEIGHTS {
         let point = world_point(at, foot + Meters(capsule.height.0 * share));
         let Ok(direction) = Dir3::new(point - eye) else {
             continue;
         };
-        let ray = Ray3d::new(eye, direction);
-        let ground = world
-            .get_resource::<GroundHeights>()
-            .and_then(|ground| ground.hit(ray));
-        match (clicked(world, &Pointed { ray, ground }), ground) {
+        let pointed = Pointed::along(world, Ray3d::new(eye, direction));
+        match (clicked(world, &pointed), pointed.ground) {
             (Some(clicked), Some(ground)) if clicked == entity => return ground,
             (Some(_), _) => {}
             (None, _) => break,
@@ -1915,8 +1925,8 @@ fn pointed_at(world: &mut World, spot: Pos<Meters>) -> Option<Pointed> {
     let eye = view.eye();
     let direction = Dir3::new(world_point(spot, ground_height(world, spot)) - eye).ok()?;
     Some(Pointed {
-        ray: Ray3d::new(eye, direction),
         ground: Some(spot),
+        ..Pointed::along(world, Ray3d::new(eye, direction))
     })
 }
 
@@ -1925,6 +1935,7 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
         ClickClaim::Attack(entity)
         | ClickClaim::Interact(entity)
         | ClickClaim::Aim(entity)
+        | ClickClaim::Board(entity)
         | ClickClaim::Pickup(entity)
         | ClickClaim::Gather(entity) => Some(entity),
         ClickClaim::Interface

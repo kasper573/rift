@@ -352,6 +352,7 @@ fn sources() -> Vec<SocialRequestSource> {
             },
             may_send: |_, _, _, _| Ok(()),
             accepted: seated,
+            stands: |_, _| true,
         },
         friend::request_source(),
     ]

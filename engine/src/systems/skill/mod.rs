@@ -200,7 +200,7 @@ impl ContentFile for SkillDef {
                 );
             }
         }
-        match (self.target.aimed_at_point(), self.area.is_some()) {
+        match (self.target.covers_area(), self.area.is_some()) {
             (true, false) => check.error(
                 "/area",
                 "area kind without an area",
@@ -328,14 +328,25 @@ pub enum Targeting {
     SingleEnemy,
     AreaAlly,
     AreaEnemy,
+    /// A spot within the skill's range of where the caster stands, which they are never walked
+    /// toward: nothing is hit there, and what comes of it is the skill's script's to say.
+    Spot,
     #[serde(rename = "self")]
     #[strum(serialize = "self")]
     Caster,
 }
 
 impl Targeting {
-    pub fn aimed_at_point(self) -> bool {
+    /// Whether the skill takes whoever stands in a shape at the point it is aimed at.
+    pub fn covers_area(self) -> bool {
         matches!(self, Targeting::AreaAlly | Targeting::AreaEnemy)
+    }
+
+    pub fn aimed_at_point(self) -> bool {
+        matches!(
+            self,
+            Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot
+        )
     }
 
     pub fn hostile(self) -> bool {
@@ -352,6 +363,7 @@ impl Targeting {
             Targeting::SingleEnemy => "One enemy",
             Targeting::AreaAlly => "Allies around the aimed point",
             Targeting::AreaEnemy => "Enemies around the aimed point",
+            Targeting::Spot => "A spot in range",
             Targeting::Caster => "Yourself",
         }
     }
@@ -718,6 +730,16 @@ pub fn grants_of(content: &Content, item: ItemId) -> &[SkillId] {
     }
 }
 
+/// Whether using `skill` is using an item `actor` carries: one whose use casts it.
+pub fn carried_as_item(world: &World, actor: Entity, skill: SkillId) -> bool {
+    let content = world.resource::<Content>();
+    world.get::<Inventory>(actor).is_some_and(|bag| {
+        bag.slots
+            .iter()
+            .any(|stack| cast_by(content, stack.item) == Some(skill))
+    })
+}
+
 /// The skill a use of the item casts, for a usable item that casts one.
 pub fn cast_by(content: &Content, item: ItemId) -> Option<SkillId> {
     match item.get(content).kind {
@@ -754,6 +776,7 @@ pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
     let def = skill.get(world.resource::<Content>());
     match def.target {
         Targeting::Caster => vec![caster],
+        Targeting::Spot => Vec::new(),
         Targeting::SingleAlly | Targeting::SingleEnemy => used_target(world, cx)
             .filter(|who| casting::fits(world, caster, *who, def.target))
             .into_iter()
@@ -801,7 +824,9 @@ pub fn aimed_point(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Pos<Met
         Targeting::SingleAlly | Targeting::SingleEnemy => {
             movement::position(world, used_target(world, cx)?)
         }
-        Targeting::AreaAlly | Targeting::AreaEnemy => cx.event.get(USED_POINT)?.as_point(),
+        Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot => {
+            cx.event.get(USED_POINT)?.as_point()
+        }
     }
 }
 

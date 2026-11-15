@@ -36,6 +36,7 @@ use crate::systems::equipment::Equipment;
 use crate::systems::history::History;
 use crate::systems::item::Inventory;
 use crate::systems::memory::Memory;
+use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{self, HeardMove, Position, Spot};
 use crate::systems::quest::QuestLog;
 use crate::systems::script::{EventKind, Place};
@@ -293,21 +294,38 @@ pub fn arriving(world: &World, entity: Entity) -> bool {
     world.get::<ArrivalHold>(entity).is_some()
 }
 
-/// Answers every request of a kind for the player who sent it, telling them what refused one;
-/// `commanding` requests are dropped while the player may not command their character.
+/// What a kind of request needs of the player who makes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestNeeds {
+    /// Answered however the player's character fares.
+    Nothing,
+    /// Dropped while the player may not command their character.
+    Command,
+    /// A command a rider's seat must let them make: from a seat that does not, it is refused or
+    /// made on foot, as their mount has it.
+    Seat(RiderAct),
+}
+
+/// Answers every request of a kind for the player who sent it, telling them what refused one,
+/// once the player meets what the kind `needs` of them.
 pub(crate) fn player_requests<M: Message>(
     world: &mut World,
-    commanding: bool,
+    needs: RequestNeeds,
     mut answer: impl FnMut(&mut World, Entity, M) -> Result<(), String>,
 ) {
     for request in drain_requests::<M>(world) {
         let Some(player) = conn_player(world, request.client) else {
             continue;
         };
-        if commanding && !may_command(world, player) {
+        if needs != RequestNeeds::Nothing && !may_command(world, player) {
             continue;
         }
-        if let Err(reason) = answer(world, player, request.message) {
+        let seated = match needs {
+            RequestNeeds::Seat(act) => mount::seat::act(world, player, act),
+            RequestNeeds::Nothing | RequestNeeds::Command => Ok(()),
+        };
+        let answered = seated.and_then(|()| answer(world, player, request.message));
+        if let Err(reason) = answered {
             notification::error(world, player, reason);
         }
     }
@@ -748,7 +766,7 @@ pub(crate) fn place(
 
 pub fn respawn(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    player_requests::<RespawnRequest>(world, false, |world, player, _| {
+    player_requests::<RespawnRequest>(world, RequestNeeds::Nothing, |world, player, _| {
         let spawn = world.get::<SpawnPoint>(player).map(|spawn| spawn.0);
         if let Some(spawn) = spawn
             && stat::is_dead(world, player)

@@ -12,6 +12,7 @@ use crate::systems::actor::skeleton::{Declared, GestureName};
 use crate::systems::actor::{
     Action, Actor, ActorModel, Appearance, Motion, Playing, Pose, held, playing,
 };
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{PlayedBy, player_requests};
 use crate::systems::{movement, reach};
 
@@ -48,7 +49,7 @@ pub struct EmoteRequest {
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<EmoteRequest>(world, true, |world, player, request| {
+    player_requests::<EmoteRequest>(world, RequestNeeds::Command, |world, player, request| {
         perform(world, player, request.emote)
     });
 }

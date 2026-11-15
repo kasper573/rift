@@ -1474,6 +1474,25 @@ impl ClipSet {
             .flat_map(|(name, cell)| cell.entries(format!("/moves/{}", name.0)));
         attack.chain(moves)
     }
+
+    /// The clips that must land somewhere: the attack and every move but those `sat`, which a
+    /// body makes over and over where it sits and never lands.
+    pub fn hits<'a>(
+        &'a self,
+        sat: &'a BTreeSet<MoveName>,
+    ) -> impl Iterator<Item = (String, &'a ClipRef)> {
+        let attack = self
+            .clips
+            .get(&Action::Attack)
+            .into_iter()
+            .flat_map(|cell| cell.entries("/clips/attack".to_owned()));
+        let moves = self
+            .moves
+            .iter()
+            .filter(|(name, _)| !sat.contains(*name))
+            .flat_map(|(name, cell)| cell.entries(format!("/moves/{}", name.0)));
+        attack.chain(moves)
+    }
 }
 
 /// Which rung of the ladder named a clip: a stance's column, the base column, or a fallback for
@@ -1714,8 +1733,9 @@ impl SkeletonDef {
     }
 
     /// What a body needs of the skeleton that it lacks yet, each said of the skeleton: a skeleton
-    /// is made up step by step, and only a finished one may be worn.
-    pub fn unfinished(&self) -> Vec<String> {
+    /// is made up step by step, and only a finished one may be worn. The moves `sat` are the
+    /// game's seats', which land nowhere and so need no apex.
+    pub fn unfinished(&self, sat: &BTreeSet<MoveName>) -> Vec<String> {
         let mut lacking = Vec::new();
         if self.rig.files.is_empty() {
             lacking.push("has no rig".to_owned());
@@ -1727,7 +1747,7 @@ impl SkeletonDef {
         }
         let mut seen = BTreeSet::new();
         for (_, set) in self.sets() {
-            for (_, clip) in set.attacks() {
+            for (_, clip) in set.hits(sat) {
                 let clip = clip.clip();
                 if seen.insert(("apex", clip)) && !self.cues_of(clip).iter().any(|cue| cue.apex) {
                     lacking.push(format!("marks no apex on {clip}, which plays as a hit"));

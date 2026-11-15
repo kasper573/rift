@@ -22,6 +22,7 @@ use crate::core::units::Seconds;
 use crate::systems::account::AccountId;
 use crate::systems::history::HistoryTopic;
 use crate::systems::notification::Notification;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::society::{self, AccountNumber, Settling, Society, SocietyAsk};
@@ -94,6 +95,9 @@ pub struct SocialRequestSource {
     pub may_send: fn(&Society, &GameSettings, &AccountId, &AccountId) -> Result<(), RequestUnsent>,
     /// What a yes does.
     pub accepted: fn(&mut Settling, &GameSettings, &SocialRequest) -> Result<(), RequestUnaccepted>,
+    /// Whether one that waits still may, by the kind's own rules. One that may not ends with
+    /// nobody told.
+    pub stands: fn(&mut Settling, &SocialRequest) -> bool,
 }
 
 /// Why a request was not sent.
@@ -196,6 +200,13 @@ impl SocialRequests {
             .into_iter()
             .flatten()
             .filter_map(|id| self.waiting.get(id))
+    }
+
+    /// Every request of `kind` that waits, the oldest first.
+    pub fn of_kind(&self, kind: SocialRequestKind) -> impl Iterator<Item = &SocialRequest> {
+        self.waiting
+            .values()
+            .filter(move |request| request.kind == kind)
     }
 
     /// The request of `kind` that `asker` has waiting with `asked`.
@@ -351,18 +362,22 @@ pub struct ChooseAcceptsRequests(pub AcceptsRequestsFrom);
 /// Hands what players of this world asked of requests, blocks and their setting to society.
 pub fn requests(world: &mut World) {
     let client = |world: &World, player: Entity| world.get::<PlayedBy>(player).map(|by| by.client);
-    player::player_requests::<AnswerSocialRequest>(world, false, |world, player, answer| {
-        let ask = match answer.answer {
-            RequestAnswer::Accept => SocialRequestAsk::Accept(answer.request),
-            RequestAnswer::Decline => SocialRequestAsk::Decline(answer.request),
-            RequestAnswer::TakeBack => SocialRequestAsk::TakeBack(answer.request),
-        };
-        if let Some(client) = client(world, player) {
-            society::ask(world, client, SocietyAsk::Request(ask));
-        }
-        Ok(())
-    });
-    player::player_requests::<BlockPlayer>(world, false, |world, player, block| {
+    player::player_requests::<AnswerSocialRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, answer| {
+            let ask = match answer.answer {
+                RequestAnswer::Accept => SocialRequestAsk::Accept(answer.request),
+                RequestAnswer::Decline => SocialRequestAsk::Decline(answer.request),
+                RequestAnswer::TakeBack => SocialRequestAsk::TakeBack(answer.request),
+            };
+            if let Some(client) = client(world, player) {
+                society::ask(world, client, SocietyAsk::Request(ask));
+            }
+            Ok(())
+        },
+    );
+    player::player_requests::<BlockPlayer>(world, RequestNeeds::Nothing, |world, player, block| {
         let ask = if block.blocked {
             BlockAsk::Block(block.account)
         } else {
@@ -373,12 +388,16 @@ pub fn requests(world: &mut World) {
         }
         Ok(())
     });
-    player::player_requests::<ChooseAcceptsRequests>(world, false, |world, player, chosen| {
-        if let Some(client) = client(world, player) {
-            society::ask(world, client, SocietyAsk::Accepts(chosen.0));
-        }
-        Ok(())
-    });
+    player::player_requests::<ChooseAcceptsRequests>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, chosen| {
+            if let Some(client) = client(world, player) {
+                society::ask(world, client, SocietyAsk::Accepts(chosen.0));
+            }
+            Ok(())
+        },
+    );
 }
 
 /// Does with a request what `by` asked, under the game `settings` are of.
@@ -443,6 +462,20 @@ pub(crate) fn end_of(settling: &mut Settling, kind: SocialRequestKind, asker: &A
         .collect();
     for id in asked {
         end(settling, id);
+    }
+}
+
+/// Ends every request of `kind` that `still` no longer holds for, with nobody told.
+pub(crate) fn end_unless(
+    settling: &mut Settling,
+    kind: SocialRequestKind,
+    mut still: impl FnMut(&mut Settling, &SocialRequest) -> bool,
+) {
+    let waiting: Vec<SocialRequest> = settling.society.requests.of_kind(kind).cloned().collect();
+    for request in waiting {
+        if !still(settling, &request) {
+            end(settling, request.id);
+        }
     }
 }
 

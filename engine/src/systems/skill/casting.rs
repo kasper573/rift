@@ -14,12 +14,14 @@ use crate::core::script::{
 };
 use crate::core::tick::{Cached, Planner};
 use crate::core::time::WallClock;
-use crate::core::units::Meters;
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::GameSettings;
 use crate::systems::actor::{self, playing};
 use crate::systems::combat::{self, Relation};
 use crate::systems::item::Inventory;
-use crate::systems::movement::Berths;
+use crate::systems::mount::{self, RiderAct};
+use crate::systems::movement::{self, Berths};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, player_requests};
 use crate::systems::reach::{self, Pursuit, PursuitPlan, ReachAct, ReachIntent, ReachTarget};
 use crate::systems::script::effect::{self as effects, Audience};
@@ -66,11 +68,19 @@ pub struct UseSkill {
 }
 
 pub fn request(world: &mut World) {
-    player_requests::<UseSkillRequest>(world, true, |world, caster, request| {
+    player_requests::<UseSkillRequest>(world, RequestNeeds::Command, |world, caster, request| {
         if let CastAim::Actor(target) = request.aim
             && !visibility::in_sight(world, caster, target)
         {
             return Err("Can't see them".to_owned());
+        }
+        if !mount::left_by(world, caster, request.skill) {
+            let act = if super::carried_as_item(world, caster, request.skill) {
+                RiderAct::Items
+            } else {
+                RiderAct::Skills
+            };
+            mount::seat::act(world, caster, act)?;
         }
         cast(world, caster, request.skill, request.aim, false)
     });
@@ -90,6 +100,23 @@ pub fn cast(
     }
     let content = world.resource::<Content>().clone();
     let def = skill.get(&content);
+    if let Some(mount) = mount::called_by(world, skill) {
+        // The skill of the mount its caster drives is how they leave it, which is no cast:
+        // nothing is spent, and no cooldown starts.
+        if mount::drives(world, caster, mount) {
+            let spot = match aim {
+                CastAim::Point(spot) => Some(spot),
+                CastAim::Actor(_) | CastAim::None => None,
+            };
+            return mount::step_off(world, caster, spot);
+        }
+        // A mount called at a spot is refused for the spot, where the spot is weighed.
+        if def.target != Targeting::Spot
+            && let Some(refusal) = mount::uncallable(world, caster, mount, aim)
+        {
+            return Err(refusal);
+        }
+    }
     ready(world, caster, skill)?;
     let target = match (def.target, aim) {
         (Targeting::Caster, _) => ReachTarget::Actor(caster),
@@ -108,9 +135,40 @@ pub fn cast(
         (Targeting::AreaAlly | Targeting::AreaEnemy, _) => {
             return Err(format!("{} needs a point to aim at", def.name));
         }
+        (Targeting::Spot, CastAim::Point(spot)) => {
+            if let Some(refusal) = spot_refused(world, caster, skill, spot) {
+                return Err(refusal);
+            }
+            ReachTarget::Point(spot)
+        }
+        (Targeting::Spot, _) => {
+            return Err(format!("{} needs a spot to aim at", def.name));
+        }
     };
     reach::intend(world, caster, target, ReachAct::Cast { skill, repeat });
     Ok(())
+}
+
+/// What `spot` has against `caster` using the skill there, in the game's words: it lies out of
+/// the skill's range of them, or the mount the skill calls may not be called at it. For the
+/// driver of that mount the skill is how they leave it, and the spot is where they would stand.
+/// The server weighs a spot by it as the skill is cast, and a client as the spot is aimed at.
+pub fn spot_refused(
+    world: &World,
+    caster: Entity,
+    skill: SkillId,
+    spot: Pos<Meters>,
+) -> Option<String> {
+    let mount = mount::called_by(world, skill);
+    if mount.is_some_and(|mount| mount::drives(world, caster, mount)) {
+        return mount::landing(world, caster, Some(spot)).err();
+    }
+    let range = super::range_of(world, caster, skill, super::rank_of(world, caster, skill));
+    let near = movement::position(world, caster).is_some_and(|from| from.distance(spot) <= range);
+    if !near {
+        return Some(world.resource::<GameSettings>().words.spot_too_far.clone());
+    }
+    mount.and_then(|mount| mount::uncallable(world, caster, mount, CastAim::Point(spot)))
 }
 
 /// Whether a skill may be used now by someone who knows it: not cooling down, its requirements
@@ -161,6 +219,7 @@ pub fn fits(world: &World, caster: Entity, target: Entity, targeting: Targeting)
             matches!(relation, Relation::Own | Relation::Ally)
         }
         Targeting::Caster => relation == Relation::Own,
+        Targeting::Spot => false,
     }
 }
 

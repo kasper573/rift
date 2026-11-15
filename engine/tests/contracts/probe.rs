@@ -72,7 +72,11 @@ fn a_driver_finds_the_games_things_through_the_probe() {
         &content,
         &ProbeGameQuestion::Batch {
             questions: [Pos::new(1.5, 1.5), Pos::new(4.5, 2.5)]
-                .map(|at| ProbeGameQuestion::Walkable { area, at })
+                .map(|at| ProbeGameQuestion::Walkable {
+                    area,
+                    riding: None,
+                    at,
+                })
                 .to_vec(),
         },
     );
@@ -81,6 +85,7 @@ fn a_driver_finds_the_games_things_through_the_probe() {
         &content,
         &ProbeGameQuestion::Route {
             area,
+            riding: None,
             from: Pos::new(2.0, 3.0),
             to: Pos::new(8.0, 3.0),
         },

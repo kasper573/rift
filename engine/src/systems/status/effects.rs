@@ -203,12 +203,13 @@ pub fn boosts_of(content: &Content, item: ItemId) -> Vec<(StatKind, Option<f32>)
 
 /// The aspect a boost belongs to, from the row whose script it is in.
 fn source_of(cx: &Compiler<RiftScripting>) -> Result<AspectSource, ScriptFault> {
-    let expected = "a status effect's, an item's or a passive skill's script";
+    let expected = "a status effect's, an item's, a mount's or a passive skill's script";
     let Some(row) = cx.owner_row() else {
         return Err(ScriptFault::new("boost without an aspect", expected));
     };
     match row.kind {
         RunnerKind::StatusEffect => Ok(AspectSource::Status(row.id())),
+        RunnerKind::Mount => Ok(AspectSource::Mount(row.id())),
         RunnerKind::Item => Ok(AspectSource::Item(row.id())),
         RunnerKind::Skill => {
             let skill: SkillId = row.id();

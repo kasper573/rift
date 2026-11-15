@@ -15,9 +15,10 @@ use bevy::prelude::*;
 use super::appearance::look;
 use super::held::{self, HandsAtWork, Held, ToolInHand};
 use super::layering::{self, Layering};
+use super::model::Resolved;
 use super::rigging::BuiltSkeleton;
 use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, LoopStart, SkeletonId};
-use super::skeleton::{EquipmentSlot, GestureName};
+use super::skeleton::{EquipmentSlot, GestureName, MoveName};
 use super::stance::{self, HandIndex, PropHand, StanceId};
 use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
 use crate::core::assets;
@@ -32,9 +33,7 @@ use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::plumb::Plumb;
 use crate::core::render::world::rig_clip;
-use crate::core::render::{
-    Animator, Loops, NextTurn, Previous, facing_rotation, ground_height, world_point,
-};
+use crate::core::render::{Animator, Loops, NextTurn, Previous, facing_rotation, world_point};
 use crate::core::text::Typewriter;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
@@ -245,6 +244,11 @@ impl Hung {
             .map_or(PropHold::Gripped, |(_, grip)| grip.hold)
     }
 }
+
+/// The move a body makes over and over where it sits, in place of standing and walking. A
+/// client's own, kept by whatever draws the body carried.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct Seated(pub MoveName);
 
 /// What plays, from when: an attack struck again restarts the same clip.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -592,6 +596,7 @@ struct PoseInputs {
     stance: Option<StanceId>,
     ground: Meters,
     holding: Vec<(HandIndex, PropHold)>,
+    seated: Option<Seated>,
 }
 
 /// Places every rig where its actor shows, turned the way it faces, playing the clip its stance
@@ -634,7 +639,8 @@ pub fn pose(world: &mut World) {
         let model = ActorModel::get(&content, model_id);
         let easing = model.skeleton().def.easing;
         let stance = held::stance_of(world, entity);
-        let ground = ground_height(world, at.0);
+        let ground = super::foot_height(world, entity, at.0);
+        let seated = world.get::<Seated>(entity).cloned();
         let given = playing
             .as_ref()
             .filter(|playing| playing.motion.shows_over(shown.action));
@@ -659,6 +665,7 @@ pub fn pose(world: &mut World) {
             stance,
             ground,
             holding: holding.clone(),
+            seated: seated.clone(),
         };
         if world
             .get::<Posed>(entity)
@@ -695,12 +702,27 @@ pub fn pose(world: &mut World) {
                     .then_some((*line, gesture, pick))
             });
         let talks = speech.is_some_and(|speech| speech.talking);
-        let motion = match (given, &gesture) {
-            _ if flinching => flinch,
-            (Some(playing), _) => playing.motion.clone(),
-            (None, Some((_, gesture, _))) => gesture.clone(),
-            (None, None) if shown.action == Action::Talk && !talks => Motion::Action(Action::Idle),
-            (None, None) => Motion::Action(shown.action),
+        let sits = seated
+            .map(|seated| Motion::Move(seated.0))
+            .filter(|sits| shown.action != Action::Dead && model.plays(stance, sits));
+        let (motion, sitting) = match (given, &gesture, sits) {
+            _ if flinching => (flinch, false),
+            (Some(playing), ..) => (playing.motion.clone(), false),
+            (None, Some((_, gesture, _)), _) => (gesture.clone(), false),
+            (None, None, Some(sits)) => (sits, true),
+            (None, None, None) if shown.action == Action::Talk && !talks => {
+                (Motion::Action(Action::Idle), false)
+            }
+            (None, None, None) => (Motion::Action(shown.action), false),
+        };
+        // A seat's move is made for as long as the body sits, where any other move is made once.
+        let once = motion.once() && !sitting;
+        let rate_of = |resolved: &Resolved| {
+            if sitting {
+                PlaybackRate(1.0)
+            } else {
+                model.rate(&motion, resolved, actor.attack_rate, actor.speed)
+            }
         };
         let mut play = Play {
             motion: motion.clone(),
@@ -719,7 +741,7 @@ pub fn pose(world: &mut World) {
         let cell = model.cell(stance, &motion, actor.pose);
         let played_once = |pick| {
             let resolved = model.resolve(stance, &motion, actor.pose, pick);
-            resolved.length / model.rate(&motion, &resolved, actor.attack_rate, actor.speed)
+            resolved.length / rate_of(&resolved)
         };
         let anywhere = |pick| {
             model.skeleton().def.loop_start == LoopStart::Anywhere
@@ -729,8 +751,8 @@ pub fn pose(world: &mut World) {
                     .is_empty()
         };
         let mut next = |last, rng: &mut Rng| cell.turn_after(last, rng);
-        let looping_turns = !motion.once() && cell.clips().len() > 1;
-        let loops = (!motion.once()).then_some(Loops {
+        let looping_turns = !once && cell.clips().len() > 1;
+        let loops = (!once).then_some(Loops {
             length: &played_once,
             anywhere: &anywhere,
             turns: looping_turns.then_some(&mut next as &mut NextTurn),
@@ -745,8 +767,8 @@ pub fn pose(world: &mut World) {
             (None, None) => playhead.turn,
         };
         let resolved = model.resolve(stance, &motion, actor.pose, play.pick);
-        let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
-        let (repeat, begins) = if motion.once() {
+        let rate = rate_of(&resolved);
+        let (repeat, begins) = if once {
             (RepeatAnimation::Never, Seconds(0.0))
         } else if cell.transits(play.pick) {
             (RepeatAnimation::Never, playhead.elapsed * rate.0)

@@ -1026,6 +1026,21 @@ fn words() -> GameWords {
         you_joined_party: "You joined {name}'s party".to_owned(),
         you_left_party: "You left the party".to_owned(),
         chat_too_fast: "You are writing too fast".to_owned(),
+        mount_barred_here: "Mounts of this kind are barred here".to_owned(),
+        no_water_in_reach: "No water deep enough within reach".to_owned(),
+        step_off_first: "Step off first".to_owned(),
+        no_ground_in_reach: "No ground to step onto within reach".to_owned(),
+        spot_too_far: "That spot is too far away".to_owned(),
+        not_from_mount: "Not from the {mount}".to_owned(),
+        mount_left_behind: "Your {mount} could not follow".to_owned(),
+        seat_asks: "{name} asks for a seat on your {about}".to_owned(),
+        seat_asked: "You asked {name} for a seat".to_owned(),
+        seat_declined: "{name} has no seat for you".to_owned(),
+        seat_lapsed: "{name} did not answer about a seat".to_owned(),
+        seats_taken: "Every seat is taken".to_owned(),
+        seat_out_of_reach: "Too far from the mount for a seat".to_owned(),
+        set_down_by: "{name} set you down".to_owned(),
+        seat_free: "Seat free".to_owned(),
     }
 }
 

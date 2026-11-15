@@ -40,9 +40,11 @@ use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
 use crate::systems::interface::CursorId;
 use crate::systems::item::rarity::ItemRarityId;
+use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::party;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::{
@@ -936,8 +938,18 @@ pub struct ItemSfx {
 }
 
 pub fn use_item(world: &mut World) {
-    player_requests::<UseItemRequest>(world, true, |world, player, request| {
-        use_slot(world, player, request.slot as usize)
+    player_requests::<UseItemRequest>(world, RequestNeeds::Command, |world, player, request| {
+        let slot = request.slot as usize;
+        let content = world.resource::<Content>().clone();
+        let leaves = world
+            .get::<Inventory>(player)
+            .and_then(|bag| bag.slots.get(slot))
+            .and_then(|stack| skill::cast_by(&content, stack.item))
+            .is_some_and(|skill| mount::left_by(world, player, skill));
+        if !leaves {
+            mount::seat::act(world, player, RiderAct::Items)?;
+        }
+        use_slot(world, player, slot)
     });
 }
 
@@ -990,7 +1002,7 @@ pub fn raise(world: &mut World, item: ItemId, kind: EventKind, actor: Entity) {
 
 pub fn drop_item(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    player_requests::<DropItemRequest>(world, true, |world, player, request| {
+    player_requests::<DropItemRequest>(world, RequestNeeds::Command, |world, player, request| {
         let slot = request.slot as usize;
         let removed = match world.get_mut::<Inventory>(player) {
             Some(mut inventory)
@@ -1011,14 +1023,19 @@ pub fn drop_item(world: &mut World) {
 }
 
 pub fn pickup_request(world: &mut World) {
-    player_requests::<PickupRequest>(world, true, |world, player, request| {
-        let target = request.target;
-        if world.get::<DroppedItem>(target).is_some() && visibility::in_sight(world, player, target)
-        {
-            reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Pickup);
-        }
-        Ok(())
-    });
+    player_requests::<PickupRequest>(
+        world,
+        RequestNeeds::Seat(RiderAct::PickUp),
+        |world, player, request| {
+            let target = request.target;
+            if world.get::<DroppedItem>(target).is_some()
+                && visibility::in_sight(world, player, target)
+            {
+                reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Pickup);
+            }
+            Ok(())
+        },
+    );
 }
 
 /// The item nearest `point` within a click's reach of it that the player may take.

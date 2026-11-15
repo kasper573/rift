@@ -296,7 +296,9 @@ fn entry(owner: RunnerKind, next: &str) -> Value {
         RunnerKind::Shop => json!({ "type": "on", "event": "bought", "next": next }),
         RunnerKind::Resource => json!({ "type": "on", "event": "extracted", "next": next }),
         RunnerKind::RecipeBook => json!({ "type": "on", "event": "crafted", "next": next }),
-        RunnerKind::StatusEffect => json!({ "type": "on", "event": "activated", "next": next }),
+        RunnerKind::StatusEffect | RunnerKind::Mount => {
+            json!({ "type": "on", "event": "activated", "next": next })
+        }
         RunnerKind::Command => json!({ "type": "on", "event": "invoked", "next": next }),
         RunnerKind::Blueprint | RunnerKind::Any => unreachable!("no entry for {owner:?}"),
     }

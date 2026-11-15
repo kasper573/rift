@@ -12,6 +12,7 @@ use crate::systems::actor::skeleton::EquipmentSlot;
 use crate::systems::actor::stance::HandIndex;
 use crate::systems::actor::{ActorModel, appearance};
 use crate::systems::item::{self, Inventory, ItemId, ItemKind, ItemStack, Wear};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::resource::Working;
 use crate::systems::script::condition;
@@ -368,13 +369,13 @@ pub fn hands(equipment: &Equipment) -> BTreeMap<HandIndex, ItemId> {
 }
 
 pub fn hold(world: &mut World) {
-    player_requests::<HoldRequest>(world, true, |world, player, request| {
+    player_requests::<HoldRequest>(world, RequestNeeds::Command, |world, player, request| {
         equip(world, player, request.slot as usize, Some(request.hand))
     });
 }
 
 pub fn unequip(world: &mut World) {
-    player_requests::<UnequipRequest>(world, true, |world, player, request| {
+    player_requests::<UnequipRequest>(world, RequestNeeds::Command, |world, player, request| {
         unequip_slot(world, player, request.slot)
     });
 }

@@ -17,8 +17,9 @@ use crate::systems::equipment::{EquipmentPlace, HoldRequest, UnequipRequest};
 use crate::systems::hud::Carried;
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::item::widget::{SLOT, SlotLook, slot, slot_pip};
-use crate::systems::item::{ItemId, UseItemRequest, card};
+use crate::systems::item::{ItemId, card};
 use crate::systems::player::session;
+use crate::systems::skill::bar;
 
 const SLOT_GAP: f32 = 5.0;
 const NAMED_SLOT: f32 = 46.0;
@@ -56,7 +57,7 @@ pub fn pane(ui: &mut Ui, world: &mut World) {
         })
         .response;
     if let Some(Carried::BagSlot(slot)) = drag::dropped::<Carried>(&shown) {
-        world.write_message(UseItemRequest { slot });
+        bar::use_bag_slot(world, slot);
     }
 }
 

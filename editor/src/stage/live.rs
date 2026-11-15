@@ -359,6 +359,7 @@ fn skill_setup(
     let beside = Pos::new(spawn.at.x + TARGET_REACH, spawn.at.y);
     let (targets, aim) = match def.target {
         Targeting::Caster => (Vec::new(), CastAim::None),
+        Targeting::Spot => (Vec::new(), CastAim::Point(beside)),
         Targeting::SingleEnemy => {
             let enemy = spawn_sturdy(
                 world,

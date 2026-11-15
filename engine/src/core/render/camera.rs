@@ -25,7 +25,7 @@ use bevy::window::PrimaryWindow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::ground::Heightfield;
+use crate::core::ground::{GroundGrid, Heightfield, Level, WaterSurface};
 use crate::core::gui;
 use crate::core::math::{Pos, Rect, Rgb};
 use crate::core::render::video::VideoPreferences;
@@ -909,6 +909,7 @@ impl View {
 #[derive(Resource, Clone)]
 pub struct GroundHeights {
     pub heights: Heightfield,
+    pub water: WaterSurface,
     pub bounds: Rect<Meters>,
 }
 
@@ -917,18 +918,38 @@ impl GroundHeights {
         self.heights.height_at(at)
     }
 
+    /// How high what lies open to the sky at `at` stands: the water where it covers the ground.
+    pub fn surface_at(&self, at: Pos<Meters>) -> Meters {
+        Meters(self.heights.height_at(at).0.max(self.water.height_at(at).0))
+    }
+
     /// Where the ray meets the ground, if it does within the area.
     pub fn hit(&self, ray: Ray3d) -> Option<Pos<Meters>> {
-        ground_hit(&self.heights, self.bounds, ray)
+        let along = reach_along(&self.heights, self.bounds, ray)?;
+        Some(ground_pos(ray.origin + *ray.direction * along))
+    }
+
+    /// Where the ray meets what lies open to the sky, if it does within the area: the water
+    /// where it covers the ground it would have met.
+    pub fn surface_hit(&self, ray: Ray3d) -> Option<Pos<Meters>> {
+        let ground = reach_along(&self.heights, self.bounds, ray)?;
+        let along =
+            reach_along(&self.water, self.bounds, ray).map_or(ground, |water| water.min(ground));
+        Some(ground_pos(ray.origin + *ray.direction * along))
     }
 }
 
 /// The ground point a ray lands on: where it first comes down to the ground within `bounds`,
 /// however far along it that is.
 pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Option<Pos<Meters>> {
+    let along = reach_along(heights, bounds, ray)?;
+    Some(ground_pos(ray.origin + *ray.direction * along))
+}
+
+/// How far along a ray it first comes down to `heights` within `bounds`.
+fn reach_along<T: Level>(heights: &GroundGrid<T>, bounds: Rect<Meters>, ray: Ray3d) -> Option<f32> {
     let (from, to) = among_heights(heights, ray, over(bounds, ray));
-    let t = heights.first_under(ray.origin, *ray.direction, from, to)?;
-    Some(ground_pos(ray.origin + *ray.direction * t))
+    heights.first_under(ray.origin, *ray.direction, from, to)
 }
 
 /// The farthest point along a ray under which it can show the ground within `bounds`, no farther
@@ -962,7 +983,7 @@ fn over(bounds: Rect<Meters>, ray: Ray3d) -> (f32, f32) {
 
 /// The part of `span` along a ray in which it runs no higher than the highest ground, nor,
 /// heading down, lower than the lowest.
-fn among_heights(heights: &Heightfield, ray: Ray3d, span: (f32, f32)) -> (f32, f32) {
+fn among_heights<T: Level>(heights: &GroundGrid<T>, ray: Ray3d, span: (f32, f32)) -> (f32, f32) {
     let (origin, direction) = (ray.origin, *ray.direction);
     let range = heights.range();
     let (from, mut to) = between(
@@ -1011,6 +1032,13 @@ pub fn ground_height(world: &World, at: Pos<Meters>) -> Meters {
     world
         .get_resource::<GroundHeights>()
         .map_or(Meters(0.0), |ground| ground.height_at(at))
+}
+
+/// How high what lies open to the sky at `at` stands: the ground, or the water over it.
+pub fn surface_height(world: &World, at: Pos<Meters>) -> Meters {
+    world
+        .get_resource::<GroundHeights>()
+        .map_or(Meters(0.0), |ground| ground.surface_at(at))
 }
 
 /// The size of the primary window, in logical pixels.

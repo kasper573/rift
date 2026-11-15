@@ -24,6 +24,7 @@ use crate::systems::history::HistoryTopic;
 use crate::systems::input::map::InputAction;
 use crate::systems::item::{self, ExchangeRefusal, Inventory, ItemStack};
 use crate::systems::notification::{self, Notification};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::snapshot::KeptAside;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::save::Unwritten;
@@ -362,12 +363,16 @@ impl InboxView {
 /// Hands what players of this world asked of their messages to society.
 pub fn requests(world: &mut World) {
     fn hand<M: Message>(world: &mut World, ask: fn(M) -> InboxAsk) {
-        player::player_requests::<M>(world, false, move |world, player, message| {
-            if let Some(by) = world.get::<PlayedBy>(player) {
-                society::ask(world, by.client, SocietyAsk::Inbox(ask(message)));
-            }
-            Ok(())
-        });
+        player::player_requests::<M>(
+            world,
+            RequestNeeds::Nothing,
+            move |world, player, message| {
+                if let Some(by) = world.get::<PlayedBy>(player) {
+                    society::ask(world, by.client, SocietyAsk::Inbox(ask(message)));
+                }
+                Ok(())
+            },
+        );
     }
     hand::<SendMessage>(world, InboxAsk::Send);
     hand::<OpenMessage>(world, |open| InboxAsk::Open(open.0));

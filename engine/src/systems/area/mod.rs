@@ -63,6 +63,7 @@ use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, GridDims, MeterSize, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
+use crate::systems::mount::{self, MountKind};
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
 use crate::systems::script::{
@@ -180,6 +181,10 @@ pub struct AreaDef {
     pub lighting: Lighting,
     #[serde(default, skip_serializing_if = "Climate::is_still")]
     pub climate: Climate,
+    /// The kinds of mount nobody rides here: one called here is refused, and a rider who warps in
+    /// arrives on foot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bars_mounts: Vec<MountKind>,
     #[serde(skip)]
     pub scene: Vec<SceneNode>,
     #[serde(skip)]
@@ -213,6 +218,7 @@ impl ContentFile for AreaDef {
             terrains: vec![near.file()?],
             lighting: Lighting::day(),
             climate: Climate::always(Weather::breezy()),
+            bars_mounts: Vec::new(),
             scene: vec![SceneNode::Module(scene::ModuleNode::new(AreaModule::Fog(
                 FogBank::light_over(size.bounds()),
             )))],
@@ -874,13 +880,6 @@ pub fn warp_at(world: &mut World, at: Pos<Meters>) -> Option<Entity> {
         .map(|(entity, _)| entity)
 }
 
-pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
-    crate::systems::player::session::my_character(world)
-        .map(|me| me.id())
-        .and_then(|entity| of(world, entity))
-        .is_some_and(|area| area.mesh().walkable(at))
-}
-
 /// An area as the game plays it: its ground, where it walks and flies, what stands and shines on
 /// it, and what it sounds like.
 pub struct Area {
@@ -943,6 +942,12 @@ impl Area {
     /// cut around the safe zones for the wild; with no safe zone the wild moves on everyone's.
     pub fn mesh_for(&self, wild: bool, flies: bool) -> HeldMesh {
         walk::mesh(self, wild && !self.safe_zones.is_empty(), flies)
+    }
+
+    /// The mesh whatever draws `draught` of water floats on, as far as the tiles held: none for
+    /// a draught no mount of the game floats at.
+    pub fn water_mesh(&self, draught: Meters) -> Option<HeldMesh> {
+        walk::water(self, draught)
     }
 
     /// The ground everyone walks within a tile of `at`, laid for a look at one place of the area
@@ -1482,7 +1487,7 @@ fn build_area(
         prop_origins,
         lights,
         playing,
-        meshes: walk::Meshes::empty(ground.size.bounds()),
+        meshes: walk::Meshes::empty(ground.size.bounds(), mount::draughts(content)),
         modules_by_tile,
         placements_by_tile,
     };

@@ -22,6 +22,7 @@ use crate::systems::area::{self, AreaDef, AreaId, AreaModule, PropId};
 use crate::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers, WheelTurn};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{ItemDef, ItemId};
+use crate::systems::mount::{self, MountDef, MountId, MountKind};
 use crate::systems::movement::Bodies;
 use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
@@ -55,39 +56,52 @@ pub enum ProbeGameQuestion {
     /// Each question in turn, in one line rather than one each. Answered with a list of their
     /// answers, each of its question's kind, in the same order.
     Batch { questions: Vec<ProbeGameQuestion> },
-    /// Whether `at` is walkable ground. Answered with a boolean.
+    /// Whether `at` is walkable ground, or for someone `riding` a mount somewhere it goes.
+    /// Answered with a boolean.
     Walkable {
         area: AreaId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        riding: Option<MountId>,
         #[schemars(with = "PosSchema")]
         at: Pos<Meters>,
     },
-    /// Whether a walk from `from` reaches `to`. Answered with a boolean.
+    /// Whether a walk from `from` reaches `to`, or the way of someone `riding` a mount. Answered
+    /// with a boolean.
     Connects {
         area: AreaId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        riding: Option<MountId>,
         #[schemars(with = "PosSchema")]
         from: Pos<Meters>,
         #[schemars(with = "PosSchema")]
         to: Pos<Meters>,
     },
-    /// The corners of the walk from `from` to `to`, or null where none reaches. Answered with a
-    /// list of positions.
+    /// The corners of the walk from `from` to `to`, or of the way of someone `riding` a mount, or
+    /// null where none reaches. Answered with a list of positions.
     Route {
         area: AreaId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        riding: Option<MountId>,
         #[schemars(with = "PosSchema")]
         from: Pos<Meters>,
         #[schemars(with = "PosSchema")]
         to: Pos<Meters>,
     },
-    /// The walkable ground nearest `at`, or null. Answered with a position.
+    /// The walkable ground nearest `at`, or the nearest place someone `riding` a mount goes, or
+    /// null. Answered with a position.
     Nearest {
         area: AreaId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        riding: Option<MountId>,
         #[schemars(with = "PosSchema")]
         at: Pos<Meters>,
     },
-    /// The walkable ground nearest `goal` that a walk from `from` reaches, searched along rings
-    /// `spacing` apart, or null. Answered with a position.
+    /// The walkable ground nearest `goal` that a walk from `from` reaches, or the way of someone
+    /// `riding` a mount, searched along rings `spacing` apart, or null. Answered with a position.
     ReachableNear {
         area: AreaId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        riding: Option<MountId>,
         #[schemars(with = "PosSchema")]
         from: Pos<Meters>,
         #[schemars(with = "PosSchema")]
@@ -142,6 +156,7 @@ pub struct ProbeGame {
     pub npcs: Vec<ProbeNpc>,
     pub items: Vec<ProbeItem>,
     pub skills: Vec<ProbeSkill>,
+    pub mounts: Vec<ProbeMount>,
     /// The images the interface shows its own icons with, by the icons' names.
     pub interface_icons: Vec<ProbeInterfaceIcon>,
 }
@@ -181,6 +196,18 @@ pub struct ProbeSkill {
     pub range: Option<Meters>,
     /// The ground it strikes around where it lands.
     pub area: Option<Shape>,
+}
+
+/// A mount of the game: how it travels and so where it goes, how many it seats with its driver,
+/// how far off it a rider steps and a seat is asked for, and the skills that call it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeMount {
+    pub mount: MountId,
+    pub name: String,
+    pub kind: MountKind,
+    pub seats: usize,
+    pub reach: Meters,
+    pub called_by: Vec<SkillId>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -360,22 +387,39 @@ fn answer_in_scope(content: &Content, question: &ProbeGameQuestion) -> Value {
                 .map(|question| answer_in_scope(content, question))
                 .collect(),
         ),
-        &ProbeGameQuestion::Walkable { area, at } => json(&mesh(content, area, &[at]).walkable(at)),
-        &ProbeGameQuestion::Connects { area, from, to } => {
-            json(&mesh(content, area, &[from, to]).connects(from, to))
+        &ProbeGameQuestion::Walkable { area, riding, at } => {
+            json(&mesh(content, area, riding, &[at]).is_some_and(|mesh| mesh.walkable(at)))
         }
-        &ProbeGameQuestion::Route { area, from, to } => {
-            json(&mesh(content, area, &[from, to]).route(from, to))
+        &ProbeGameQuestion::Connects {
+            area,
+            riding,
+            from,
+            to,
+        } => {
+            let mesh = mesh(content, area, riding, &[from, to]);
+            json(&mesh.is_some_and(|mesh| mesh.connects(from, to)))
         }
-        &ProbeGameQuestion::Nearest { area, at } => json(&mesh(content, area, &[at]).nearest(at)),
+        &ProbeGameQuestion::Route {
+            area,
+            riding,
+            from,
+            to,
+        } => {
+            let mesh = mesh(content, area, riding, &[from, to]);
+            json(&mesh.and_then(|mesh| mesh.route(from, to)))
+        }
+        &ProbeGameQuestion::Nearest { area, riding, at } => {
+            json(&mesh(content, area, riding, &[at]).and_then(|mesh| mesh.nearest(at)))
+        }
         &ProbeGameQuestion::ReachableNear {
             area,
+            riding,
             from,
             goal,
             spacing,
         } => {
-            let mesh = mesh(content, area, &[from, goal]);
-            let reached = mesh.nearest(from).and_then(|from| {
+            let reached = mesh(content, area, riding, &[from, goal]).and_then(|mesh| {
+                let from = mesh.nearest(from)?;
                 mesh.nearest_where(goal, spacing, |point| mesh.connects(from, point))
             });
             json(&reached)
@@ -438,6 +482,20 @@ fn game(content: &Content) -> ProbeGame {
                     name: def.name.clone(),
                     range: def.range,
                     area: def.area,
+                }
+            })
+            .collect(),
+        mounts: content
+            .ids::<MountDef>()
+            .map(|mount| {
+                let def = mount.get(content);
+                ProbeMount {
+                    mount,
+                    name: def.name.clone(),
+                    kind: MountKind::from(def.travels),
+                    seats: def.seats.len(),
+                    reach: def.reach,
+                    called_by: mount::callers(content, mount),
                 }
             })
             .collect(),
@@ -534,13 +592,22 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
     }
 }
 
-/// The area's mesh over the tiles around `points`, held first, and whatever a route between
-/// them may take in besides: a tile's width around them.
-fn mesh(content: &Content, area: AreaId, points: &[Pos<Meters>]) -> area::HeldMesh {
-    let area = area::load(content, area);
+/// The mesh a walker goes on in the area, or someone `riding` a mount, over the tiles around
+/// `points`, held first, and whatever a route between them may take in besides: a tile's width
+/// around them. None for a mount the area bars or has no water for.
+fn mesh(
+    content: &Content,
+    id: AreaId,
+    riding: Option<MountId>,
+    points: &[Pos<Meters>],
+) -> Option<area::HeldMesh> {
+    let area = area::load(content, id);
     let around = Rect::from_points(points.iter().copied()).inflate(TILE_SIDE.0, TILE_SIDE.0);
     let _held = area.hold(area.ground_size().tiles_within(around));
-    area.mesh()
+    match riding {
+        Some(mount) => mount::mesh_in(content, id, mount.get(content).travels),
+        None => Some(area.mesh()),
+    }
 }
 
 fn water(content: &Content, id: AreaId, at: Pos<Meters>) -> ProbeWater {

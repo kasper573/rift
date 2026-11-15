@@ -21,6 +21,7 @@ use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{DroppedItem, Inventory, ItemId};
 use crate::systems::memory::{self, MemoryId};
+use crate::systems::mount;
 use crate::systems::movement::{self, Position};
 use crate::systems::npc::{Npc, NpcId, Pack, Packs, body};
 use crate::systems::party;
@@ -266,6 +267,12 @@ pub enum RiftQuery {
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
     },
+    /// Whether the character sits on a mount, as its driver or a passenger.
+    Riding {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+    },
     FreeSlots {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
@@ -461,6 +468,7 @@ impl RiftQueryKind {
             | RiftQueryKind::Equipped
             | RiftQueryKind::MastersRecipe
             | RiftQueryKind::InParty
+            | RiftQueryKind::Riding
             | RiftQueryKind::SetWithin
             | RiftQueryKind::OnQuest
             | RiftQueryKind::QuestDone
@@ -502,6 +510,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::Holding { of, .. }
             | RiftQuery::MastersRecipe { of, .. }
             | RiftQuery::InParty { of }
+            | RiftQuery::Riding { of }
             | RiftQuery::FreeSlots { of }
             | RiftQuery::Offered { of, .. }
             | RiftQuery::Equipped { of, .. }
@@ -653,6 +662,14 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 Box::new(move |world, cx| {
                     Value::Bool(
                         character(world, cx, &of).is_some_and(|who| party::in_one(world, who)),
+                    )
+                })
+            }
+            RiftQuery::Riding { of } => {
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    Value::Bool(
+                        character(world, cx, &of).is_some_and(|who| mount::rides(world, who)),
                     )
                 })
             }

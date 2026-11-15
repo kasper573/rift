@@ -19,6 +19,7 @@ use crate::core::time::UnixMillis;
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::social_request::{
     RequestUnaccepted, RequestUnsent, SocialRequest, SocialRequestAsk, SocialRequestKind,
@@ -169,13 +170,14 @@ pub fn request_source() -> SocialRequestSource {
         },
         may_send,
         accepted,
+        stands: |_, _| true,
     }
 }
 
 /// Hands what players of this world asked of friends to society.
 pub fn requests(world: &mut World) {
     let client = |world: &World, player: Entity| world.get::<PlayedBy>(player).map(|by| by.client);
-    player::player_requests::<AskFriendship>(world, false, |world, player, ask| {
+    player::player_requests::<AskFriendship>(world, RequestNeeds::Nothing, |world, player, ask| {
         let ask = SocialRequestAsk::Ask {
             kind: SocialRequestKind::Friendship,
             of: ask.0,
@@ -186,17 +188,21 @@ pub fn requests(world: &mut World) {
         }
         Ok(())
     });
-    player::player_requests::<RemoveFriend>(world, false, |world, player, remove| {
-        if let Some(client) = client(world, player) {
-            society::ask(
-                world,
-                client,
-                SocietyAsk::Friend(FriendAsk::Remove(remove.0)),
-            );
-        }
-        Ok(())
-    });
-    player::player_requests::<FindPlayers>(world, false, |world, player, find| {
+    player::player_requests::<RemoveFriend>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, remove| {
+            if let Some(client) = client(world, player) {
+                society::ask(
+                    world,
+                    client,
+                    SocietyAsk::Friend(FriendAsk::Remove(remove.0)),
+                );
+            }
+            Ok(())
+        },
+    );
+    player::player_requests::<FindPlayers>(world, RequestNeeds::Nothing, |world, player, find| {
         if let Some(client) = client(world, player) {
             society::ask(
                 world,

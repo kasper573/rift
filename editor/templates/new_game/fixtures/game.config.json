@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "dd5f4af9",
+  "content_version": "afc50816",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -177,7 +177,22 @@
     "xp_shared": "Shared with {names}",
     "you_joined_party": "You joined {name}'s party",
     "you_left_party": "You left the party",
-    "chat_too_fast": "You are writing too fast"
+    "chat_too_fast": "You are writing too fast",
+    "mount_barred_here": "Mounts of this kind are barred here",
+    "no_water_in_reach": "No water deep enough within reach",
+    "step_off_first": "Step off first",
+    "no_ground_in_reach": "No ground to step onto within reach",
+    "spot_too_far": "That spot is too far away",
+    "not_from_mount": "Not from the {mount}",
+    "mount_left_behind": "Your {mount} could not follow",
+    "seat_asks": "{name} asks for a seat on your {about}",
+    "seat_asked": "You asked {name} for a seat",
+    "seat_declined": "{name} has no seat for you",
+    "seat_lapsed": "{name} did not answer about a seat",
+    "seats_taken": "Every seat is taken",
+    "seat_out_of_reach": "Too far from the mount for a seat",
+    "set_down_by": "{name} set you down",
+    "seat_free": "Seat free"
   },
   "typing": {
     "pace": 45.0,

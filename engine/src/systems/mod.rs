@@ -24,6 +24,7 @@ pub mod interface;
 pub mod item;
 pub mod launch;
 pub mod memory;
+pub mod mount;
 pub mod movement;
 pub mod notification;
 pub mod npc;
@@ -117,6 +118,7 @@ pub fn protocol(app: &mut App) {
     friend::register(app);
     inbox::register(app);
     party::register(app);
+    mount::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -138,7 +140,11 @@ pub fn protocol(app: &mut App) {
 
 /// The kinds of request between players the engine's systems bring.
 pub fn request_sources() -> Vec<social_request::SocialRequestSource> {
-    vec![friend::request_source(), party::request_source()]
+    vec![
+        friend::request_source(),
+        party::request_source(),
+        mount::seat::request_source(),
+    ]
 }
 
 /// Wires each system's say into the registries other systems read, so neither names the other: what
@@ -481,6 +487,36 @@ pub struct GameWords {
     pub you_left_party: String,
     /// What a player is told saying more lines than the game lets them in a while.
     pub chat_too_fast: String,
+    /// What a player is told calling a mount where the area bars its kind.
+    pub mount_barred_here: String,
+    /// What a player is told calling a mount that floats at a spot where nothing floats it.
+    pub no_water_in_reach: String,
+    /// What a rider is told calling a mount, or asking for a seat on one.
+    pub step_off_first: String,
+    /// What a rider is told stepping off where no ground lies within their mount's reach.
+    pub no_ground_in_reach: String,
+    /// What a player is told aiming a skill at a spot farther off than it reaches.
+    pub spot_too_far: String,
+    /// What a rider is told doing what their seat on `{mount}` does not let them.
+    pub not_from_mount: String,
+    /// What a rider is told arriving somewhere their `{mount}` could not follow them to.
+    pub mount_left_behind: String,
+    /// What a request for a seat on their `{about}` from `{name}` says to its driver.
+    pub seat_asks: String,
+    /// What a request for a seat says to the player who asked `{name}` for one.
+    pub seat_asked: String,
+    /// What a player is told as `{name}` declines them a seat.
+    pub seat_declined: String,
+    /// What a player is told as their request for a seat from `{name}` runs out unanswered.
+    pub seat_lapsed: String,
+    /// What a player is told asking for a seat on a mount that has none free.
+    pub seats_taken: String,
+    /// What both are told as a seat is granted to someone no longer beside the mount.
+    pub seat_out_of_reach: String,
+    /// What a passenger is told as their driver `{name}` sets them down.
+    pub set_down_by: String,
+    /// What the plate of a driver says under their name while their mount has a seat free.
+    pub seat_free: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -643,6 +679,7 @@ pub fn server_app(
                 tick::run,
                 (
                     item::pickups,
+                    mount::seat::boarding,
                     (resource::gathering, resource::work).chain(),
                     interact::interactions,
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
@@ -659,6 +696,7 @@ pub fn server_app(
                         inbox::requests,
                         inbox::overflow,
                         party::requests,
+                        mount::seat::requests,
                         chat::channel::list,
                     ),
                     player::linger,
@@ -702,6 +740,9 @@ fn tick_planners() -> Tick {
         script::RunFlows::default(),
         npc::body::DriveBodies::default(),
         movement::AdvanceWalks::default(),
+    ));
+    tick.add((
+        mount::CarryRiders::default(),
         stat::SettleVitals::default(),
         actor::SettleActions::default(),
         attention::MarkAttention::default(),
@@ -827,6 +868,8 @@ pub fn client_app(
             friend::page::plugin,
             inbox::page::plugin,
             party::page::plugin,
+            mount::render::MountRenderPlugin,
+            mount::plate::plugin,
         ));
     app
 }
@@ -996,6 +1039,9 @@ pub fn tables() -> ContentRegistry {
         .file::<status::StatusEffectDef>()
         .named::<status::StatusEffectDef>()
         .modules::<status::StatusEffectDef>()
+        .file::<mount::MountDef>()
+        .named::<mount::MountDef>()
+        .modules::<mount::MountDef>()
         .list_kind(MODULES, "unknown module type", "a module type")
         .hook(LoadStep::Files, crate::core::content::media::check_media);
     crate::core::babble::content(&mut registry);
@@ -1015,6 +1061,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, class::check_all)
         .hook(LoadStep::Across, npc::check_all)
         .hook(LoadStep::Across, skill::check_all)
+        .hook(LoadStep::Across, mount::check_all)
         .hook(LoadStep::Across, emote::check_all)
         .hook(LoadStep::Across, item::check_pictures)
         .hook(LoadStep::Across, item::check_looks)
@@ -1181,6 +1228,21 @@ fn check_settings(loading: &mut Loading) {
         ("you_joined_party", &settings.words.you_joined_party),
         ("you_left_party", &settings.words.you_left_party),
         ("chat_too_fast", &settings.words.chat_too_fast),
+        ("mount_barred_here", &settings.words.mount_barred_here),
+        ("no_water_in_reach", &settings.words.no_water_in_reach),
+        ("step_off_first", &settings.words.step_off_first),
+        ("no_ground_in_reach", &settings.words.no_ground_in_reach),
+        ("spot_too_far", &settings.words.spot_too_far),
+        ("not_from_mount", &settings.words.not_from_mount),
+        ("mount_left_behind", &settings.words.mount_left_behind),
+        ("seat_asks", &settings.words.seat_asks),
+        ("seat_asked", &settings.words.seat_asked),
+        ("seat_declined", &settings.words.seat_declined),
+        ("seat_lapsed", &settings.words.seat_lapsed),
+        ("seats_taken", &settings.words.seats_taken),
+        ("seat_out_of_reach", &settings.words.seat_out_of_reach),
+        ("set_down_by", &settings.words.set_down_by),
+        ("seat_free", &settings.words.seat_free),
     ]
     .into_iter()
     .chain(inbox::words(&settings.words))

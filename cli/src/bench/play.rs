@@ -85,7 +85,7 @@ pub fn act(world: &mut World, content: &Content, roster: &[Entity], tick: usize)
             Targeting::AreaEnemy => {
                 CastAim::Point(nearest_npc(world, at).map_or(at, |(_, pos)| pos))
             }
-            Targeting::AreaAlly => CastAim::Point(at),
+            Targeting::AreaAlly | Targeting::Spot => CastAim::Point(at),
         };
         from_client(world, conn, UseSkillRequest { skill, aim });
     }
