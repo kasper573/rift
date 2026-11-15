@@ -3765,6 +3765,7 @@ dependencies = [
  "getrandom 0.4.3",
  "glam 0.32.1",
  "gltf",
+ "i_overlay",
  "image",
  "jsonc-parser",
  "kira",
