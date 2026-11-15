@@ -23,9 +23,9 @@ use crate::systems::actor::{self, Hitbox, Hurt};
 use crate::systems::area::{AreaId, AreaModule, AreaTag, PropId};
 use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::item::{
-    DropRow, Inventory, ItemDef, ItemId, ItemStack, ToolTypeDef, ToolTypeId,
+    DropRow, ExchangeRefusal, Inventory, ItemDef, ItemId, ItemStack, ToolTypeDef, ToolTypeId,
 };
-use crate::systems::mount::RiderAct;
+use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{self, Bodies, Position, Spot, position};
 use crate::systems::notification;
 use crate::systems::player::RequestNeeds;
@@ -44,6 +44,7 @@ pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
     app.replicate_once::<Resource>()
         .replicate::<Left>()
+        .replicate_once::<ResourceAfloat>()
         .replicate::<Working>()
         .add_mapped_client_message::<GatherRequest>()
         .add_client_message::<StopGathering>();
@@ -67,6 +68,13 @@ pub struct ResourceDef {
     pub max_occupants: u32,
     /// The kind of tool it is worked with, worn in the tool slot unless the kind is worked by hand.
     pub tool: ToolTypeId,
+    /// Taken from the worker each time an extraction ends, in the exchange that gives the drops,
+    /// whatever the drops come to. Work needs them in the bag.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spends: Vec<ItemStack>,
+    /// How far off it is worked from. Without one, from beside it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<Meters>,
     /// How long one extraction takes at a gathering speed of one.
     pub takes: Seconds,
     /// Rolled once per extraction, every row. Work needs room in the bag for the most every row
@@ -92,6 +100,8 @@ impl ContentFile for ResourceDef {
             quantity: 1,
             max_occupants: 1,
             tool: near.file()?,
+            spends: Vec::new(),
+            reach: None,
             takes: Seconds(1.0),
             drops: vec![DropRow::of(near.file()?)],
             modules: Vec::new(),
@@ -106,6 +116,12 @@ impl ContentFile for ResourceDef {
             check.at_least(format!("/drops/{index}/amount"), drop.amount, 1, "items");
         }
         check.at_least("/takes", self.takes.0, 0.0, "seconds");
+        for (index, spent) in self.spends.iter().enumerate() {
+            check.at_least(format!("/spends/{index}/count"), spent.count, 1, "items");
+        }
+        if let Some(reach) = self.reach {
+            check.at_least("/reach", reach.0, 0.0, "meters");
+        }
     }
 }
 
@@ -269,6 +285,10 @@ pub struct Resource {
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Left(pub u32);
 
+/// On a resource that lies on water: it stands on the water's surface, over the bed below.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResourceAfloat;
+
 /// On a character working a resource: which, with which tool from its tool slot if any, and when
 /// the extraction under way began and completes by the server's clock. It holds one of the
 /// resource's places.
@@ -379,6 +399,13 @@ pub fn workable(
         };
         Some(worn)
     };
+    let bag = world
+        .get::<Inventory>(worker)
+        .cloned()
+        .unwrap_or_else(Inventory::empty);
+    if let Err(missing) = bag.clone().exchange(&content, &row.spends, &[]) {
+        return Err(unpaid(&content, missing));
+    }
     let working_it = world
         .get::<Working>(worker)
         .is_some_and(|working| working.resource == resource);
@@ -390,14 +417,10 @@ pub fn workable(
         worker,
         StatKind::GatheringEfficiency,
     ));
-    let fits = world
-        .get::<Inventory>(worker)
-        .cloned()
-        .unwrap_or_else(Inventory::empty)
-        .exchange(&content, &[], &row.most_at(efficiency));
-    match fits {
+    let mut bag = bag;
+    match bag.exchange(&content, &row.spends, &row.most_at(efficiency)) {
         Ok(()) => Ok(tool),
-        Err(_) => Err(words.bag_room.clone()),
+        Err(refusal) => Err(unpaid(&content, refusal)),
     }
 }
 
@@ -514,12 +537,21 @@ fn swing(world: &mut World, worker: Entity) {
     }
 }
 
-/// How near a resource its workers stand: against the body of its look.
+/// How near a resource its workers stand: within its reach, or against the body of its look
+/// where it has none.
 fn work_reach(world: &World, resource: Entity) -> Option<Meters> {
+    let def = world.get::<Resource>(resource)?.def;
     let body = world.get::<Hitbox>(resource)?.0;
-    Some(Meters(
-        body.radius.0 + world.resource::<Bodies>().spacing().0,
-    ))
+    let beside = Meters(body.radius.0 + world.resource::<Bodies>().spacing().0);
+    Some(def.get(world.resource::<Content>()).reach.unwrap_or(beside))
+}
+
+/// Why an extraction cannot be paid for out of a bag, as the game words it.
+fn unpaid(content: &Content, refusal: ExchangeRefusal) -> String {
+    match refusal {
+        ExchangeRefusal::Missing(_) => refusal.describe(content),
+        ExchangeRefusal::NoRoom { .. } => content.built::<GameSettings>().words.bag_room.clone(),
+    }
 }
 
 fn start(world: &mut World, worker: Entity, resource: Entity) {
@@ -585,12 +617,16 @@ fn interrupted(world: &mut World, worker: Entity, working: &Working) -> Option<O
         .is_some_and(|((reach, at), resource)| at.distance(resource) <= reach);
     let tool_worn = working.tool.is_none()
         || equipment::in_slot(world, worker, &EquipmentPlace::Tool) == working.tool;
-    let busy = movement::moving(world, worker) || reach::current(world, worker).is_some();
+    let busy = movement::moving(world, worker)
+        || mount::under_way(world, worker)
+        || reach::current(world, worker).is_some();
     (stat::is_dead(world, worker) || !unhurt || !in_reach || !tool_worn || busy).then_some(None)
 }
 
 /// Completes the extraction `worker` has under way, which came due at `done`: takes one from the
-/// resource, rolls its drops into the worker's bag as many times as its efficiency makes it, and begins the next where the bag has room.
+/// resource, and in one exchange takes what it spends out of the worker's bag and gives its
+/// drops, rolled as many times as the worker's efficiency makes it; then begins the next where
+/// the worker still can.
 fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMillis) {
     let Some(working) = world.get::<Working>(worker).copied() else {
         return;
@@ -613,11 +649,13 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
         StatKind::GatheringEfficiency,
     ));
     let dropped = world.resource_scope(|_, mut rng: Mut<Rng>| row.rolled_at(efficiency, &mut rng));
-    let paid = world
-        .get_mut::<Inventory>(worker)
-        .is_some_and(|mut bag| bag.exchange(content, &[], &dropped).is_ok());
-    if !paid {
-        return stop(world, worker);
+    let paid = match world.get_mut::<Inventory>(worker) {
+        Some(mut bag) => bag.exchange(content, &row.spends, &dropped),
+        None => return stop(world, worker),
+    };
+    if let Err(refusal) = paid {
+        stop(world, worker);
+        return notification::error(world, worker, unpaid(content, refusal));
     }
     world.entity_mut(resource).insert(Left(left - 1));
     for stack in &dropped {

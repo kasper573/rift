@@ -95,7 +95,7 @@ fn carry(world: &mut World) {
         };
     }
     let landed: Vec<Entity> = world
-        .query_filtered::<Entity, (With<Aloft>, Without<Riding>, Without<Steed>)>()
+        .query_filtered::<Entity, (With<Aloft>, With<Actor>, Without<Riding>, Without<Steed>)>()
         .iter(world)
         .collect();
     for landed in landed {

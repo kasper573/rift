@@ -63,13 +63,13 @@ use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, GridDims, MeterSize, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
-use crate::systems::mount::{self, MountKind};
+use crate::systems::mount::MountKind;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
 use crate::systems::script::{
     self, Condition, EffectReach, OwnerRow, RiftScripts, ScriptModule, SkyCondition, SkyTable,
 };
-use crate::systems::spawner::Spawner;
+use crate::systems::spawner::{SpawnSurface, Spawner};
 use blueprint::{FlattenAt, FlattenError};
 use lighting::MAX_LIGHTS;
 use prop::MAX_PROPS;
@@ -950,6 +950,12 @@ impl Area {
         walk::water(self, draught)
     }
 
+    /// The mesh of wherever water stands, as far as the tiles held: none in an area that spawns
+    /// nothing on water.
+    pub fn standing_water(&self) -> Option<HeldMesh> {
+        walk::water(self, walk::ANY_WATER)
+    }
+
     /// The ground everyone walks within a tile of `at`, laid for a look at one place of the area
     /// whether or not its ground is held there, and leaving what is held as it is.
     pub fn mesh_near(&self, at: Pos<Meters>) -> NavMesh {
@@ -1487,7 +1493,7 @@ fn build_area(
         prop_origins,
         lights,
         playing,
-        meshes: walk::Meshes::empty(ground.size.bounds(), mount::draughts(content)),
+        meshes: walk::Meshes::empty(ground.size.bounds(), walk::draughts(content, modules)),
         modules_by_tile,
         placements_by_tile,
     };
@@ -1640,10 +1646,16 @@ fn check_footing(
             ObjectShape::Rect(_) => None,
         },
         AreaModule::Resident(resident) => Some(SurveyQuestion::Walkable(resident.at)),
-        AreaModule::Spawner(spawner) => Some(SurveyQuestion::Covers {
-            bounds: spawner.within.unwrap_or(area.size.bounds()),
-            wild: spawner.keeps_wild(),
-        }),
+        AreaModule::Spawner(spawner) => {
+            let bounds = spawner.within.unwrap_or(area.size.bounds());
+            Some(match spawner.on {
+                SpawnSurface::Ground => SurveyQuestion::Covers {
+                    bounds,
+                    wild: spawner.keeps_wild(),
+                },
+                SpawnSurface::Water => SurveyQuestion::Wet(bounds),
+            })
+        }
         _ => None,
     };
     let ground_of = |object: &ObjectDef| match object.shape {
@@ -1712,15 +1724,21 @@ fn check_footing(
                 }
             }
             AreaModule::Spawner(spawner) if !stands => {
+                let (rule, wanted) = match spawner.on {
+                    SpawnSurface::Water => ("no water to spawn on", "water to spawn on"),
+                    SpawnSurface::Ground if spawner.keeps_wild() => (
+                        "no ground to spawn on",
+                        "walkable ground outside every safe zone to spawn on",
+                    ),
+                    SpawnSurface::Ground => {
+                        ("no ground to spawn on", "walkable ground to spawn on")
+                    }
+                };
                 check.error(
                     site(""),
-                    "no ground to spawn on",
+                    rule,
                     format!("{} in {}", spawner.named(content), id.path(content)),
-                    if spawner.keeps_wild() {
-                        "walkable ground outside every safe zone to spawn on"
-                    } else {
-                        "walkable ground to spawn on"
-                    },
+                    wanted,
                 );
             }
             _ => {}

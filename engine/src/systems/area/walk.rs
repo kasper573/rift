@@ -14,6 +14,7 @@ use crate::core::ground::{TILE_SIDE, TileAt};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::units::{CellPos, GridSize, GroundCell, MeterSize, Meters};
 use crate::systems::movement::{NavMesh, SEAM_SNAP, TileLayer};
+use crate::systems::spawner::SpawnSurface;
 
 /// What a terrain is underfoot: whether actors walk on it, and what a step on it sounds like.
 #[derive(Clone, Debug)]
@@ -189,9 +190,28 @@ pub(super) fn mesh(area: &Area, wild: bool, flies: bool) -> HeldMesh {
     area.meshes.meshes[kind(wild, flies)].load()
 }
 
-/// The mesh what draws `draught` of water floats on in `area`, over the tiles held: wherever the
-/// water stands at least that deep, whatever lies under it, less every prop's footprint. None for
-/// a draught nothing in the game floats at.
+/// The least water there is: any at all. What an area spawns on water lies wherever it stands.
+pub(super) const ANY_WATER: Meters = Meters(0.0);
+
+/// The draughts `area_modules` and the game's mounts have an area lay a mesh of water for, the
+/// shallowest first: every mount's, and any water at all where something is spawned on it.
+pub(super) fn draughts(content: &Content, area_modules: &[super::Flattened]) -> Vec<Meters> {
+    let mut draughts = crate::systems::mount::draughts(content);
+    let spawns_afloat = area_modules.iter().any(|placed| {
+        matches!(
+            &placed.module,
+            super::AreaModule::Spawner(spawner) if spawner.on == SpawnSurface::Water
+        )
+    });
+    if spawns_afloat && !draughts.contains(&ANY_WATER) {
+        draughts.insert(0, ANY_WATER);
+    }
+    draughts
+}
+
+/// The mesh what draws `draught` of water floats on in `area`, over the tiles held: wherever
+/// water stands, at least that deep, whatever lies under it, less every prop's footprint. None
+/// for a draught the area lays no mesh for.
 pub(super) fn water(area: &Area, draught: Meters) -> Option<HeldMesh> {
     let meshes = &area.meshes;
     let place = meshes.draughts.iter().position(|held| *held == draught)?;
@@ -220,6 +240,9 @@ pub enum SurveyQuestion {
     Walkable(Pos<Meters>),
     /// Whether some ground within the bounds is walked: by the wild, or by everyone.
     Covers { bounds: Rect<Meters>, wild: bool },
+    /// Whether water stands somewhere within the bounds, clear of every prop. Asked only of an
+    /// area that spawns on water.
+    Wet(Rect<Meters>),
     /// The islands of the ground everyone walks within the bounds.
     Islands(Rect<Meters>),
     /// The island of the ground everyone walks at the point, none where nobody walks there.
@@ -232,7 +255,9 @@ impl SurveyQuestion {
             SurveyQuestion::Walkable(at) | SurveyQuestion::IslandAt(at) => {
                 Rect::new(at, Size::zero())
             }
-            SurveyQuestion::Covers { bounds, .. } | SurveyQuestion::Islands(bounds) => bounds,
+            SurveyQuestion::Covers { bounds, .. }
+            | SurveyQuestion::Wet(bounds)
+            | SurveyQuestion::Islands(bounds) => bounds,
         }
     }
 
@@ -322,7 +347,10 @@ impl<'a> Survey<'a> {
                 let wild = asking.iter().any(|index| {
                     matches!(questions[*index], SurveyQuestion::Covers { wild: true, .. })
                 });
-                let tile = SurveyedTile::of(self.area, at, wild);
+                let wet = asking
+                    .iter()
+                    .any(|index| matches!(questions[*index], SurveyQuestion::Wet(_)));
+                let tile = SurveyedTile::of(self.area, at, wild, wet);
                 AnsweredTile {
                     at,
                     rims: lays_islands.then(|| tile.rims()),
@@ -411,7 +439,7 @@ impl<'a> Survey<'a> {
         {
             return tile.clone();
         }
-        let tile = Arc::new(SurveyedTile::of(self.area, at, false));
+        let tile = Arc::new(SurveyedTile::of(self.area, at, false, false));
         let mut at_hand = self.at_hand.lock().expect("the survey's tiles");
         if at_hand.len() == AT_HAND {
             at_hand.pop_front();
@@ -430,16 +458,17 @@ impl<'a> Survey<'a> {
 const AT_HAND: usize = 32;
 
 /// A tile as a survey looks at it: the layer and the ground everyone walks on it, and the wild's
-/// where a question asks of it.
+/// and the water standing on it where a question asks of them.
 struct SurveyedTile {
     layer: TileLayer,
     walks: NavMesh,
     wild: Option<NavMesh>,
+    wet: Option<NavMesh>,
 }
 
 impl SurveyedTile {
-    /// The tile at `at`, with the wild's ground where `wild`.
-    fn of(area: &Area, at: TileAt, wild: bool) -> SurveyedTile {
+    /// The tile at `at`, with the wild's ground where `wild` and its water where `wet`.
+    fn of(area: &Area, at: TileAt, wild: bool, wet: bool) -> SurveyedTile {
         let TileGround {
             tile,
             ground,
@@ -454,9 +483,20 @@ impl SurveyedTile {
         } else {
             (NavMesh::triangulate(tile, bounds, &ground, radius), None)
         };
+        let wet = wet.then(|| {
+            let any = area
+                .meshes
+                .draughts
+                .iter()
+                .position(|draught| *draught == ANY_WATER)
+                .expect("an area that spawns on water lays its water");
+            let water = NavMesh::triangulate(tile, bounds, &unfloatable(area, at, any), radius);
+            NavMesh::join(bounds, [&water])
+        });
         SurveyedTile {
             walks: NavMesh::join(bounds, [&layer]),
             wild,
+            wet,
             layer,
         }
     }
@@ -477,6 +517,12 @@ impl SurveyedTile {
             } else {
                 self.walks.covers(bounds)
             }),
+            SurveyQuestion::Wet(bounds) => TileAnswer::Yes(
+                self.wet
+                    .as_ref()
+                    .expect("the water, laid for the questions that ask of it")
+                    .covers(bounds),
+            ),
             SurveyQuestion::Islands(bounds) => TileAnswer::Islands(
                 self.walks
                     .ground_within(bounds)
@@ -524,7 +570,7 @@ impl SurveyIslands {
                 .each_tile()
                 .collect::<Vec<_>>()
                 .into_par_iter()
-                .map(|at| (at, SurveyedTile::of(area, at, false).rims()))
+                .map(|at| (at, SurveyedTile::of(area, at, false, false).rims()))
                 .collect(),
         )
     }
@@ -818,7 +864,8 @@ fn shallow(area: &Area, at: TileAt, draught: usize) -> Arc<[Rect<Meters>]> {
         .flat_map(|y| (0..dims.width).map(move |x| (x, y)))
         .map(|(x, y)| {
             let cell = origin + CellPos::new(x as i32, y as i32).to_vector();
-            area.water.depth_at(&area.heights, cell.bounds().center()) < deep
+            let depth = area.water.depth_at(&area.heights, cell.bounds().center());
+            depth <= Meters(0.0) || depth < deep
         })
         .collect();
     let patches: Arc<[Rect<Meters>]> = patches(origin, dims, &cells).into();

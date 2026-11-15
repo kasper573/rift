@@ -298,6 +298,13 @@ pub fn carried(world: &World, rider: Entity) -> bool {
         .is_some_and(|riding| !riding.drives())
 }
 
+/// Whether what `rider` rides is on its way somewhere.
+pub fn under_way(world: &World, rider: Entity) -> bool {
+    world
+        .get::<Riding>(rider)
+        .is_some_and(|riding| movement::moving(world, riding.driver))
+}
+
 /// Every depth of water some mount of the game floats at, the shallowest first.
 pub fn draughts(content: &Content) -> Vec<Meters> {
     let mut draughts: Vec<Meters> = content

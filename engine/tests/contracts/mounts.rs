@@ -12,13 +12,14 @@ use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::probe::{ProbeGame, ProbeGameQuestion, answer};
+use engine::systems::resource::{self, GatherRequest, ResourceDef, StopGathering, Working};
 use engine::systems::script::Place;
 use engine::systems::skill::{self, CastAim, SkillDef, UseSkillRequest};
 use engine::systems::social_request::RequestAnswer;
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, reach, request_sources, script, status};
 use serde_json::{Value, json};
-use testkit::{BODY, Game, HEIGHTS, Map, Sim, path, rig_clips};
+use testkit::{APEX, BODY, Game, HEIGHTS, Map, Sim, path, rig_clips};
 
 use crate::server::Server;
 
@@ -29,6 +30,8 @@ const BEACH: Pos<Meters> = Pos::new(10.0, 6.0);
 const ROCK: Pos<Meters> = Pos::new(3.0, 3.0);
 const OFFSHORE: Pos<Meters> = Pos::new(15.5, 6.0);
 const FAR_OUT: Pos<Meters> = Pos::new(21.0, 6.0);
+/// How long a shoal takes to give once.
+const ANGLING: f32 = 1.0;
 
 #[test]
 fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
@@ -366,6 +369,91 @@ fn a_seat_is_asked_of_the_driver_and_lets_its_rider_do_what_it_allows() {
 }
 
 #[test]
+fn everyone_aboard_works_what_is_in_reach_of_their_mount_until_it_moves_on() {
+    let mut server = server();
+    let wren = server.sign_in(1, "Wren", "village");
+    let hale = server.sign_in(2, "Hale", "village");
+    let isolde = server.sign_in(3, "Isolde", "village");
+    aboard(&mut server, (2, hale), (1, wren));
+    stand(&mut server, isolde, Pos::new(11.0, 5.0));
+    board(&mut server, (2, hale), (3, isolde));
+    for angler in [wren, hale, isolde] {
+        server.village.give(angler, "lure", 2);
+    }
+    let village = server.village.id::<AreaDef>("village");
+    let shoal = server.village.id::<ResourceDef>("shoal");
+    let [near, far] = [18.5, 23.0]
+        .map(|x| resource::spawn(&mut server.village.world, shoal, Pos::new(x, 6.0), village));
+    let working = |server: &Server, who: Entity| {
+        server
+            .village
+            .world
+            .get::<Working>(who)
+            .map(|working| working.resource)
+    };
+    let lures = |server: &Server| [wren, hale].map(|angler| server.village.count(angler, "lure"));
+
+    for client in [1, 2, 3] {
+        server.send(client, GatherRequest { target: near });
+    }
+    run(&mut server, 0.3);
+    assert_eq!(
+        (
+            working(&server, hale),
+            working(&server, wren),
+            working(&server, isolde),
+            server.village.errors(3).last().cloned(),
+            at(&server, hale),
+        ),
+        (
+            Some(near),
+            Some(near),
+            None,
+            Some("Not from the Rowboat".to_owned()),
+            OFFSHORE
+        ),
+        "the driver and every passenger whose seat lets them work what the mount is in reach of, from where it lies"
+    );
+    walk(&mut server, 2, Pos::new(16.5, 6.0));
+    assert_eq!(
+        (
+            working(&server, hale),
+            working(&server, wren),
+            lures(&server)
+        ),
+        (None, None, [2, 2]),
+        "the mount moving on ends the work of everyone aboard, and nothing is spent"
+    );
+
+    server.send(1, GatherRequest { target: far });
+    run(&mut server, 1.0);
+    assert_eq!(
+        (working(&server, wren), at(&server, wren)),
+        (None, Pos::new(16.5, 6.0)),
+        "a passenger steers nothing toward what is out of reach"
+    );
+    server.send(2, GatherRequest { target: far });
+    for _ in 0..40 {
+        if [wren, hale].map(|angler| working(&server, angler)) == [Some(far); 2] {
+            break;
+        }
+        run(&mut server, 0.2);
+    }
+    assert!(at(&server, hale).distance(Pos::new(23.0, 6.0)) <= Meters(4.0));
+    run(&mut server, ANGLING + 0.3);
+    assert_eq!(
+        (
+            working(&server, hale),
+            working(&server, wren),
+            lures(&server),
+            [wren, hale].map(|angler| server.village.count(angler, "trout")),
+        ),
+        (Some(far), Some(far), [1; 2], [1; 2]),
+        "the driver takes the mount into reach, where the passenger who asked works it too, each from their own bag"
+    );
+}
+
+#[test]
 fn every_way_off_a_mount_sets_its_rider_on_ground_they_can_stand_on() {
     enum Leaves {
         ByChoice,
@@ -624,7 +712,8 @@ fn asked<Answer: serde::de::DeserializeOwned>(
 /// crow and a boat to ride, each called by a skill an item casts.
 fn game() -> Game {
     let mut clips = rig_clips();
-    clips.extend(["sit", "row"].map(|rides| (rides, Seconds(0.4))));
+    clips.extend(["sit", "row", "angle"].map(|made| (made, Seconds(0.4))));
+    let lands = |clip: &str| json!({ "clip": testkit::clip(clip), "cues": [{ "at": APEX.0, "apex": true }] });
     let calls = |name: &str, mount: &str, fields: Value| {
         let mut row = json!({
             "name": name,
@@ -665,10 +754,17 @@ fn game() -> Game {
     }
     let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
     let game = Game::new()
-        .skeleton_of(BODY, &clips, json!({}))
+        .skeleton_of(
+            BODY,
+            &clips,
+            json!({ "cues": [lands("attack"), lands("angle")] }),
+        )
         .edit("skeleton", BODY, |body| {
-            body["base"]["moves"] =
-                json!({ "sit": testkit::clip("sit"), "row": testkit::clip("row") });
+            body["base"]["moves"] = json!({
+                "sit": testkit::clip("sit"),
+                "row": testkit::clip("row"),
+                "angle": testkit::clip("angle"),
+            });
         })
         .area("village", &Map::of(&rows), json!([]))
         .area("forest", &Map::open(12, 12), json!([]))
@@ -730,10 +826,41 @@ fn game() -> Game {
                 "reach": 4.0,
                 "seats": [
                     seat("body", "row", json!(["gather"])),
-                    seat("hand.r", "sit", json!(["items", "skills"])),
+                    seat("hand.r", "sit", json!(["items", "skills", "gather"])),
                     seat("hand.l", "sit", json!(["items", "skills"])),
                 ],
                 "barred": "refuse",
+            }),
+        )
+        .row(
+            "tool_type",
+            "line",
+            json!({
+                "name": "Line",
+                "by_hand": true,
+                "work": "angle",
+                "cursor": path("cursor", "hook"),
+                "sfx": { "swing": path("sfx", "plop"), "ran_out": path("sfx", "plop") },
+            }),
+        )
+        .cursor("hook")
+        .sfx("plop")
+        .prop("ripples", json!({ "type": "none" }))
+        .resource("lure", 20)
+        .resource("trout", 20)
+        .row(
+            "resource",
+            "shoal",
+            json!({
+                "name": "Shoal",
+                "look": path("prop", "ripples"),
+                "quantity": 9,
+                "max_occupants": 3,
+                "tool": path("tool_type", "line"),
+                "spends": [{ "item": path("item", "lure") }],
+                "reach": 4.0,
+                "takes": ANGLING,
+                "drops": [{ "item": path("item", "trout") }],
             }),
         )
         .item("bridle", casts("call_mare"))
@@ -779,30 +906,7 @@ fn game() -> Game {
         game.row("skill", &name, row)
             .script(&format!("{name}_used"), "skill", script)
     });
-    water_on(game, "village", &water)
-}
-
-/// `game` with `water` lying on its area `area`.
-fn water_on(game: Game, area: &str, water: &WaterSurface) -> Game {
-    let game = water
-        .size()
-        .each_tile()
-        .filter_map(|at| Some((at, water.encode_tile(at)?)))
-        .fold(game, |game, (at, bytes)| {
-            game.part(
-                "area",
-                area,
-                &area::WATER.named(&at.key(), "png"),
-                bytes.to_vec(),
-            )
-        });
-    let overview = water.encode_overview().expect("water to lie somewhere");
-    game.part(
-        "area",
-        area,
-        &area::WATER_OVERVIEW.named("", "png"),
-        overview,
-    )
+    game.water("village", &water)
 }
 
 fn server() -> Server {
@@ -820,9 +924,12 @@ fn server_of(game: Game) -> Server {
             .accept::<UseSkillRequest>()
             .accept::<UseItemRequest>()
             .accept::<MountRequest>()
+            .accept::<GatherRequest>()
+            .accept::<StopGathering>()
             .add((
                 player::arrival_holds,
                 movement::move_request,
+                resource::gather_request,
                 combat::request,
                 skill::casting::request,
                 item::use_item,
@@ -842,6 +949,8 @@ fn server_of(game: Game) -> Server {
             .plan(stat::SettleVitals::default())
             .add((
                 mount::seat::boarding,
+                resource::gathering,
+                resource::work,
                 combat::defeats,
                 skill::hotbar::settle_basic_attack,
             ))

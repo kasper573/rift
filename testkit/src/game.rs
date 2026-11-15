@@ -10,7 +10,9 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, FileShape, LoadReport,
     MemoryFolder, SETTINGS_FILE, content_path, name_of, table_of, version,
 };
-use engine::core::ground::{GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER};
+use engine::core::ground::{
+    GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER, WaterSurface,
+};
 use engine::core::math::Rgb;
 use engine::core::render::{
     CameraFraming, ClearingLook, CloudLook, LightLook, Look, PictureGrade, SkyLook, SurfaceFinish,
@@ -769,6 +771,29 @@ impl Game {
             Some(bytes) => game.part("area", name, &area::PAINT_OVERVIEW.named("", "png"), bytes),
             None => game,
         }
+    }
+
+    /// Lays `water` on the area `area`.
+    pub fn water(self, area: &str, water: &WaterSurface) -> Game {
+        let game = water
+            .size()
+            .each_tile()
+            .filter_map(|at| Some((at, water.encode_tile(at)?)))
+            .fold(self, |game, (at, bytes)| {
+                game.part(
+                    "area",
+                    area,
+                    &area::WATER.named(&at.key(), "png"),
+                    bytes.to_vec(),
+                )
+            });
+        let overview = water.encode_overview().expect("water to lie somewhere");
+        game.part(
+            "area",
+            area,
+            &area::WATER_OVERVIEW.named("", "png"),
+            overview,
+        )
     }
 
     /// The two terrains every declared area is painted with: turf to walk on and rock that

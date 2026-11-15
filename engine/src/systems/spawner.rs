@@ -17,7 +17,7 @@ use crate::systems::area::{self, Area, AreaId, AreaModule, TimeOfDayName, Wild};
 use crate::systems::movement::{NavMesh, Position, Spots, position};
 use crate::systems::npc::{self, AbsenceSpanAt, Npc, NpcId, Pack, Roams, absence};
 use crate::systems::player::PlayedBy;
-use crate::systems::resource::{self, ResourceId};
+use crate::systems::resource::{self, ResourceAfloat, ResourceId};
 use crate::systems::script::{SkyCondition, sky};
 use crate::systems::visibility::Viewers;
 use crate::systems::{WorldArea, dialogue, stat, visibility};
@@ -42,6 +42,20 @@ pub struct Spawner {
         skip_serializing_if = "Option::is_none"
     )]
     pub within: Option<Rect<Meters>>,
+    /// What its entries are placed on. Only resources lie on water.
+    #[serde(default, skip_serializing_if = "serial::is_default")]
+    pub on: SpawnSurface,
+}
+
+/// What a spawner places its entries on.
+#[derive(JsonSchema, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnSurface {
+    /// The ground everyone walks.
+    #[default]
+    Ground,
+    /// Wherever water stands, clear of every prop.
+    Water,
 }
 
 #[derive(JsonSchema, Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -91,6 +105,7 @@ impl Spawner {
             count: 1,
             respawn: None,
             within,
+            on: SpawnSurface::Ground,
         }
     }
 
@@ -138,6 +153,14 @@ impl Spawner {
                 1,
                 "shares",
             );
+            if self.on == SpawnSurface::Water && matches!(share.what, Spawns::Npc { .. }) {
+                cx.error(
+                    format!("{pointer}/spawns/{index}"),
+                    "walks on water",
+                    "an npc in a spawner that places on water",
+                    "resources alone on water: an npc walks the ground",
+                );
+            }
             if self.spawns[..index]
                 .iter()
                 .any(|other| other.what == share.what)
@@ -717,12 +740,24 @@ fn spawn_drawn(
             };
             entity
         }
-        Spawns::Resource { resource: def } => {
-            let mesh = area.mesh_for(false, false);
-            let at = free_point(world, &mesh, area_id, spawner.within, watching)
-                .expect("checked at load: a spawner has ground to spawn on");
-            resource::spawn(world, def, at, area_id)
-        }
+        Spawns::Resource { resource: def } => match spawner.on {
+            SpawnSurface::Ground => {
+                let mesh = area.mesh_for(false, false);
+                let at = free_point(world, &mesh, area_id, spawner.within, watching)
+                    .expect("checked at load: a spawner has ground to spawn on");
+                resource::spawn(world, def, at, area_id)
+            }
+            SpawnSurface::Water => {
+                let mesh = area
+                    .standing_water()
+                    .expect("an area that spawns on water lays its water");
+                let at = free_point(world, &mesh, area_id, spawner.within, watching)
+                    .expect("checked at load: a spawner on water has water to spawn on");
+                let afloat = resource::spawn(world, def, at, area_id);
+                world.entity_mut(afloat).insert(ResourceAfloat);
+                afloat
+            }
+        },
     }
 }
 

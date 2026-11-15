@@ -28,7 +28,7 @@ use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
 use crate::systems::script::Place;
 use crate::systems::skill::{SkillDef, SkillId};
-use crate::systems::spawner::Spawns;
+use crate::systems::spawner::{SpawnSurface, Spawns};
 
 /// A question for the probe that only a frame of a running client answers, one JSON line each,
 /// answered with one JSON line before the next is asked.
@@ -243,6 +243,8 @@ pub struct ProbeSpawner {
     pub respawn: Option<Seconds>,
     #[schemars(with = "RectSchema")]
     pub over: Rect<Meters>,
+    /// What its entries are placed on.
+    pub on: SpawnSurface,
 }
 
 /// One thing a spawner's entries may be, and its weight beside the others.
@@ -546,6 +548,7 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
                 count: spawner.count,
                 respawn: spawner.respawn,
                 over: spawner.within.unwrap_or_else(|| Rect::from_size(area.size)),
+                on: spawner.on,
             }),
             _ => None,
         })

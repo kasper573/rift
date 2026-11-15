@@ -431,6 +431,9 @@ fn stride(world: &World, id: Entity, dt: Seconds) -> MoverStep {
 
 /// How fast the actor moves: its pace, slowed by the water it wades through.
 pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {
+    if mount::carried(world, entity) {
+        return MetersPerSec(Meters(0.0));
+    }
     let pace = stat::effective(world, entity, StatKind::MovementSpeed);
     MetersPerSec(Meters(pace * wading_share(world, entity)))
 }

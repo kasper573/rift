@@ -234,8 +234,8 @@ fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
     ));
 }
 
-/// What a full resource comes to, worked out from its fields: what it gives, how long one worker
-/// takes to empty it, and the bag room work needs.
+/// What a full resource comes to, worked out from its fields: what it gives and spends, how long
+/// one worker takes to empty it, the bag room work needs and how far off it is done from.
 fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
     let mut lines: Vec<String> = def
         .drops
@@ -253,6 +253,10 @@ fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
             }
         })
         .collect();
+    lines.extend(def.spends.iter().map(|spent| {
+        let all = def.quantity * spent.count;
+        format!("Spends {all} {}", spent.item.get(content).name)
+    }));
     lines.push(format!(
         "Empty after {} s of one worker's work",
         def.quantity as f32 * def.takes.0
@@ -264,6 +268,9 @@ fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
         1 => "Work needs room in the bag for 1 kind of item".to_owned(),
         kinds => format!("Work needs room in the bag for {kinds} kinds of item"),
     });
+    if let Some(reach) = def.reach {
+        lines.push(format!("Worked from up to {} m off", reach.0));
+    }
     lines
 }
 

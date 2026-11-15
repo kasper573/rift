@@ -1,31 +1,39 @@
 //! Resources as a client shows them: each standing as the prop it looks like under a plate naming
-//! it and counting who works it, and a bar under every worker filling once an extraction.
+//! it and counting who works it, and a bar under every worker filling once an extraction, with
+//! what the work spends and how much of it is left under the player's own.
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use ui::egui;
 use ui::face::TextRole;
+use ui::glyph::{self, Halo};
 use ui::{float, ink, paint, slip};
 
-use super::{Left, Resource, ResourceId, StopGathering, Working, workers};
+use super::{Left, Resource, ResourceAfloat, ResourceId, StopGathering, Working, workers};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::render::{ground_height, window_point, world_point};
+use crate::core::render::{ground_height, surface_height, window_point, world_point};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::Meters;
-use crate::systems::actor::Hitbox;
 use crate::systems::actor::plate::PlateLabel;
+use crate::systems::actor::{Aloft, Hitbox};
 use crate::systems::hud;
 use crate::systems::input::map::{InputAction, input};
+use crate::systems::item::Inventory;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
 const BAR: egui::Vec2 = egui::Vec2::new(56.0, 5.0);
 const BAR_DROP: f32 = 10.0;
+const SPENT_GAP: f32 = 4.0;
+const SPENT_HALO: Halo = Halo {
+    color: ink::CREAM,
+    width: 1.0,
+};
 const HINT_GAP: f32 = 8.0;
 
 pub struct ResourceRenderPlugin;
@@ -119,14 +127,25 @@ fn dress(
     ));
 }
 
+/// Stands every resource where it is: on the ground, or on the water's surface for one that
+/// lies on water, which is where its plate and the pointer find it too.
 fn stand(world: &mut World) {
-    let standing: Vec<(Entity, Pos<Meters>)> = world
-        .query_filtered::<(Entity, &Position), With<Resource>>()
+    let standing: Vec<(Entity, Pos<Meters>, bool)> = world
+        .query_filtered::<(Entity, &Position, Has<ResourceAfloat>), With<Resource>>()
         .iter(world)
-        .map(|(entity, position)| (entity, position.pos))
+        .map(|(entity, position, afloat)| (entity, position.pos, afloat))
         .collect();
-    for (entity, at) in standing {
-        let at = world_point(at, ground_height(world, at));
+    for (entity, at, afloat) in standing {
+        let height = if afloat {
+            let surface = Aloft(surface_height(world, at));
+            if world.get::<Aloft>(entity) != Some(&surface) {
+                world.entity_mut(entity).insert(surface);
+            }
+            surface.0
+        } else {
+            ground_height(world, at)
+        };
+        let at = world_point(at, height);
         if let Some(mut transform) = world.get_mut::<Transform>(entity)
             && transform.translation != at
         {
@@ -146,6 +165,7 @@ fn draw_bars(world: &mut World) {
             (entity, drawn.map_or(at.pos, |drawn| drawn.0), *working)
         })
         .collect();
+    let me = session::me(world);
     for (worker, at, working) in workers {
         let Some(share) = progress(world, &working) else {
             continue;
@@ -153,11 +173,48 @@ fn draw_bars(world: &mut World) {
         let Some(feet) = window_point(world, at, Meters(0.0)) else {
             continue;
         };
+        let spent = if Some(worker) == me {
+            spent(world, worker, &working)
+        } else {
+            Vec::new()
+        };
         gui::world_area(world, ("work bar", worker))
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(feet.x, feet.y + BAR_DROP))
-            .show(&gui, |ui| paint::progress_line(ui, BAR, share, ink::GOLD));
+            .show(&gui, |ui| {
+                paint::progress_line(ui, BAR, share, ink::GOLD);
+                let mut below = ui.min_rect().center_bottom() + egui::vec2(0.0, SPENT_GAP);
+                for line in &spent {
+                    glyph::haloed(
+                        ui.painter(),
+                        below,
+                        egui::Align2::CENTER_TOP,
+                        line,
+                        TextRole::Small.font_id(),
+                        ink::INK,
+                        SPENT_HALO,
+                    );
+                    below.y += TextRole::Small.size() + SPENT_GAP;
+                }
+            });
     }
+}
+
+/// What the work of `worker` spends an extraction, each with how many of it their bag holds.
+fn spent(world: &World, worker: Entity, working: &Working) -> Vec<String> {
+    let content = world.resource::<Content>();
+    let Some(resource) = world.get::<Resource>(working.resource) else {
+        return Vec::new();
+    };
+    let bag = world.get::<Inventory>(worker);
+    let spends = &resource.def.get(content).spends;
+    spends
+        .iter()
+        .map(|stack| {
+            let held = bag.map_or(0, |bag| bag.count(stack.item));
+            format!("{} × {held}", stack.item.get(content).name)
+        })
+        .collect()
 }
 
 fn draw_hint(world: &mut World) {

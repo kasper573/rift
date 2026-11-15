@@ -143,9 +143,10 @@ impl Sim {
 
     /// Hands everyone on their way out of this area over to `to`'s server, the area they are
     /// bound for, where each draws what they arrive to: the first of them as they arrived, a
-    /// driver before their passengers.
+    /// driver before their passengers. Each is connected there and no longer here.
     pub fn hand_over(&mut self, to: &mut Sim) -> Entity {
-        let arrived: Vec<Entity> = transition::departing(&mut self.world)
+        let travelers = transition::departing(&mut self.world);
+        let arrived: Vec<Entity> = travelers
             .into_iter()
             .map(|traveler| {
                 assert_eq!(
@@ -154,6 +155,7 @@ impl Sim {
                     "the traveler is bound for the area they are handed to"
                 );
                 let client = traveler.played.client;
+                self.disconnect(client.0);
                 to.connect(client.0);
                 let arrived = transition::arrive(&mut to.world, traveler);
                 let conn = to.conn(client.0);
