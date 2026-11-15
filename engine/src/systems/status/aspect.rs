@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{StatusEffectId, Statuses, boost};
+use super::{Boosts, StatusEffectId, Statuses, boost};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::par;
@@ -17,6 +17,7 @@ use crate::systems::script::effect::Audience;
 use crate::systems::script::event::RiftEvent;
 use crate::systems::script::{EventKind, Owner, OwnerRow, RiftInstances, RiftScripts};
 use crate::systems::skill::{self, Learned, Rank, SkillId, SkillKind};
+use crate::systems::stat::Stat;
 use crate::systems::vfx::{self, VfxShaderFixture};
 
 /// Where the aspects of an actor or an object come from: a status it carries, an item it wears or
@@ -63,6 +64,64 @@ struct Cadence {
     next: UnixMillis,
 }
 
+/// What the statuses of an actor had under way when it left a world, brought to the one it
+/// arrives in: there each is taken up where it was and not applied anew, so what its script does
+/// as it is applied does not happen twice and its intervals keep their beat.
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct CarriedStatuses(pub Vec<CarriedStatus>);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CarriedStatus {
+    pub effect: StatusEffectId,
+    /// When the status it belongs to was applied: a status applied since is another.
+    pub since: UnixMillis,
+    pub beats: Vec<StatusBeat>,
+    /// The stat modifiers its script holds on the actor.
+    pub boosts: Vec<Stat>,
+}
+
+/// An interval of a status's script, and when it next fires.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StatusBeat {
+    pub every: Seconds,
+    pub next: UnixMillis,
+}
+
+/// What every status active on `actor` has under way.
+pub fn carried(world: &World, actor: Entity) -> CarriedStatuses {
+    let boosts = world.get::<Boosts>(actor);
+    let aspects = world.get::<ActiveAspects>(actor);
+    CarriedStatuses(
+        aspects
+            .iter()
+            .flat_map(|aspects| &aspects.0)
+            .filter_map(|aspect| {
+                let AspectSource::Status(effect) = aspect.source else {
+                    return None;
+                };
+                Some(CarriedStatus {
+                    effect,
+                    since: aspect.since?,
+                    beats: aspect
+                        .cadences
+                        .iter()
+                        .map(|cadence| StatusBeat {
+                            every: cadence.seconds,
+                            next: cadence.next,
+                        })
+                        .collect(),
+                    boosts: boosts
+                        .iter()
+                        .flat_map(|boosts| &boosts.0)
+                        .filter(|boost| boost.source == aspect.source)
+                        .map(|boost| boost.stat)
+                        .collect(),
+                })
+            })
+            .collect(),
+    )
+}
+
 type Stirred = Or<(
     Added<Actor>,
     Changed<Equipment>,
@@ -100,8 +159,20 @@ impl Planner for SettleAspects {
             for gone in active.iter().filter(|aspect| !wanted.contains(aspect)) {
                 deactivate(world, actor, gone.source);
             }
+            let carried = world
+                .get_entity_mut(actor)
+                .ok()
+                .and_then(|mut actor| actor.take::<CarriedStatuses>())
+                .unwrap_or_default();
             for new in wanted.iter().filter(|aspect| !active.contains(aspect)) {
-                activate(world, actor, *new);
+                let under_way = carried.0.iter().find(|carried| {
+                    new.source == AspectSource::Status(carried.effect)
+                        && new.since == Some(carried.since)
+                });
+                match under_way {
+                    Some(carried) => take_up(world, actor, carried),
+                    None => activate(world, actor, *new),
+                }
             }
         }
     }
@@ -226,31 +297,7 @@ fn desired(world: &World, actor: Entity) -> Vec<Wanted> {
 
 fn activate(world: &mut World, actor: Entity, Wanted { source, since }: Wanted) {
     let now = world.resource::<WallClock>().now;
-    let scripts = world.resource::<RiftScripts>().clone();
-    let mut cadences: Vec<Cadence> = Vec::new();
-    for procedure in scripts.of(source.row()) {
-        for (_, event) in procedure.entry(EventKind::Interval) {
-            let &RiftEvent::Interval { seconds } = event else {
-                continue;
-            };
-            if cadences.iter().all(|cadence| cadence.seconds != seconds) {
-                cadences.push(Cadence {
-                    seconds,
-                    next: now.after(seconds),
-                });
-            }
-        }
-    }
-    let aspect = ActiveAspect {
-        source,
-        since,
-        cadences,
-        during: None,
-        during_next: None,
-    };
-    if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor) {
-        aspects.0.push(aspect);
-    }
+    hold(world, actor, source, since, &[]);
     if let AspectSource::Status(effect) = source {
         let content = world.resource::<Content>().clone();
         let def = effect.get(&content);
@@ -263,16 +310,7 @@ fn activate(world: &mut World, actor: Entity, Wanted { source, since }: Wanted) 
         if def.pops {
             notification::pop_as(world, actor, def.name.clone(), VfxShaderFixture::StatusPop);
         }
-        let during = def
-            .vfx
-            .during
-            .and_then(|shown| vfx::show_lasting(world, shown, vfx::site_on(world, actor)));
-        if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor)
-            && let Some(aspect) = aspects.0.iter_mut().find(|aspect| aspect.source == source)
-        {
-            aspect.during = during;
-        }
-        sound_during(world, actor, source, now);
+        stay(world, actor, effect, now);
     }
     world.resource_mut::<RiftInstances>().raise(
         source.owner(),
@@ -281,6 +319,73 @@ fn activate(world: &mut World, actor: Entity, Wanted { source, since }: Wanted) 
         Vec::new(),
         |_| true,
     );
+}
+
+/// Makes the status `carried` describes active on `actor` as it was where the actor came from:
+/// with the boosts it held and its intervals on the beat they kept, and none of what a status
+/// shows, sounds and does as it is applied.
+fn take_up(world: &mut World, actor: Entity, carried: &CarriedStatus) {
+    let now = world.resource::<WallClock>().now;
+    let source = AspectSource::Status(carried.effect);
+    hold(world, actor, source, Some(carried.since), &carried.beats);
+    for &stat in &carried.boosts {
+        boost::hold(world, actor, source, stat);
+    }
+    stay(world, actor, carried.effect, now);
+}
+
+/// Lists `source` among the aspects active on `actor`, each interval of its scripts due an
+/// interval from now, or when `beats` has it due.
+fn hold(
+    world: &mut World,
+    actor: Entity,
+    source: AspectSource,
+    since: Option<UnixMillis>,
+    beats: &[StatusBeat],
+) {
+    let now = world.resource::<WallClock>().now;
+    let scripts = world.resource::<RiftScripts>().clone();
+    let mut cadences: Vec<Cadence> = Vec::new();
+    for procedure in scripts.of(source.row()) {
+        for (_, event) in procedure.entry(EventKind::Interval) {
+            let &RiftEvent::Interval { seconds } = event else {
+                continue;
+            };
+            if cadences.iter().all(|cadence| cadence.seconds != seconds) {
+                let kept = beats.iter().find(|beat| beat.every == seconds);
+                cadences.push(Cadence {
+                    seconds,
+                    next: kept.map_or_else(|| now.after(seconds), |beat| beat.next),
+                });
+            }
+        }
+    }
+    if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor) {
+        aspects.0.push(ActiveAspect {
+            source,
+            since,
+            cadences,
+            during: None,
+            during_next: None,
+        });
+    }
+}
+
+/// Shows and sounds what a status does for as long as it holds.
+fn stay(world: &mut World, actor: Entity, effect: StatusEffectId, now: UnixMillis) {
+    let content = world.resource::<Content>().clone();
+    let source = AspectSource::Status(effect);
+    let during = effect
+        .get(&content)
+        .vfx
+        .during
+        .and_then(|shown| vfx::show_lasting(world, shown, vfx::site_on(world, actor)));
+    if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor)
+        && let Some(aspect) = aspects.0.iter_mut().find(|aspect| aspect.source == source)
+    {
+        aspect.during = during;
+    }
+    sound_during(world, actor, source, now);
 }
 
 fn deactivate(world: &mut World, actor: Entity, source: AspectSource) {

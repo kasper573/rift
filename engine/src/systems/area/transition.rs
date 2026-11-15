@@ -18,7 +18,7 @@ pub struct Crossing {
     pub dest: Pos<Meters>,
 }
 
-#[derive(Component, Clone, Debug, Default)]
+#[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Discovered(BTreeSet<AreaId>);
 
 impl Discovered {
@@ -32,6 +32,10 @@ impl Discovered {
 
     pub fn knows(&self, area: AreaId) -> bool {
         self.0.contains(&area)
+    }
+
+    pub fn areas(&self) -> impl Iterator<Item = AreaId> + '_ {
+        self.0.iter().copied()
     }
 }
 

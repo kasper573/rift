@@ -471,11 +471,20 @@ fn a_recipe_that_requires_mastery_is_listed_to_all_and_made_only_by_one_who_mast
         2,
         JoinAs {
             snapshot: CharacterSnapshot {
-                recipe_masteries: vec![key(&sim, DAGGER)],
+                recipe_masteries: vec![key(&sim, DAGGER)].into(),
                 ..CharacterSnapshot::of_player(&content, "Journeyman", player::def(&content))
             },
             start: content.built::<GameSettings>().initial_spawn,
+            taken: None,
         },
+    );
+    assert_eq!(
+        CharacterSnapshot::of_live(&sim.world, journeyman)
+            .expect("a character in the world")
+            .recipe_masteries
+            .to_vec(),
+        [key(&sim, DAGGER)],
+        "and is saved with it"
     );
     sim.give(journeyman, "ingot", 1);
     open(&mut sim, 2, "smith");

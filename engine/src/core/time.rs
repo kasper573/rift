@@ -34,16 +34,22 @@ pub struct UnixMillis(pub u64);
 
 impl UnixMillis {
     pub fn after(self, duration: Seconds) -> UnixMillis {
-        UnixMillis(self.0.saturating_add(duration.millis().0.max(0.0) as u64))
+        UnixMillis(self.0.saturating_add(whole_millis(duration)))
     }
 
     pub fn before(self, duration: Seconds) -> UnixMillis {
-        UnixMillis(self.0.saturating_sub(duration.millis().0.max(0.0) as u64))
+        UnixMillis(self.0.saturating_sub(whole_millis(duration)))
     }
 
     pub fn since(self, earlier: UnixMillis) -> Seconds {
         Millis(self.0.saturating_sub(earlier.0) as f32).seconds()
     }
+}
+
+/// The nearest whole millisecond, so a span measured between two moments and written as seconds
+/// leads back to the moment it was measured from.
+fn whole_millis(duration: Seconds) -> u64 {
+    duration.millis().0.max(0.0).round() as u64
 }
 
 impl From<SystemTime> for UnixMillis {

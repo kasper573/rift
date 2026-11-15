@@ -64,7 +64,7 @@ pub enum RecordTally {
     Progress { have: u32, need: u32 },
 }
 
-#[derive(Component, Clone, Debug, Default)]
+#[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct History {
     counted: u64,
     records: VecDeque<HistoryRecord>,

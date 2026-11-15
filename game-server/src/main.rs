@@ -742,6 +742,7 @@ async fn test_character(State(http): State<Http>, headers: HeaderMap, body: Stri
         JoinAs {
             snapshot: character.get(content).clone(),
             start,
+            taken: None,
         },
     );
     StatusCode::NO_CONTENT.into_response()

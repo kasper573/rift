@@ -359,12 +359,13 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
     let settings = content.built::<GameSettings>();
     let mut snapshot =
         CharacterSnapshot::of_player(&content, "Hero", settings.player.get(&content));
-    snapshot.equipped = vec![sword, sim.id::<ItemDef>("helm")];
+    snapshot.equipped = vec![sword, sim.id::<ItemDef>("helm")].into();
     let joined = sim.join_as(
         2,
         JoinAs {
             snapshot,
             start: settings.initial_spawn,
+            taken: None,
         },
     );
     assert_eq!(

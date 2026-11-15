@@ -1,7 +1,7 @@
 pub mod camera;
 pub mod stage;
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bevy_app::App;
@@ -147,15 +147,22 @@ pub struct CardOffer {
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-pub struct Heard(HashSet<String>);
+pub struct Heard(BTreeSet<(String, String)>);
 
 impl Heard {
     pub fn has(&self, script: &str, node: &str) -> bool {
-        self.0.contains(&heard_key(script, node))
+        self.0.contains(&(script.to_owned(), node.to_owned()))
     }
 
     pub fn hear(&mut self, script: &str, node: &str) {
-        self.0.insert(heard_key(script, node));
+        self.0.insert((script.to_owned(), node.to_owned()));
+    }
+
+    /// Every line heard: the script it is of, and its node there.
+    pub fn lines(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(script, node)| (script.as_str(), node.as_str()))
     }
 }
 
@@ -567,10 +574,6 @@ fn bystanders(world: &mut World, player: Entity, lines: &[SpokenLine]) -> Vec<En
                 .map(|(body, ..)| *body)
         })
         .collect()
-}
-
-fn heard_key(script: &str, node: &str) -> String {
-    format!("{script}#{node}")
 }
 
 fn begin(world: &mut World, flow: FlowKey, subject: Entity) -> bool {

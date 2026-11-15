@@ -257,6 +257,7 @@ pub struct ContentScope {
     media: Option<Arc<Vec<String>>>,
     bundles: Arc<[&'static str]>,
     renames: Option<Arc<BTreeMap<String, String>>>,
+    sets_aside: bool,
     leaves: Vec<Leaf>,
 }
 
@@ -267,6 +268,7 @@ impl ContentScope {
             media: None,
             bundles: Arc::new([]),
             renames: None,
+            sets_aside: false,
             leaves: Vec::new(),
         }
     }
@@ -277,8 +279,22 @@ impl ContentScope {
             media: None,
             bundles: Arc::new([]),
             renames: None,
+            sets_aside: false,
             leaves: Vec::new(),
         }
+    }
+
+    /// This scope for reading what was saved under files that may since have gone: an entry of
+    /// a saved list that names a missing file is set aside, where it is a dangling reference in
+    /// any other scope.
+    pub fn setting_aside(mut self) -> ContentScope {
+        self.sets_aside = true;
+        self
+    }
+
+    /// Whether the scope's game has the file `id` stands for.
+    pub fn holds<Row: ContentFile>(&self, id: ContentId<Row>) -> bool {
+        id.index() < self.paths_of::<Row>().len()
     }
 
     /// The paths this scope resolves content among, with no media checked against them.
@@ -462,6 +478,44 @@ pub fn scope_asset(path: &str) {
             scope.asset(path);
         }
     });
+}
+
+/// Whether the scope being read in sets aside the saved entries that name missing files.
+pub(super) fn sets_aside() -> bool {
+    SCOPE.with(|scope| {
+        scope
+            .borrow()
+            .as_ref()
+            .is_some_and(|scope| scope.sets_aside)
+    })
+}
+
+/// How many references the scope being read in has met so far.
+pub(super) fn references_met() -> usize {
+    SCOPE.with(|scope| {
+        scope
+            .borrow()
+            .as_ref()
+            .map_or(0, |scope| scope.leaves.len())
+    })
+}
+
+/// Forgets the references met since `met` of them had been when any names a missing file, and
+/// says whether one did.
+pub(super) fn forget_missing_since(met: usize) -> bool {
+    SCOPE.with(|scope| {
+        let mut scope = scope.borrow_mut();
+        let Some(scope) = scope.as_mut() else {
+            return false;
+        };
+        let missing = scope.leaves[met..]
+            .iter()
+            .any(|leaf| leaf.problem.is_some());
+        if missing {
+            scope.leaves.truncate(met);
+        }
+        missing
+    })
 }
 
 pub fn with_content<T>(scope: ContentScope, f: impl FnOnce() -> T) -> (T, ContentScope) {

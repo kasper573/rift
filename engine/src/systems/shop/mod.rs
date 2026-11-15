@@ -364,8 +364,26 @@ impl ShopLedger {
         self.stock.insert((shop, offer), Restock { left, full_at });
     }
 
+    /// What is left of every limited offer bought from, by shop and offer, and when it is whole
+    /// again.
+    pub fn stock(&self) -> impl Iterator<Item = (ShopId, u32, u32, UnixMillis)> + '_ {
+        self.stock
+            .iter()
+            .map(|(&(shop, offer), restock)| (shop, offer, restock.left, restock.full_at))
+    }
+
+    /// The sales each shop keeps for buying back, the earliest first.
+    pub fn sales(&self) -> impl Iterator<Item = (ShopId, impl Iterator<Item = &Sale>)> {
+        self.sales
+            .iter()
+            .map(|(&shop, sales)| (shop, sales.iter().rev()))
+    }
+
     /// Records a sale at `shop`, which keeps `kept` of the latest for buying back.
     pub fn record_sale(&mut self, shop: ShopId, sale: Sale, kept: u32) {
+        if kept == 0 {
+            return;
+        }
         let sales = self.sales.entry(shop).or_default();
         sales.push_front(sale);
         sales.truncate(kept as usize);

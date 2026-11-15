@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Cooldowns, Learned};
+use super::Learned;
 use crate::core::content::SchemaMark;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, ScriptFault};
 use crate::systems::class::{self, SkillPoints};
@@ -121,14 +121,12 @@ pub fn expire(world: &mut World) {
     }
 }
 
-/// Forgets every learned rank and cooldown; the points come back as the class level grants them.
+/// Forgets every learned rank; the points come back as the class level grants them. A cooldown
+/// still running runs on: a reset is no way to be rid of one.
 pub fn reset(world: &mut World, player: Entity) {
     let returned = class::spent_points(world, player);
     if let Some(mut learned) = world.get_mut::<Learned>(player) {
         learned.0.clear();
-    }
-    if let Some(mut cooldowns) = world.get_mut::<Cooldowns>(player) {
-        cooldowns.0.clear();
     }
     notification::notify(
         world,

@@ -4,12 +4,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::content::{
-    Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, id, serial,
+    Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, SavedList, id,
+    serial,
 };
+use crate::core::math::Pos;
 use crate::core::script::{Value, ValueType};
-use crate::core::time::WallClock;
+use crate::core::time::{GameDay, UnixMillis, WallClock};
 use crate::core::units::Seconds;
-use crate::systems::GameSettings;
 use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
 use crate::systems::area::{self, AreaId, transition::Discovered};
 use crate::systems::class::{Class, ClassId, NodeKey};
@@ -19,16 +20,23 @@ use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{History, HistoryEntry};
 use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::memory::{Memory, MemoryId};
+use crate::systems::movement::Position;
 use crate::systems::player::{CharacterState, PlayerDef, SpawnPoint, Xp, def};
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::script::Place;
 use crate::systems::shop::{Sale, ShopId, ShopLedger};
 use crate::systems::skill::learn::{PlanRefusal, plan};
 use crate::systems::skill::{
-    self, BasicAttack, Hotbar, HotbarEntry, HotbarSlot, Learned, Rank, SkillId,
+    self, BasicAttack, Cooldowns, Hotbar, HotbarEntry, HotbarSlot, Learned, Rank, SkillId,
 };
-use crate::systems::stat::Stats;
+use crate::systems::stat::{self, Stat, Stats};
+use crate::systems::status::{
+    CarriedStatus, CarriedStatuses, StatusBeat, StatusEffectId, StatusInstance, Statuses,
+};
+use crate::systems::{GameSettings, WorldArea};
 
+/// A character, whole: what a test character is staged from, and what a played one is saved as.
+/// It holds every moment as time ago or time left, counted from when it was taken.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CharacterSnapshot {
@@ -41,32 +49,44 @@ pub struct CharacterSnapshot {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<SnapshotSkill>,
     /// The recipes mastered for good, besides those the skills give.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub recipe_masteries: Vec<RecipeKey>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub hotbar: Vec<SnapshotSlot>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub recipe_masteries: SavedList<RecipeKey>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub hotbar: SavedList<SnapshotSlot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub basic_attack: Option<SkillId>,
     #[serde(default, skip_serializing_if = "Stats::is_empty")]
     pub stats: Stats,
     #[schemars(transform = SchemaMark::Usage.with("from the bag"))]
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub bag: Vec<ItemStack>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub bag: SavedList<ItemStack>,
     /// Put on in order, each where equipping puts it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub equipped: Vec<ItemId>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub known_areas: Vec<AreaId>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub quests: Vec<SnapshotQuest>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub memories: Vec<SnapshotMemory>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub equipped: SavedList<ItemId>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub known_areas: SavedList<AreaId>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub quests: SavedList<SnapshotQuest>,
+    /// The quests the tracker shows, in its order. Without it, every active quest, as listed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracked_quests: Option<SavedList<QuestId>>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub memories: SavedList<SnapshotMemory>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lines_heard: Vec<HeardLine>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub shops: Vec<SnapshotShop>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub shops: SavedList<SnapshotShop>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history: Vec<SnapshotRecord>,
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub statuses: SavedList<SnapshotStatus>,
+    /// The skills still cooling down.
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub cooldowns: SavedList<SnapshotCooldown>,
+    /// The spot they rise on after a fall, in the area they start in. Without it, where they
+    /// start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rises_at: Option<SnapshotSpot>,
     pub start: CharacterStart,
 }
 
@@ -87,18 +107,22 @@ impl ContentFile for CharacterSnapshot {
             appearance: Appearance::of(near.file()?),
             xp: 0,
             skills: Vec::new(),
-            recipe_masteries: Vec::new(),
-            hotbar: Vec::new(),
+            recipe_masteries: SavedList::default(),
+            hotbar: SavedList::default(),
             basic_attack: None,
             stats: Stats::default(),
-            bag: Vec::new(),
-            equipped: Vec::new(),
-            known_areas: Vec::new(),
-            quests: Vec::new(),
-            memories: Vec::new(),
+            bag: SavedList::default(),
+            equipped: SavedList::default(),
+            known_areas: SavedList::default(),
+            quests: SavedList::default(),
+            tracked_quests: None,
+            memories: SavedList::default(),
             lines_heard: Vec::new(),
-            shops: Vec::new(),
+            shops: SavedList::default(),
             history: Vec::new(),
+            statuses: SavedList::default(),
+            cooldowns: SavedList::default(),
+            rises_at: None,
             start: CharacterStart::InitialSpawn(AtInitialSpawn::InitialSpawn),
         })
     }
@@ -114,18 +138,22 @@ impl CharacterSnapshot {
             appearance: Appearance::of(def.class.get(content).model),
             xp: 0,
             skills: Vec::new(),
-            recipe_masteries: Vec::new(),
-            hotbar: Vec::new(),
+            recipe_masteries: SavedList::default(),
+            hotbar: SavedList::default(),
             basic_attack: None,
             stats: Stats::default(),
-            bag: Vec::new(),
-            equipped: Vec::new(),
-            known_areas: Vec::new(),
-            quests: Vec::new(),
-            memories: Vec::new(),
+            bag: SavedList::default(),
+            equipped: SavedList::default(),
+            known_areas: SavedList::default(),
+            quests: SavedList::default(),
+            tracked_quests: None,
+            memories: SavedList::default(),
             lines_heard: Vec::new(),
-            shops: Vec::new(),
+            shops: SavedList::default(),
             history: Vec::new(),
+            statuses: SavedList::default(),
+            cooldowns: SavedList::default(),
+            rises_at: None,
             start: CharacterStart::InitialSpawn(AtInitialSpawn::InitialSpawn),
         }
     }
@@ -169,6 +197,40 @@ pub struct SnapshotQuest {
     pub left: Option<Seconds>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decided: Option<String>,
+    /// An active quest's kills since one last gave a drop that grows rarer or likelier with
+    /// them.
+    #[serde(default, skip_serializing_if = "serial::is_zero")]
+    pub dry_kills: u32,
+    /// Whether the player was already told an active quest is ready to hand in.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub told_ready: bool,
+    /// How many days ago a finished quest was finished.
+    #[serde(default, skip_serializing_if = "serial::is_zero")]
+    pub days_ago: u32,
+    /// How long until a finished quest that opens again does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_in: Option<Seconds>,
+    /// Whether a finished quest was offered again since.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub offered_again: bool,
+}
+
+impl SnapshotQuest {
+    /// The quest in `state`, with nothing done on it yet.
+    pub fn of(quest: QuestId, state: QuestState) -> SnapshotQuest {
+        SnapshotQuest {
+            quest,
+            state,
+            progress: Vec::new(),
+            left: None,
+            decided: None,
+            dry_kills: 0,
+            told_ready: false,
+            days_ago: 0,
+            resets_in: None,
+            offered_again: false,
+        }
+    }
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -228,10 +290,67 @@ pub struct SnapshotRecord {
     pub entry: HistoryEntry,
 }
 
+/// A status a character carries.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotStatus {
+    pub effect: StatusEffectId,
+    #[serde(
+        default = "serial::one_f32",
+        skip_serializing_if = "serial::is_one_f32"
+    )]
+    pub power: f32,
+    /// How long ago it was applied.
+    #[serde(default, skip_serializing_if = "Seconds::is_zero")]
+    pub ago: Seconds,
+    /// How long it still holds. Without it, until it is taken off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<Seconds>,
+    /// What it had under way when the snapshot was taken. With it the status is taken up where
+    /// it was. Without it the status is applied anew.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub running: Option<RunningStatus>,
+}
+
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunningStatus {
+    /// When each interval of its script next fires.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub beats: Vec<SnapshotBeat>,
+    /// The stat modifiers its script holds on the character.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boosts: Vec<Stat>,
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotBeat {
+    pub every: Seconds,
+    pub next_in: Seconds,
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotCooldown {
+    pub skill: SkillId,
+    pub left: Seconds,
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotSpot {
+    pub x: f32,
+    pub y: f32,
+}
+
+/// The character a connection joins as, where it starts, and when its snapshot was taken, unless
+/// that is the moment it joins.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct JoinAs {
     pub snapshot: CharacterSnapshot,
     pub start: Place,
+    pub taken: Option<UnixMillis>,
 }
 
 pub fn start_of(content: &Content, snapshot: &CharacterSnapshot) -> Place {
@@ -241,26 +360,35 @@ pub fn start_of(content: &Content, snapshot: &CharacterSnapshot) -> Place {
     }
 }
 
+/// The character `snapshot` holds, starting at `start`. What runs on the clock is counted from
+/// `taken`, the moment the snapshot was taken: cooldowns, a quest's deadline, a shop's restock,
+/// how long ago something was remembered or recorded. What acts on the character is counted from
+/// now, so it waited while the character was not in a world: its statuses.
 pub fn materialize(
     content: &Content,
     snapshot: &CharacterSnapshot,
     start: Place,
     clock: WallClock,
+    taken: UnixMillis,
 ) -> CharacterState {
+    let then = WallClock {
+        now: taken,
+        reset: clock.reset,
+    };
     let mut stats = def(content).stats.clone();
     stats.0.extend(&snapshot.stats.0);
     let mut discovered = Discovered::starting_in(start.area);
-    for &known in &snapshot.known_areas {
+    for &known in snapshot.known_areas.iter() {
         discovered.discover(known);
     }
     let mut memory = Memory::default();
-    for remembered in &snapshot.memories {
+    for remembered in snapshot.memories.iter() {
         memory.set(
             content,
             remembered.memory,
             remembered.value.clone().into(),
             WallClock {
-                now: clock.now.before(remembered.ago),
+                now: taken.before(remembered.ago),
                 reset: clock.reset,
             },
         );
@@ -270,13 +398,13 @@ pub fn materialize(
         heard.hear(&line.script, &line.node);
     }
     let mut ledger = ShopLedger::default();
-    for visited in &snapshot.shops {
+    for visited in snapshot.shops.iter() {
         for stock in &visited.stock {
             ledger.stocked(
                 visited.shop,
                 stock.offer,
                 stock.left,
-                clock.now.after(stock.restocks_in),
+                taken.after(stock.restocks_in),
             );
         }
         for sale in &visited.sales {
@@ -287,16 +415,21 @@ pub fn materialize(
             );
         }
     }
+    let (statuses, carried) = statuses(snapshot, clock.now);
     CharacterState {
         name: Name {
             name: snapshot.name.clone(),
         },
         appearance: snapshot.appearance.clone(),
-        spawn: SpawnPoint(start.at),
+        spawn: SpawnPoint(
+            snapshot
+                .rises_at
+                .map_or(start.at, |spot| Pos::new(spot.x, spot.y)),
+        ),
         discovered,
         stats,
         inventory: Inventory {
-            slots: snapshot.bag.clone(),
+            slots: snapshot.bag.to_vec(),
             max: content.built::<GameSettings>().slots.bag,
         },
         xp: Xp {
@@ -320,14 +453,205 @@ pub fn materialize(
         memory,
         heard,
         ledger,
-        quests: quest_log(content, snapshot, clock),
+        quests: quest_log(content, snapshot, then),
         history: History::replayed(
             snapshot
                 .history
                 .iter()
-                .map(|record| (clock.now.before(record.ago), record.entry.clone())),
+                .map(|record| (taken.before(record.ago), record.entry.clone())),
             content.built::<GameSettings>().history_merges_within,
         ),
+        cooldowns: Cooldowns(
+            snapshot
+                .cooldowns
+                .iter()
+                .map(|cooling| (cooling.skill, taken.after(cooling.left)))
+                .collect(),
+        ),
+        statuses,
+        carried,
+    }
+}
+
+impl CharacterSnapshot {
+    /// A live character, as it stands: every part `CharacterState` lists, with each moment on
+    /// the clock written as time ago or time left.
+    pub fn of_live(world: &World, player: Entity) -> Option<CharacterSnapshot> {
+        let now = world.resource::<WallClock>().now;
+        let day = world.resource::<WallClock>().day();
+        let area = world.resource::<WorldArea>().0;
+        let at = world.get::<Position>(player)?.pos;
+        let state = CharacterState::of(world, player, world.get::<SpawnPoint>(player)?.0)?;
+        let log = &state.quests;
+        let active = log.active.iter().map(|active| SnapshotQuest {
+            quest: active.quest,
+            state: QuestState::Active,
+            progress: active.counts.clone(),
+            left: active.deadline.map(|deadline| deadline.since(now)),
+            decided: active.decided.clone(),
+            dry_kills: active.dry_kills,
+            told_ready: log.told_ready.contains(&active.quest),
+            days_ago: 0,
+            resets_in: None,
+            offered_again: false,
+        });
+        let finished = log.finished.iter().map(|finished| SnapshotQuest {
+            quest: finished.quest,
+            state: match finished.result {
+                QuestResult::Completed => QuestState::Completed,
+                QuestResult::Failed => QuestState::Failed,
+            },
+            progress: Vec::new(),
+            left: None,
+            decided: None,
+            dry_kills: 0,
+            told_ready: false,
+            days_ago: u32::try_from(day.0.saturating_sub(finished.day.0)).unwrap_or(u32::MAX),
+            resets_in: finished.resets_at.map(|at| at.since(now)),
+            offered_again: finished.offered_again,
+        });
+        let mut shops: Vec<SnapshotShop> = Vec::new();
+        let shop = |shops: &mut Vec<SnapshotShop>, id: ShopId| -> usize {
+            shops
+                .iter()
+                .position(|visited| visited.shop == id)
+                .unwrap_or_else(|| {
+                    shops.push(SnapshotShop {
+                        shop: id,
+                        stock: Vec::new(),
+                        sales: Vec::new(),
+                    });
+                    shops.len() - 1
+                })
+        };
+        let mut stock: Vec<_> = state.ledger.stock().collect();
+        stock.sort_by_key(|&(shop, offer, ..)| (shop, offer));
+        for (id, offer, left, full_at) in stock {
+            let visited = shop(&mut shops, id);
+            shops[visited].stock.push(ShopStock {
+                offer,
+                left,
+                restocks_in: full_at.since(now),
+            });
+        }
+        let mut sales: Vec<_> = state.ledger.sales().collect();
+        sales.sort_by_key(|(shop, _)| *shop);
+        for (id, sold) in sales {
+            let visited = shop(&mut shops, id);
+            shops[visited].sales.extend(sold.cloned());
+        }
+        let mut equipped: Vec<ItemId> = Vec::new();
+        for &item in state.equipment.slots.values() {
+            if !equipped.contains(&item) {
+                equipped.push(item);
+            }
+        }
+        Some(CharacterSnapshot {
+            name: state.name.name.clone(),
+            class: state.class.def,
+            appearance: state.appearance.clone(),
+            xp: state.xp.amount,
+            skills: state
+                .learned
+                .0
+                .iter()
+                .map(|(node, &rank)| SnapshotSkill {
+                    node: node.clone(),
+                    rank,
+                })
+                .collect(),
+            recipe_masteries: state.masteries.0.iter().cloned().collect(),
+            hotbar: state
+                .hotbar
+                .0
+                .iter()
+                .zip(0..)
+                .filter(|(entry, _)| **entry != HotbarEntry::Empty)
+                .map(|(&entry, slot)| SnapshotSlot {
+                    slot: HotbarSlot(slot),
+                    entry,
+                })
+                .collect(),
+            basic_attack: state.basic_attack.0,
+            stats: stat::snapshot(world, player),
+            bag: state.inventory.slots.iter().copied().collect(),
+            equipped: equipped.into(),
+            known_areas: state.discovered.areas().collect(),
+            quests: active.chain(finished).collect(),
+            tracked_quests: Some(log.tracked.iter().copied().collect()),
+            memories: state
+                .memory
+                .recollections()
+                .filter_map(|(memory, value, at)| {
+                    Some(SnapshotMemory {
+                        memory,
+                        value: MemoryValue::of(value)?,
+                        ago: now.since(at),
+                    })
+                })
+                .collect(),
+            lines_heard: state
+                .heard
+                .lines()
+                .map(|(script, node)| HeardLine {
+                    script: script.to_owned(),
+                    node: node.to_owned(),
+                })
+                .collect(),
+            shops: shops.into(),
+            history: state
+                .history
+                .records()
+                .map(|record| SnapshotRecord {
+                    ago: now.since(record.at),
+                    entry: record.entry.clone(),
+                })
+                .collect(),
+            statuses: state
+                .statuses
+                .0
+                .iter()
+                .map(|held| SnapshotStatus {
+                    effect: held.effect,
+                    power: held.power,
+                    ago: now.since(held.since),
+                    left: held.until.map(|until| until.since(now)),
+                    running: state
+                        .carried
+                        .0
+                        .iter()
+                        .find(|carried| {
+                            carried.effect == held.effect && carried.since == held.since
+                        })
+                        .map(|carried| RunningStatus {
+                            beats: carried
+                                .beats
+                                .iter()
+                                .map(|beat| SnapshotBeat {
+                                    every: beat.every,
+                                    next_in: beat.next.since(now),
+                                })
+                                .collect(),
+                            boosts: carried.boosts.clone(),
+                        }),
+                })
+                .collect(),
+            cooldowns: state
+                .cooldowns
+                .0
+                .iter()
+                .filter(|&(_, &ready)| ready > now)
+                .map(|(&skill, &ready)| SnapshotCooldown {
+                    skill,
+                    left: ready.since(now),
+                })
+                .collect(),
+            rises_at: Some(SnapshotSpot {
+                x: state.spawn.0.x,
+                y: state.spawn.0.y,
+            }),
+            start: CharacterStart::At(Place { area, at }),
+        })
     }
 }
 
@@ -363,6 +687,17 @@ impl From<MemoryValue> for Value {
 }
 
 impl MemoryValue {
+    /// What a memory holds, when it is of a type a memory is declared as.
+    fn of(value: &Value) -> Option<MemoryValue> {
+        match value {
+            Value::Bool(flag) => Some(MemoryValue::Bool(*flag)),
+            Value::Int(int) => Some(MemoryValue::Int(*int)),
+            Value::Num(num) => Some(MemoryValue::Num(*num)),
+            Value::Text(text) => Some(MemoryValue::Text(text.clone())),
+            _ => None,
+        }
+    }
+
     fn fits(&self, ty: ValueType) -> bool {
         matches!(
             (self, ty),
@@ -395,32 +730,81 @@ fn learned(snapshot: &CharacterSnapshot) -> Learned {
 
 fn hotbar(snapshot: &CharacterSnapshot) -> Hotbar {
     let mut hotbar = Hotbar::default();
-    for held in &snapshot.hotbar {
+    for held in snapshot.hotbar.iter() {
         hotbar.set(held.slot, held.entry);
     }
     hotbar
 }
 
-fn quest_log(content: &Content, snapshot: &CharacterSnapshot, clock: WallClock) -> QuestLog {
+/// The statuses `snapshot` holds, counted from `now`, and what those taken up where they were
+/// had under way.
+fn statuses(snapshot: &CharacterSnapshot, now: UnixMillis) -> (Statuses, CarriedStatuses) {
+    let mut statuses = Statuses::default();
+    let mut carried = CarriedStatuses::default();
+    for held in snapshot.statuses.iter() {
+        let since = now.before(held.ago);
+        statuses.0.push(StatusInstance {
+            effect: held.effect,
+            power: held.power,
+            since,
+            until: held.left.map(|left| now.after(left)),
+        });
+        if let Some(running) = &held.running {
+            carried.0.push(CarriedStatus {
+                effect: held.effect,
+                since,
+                beats: running
+                    .beats
+                    .iter()
+                    .map(|beat| StatusBeat {
+                        every: beat.every,
+                        next: now.after(beat.next_in),
+                    })
+                    .collect(),
+                boosts: running.boosts.clone(),
+            });
+        }
+    }
+    (statuses, carried)
+}
+
+fn quest_log(content: &Content, snapshot: &CharacterSnapshot, then: WallClock) -> QuestLog {
     let mut log = QuestLog::default();
-    for entry in &snapshot.quests {
+    for entry in snapshot.quests.iter() {
         let result = match entry.state {
             QuestState::Active => {
                 let mut active = ActiveQuest::fresh(content, entry.quest);
                 for (count, given) in active.counts.iter_mut().zip(&entry.progress) {
                     *count = *given;
                 }
-                active.deadline = entry.left.map(|left| clock.now.after(left));
+                active.deadline = entry.left.map(|left| then.now.after(left));
                 active.decided = entry.decided.clone();
+                active.dry_kills = entry.dry_kills;
                 log.active.push(active);
-                log.tracked.push(entry.quest);
+                if snapshot.tracked_quests.is_none() {
+                    log.tracked.push(entry.quest);
+                }
+                if entry.told_ready {
+                    log.told_ready.push(entry.quest);
+                }
                 continue;
             }
             QuestState::Completed => QuestResult::Completed,
             QuestState::Failed => QuestResult::Failed,
         };
-        log.finished
-            .push(FinishedQuest::new(entry.quest, result, clock.day()));
+        let day = GameDay(then.day().0.saturating_sub(u64::from(entry.days_ago)));
+        log.finished.push(FinishedQuest {
+            resets_at: entry.resets_in.map(|left| then.now.after(left)),
+            offered_again: entry.offered_again,
+            ..FinishedQuest::new(entry.quest, result, day)
+        });
+    }
+    if let Some(tracked) = &snapshot.tracked_quests {
+        log.tracked = tracked
+            .iter()
+            .copied()
+            .filter(|&quest| log.active(quest).is_some())
+            .collect();
     }
     log
 }

@@ -282,7 +282,16 @@ pub fn join(
     start: Place,
     client: ClientId,
 ) -> Result<Joined, String> {
-    let conn = world.spawn((client, JoinAs { snapshot, start })).id();
+    let conn = world
+        .spawn((
+            client,
+            JoinAs {
+                snapshot,
+                start,
+                taken: None,
+            },
+        ))
+        .id();
     from_client(world, conn, JoinRequest);
     tick(world);
     let actor = world

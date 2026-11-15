@@ -37,8 +37,9 @@ use crate::systems::movement::{self, HeardMove, Position, Spot};
 use crate::systems::quest::QuestLog;
 use crate::systems::script::{EventKind, Place};
 use crate::systems::shop::{self, ShopLedger};
-use crate::systems::skill::{BasicAttack, Hotbar, Learned};
+use crate::systems::skill::{BasicAttack, Cooldowns, Hotbar, Learned};
 use crate::systems::stat::{self, Immortal, Stats};
+use crate::systems::status::{self, CarriedStatuses, Statuses};
 use crate::systems::visibility;
 use crate::systems::{GameSettings, WorldArea, belongings, drain_requests, notification, region};
 
@@ -419,12 +420,13 @@ pub fn join(world: &mut World) {
         }
         let clock = *world.resource::<WallClock>();
         let (at, state) = match world.get::<JoinAs>(client_entity) {
-            Some(JoinAs { snapshot, start }) if start.area == zone => {
-                let (snapshot, start) = (snapshot.clone(), *start);
+            Some(joining) if joining.start.area == zone => {
+                let (snapshot, start) = (joining.snapshot.clone(), joining.start);
+                let taken = joining.taken.unwrap_or(clock.now);
                 region::hold_around(world, start.at);
                 (
                     movement::place_beside(world, zone, &area.mesh(), start.at),
-                    snapshot::materialize(&content, &snapshot, start, clock),
+                    snapshot::materialize(&content, &snapshot, start, clock, taken),
                 )
             }
             _ => {
@@ -436,7 +438,7 @@ pub fn join(world: &mut World) {
                 let at = movement::place_beside(world, zone, &area.mesh(), spawn);
                 let fresh = CharacterSnapshot::of_player(&content, &name, def(&content));
                 let start = Place { area: zone, at };
-                let state = snapshot::materialize(&content, &fresh, start, clock);
+                let state = snapshot::materialize(&content, &fresh, start, clock, clock.now);
                 (at, state)
             }
         };
@@ -472,7 +474,10 @@ fn spawn_position(
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct SpawnPoint(pub Pos<Meters>);
 
-#[derive(Bundle)]
+/// Everything a character is: what it crosses between worlds with, and what a snapshot of it
+/// holds. A system that gives a character something more to keep lists it here, and it is
+/// carried across a warp and saved by that line.
+#[derive(Bundle, Debug, PartialEq)]
 pub struct CharacterState {
     pub name: Name,
     pub appearance: Appearance,
@@ -492,6 +497,9 @@ pub struct CharacterState {
     pub ledger: ShopLedger,
     pub quests: QuestLog,
     pub history: History,
+    pub cooldowns: Cooldowns,
+    pub statuses: Statuses,
+    pub carried: CarriedStatuses,
 }
 
 impl CharacterState {
@@ -521,6 +529,9 @@ impl CharacterState {
             ledger: shop::ledger(world, entity),
             quests: world.get::<QuestLog>(entity).cloned().unwrap_or_default(),
             history: world.get::<History>(entity).cloned().unwrap_or_default(),
+            cooldowns: world.get::<Cooldowns>(entity).cloned().unwrap_or_default(),
+            statuses: world.get::<Statuses>(entity).cloned().unwrap_or_default(),
+            carried: status::aspect::carried(world, entity),
         })
     }
 }

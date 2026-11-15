@@ -33,7 +33,11 @@ pub fn characters_in(content: &Content, zone: AreaId) -> Vec<(CharacterSnapshot,
 
 pub fn join_as(world: &mut World, conn: Entity, character: &(CharacterSnapshot, Place)) {
     let (snapshot, start) = character.clone();
-    world.entity_mut(conn).insert(JoinAs { snapshot, start });
+    world.entity_mut(conn).insert(JoinAs {
+        snapshot,
+        start,
+        taken: None,
+    });
 }
 
 /// Every player whose turn it is this tick casts the next skill on its bar.

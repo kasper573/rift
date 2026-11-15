@@ -79,6 +79,8 @@ pub enum CharacterSection {
     #[serde(rename = "masteries")]
     #[strum(serialize = "Recipe masteries")]
     RecipeMasteries,
+    Statuses,
+    Cooldowns,
     Start,
     #[serde(rename = "areas")]
     #[strum(serialize = "Areas known")]
@@ -107,9 +109,13 @@ impl CharacterSection {
                     CharacterSection::Start,
                 ],
             ),
-            CharacterSection::Stats | CharacterSection::AreasKnown => {
-                (&[CharacterSection::Stats], &[CharacterSection::AreasKnown])
-            }
+            CharacterSection::Stats
+            | CharacterSection::AreasKnown
+            | CharacterSection::Statuses
+            | CharacterSection::Cooldowns => (
+                &[CharacterSection::Stats, CharacterSection::Statuses],
+                &[CharacterSection::AreasKnown, CharacterSection::Cooldowns],
+            ),
             CharacterSection::Skills
             | CharacterSection::Hotbar
             | CharacterSection::RecipeMasteries => (
@@ -311,6 +317,20 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                         "Recipe masteries",
                                         &mut character.recipe_masteries,
                                         field!(CharacterSnapshot, recipe_masteries),
+                                    ),
+                                    CharacterSection::Statuses => section_of(
+                                        ui,
+                                        &mut cx,
+                                        "Statuses",
+                                        &mut character.statuses,
+                                        field!(CharacterSnapshot, statuses),
+                                    ),
+                                    CharacterSection::Cooldowns => section_of(
+                                        ui,
+                                        &mut cx,
+                                        "Cooldowns",
+                                        &mut character.cooldowns,
+                                        field!(CharacterSnapshot, cooldowns),
                                     ),
                                     CharacterSection::LinesHeard => section_of(
                                         ui,
@@ -1277,13 +1297,7 @@ fn giver_of<'p>(
 fn set_standing(character: &mut CharacterSnapshot, quest: QuestId, standing: QuestStanding) {
     character.quests.retain(|entry| entry.quest != quest);
     if let Some(state) = standing.state() {
-        character.quests.push(SnapshotQuest {
-            quest,
-            state,
-            progress: Vec::new(),
-            left: None,
-            decided: None,
-        });
+        character.quests.push(SnapshotQuest::of(quest, state));
     }
 }
 
