@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "bd6a4424",
+  "content_version": "dd5f4af9",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -174,7 +174,10 @@
     "you_were_removed": "You were removed from the party",
     "party_disbanded": "{name} disbanded the party",
     "party_leads": "{name} leads the party now",
-    "xp_shared": "Shared with {names}"
+    "xp_shared": "Shared with {names}",
+    "you_joined_party": "You joined {name}'s party",
+    "you_left_party": "You left the party",
+    "chat_too_fast": "You are writing too fast"
   },
   "typing": {
     "pace": 45.0,
@@ -385,6 +388,10 @@
   "requests": {
     "card_shows": 20.0,
     "new_accounts_accept": "everyone"
+  },
+  "chat": {
+    "lines": 5,
+    "within": 10.0
   },
   "friends": {
     "most": 100,

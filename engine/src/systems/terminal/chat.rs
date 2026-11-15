@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::prelude::*;
@@ -5,6 +6,9 @@ use bevy_terminal::{
     COMMAND_PREFIX, LineKind, MAX_INPUT_LEN, TerminalCompletionRequest, TerminalCompletions,
     TerminalInput, TerminalLine,
 };
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use strum::VariantArray;
 use ui::egui;
 use ui::egui::containers::scroll_area::{DragScroll, ScrollBarVisibility, ScrollSource};
 use ui::egui::emath::TSTransform;
@@ -20,8 +24,10 @@ use ui::suggest::{self, Suggestion};
 use ui::{dusk, input};
 
 use super::TerminalLog;
-use crate::core::gui::{self, Band, Tier};
+use crate::core::content::{Content, Fixture};
+use crate::core::gui::{self, Band, GuiImage, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
+use crate::systems::chat::{ChatChannel, ChatChannels};
 use crate::systems::hud::{self, SizedPiece};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::input::scope;
@@ -34,6 +40,12 @@ const START: Vec2 = Vec2::new(310.0, 186.0);
 /// Two lines and the row they are typed in.
 const SMALLEST: Vec2 = Vec2::new(220.0, 96.0);
 const BAR: f32 = 12.0;
+const TABS: f32 = 22.0;
+const TAB_PAD: f32 = 8.0;
+const TAB_GAP: f32 = 4.0;
+/// How large a channel's sign is beside the letters it marks.
+const SIGN_SHARE_OF_TEXT: f32 = 0.8;
+const SIGN_GAP: f32 = 4.0;
 const ROW: f32 = 28.0;
 const PAD: f32 = 10.0;
 const LINE_GAP: f32 = 2.0;
@@ -44,7 +56,7 @@ const GRIP: f32 = 14.0;
 const HANDLE: Vec2 = Vec2::new(32.0, 2.0);
 const PILL: Vec2 = Vec2::new(72.0, 20.0);
 const PAGE_SHARE_OF_LOG: f32 = 0.8;
-const WIDTH_THAT_FITS_HINTS: f32 = 260.0;
+const ROOM_TO_TYPE_BESIDE_HINTS: f32 = 150.0;
 const ROW_WASH: f32 = 0.55;
 
 #[derive(Resource, Default)]
@@ -60,8 +72,15 @@ pub(crate) struct ChatView {
     /// Whether an input method is putting a character together, whose confirming key sends
     /// nothing.
     composing: bool,
-    reading_from: Option<u64>,
+    /// The channels the server last said the player is in: a tab each.
+    channels: Vec<ChatChannel>,
+    /// The tab shown, which what is typed goes to.
+    shown: ChatChannel,
+    /// How many lines had arrived on each channel when its tab was last shown.
+    seen: HashMap<ChatChannel, u64>,
+    reading_from: HashMap<ChatChannel, u64>,
     catching_up: bool,
+    was_typing: bool,
 }
 
 impl ChatView {
@@ -95,6 +114,85 @@ pub(super) fn suggested(
     }
 }
 
+/// Keeps a tab for each channel the server says the player is in. A channel that is gone takes
+/// its lines with it, and chat shows its first tab when the one shown went.
+pub(super) fn channels(world: &mut World) {
+    let Some(told) = session::my_character(world)
+        .and_then(|me| me.get::<ChatChannels>().cloned())
+        .filter(|told| told.0 != world.resource::<ChatView>().channels)
+    else {
+        return;
+    };
+    let gone: Vec<ChatChannel> = world
+        .resource::<ChatView>()
+        .channels
+        .iter()
+        .copied()
+        .filter(|channel| !told.0.contains(channel))
+        .collect();
+    for channel in &gone {
+        world
+            .resource_mut::<TerminalLog>()
+            .forget(channel.terminal());
+    }
+    let mut view = world.resource_mut::<ChatView>();
+    for channel in &gone {
+        view.seen.remove(channel);
+        view.reading_from.remove(channel);
+    }
+    if !told.0.contains(&view.shown) {
+        view.shown = told.0.first().copied().unwrap_or_default();
+    }
+    view.channels = told.0;
+}
+
+/// What chat shows of its channels, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
+pub struct ShownChat {
+    /// The tab shown, which what is typed goes to.
+    pub shown: ChatChannel,
+    /// A tab for each channel the player is in, in the order chat lists them.
+    pub tabs: Vec<ShownChatTab>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownChatTab {
+    pub channel: ChatChannel,
+    pub name: String,
+    /// How many lines arrived on the channel since its tab was last shown.
+    pub unread: u32,
+}
+
+pub fn shown(world: &World) -> ShownChat {
+    let view = world.resource::<ChatView>();
+    let content = world.resource::<Content>();
+    let log = world.resource::<TerminalLog>();
+    let me = session::my_id(world).map(|client| u64::from(client.0));
+    ShownChat {
+        shown: view.shown,
+        tabs: view
+            .channels
+            .iter()
+            .map(|&channel| ShownChatTab {
+                channel,
+                name: channel.id(content).get(content).name.clone(),
+                unread: u32::try_from(unread(log, view, channel, me)).unwrap_or(u32::MAX),
+            })
+            .collect(),
+    }
+}
+
+/// How many lines arrived on `channel` since its tab was last shown, the player's own aside.
+fn unread(log: &TerminalLog, view: &ChatView, channel: ChatChannel, me: Option<u64>) -> usize {
+    let seen = view.seen.get(&channel).copied().unwrap_or(0);
+    let since = log.arrived(channel.terminal()).saturating_sub(seen);
+    log.on(channel.terminal())
+        .rev()
+        .take(usize::try_from(since).unwrap_or(usize::MAX))
+        .filter(|line| !typed_by(line, me))
+        .count()
+}
+
 pub(super) fn keys(world: &mut World) {
     let shown = world.resource::<UserSettings>().chat_shown();
     if shown && map::just_pressed(world, InputAction::FocusChat) {
@@ -114,9 +212,15 @@ pub(super) fn draw(world: &mut World) {
     if !settings.chat_shown() {
         return;
     }
+    let background = settings.chat_background().0 / 100.0;
+    let font = FontId::new(settings.chat_text_size().0, TextRole::Body.font_id().family);
     let look = ChatLook {
-        background: settings.chat_background().0 / 100.0,
-        font: FontId::new(settings.chat_text_size().0, TextRole::Body.font_id().family),
+        background,
+        font,
+        channels: ChatChannel::VARIANTS
+            .iter()
+            .map(|&channel| ChannelLook::of(world, channel))
+            .collect(),
     };
     let screen = gui.content_rect();
     let piece = SizedPiece {
@@ -156,10 +260,20 @@ pub(super) fn draw(world: &mut World) {
             plate(ui, rect, typing, look.background);
             let handles = typing.then(|| handles(ui, rect));
             let row = Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - ROW), rect.max);
+            let strip = Rect::from_min_max(
+                Pos2::new(rect.left(), rect.top() + BAR),
+                Pos2::new(rect.right(), rect.top() + BAR + TABS),
+            );
+            // The lines stand on the row they are typed in, so the tabs take room from the oldest
+            // of them and move none.
+            let top = if typing { strip.bottom() } else { strip.top() };
             let log = Rect::from_min_max(
-                Pos2::new(rect.left() + PAD, rect.top() + BAR),
+                Pos2::new(rect.left() + PAD, top),
                 Pos2::new(rect.right(), row.top() - ROW_GAP),
             );
+            if typing {
+                tabs(ui, world, &mut view, strip, &look);
+            }
             lines(ui, world, &mut view, log, &look);
             field_row(ui, world, &mut view, row, &look);
             handles
@@ -184,6 +298,140 @@ pub(super) fn draw(world: &mut World) {
 struct ChatLook {
     background: f32,
     font: FontId,
+    /// How each channel the engine lists is told from the others, in their order.
+    channels: Vec<ChannelLook>,
+}
+
+impl ChatLook {
+    fn of(&self, channel: ChatChannel) -> Option<&ChannelLook> {
+        self.channels.iter().find(|look| look.channel == channel)
+    }
+
+    fn sign(&self) -> Vec2 {
+        Vec2::splat(self.font.size * SIGN_SHARE_OF_TEXT)
+    }
+}
+
+struct ChannelLook {
+    channel: ChatChannel,
+    name: String,
+    sign: Option<GuiImage>,
+    color: Color32,
+}
+
+impl ChannelLook {
+    fn of(world: &mut World, channel: ChatChannel) -> ChannelLook {
+        let content = world.resource::<Content>().clone();
+        let def = channel.id(&content).get(&content);
+        let [r, g, b] = def.color.0;
+        ChannelLook {
+            channel,
+            name: def.name.clone(),
+            sign: gui::image(world, &def.sign),
+            color: Color32::from_rgb(r, g, b),
+        }
+    }
+
+    fn paint_sign(&self, ui: &Ui, at: Rect, opacity: f32) {
+        if let Some(sign) = &self.sign {
+            let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+            ui.painter()
+                .image(sign.texture, at, whole, self.color.gamma_multiply(opacity));
+        }
+    }
+}
+
+/// A tab for each channel the player is in, the one shown underlined and every other counting
+/// the lines that arrived on it since it was.
+fn tabs(ui: &mut Ui, world: &World, view: &mut ChatView, strip: Rect, look: &ChatLook) {
+    let keys = world.resource::<InputMap>();
+    let pressed = |action| {
+        keys.shortcut(action)
+            .is_some_and(|key| ui.input_mut(|input| input.consume_shortcut(&key)))
+    };
+    // A shortcut held with more modifiers than another's is asked first, as the lesser one
+    // would take its press.
+    let back = pressed(InputAction::PreviousChatTab);
+    let on = !back && pressed(InputAction::NextChatTab);
+    let place = view.channels.iter().position(|tab| *tab == view.shown);
+    if let Some(place) = place.filter(|_| back || on) {
+        let tabs = view.channels.len();
+        let turned = if back { place + tabs - 1 } else { place + 1 };
+        view.shown = view.channels[turned % tabs];
+    }
+    let log = world.resource::<TerminalLog>();
+    let me = session::my_id(world).map(|client| u64::from(client.0));
+    let sign = look.sign();
+    let mut left = strip.left() + PAD - TAB_PAD;
+    for channel in view.channels.clone() {
+        let Some(channel_look) = look.of(channel) else {
+            continue;
+        };
+        let selected = channel == view.shown;
+        let waiting = unread(log, view, channel, me);
+        let ink = if selected {
+            dusk::TEXT
+        } else {
+            dusk::TEXT.gamma_multiply(0.65)
+        };
+        let name = ui
+            .painter()
+            .layout_no_wrap(channel_look.name.clone(), look.font.clone(), ink);
+        let count = (waiting > 0).then(|| {
+            ui.painter()
+                .layout_no_wrap(waiting.to_string(), TextRole::Small.font_id(), dusk::FILL)
+        });
+        let pill = count
+            .as_ref()
+            .map(|count| Vec2::new(count.size().x + 10.0, count.size().y + 2.0));
+        let wide = sign.x + SIGN_GAP + name.size().x + pill.map_or(0.0, |pill| SIGN_GAP + pill.x);
+        let rect = Rect::from_min_size(
+            Pos2::new(left, strip.top()),
+            Vec2::new(wide + 2.0 * TAB_PAD, strip.height()),
+        );
+        let label = match waiting {
+            0 => format!("{} chat", channel_look.name),
+            waiting => format!("{} chat, {waiting} new", channel_look.name),
+        };
+        let response = ui
+            .interact(rect, Id::new(("chat tab", channel)), Sense::click())
+            .on_hover_cursor(CursorIcon::PointingHand);
+        response.widget_info(|| {
+            WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &label)
+        });
+        if response.clicked() {
+            view.shown = channel;
+        }
+        let middle = rect.center().y;
+        let mut at = rect.left() + TAB_PAD;
+        let sign_at = Rect::from_min_size(Pos2::new(at, middle - sign.y / 2.0), sign);
+        channel_look.paint_sign(ui, sign_at, if selected { 1.0 } else { 0.65 });
+        at += sign.x + SIGN_GAP;
+        let name_wide = name.size().x;
+        ui.painter()
+            .galley(Pos2::new(at, middle - name.size().y / 2.0), name, ink);
+        at += name_wide + SIGN_GAP;
+        if let (Some(count), Some(pill)) = (count, pill) {
+            let pill = Rect::from_min_size(Pos2::new(at, middle - pill.y / 2.0), pill);
+            ui.painter()
+                .rect_filled(pill, pill.height() / 2.0, dusk::NOTICE);
+            ui.painter()
+                .galley(pill.center() - count.size() / 2.0, count, dusk::FILL);
+        }
+        if selected {
+            ui.painter().hline(
+                rect.shrink2(Vec2::new(TAB_PAD / 2.0, 0.0)).x_range(),
+                strip.bottom() - 1.0,
+                Stroke::new(2.0, dusk::TEXT),
+            );
+        }
+        left = rect.right() + TAB_GAP;
+    }
+    ui.painter().hline(
+        strip.x_range(),
+        strip.bottom(),
+        Stroke::new(1.0, dusk::BORDER),
+    );
 }
 
 fn field_id() -> Id {
@@ -243,23 +491,33 @@ fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
     (mover, sizer)
 }
 
+/// The lines of the tab shown while chat is typed in, and of every channel together at rest.
 fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &ChatLook) {
     let log = world.resource::<TerminalLog>();
     let me = session::my_id(world).map(|client| u64::from(client.0));
     let width = room.width() - SCROLL_BAR - PAD;
-    let laid: Vec<(Arc<Galley>, String)> = log
+    let typing = view.typing;
+    let shown = view.shown;
+    let of_tab = |line: &&TerminalLine| !typing || line.channel == shown.terminal();
+    let laid: Vec<(Arc<Galley>, String, Option<&ChannelLook>)> = log
         .lines()
+        .filter(of_tab)
         .map(|line| {
-            let job = line_job(line, look, width);
+            let said_on = match line.kind {
+                LineKind::Said(_) => ChatChannel::of(line.channel).and_then(|on| look.of(on)),
+                LineKind::Notice | LineKind::Failed => None,
+            };
+            let job = line_job(line, said_on, look, width);
             let plain = job.text.clone();
-            (ui.fonts_mut(|fonts| fonts.layout_job(job)), plain)
+            (ui.fonts_mut(|fonts| fonts.layout_job(job)), plain, said_on)
         })
         .collect();
     let tall: f32 = laid
         .iter()
-        .map(|(galley, _)| galley.size().y + LINE_GAP)
+        .map(|(galley, ..)| galley.size().y + LINE_GAP)
         .sum();
-    let typing = view.typing;
+    let sign = look.sign();
+    let row_tall = ui.fonts_mut(|fonts| fonts.row_height(&look.font));
     let (source, bar) = if typing {
         (
             ScrollSource {
@@ -272,7 +530,8 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
     } else {
         (ScrollSource::NONE, ScrollBarVisibility::AlwaysHidden)
     };
-    let catch_up = !typing || std::mem::take(&mut view.catching_up);
+    let began = typing && !std::mem::replace(&mut view.was_typing, typing);
+    let catch_up = !typing || began || std::mem::take(&mut view.catching_up);
     let paged = typing.then(|| {
         let keys = world.resource::<InputMap>();
         let turned = |action| {
@@ -296,7 +555,7 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
             }
             ui.visuals_mut().extreme_bg_color = Color32::TRANSPARENT;
             egui::ScrollArea::vertical()
-                .id_salt("chat log")
+                .id_salt(("chat log", typing.then_some(shown)))
                 .auto_shrink(false)
                 .stick_to_bottom(true)
                 .scroll_source(source)
@@ -304,12 +563,16 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.add_space((room.height() - tall).max(0.0));
-                    for (galley, plain) in laid {
+                    for (galley, plain, said_on) in laid {
                         let size = Vec2::new(width, galley.size().y + LINE_GAP);
                         let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
                         response
                             .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &plain));
                         if ui.is_rect_visible(rect) {
+                            if let Some(said_on) = said_on {
+                                let at = rect.min + Vec2::new(0.0, (row_tall - sign.y) / 2.0);
+                                said_on.paint_sign(ui, Rect::from_min_size(at, sign), 1.0);
+                            }
                             dusk::lettering(
                                 ui.painter(),
                                 rect.min,
@@ -336,13 +599,22 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
         .inner;
     let end = scrolled.content_size.y - scrolled.inner_rect.height();
     let reading = typing && scrolled.state.offset.y < end - 1.0;
-    let arrived = log.arrived();
-    view.reading_from = reading.then(|| view.reading_from.unwrap_or(arrived));
-    let since = view.reading_from.map_or(0, |from| arrived - from);
+    let arrived = log.arrived(shown.terminal());
+    view.seen.insert(shown, arrived);
+    if !typing {
+        view.reading_from.clear();
+    } else if !reading {
+        view.reading_from.remove(&shown);
+    }
+    let since = if reading {
+        arrived.saturating_sub(*view.reading_from.entry(shown).or_insert(arrived))
+    } else {
+        0
+    };
     let unread = log
-        .lines()
+        .on(shown.terminal())
         .rev()
-        .take(since as usize)
+        .take(usize::try_from(since).unwrap_or(usize::MAX))
         .filter(|line| !typed_by(line, me))
         .count();
     if unread > 0 && unread_pill(ui, room, unread).clicked() {
@@ -379,9 +651,14 @@ fn unread_pill(ui: &mut Ui, room: Rect, unread: usize) -> egui::Response {
     response
 }
 
-/// A name and its colon tell speech from what the game itself says, so the ink is never the only
-/// sign.
-fn line_job(line: &TerminalLine, look: &ChatLook, width: f32) -> LayoutJob {
+/// A name and its colon tell speech from what the game itself says, and the sign of its channel
+/// stands before what was said on one, so the ink is never the only sign.
+fn line_job(
+    line: &TerminalLine,
+    said_on: Option<&ChannelLook>,
+    look: &ChatLook,
+    width: f32,
+) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = width;
     let format = |color: Color32| TextFormat {
@@ -392,10 +669,11 @@ fn line_job(line: &TerminalLine, look: &ChatLook, width: f32) -> LayoutJob {
     match &line.kind {
         LineKind::Said(speaker) => {
             let ink = match speaker.typist {
-                Some(_) => dusk::PLAYER,
+                Some(_) => said_on.map_or(dusk::PLAYER, |said_on| said_on.color),
                 None => dusk::TOWNSPERSON,
             };
-            job.append(&format!("{}:", speaker.name), 0.0, format(ink));
+            let lead = said_on.map_or(0.0, |_| look.sign().x + SIGN_GAP);
+            job.append(&format!("{}:", speaker.name), lead, format(ink));
             job.append(&format!(" {}", line.text), 0.0, format(dusk::TEXT));
         }
         LineKind::Notice => job.append(&line.text, 0.0, format(dusk::NOTICE)),
@@ -457,7 +735,16 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         dusk::TEXT
     };
     let faint = TextLook::new(TextRole::Small.size(), hint_ink).on(Ground::Dusk);
-    let hints = StyledLine::new(if typing {
+    let hints = StyledLine::new(if typing && view.channels.len() > 1 {
+        vec![
+            map::input(InputAction::SubmitText),
+            TextPiece::text(" send  "),
+            map::input(InputAction::NextChatTab),
+            TextPiece::text(" next tab  "),
+            map::input(InputAction::Dismiss),
+            TextPiece::text(" cancel"),
+        ]
+    } else if typing {
         vec![
             map::input(InputAction::SubmitText),
             TextPiece::text(" send  "),
@@ -473,7 +760,8 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         vec![TextPiece::text("Click to chat")]
     });
     let hints_wide = text::measure(ui.ctx(), world, &hints, faint, f32::INFINITY).x;
-    let hinted = !typing || inner.width() >= WIDTH_THAT_FITS_HINTS;
+    let hinted = !typing || inner.width() >= hints_wide + ROOM_TO_TYPE_BESIDE_HINTS;
+    let typed_on = look.of(view.shown);
     if !typing && view.draft.is_empty() {
         ui.scope_builder(
             UiBuilder::new()
@@ -489,9 +777,11 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 .layout(Layout::left_to_right(Align::Center)),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                if typing {
+                if let Some(typed_on) = typed_on.filter(|_| typing) {
+                    let (sign, _) = ui.allocate_exact_size(look.sign(), Sense::hover());
+                    typed_on.paint_sign(ui, sign, 1.0);
                     ui.label(
-                        egui::RichText::new("Say:")
+                        egui::RichText::new(format!("{}:", typed_on.name))
                             .font(look.font.clone())
                             .color(dusk::TEXT.gamma_multiply(0.75)),
                     );
@@ -569,7 +859,10 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
     if sent {
         let line = std::mem::take(&mut view.draft);
         if !line.trim().is_empty() {
-            world.write_message(TerminalInput { text: line });
+            world.write_message(TerminalInput {
+                text: line,
+                channel: view.shown.terminal(),
+            });
         }
         view.typing = false;
     }

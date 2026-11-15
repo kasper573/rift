@@ -147,6 +147,9 @@ pub fn plug_ins(world: &mut World) {
     world.init_resource::<stat::Sources>();
     world.init_resource::<attention::MarkSources>();
     world.init_resource::<attention::BadgeSources>();
+    world.init_resource::<chat::Sources>();
+    chat::source(world, chat::area_channel());
+    chat::source(world, party::chat_channel());
     stat::source(world, status::boost::modifiers);
     stat::source(world, class::level_stats);
     stat::source(world, skill::casting::chase);
@@ -272,6 +275,7 @@ pub struct GameSettings {
     /// zero it is gone at once.
     pub lingers_for: Seconds,
     pub requests: social_request::RequestSettings,
+    pub chat: chat::ChatSettings,
     /// How friends work. A game without it has no friends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub friends: Option<friend::FriendSettings>,
@@ -471,6 +475,12 @@ pub struct GameWords {
     pub party_leads: String,
     /// What a player is told as they share the experience of a kill with `{names}`.
     pub xp_shared: String,
+    /// What the party's chat says to a player as they join the party `{name}` leads.
+    pub you_joined_party: String,
+    /// What chat says to a player as they leave their party.
+    pub you_left_party: String,
+    /// What a player is told saying more lines than the game lets them in a while.
+    pub chat_too_fast: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -649,6 +659,7 @@ pub fn server_app(
                         inbox::requests,
                         inbox::overflow,
                         party::requests,
+                        chat::channel::list,
                     ),
                     player::linger,
                     player::respawn,
@@ -657,8 +668,7 @@ pub fn server_app(
                     skill::hotbar::settle_basic_attack,
                     chat::hear,
                     (command::run, command::retire, command::complete::answer).chain(),
-                    chat::overhear,
-                    chat::rebroadcast,
+                    chat::speak,
                     belongings::notify_changes,
                     history::backfill,
                 )
@@ -932,6 +942,7 @@ pub fn tables() -> ContentRegistry {
         .fixture::<interface::InterfaceSound>()
         .fixture::<interface::CursorShape>()
         .fixture::<interface::InterfaceIcon>()
+        .fixture::<chat::ChatChannel>()
         .fixture::<vfx::VfxFixture>()
         .fixture::<vfx::VfxShaderFixture>()
         .fixture::<area::world_map::WorldMap>()
@@ -942,6 +953,7 @@ pub fn tables() -> ContentRegistry {
         .file::<input::map::InputDef>()
         .file::<interface::CursorDef>()
         .file::<interface::InterfaceIconDef>()
+        .file::<chat::ChatChannelDef>()
         .file::<item::ItemDef>()
         .named::<item::ItemDef>()
         .modules::<item::ItemDef>()
@@ -1056,6 +1068,8 @@ fn check_settings(loading: &mut Loading) {
         0.0,
         "seconds",
     );
+    check.at_least("/chat/lines", settings.chat.lines, 1, "lines");
+    check.at_least("/chat/within", settings.chat.within.0, 0.0, "seconds");
     if let Some(friends) = &settings.friends {
         check.at_least("/friends/most", friends.most, 1, "friends");
         check.at_least("/friends/requests", friends.requests, 1, "requests");
@@ -1164,6 +1178,9 @@ fn check_settings(loading: &mut Loading) {
         ("party_disbanded", &settings.words.party_disbanded),
         ("party_leads", &settings.words.party_leads),
         ("xp_shared", &settings.words.xp_shared),
+        ("you_joined_party", &settings.words.you_joined_party),
+        ("you_left_party", &settings.words.you_left_party),
+        ("chat_too_fast", &settings.words.chat_too_fast),
     ]
     .into_iter()
     .chain(inbox::words(&settings.words))

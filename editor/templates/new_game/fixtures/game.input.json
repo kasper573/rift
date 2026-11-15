@@ -216,6 +216,27 @@
         }
       ]
     },
+    "next_chat_tab": {
+      "label": "Show the next tab of chat",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "Tab",
+          "ctrl": true
+        }
+      ]
+    },
+    "previous_chat_tab": {
+      "label": "Show the tab of chat before this one",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "Tab",
+          "ctrl": true,
+          "shift": true
+        }
+      ]
+    },
     "take_default": {
       "label": "Give a question its default answer",
       "bindings": [

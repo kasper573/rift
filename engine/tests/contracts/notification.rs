@@ -1,10 +1,12 @@
 use bevy_ecs::prelude::*;
-use bevy_terminal::TerminalSaid;
+use bevy_replication::ToClient;
+use bevy_terminal::{TerminalLine, TerminalSaid};
 use engine::core::content::Content;
 use engine::core::math::{Offset, Pos, Rgb};
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
 use engine::systems::area::{self, AreaDef};
+use engine::systems::chat::ChatChannel;
 use engine::systems::combat::{self, Attitude};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::history::{History, HistoryTopic, RecordTally};
@@ -574,6 +576,7 @@ fn area(game: &Content, key: &str) -> Sim {
         .accept::<InteractRequest>()
         .accept::<ConversationRequest>()
         .message::<TerminalSaid>()
+        .message::<ToClient<TerminalLine>>()
         .add((movement::file_by_chunk, status::expire))
         .add((
             vfx::expire,
@@ -596,12 +599,13 @@ fn area(game: &Content, key: &str) -> Sim {
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
-            chat::overhear,
+            chat::speak,
         ))
         .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default())
         .add(belongings::notify_changes);
+    chat::route_lines(&mut sim.world);
     script::spawn_stateless(&mut sim.world);
     sim
 }
@@ -611,6 +615,7 @@ fn say(sim: &mut Sim, client: u32, text: &str) {
     let conn = sim.conn(client);
     sim.world.write_message(TerminalSaid {
         conn,
+        channel: ChatChannel::Area.terminal(),
         text: text.to_owned(),
     });
 }

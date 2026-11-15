@@ -61,6 +61,9 @@ pub enum InputAction {
     /// Turns what is being read a page back, toward what came earlier.
     PageBack,
     PageForward,
+    /// Shows the next of chat's tabs, round to the first from the last.
+    NextChatTab,
+    PreviousChatTab,
     TakeDefault,
     Respawn,
     TurnLeft,
@@ -181,6 +184,8 @@ impl InputAction {
             | InputAction::CompleteText
             | InputAction::PageBack
             | InputAction::PageForward
+            | InputAction::NextChatTab
+            | InputAction::PreviousChatTab
             | InputAction::TakeDefault => &[ActionReading::Shortcut],
             InputAction::ZoomIn | InputAction::ZoomOut => {
                 &[ActionReading::Press, ActionReading::Wheel]

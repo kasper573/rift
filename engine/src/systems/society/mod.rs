@@ -268,6 +268,8 @@ pub enum SocietyAsk {
     Friend(FriendAsk),
     Inbox(InboxAsk),
     Party(PartyRequest),
+    /// A line said to the party the player is in.
+    PartyLine(String),
 }
 
 /// What a world's players asked of society since the server's worlds last conferred.
@@ -381,6 +383,7 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
             SocietyAsk::Friend(ask) => friend::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Inbox(ask) => inbox::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Party(ask) => party::settle(&mut settling, settings, &by, ask),
+            SocietyAsk::PartyLine(text) => party::say(&mut settling, &by, &text),
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {
                     account.accepts_requests_from = Some(from);

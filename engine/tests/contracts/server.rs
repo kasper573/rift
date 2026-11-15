@@ -1,9 +1,11 @@
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
+use bevy_terminal::{TerminalCommanded, TerminalInput, TerminalLine, TerminalSaid};
 use engine::core::content::Content;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::account::{AccountId, AccountIdentity};
+use engine::systems::chat;
 use engine::systems::friend::{self, AskFriendship, FindPlayers, PlayersFound, RemoveFriend};
 use engine::systems::history::HistoryNews;
 use engine::systems::inbox::{
@@ -216,6 +218,11 @@ fn serving(content: &Content, area: &str) -> Sim {
         .accept::<TakeAttached>()
         .accept::<DeleteMessage>()
         .accept::<PartyRequest>()
+        .accept::<TerminalInput>()
+        .message::<TerminalSaid>()
+        .message::<TerminalCommanded>()
+        .message::<ToClient<TerminalLine>>()
+        .add((chat::hear, chat::speak, chat::channel::list, keep_lines))
         .add((
             society::view::greet,
             social_request::requests,
@@ -233,5 +240,18 @@ fn serving(content: &Content, area: &str) -> Sim {
         policy: SpawnPolicy::Map,
         immortal: false,
     });
+    chat::route_lines(&mut sim.world);
+    sim.world.init_resource::<ChatShown>();
     sim
+}
+
+/// Every line chat showed the clients of a world, the oldest first, by the connection it was
+/// shown to.
+#[derive(Resource, Default)]
+pub struct ChatShown(pub Vec<(Entity, TerminalLine)>);
+
+fn keep_lines(mut sent: MessageReader<ToClient<TerminalLine>>, mut shown: ResMut<ChatShown>) {
+    for line in sent.read() {
+        shown.0.push((line.client, line.message.clone()));
+    }
 }

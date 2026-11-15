@@ -285,6 +285,7 @@ impl Game {
                 "suggestions": 10,
                 "lingers_for": 0.0,
                 "requests": { "card_shows": 20.0, "new_accounts_accept": "everyone" },
+                "chat": { "lines": 5, "within": 10.0 },
                 "look": look(),
                 "dialogue_shots": {
                     "shoulder": { "back": 1.6, "aside": 0.7, "up": 0.95, "aim": 0.75 },
@@ -1022,6 +1023,9 @@ fn words() -> GameWords {
         party_disbanded: "{name} disbanded the party".to_owned(),
         party_leads: "{name} leads the party now".to_owned(),
         xp_shared: "Shared with {names}".to_owned(),
+        you_joined_party: "You joined {name}'s party".to_owned(),
+        you_left_party: "You left the party".to_owned(),
+        chat_too_fast: "You are writing too fast".to_owned(),
     }
 }
 

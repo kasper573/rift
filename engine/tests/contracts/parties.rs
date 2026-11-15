@@ -1,8 +1,10 @@
 use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
+use bevy_terminal::{LineKind, TerminalInput};
 use engine::core::units::{Meters, Seconds};
 use engine::systems::area::AreaDef;
 use engine::systems::area_map::{self, MapMarkKind};
+use engine::systems::chat::{ChatChannel, ChatChannels};
 use engine::systems::item::{self, DropTaker, Reservation};
 use engine::systems::movement::position;
 use engine::systems::npc::{self, NpcDef};
@@ -16,7 +18,7 @@ use serde_json::json;
 use testkit::{Game, Map};
 
 use crate::saves::{Saves, checkpoint};
-use crate::server::Server;
+use crate::server::{ChatShown, Server};
 
 #[test]
 fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
@@ -324,6 +326,129 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
         [100],
         "alone, a kill is worth what it is"
     );
+}
+
+#[test]
+fn a_party_talks_on_a_channel_of_its_own_wherever_its_members_play() {
+    let mut server = Server::of(game(), request_sources());
+    let wren = server.sign_in(1, "Wren", "village");
+    server.sign_in(2, "Hale", "village");
+    server.sign_in(3, "Marrow", "forest");
+    server.sign_in(4, "Osric", "village");
+    server.step();
+    let channels = |server: &Server, character: Entity| {
+        server
+            .village
+            .world
+            .get::<ChatChannels>(character)
+            .map(|channels| channels.0.clone())
+    };
+    assert_eq!(
+        channels(&server, wren),
+        Some(vec![ChatChannel::Area]),
+        "everyone is in the area's channel"
+    );
+
+    for name in ["Hale", "Marrow"] {
+        invite(&mut server, 1, name);
+    }
+    server.answer(2, RequestAnswer::Accept);
+    server.answer(3, RequestAnswer::Accept);
+    server.step();
+    server.step();
+    assert_eq!(
+        channels(&server, wren),
+        Some(vec![ChatChannel::Area, ChatChannel::Party]),
+        "and the members of a party in the party's too"
+    );
+    assert_eq!(
+        (heard(&mut server, 1), heard(&mut server, 2)),
+        (
+            vec![
+                (ChatChannel::Party, "Hale joined the party".to_owned()),
+                (ChatChannel::Party, "Marrow joined the party".to_owned()),
+            ],
+            vec![
+                (ChatChannel::Party, "You joined Wren's party".to_owned()),
+                (ChatChannel::Party, "Marrow joined the party".to_owned()),
+            ]
+        ),
+        "the party's channel opens saying why"
+    );
+
+    say(&mut server, 1, ChatChannel::Party, "boat's at the jetty");
+    let line = (ChatChannel::Party, "Wren: boat's at the jetty".to_owned());
+    for member in 1..=3 {
+        assert_eq!(heard(&mut server, member).last(), Some(&line), "{member}");
+    }
+    assert!(
+        heard(&mut server, 4).is_empty(),
+        "who is not in the party hears nothing of it"
+    );
+    say(&mut server, 4, ChatChannel::Party, "let me in");
+    assert_eq!(
+        heard(&mut server, 1).last(),
+        Some(&line),
+        "nor is heard on a channel they are not in"
+    );
+
+    server.block(3, "Wren", true);
+    server.block(4, "Wren", true);
+    server.step();
+    say(&mut server, 1, ChatChannel::Party, "anyone there?");
+    say(&mut server, 1, ChatChannel::Area, "selling lures");
+    assert_eq!(
+        heard(&mut server, 2)[3..],
+        [
+            (ChatChannel::Party, "Wren: anyone there?".to_owned()),
+            (ChatChannel::Area, "Wren: selling lures".to_owned()),
+        ]
+    );
+    assert_eq!(
+        (heard(&mut server, 3).last(), heard(&mut server, 4).last()),
+        (Some(&line), None),
+        "a line reaches nobody who keeps its speaker away, on any channel"
+    );
+
+    server.send(2, PartyRequest::Leave);
+    server.step();
+    server.step();
+    let hale = server.village.player(2);
+    assert_eq!(channels(&server, hale), Some(vec![ChatChannel::Area]));
+    assert_eq!(
+        heard(&mut server, 2).last(),
+        Some(&(ChatChannel::Area, "You left the party".to_owned())),
+        "a channel that goes says why where its player still reads"
+    );
+}
+
+/// The player of `client` says `text` on `channel`, and the server carries it.
+fn say(server: &mut Server, client: u32, channel: ChatChannel, text: &str) {
+    let typed = TerminalInput {
+        text: text.to_owned(),
+        channel: channel.terminal(),
+    };
+    server.send(client, typed);
+    server.step();
+}
+
+/// Every line chat showed the player of `client`, the oldest first: what was said after who
+/// said it.
+fn heard(server: &mut Server, client: u32) -> Vec<(ChatChannel, String)> {
+    let sim = server.village_or_forest(client);
+    let conn = sim.conn(client);
+    let shown = &sim.world.resource::<ChatShown>().0;
+    shown
+        .iter()
+        .filter(|(to, _)| *to == conn)
+        .filter_map(|(_, line)| {
+            let said = match &line.kind {
+                LineKind::Said(speaker) => format!("{}: {}", speaker.name, line.text),
+                LineKind::Notice | LineKind::Failed => line.text.clone(),
+            };
+            Some((ChatChannel::of(line.channel)?, said))
+        })
+        .collect()
 }
 
 /// The player of `client` invites the player called `name` to their party.

@@ -36,7 +36,9 @@ impl InputAction {
             InputAction::SubmitText
             | InputAction::CompleteText
             | InputAction::PageBack
-            | InputAction::PageForward => &[Typing],
+            | InputAction::PageForward
+            | InputAction::NextChatTab
+            | InputAction::PreviousChatTab => &[Typing],
             InputAction::TakeDefault => &[Modal],
             InputAction::Advance
             | InputAction::PickChoice

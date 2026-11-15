@@ -113,6 +113,7 @@ use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
 use crate::systems::social_request::{self, card::ShownRequestCard};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
+use crate::systems::terminal::{self, chat::ShownChat};
 
 /// The probe's question about the game `line`, read against the game it names places of.
 pub fn read_question(content: &Content, line: &str) -> Result<ProbeGameQuestion, String> {
@@ -362,6 +363,8 @@ pub struct ProbeSnapshot {
     pub messages: ShownMessages,
     /// The party the player is in, and the invitations that wait for their answer.
     pub party: ShownParty,
+    /// The tabs of chat, which is shown and how much waits on each.
+    pub chat: ShownChat,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -1239,6 +1242,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         friends: friend::page::shown(world),
         messages: inbox::page::shown(world),
         party: party::page::shown(world),
+        chat: terminal::chat::shown(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),

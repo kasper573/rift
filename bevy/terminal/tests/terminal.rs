@@ -2,7 +2,8 @@ use bevy_app::App;
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_terminal::{
-    TerminalCommanded, TerminalInput, TerminalLine, TerminalSaid, best_matches, hear, register,
+    LineKind, TerminalChannel, TerminalCommanded, TerminalInput, TerminalLine, TerminalSaid,
+    best_matches, hear, register, reply,
 };
 
 fn server() -> App {
@@ -22,11 +23,16 @@ fn connect(world: &mut World) -> Entity {
 }
 
 fn send(world: &mut World, conn: Entity, text: &str) {
+    send_on(world, conn, TerminalChannel::default(), text);
+}
+
+fn send_on(world: &mut World, conn: Entity, channel: TerminalChannel, text: &str) {
     hear(
         world,
         conn,
         &TerminalInput {
             text: text.to_owned(),
+            channel,
         },
     );
 }
@@ -99,8 +105,47 @@ fn chat_line_is_said_trimmed_and_not_replied_to_and_a_blank_one_is_not_said() {
         said(world),
         vec![TerminalSaid {
             conn,
+            channel: TerminalChannel::default(),
             text: "hello there".to_owned()
         }]
     );
     assert!(replies(world).is_empty());
+}
+
+#[test]
+fn a_line_is_said_on_the_channel_it_was_typed_on_and_answered_there() {
+    let mut app = server();
+    let world = app.world_mut();
+    let (conn, other) = (connect(world), connect(world));
+    let party = TerminalChannel(1);
+
+    send_on(world, conn, party, "on my way");
+    send_on(world, conn, party, "/wave");
+    reply(world, conn, "You wave.");
+    reply(world, other, "Nothing typed yet.");
+
+    assert_eq!(
+        said(world),
+        vec![TerminalSaid {
+            conn,
+            channel: party,
+            text: "on my way".to_owned()
+        }]
+    );
+    let line = |text: &str, channel| TerminalLine {
+        text: text.to_owned(),
+        kind: LineKind::Notice,
+        channel,
+    };
+    assert_eq!(
+        replies(world),
+        vec![
+            (conn, line("You wave.", party)),
+            (
+                other,
+                line("Nothing typed yet.", TerminalChannel::default())
+            ),
+        ],
+        "an answer lands where its question was typed, and on the first channel before any was"
+    );
 }

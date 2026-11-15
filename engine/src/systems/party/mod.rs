@@ -19,6 +19,7 @@ use crate::core::units::{Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
+use crate::systems::chat::{self, ChatChannel, ChatChannelSource};
 use crate::systems::history::HistoryTopic;
 use crate::systems::notification::Notification;
 use crate::systems::player::{self, ClientId, PlayedBy};
@@ -253,6 +254,19 @@ pub fn in_one(world: &World, character: Entity) -> bool {
         .is_some_and(|view| view.party.is_some())
 }
 
+/// The party's chat: its members are in it, and a line reaches each of them wherever they play.
+pub fn chat_channel() -> ChatChannelSource {
+    ChatChannelSource {
+        channel: ChatChannel::Party,
+        open_to: in_one,
+        send: |world, speaker, text| {
+            if let Some(client) = world.get::<PlayedBy>(speaker).map(|by| by.client) {
+                society::ask(world, client, SocietyAsk::PartyLine(text));
+            }
+        },
+    }
+}
+
 /// An invitation to a party as a kind of request: it needs the player invited at their
 /// character, and its inviter is told how it went.
 pub fn request_source() -> SocialRequestSource {
@@ -323,6 +337,7 @@ pub(crate) fn settle(
             if let Some(party) = &party {
                 let said = words.party_left.replace("{name}", &settling.name(by));
                 tell(settling, party, by, &said);
+                closed(settling, by, &words.you_left_party);
                 leave(settling, by);
             }
         }
@@ -333,6 +348,7 @@ pub(crate) fn settle(
                     .replace("{name}", &settling.name(&removed));
                 tell(settling, party, &removed, &said);
                 settling.tell(&removed, feed(&words.you_were_removed));
+                closed(settling, &removed, &words.you_were_removed);
                 leave(settling, &removed);
             }
         }
@@ -344,8 +360,11 @@ pub(crate) fn settle(
         PartyRequest::Disband => {
             if leads && let Some(party) = &party {
                 let said = words.party_disbanded.replace("{name}", &settling.name(by));
-                tell(settling, party, by, &said);
                 for account in party.accounts() {
+                    if account != by {
+                        settling.tell(account, feed(&said));
+                    }
+                    closed(settling, account, &said);
                     settling.society.changed(account);
                     settling.society.parties.of.remove(account);
                     settling.society.parties.absent.remove(account);
@@ -477,15 +496,34 @@ fn lead(settling: &mut Settling, settings: &GameSettings, id: PartyId, leader: &
         .replace("{name}", &settling.name(leader));
     for account in party.accounts() {
         settling.tell(account, feed(&said));
+        settling.send(account, chat::notice(ChatChannel::Party, &said));
     }
     changed(settling, id);
 }
 
-/// Tells every member of `party` but `but` what happened in it.
+/// Says what `by` typed to every member of the party they are in.
+pub(crate) fn say(settling: &mut Settling, by: &AccountId, text: &str) {
+    let Some(party) = settling.society.parties.of_account(by).cloned() else {
+        return;
+    };
+    for account in party.accounts() {
+        if let Some(line) = chat::line_across(settling, ChatChannel::Party, by, account, text) {
+            settling.send(account, line);
+        }
+    }
+}
+
+/// Tells every member of `party` but `but` what happened in it, the party's chat saying it too.
 fn tell(settling: &mut Settling, party: &PlayerParty, but: &AccountId, said: &str) {
     for account in party.accounts().filter(|account| *account != but) {
         settling.tell(account, feed(said));
+        settling.send(account, chat::notice(ChatChannel::Party, said));
     }
+}
+
+/// Has chat say why the party's channel is gone, to a player who is no longer in it.
+fn closed(settling: &mut Settling, account: &AccountId, why: &str) {
+    settling.send(account, chat::notice(ChatChannel::default(), why));
 }
 
 fn feed(said: &str) -> Notification {
@@ -566,6 +604,10 @@ fn accepted(
     parties.of.insert(joiner.clone(), id);
     let said = words.party_joined.replace("{name}", &settling.name(joiner));
     tell(settling, &party, joiner, &said);
+    let said = words
+        .you_joined_party
+        .replace("{name}", &settling.name(&party.leader));
+    settling.send(joiner, chat::notice(ChatChannel::Party, &said));
     changed(settling, id);
     // A player is in one party at most: joining one declines the others.
     social_request::decline_others(settling, settings, request);

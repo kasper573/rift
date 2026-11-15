@@ -20,6 +20,7 @@ use engine::systems::area::spawnable::SpawnableDef;
 use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
+use engine::systems::chat::ChatChannelDef;
 use engine::systems::class::ClassDef;
 use engine::systems::command::TerminalCommandDef;
 use engine::systems::crafting::RecipeBookDef;
@@ -197,6 +198,7 @@ impl KindFamily {
             | InterfaceIconDef::TABLE
             | AttentionDef::TABLE
             | CardStyleDef::TABLE
+            | ChatChannelDef::TABLE
             | TerminalCommandDef::TABLE => KindFamily::Interface,
             _ => return None,
         })
@@ -253,6 +255,7 @@ pub fn of_table(table: &str) -> KindIcon {
         CursorDef::TABLE => KindIcon::plain(phosphor::CURSOR),
         InterfaceIconDef::TABLE => KindIcon::plain(phosphor::APP_WINDOW),
         AttentionDef::TABLE => KindIcon::plain(phosphor::SEAL_WARNING),
+        ChatChannelDef::TABLE => KindIcon::plain(phosphor::CHAT_CIRCLE),
         TerminalCommandDef::TABLE => KindIcon::plain(phosphor::TERMINAL_WINDOW),
         RoleDef::TABLE => KindIcon::plain(phosphor::CROWN),
         SfxDef::TABLE => KindIcon::plain(phosphor::SPEAKER_HIGH),
@@ -329,6 +332,7 @@ pub(crate) fn picture_of(project: &Project, path: &str) -> Option<FilePicture> {
         SkillDef::TABLE => whole(&project.read::<SkillDef>(path).ok()?.icon),
         AttentionDef::TABLE => whole(&project.read::<AttentionDef>(path).ok()?.icon),
         InterfaceIconDef::TABLE => whole(&project.read::<InterfaceIconDef>(path).ok()?.image),
+        ChatChannelDef::TABLE => whole(&project.read::<ChatChannelDef>(path).ok()?.sign),
         CursorDef::TABLE => whole(&project.read::<CursorDef>(path).ok()?.image),
         _ => None,
     }

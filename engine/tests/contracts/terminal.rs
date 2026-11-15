@@ -1,4 +1,5 @@
 use bevy_ecs::message::MessageCursor;
+use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
 use bevy_terminal::{
     LineKind, LineSpeaker, TerminalCompletionRequest, TerminalCompletions, TerminalInput,
@@ -8,6 +9,7 @@ use engine::core::content::Content;
 use engine::core::net::auth::TokenClaims;
 use engine::core::units::MeterPos;
 use engine::systems::account::{AccountIdentity, RoleDef};
+use engine::systems::chat::ChatChannel;
 use engine::systems::input::map::InputMap;
 use engine::systems::{chat, command, movement, region, script};
 use serde_json::{Value, json};
@@ -470,6 +472,51 @@ fn game() -> Game {
         )
 }
 
+#[test]
+fn a_player_says_only_so_many_lines_in_a_while_and_is_told_when_one_is_too_many() {
+    let mut sim = serving(game().load(), "camp");
+    sim.join(1);
+    sim.join(2);
+    let (typist, listener) = (sim.conn(1), sim.conn(2));
+    let mut cursor = MessageCursor::<ToClient<TerminalLine>>::default();
+    let mut shown = |sim: &mut Sim, text: &str| -> Vec<(Entity, LineKind)> {
+        send(sim, 1, text);
+        sim.read(&mut cursor)
+            .into_iter()
+            .map(|sent| (sent.client, sent.message.kind))
+            .collect()
+    };
+
+    for line in 1..=5 {
+        let heard = shown(&mut sim, &format!("line {line}"));
+        assert!(
+            heard.iter().any(|(conn, _)| *conn == listener),
+            "line {line}"
+        );
+    }
+    assert_eq!(
+        shown(&mut sim, "line 6"),
+        [(typist, LineKind::Failed)],
+        "a line too many is said to nobody, and whoever typed it is told so alone"
+    );
+    assert_eq!(
+        lines(&mut sim, 1).last(),
+        Some(&("You are writing too fast".to_owned(), LineKind::Failed))
+    );
+
+    send(&mut sim, 1, "/give potion");
+    sim.tick();
+    let me = sim.player(1);
+    assert_eq!(sim.count(me, "potion"), 1, "a command is no line");
+
+    sim.run(10.0);
+    let heard = shown(&mut sim, "line 7");
+    assert!(
+        heard.iter().any(|(conn, _)| *conn == listener),
+        "once the while is over they speak again"
+    );
+}
+
 /// The server of one of the game's areas, running what takes a terminal's lines and runs its
 /// commands.
 fn serving(content: Content, area: &str) -> Sim {
@@ -484,8 +531,7 @@ fn serving(content: Content, area: &str) -> Sim {
         .message::<ToClient<engine::systems::item::ItemShown>>()
         .add((
             chat::hear,
-            chat::overhear,
-            chat::rebroadcast,
+            chat::speak,
             command::run,
             command::retire,
             command::complete::answer,
@@ -503,6 +549,7 @@ fn send(sim: &mut Sim, client: u32, line: &str) {
         conn,
         TerminalInput {
             text: line.to_owned(),
+            channel: ChatChannel::Area.terminal(),
         },
     );
     sim.tick();
