@@ -1169,9 +1169,14 @@ fn check_settings(loading: &mut Loading) {
             "/messages/title_length",
             messages.title_length,
             1,
-            "letters",
+            "characters",
         );
-        check.at_least("/messages/text_length", messages.text_length, 1, "letters");
+        check.at_least(
+            "/messages/text_length",
+            messages.text_length,
+            1,
+            "characters",
+        );
         check.at_least("/messages/a_minute", messages.a_minute, 1, "messages");
     }
     if let Some(party) = &settings.party {
@@ -1334,20 +1339,25 @@ fn check_settings(loading: &mut Loading) {
 }
 
 fn check_typing(check: &mut RowCheck, typing: &Typing) {
-    check.at_least("/typing/slowest", typing.slowest.0, 1.0, "letters a second");
+    check.at_least(
+        "/typing/slowest",
+        typing.slowest.0,
+        1.0,
+        "characters a second",
+    );
     check.range(
         "/typing/fastest",
         typing.fastest.0,
         typing.slowest.0,
         f32::MAX,
-        "letters a second, no slower than the slowest",
+        "characters a second, no slower than the slowest",
     );
     check.range(
         "/typing/pace",
         typing.pace.0,
         typing.slowest.0,
         typing.fastest.0,
-        "letters a second, between the slowest and the fastest",
+        "characters a second, between the slowest and the fastest",
     );
     check.at_least("/typing/slow_by", typing.slow_by, 1.0, "times");
 }

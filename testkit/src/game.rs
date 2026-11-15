@@ -19,7 +19,7 @@ use engine::core::render::{
     Zooms,
 };
 use engine::core::text::{
-    CapLettering, Lettering, LettersPerSecond, ShakeLettering, Swing, Typing, WhisperLettering,
+    CapLettering, CharactersPerSecond, Lettering, ShakeLettering, Swing, Typing, WhisperLettering,
 };
 use engine::core::units::{Degrees, Radians, RadiansPerSec};
 use engine::core::units::{Meters, MetersPerSec, Stops};
@@ -965,9 +965,9 @@ fn json_bytes(value: &Value) -> Vec<u8> {
 /// How every test game types its lines out.
 pub fn typing() -> Typing {
     Typing {
-        pace: LettersPerSecond(45.0),
-        slowest: LettersPerSecond(15.0),
-        fastest: LettersPerSecond(120.0),
+        pace: CharactersPerSecond(45.0),
+        slowest: CharactersPerSecond(15.0),
+        fastest: CharactersPerSecond(120.0),
         slow_by: 2.5,
     }
 }

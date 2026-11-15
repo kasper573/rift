@@ -17,7 +17,7 @@ use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::render::video::{self, VideoPreferences};
 use crate::core::render::{CameraPreferences, CameraRig};
-use crate::core::text::{LettersPerSecond, Typing};
+use crate::core::text::{CharactersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
 use crate::systems::area_map::MapReachStep;
 use crate::systems::chat::ChatEmbedKind;
@@ -483,16 +483,19 @@ fn text_speed_slider(
     typing: Typing,
     label: egui::Id,
 ) {
-    let mut speed = typing.pace_for(settings.text.letters_per_second).letters.0;
+    let mut speed = typing
+        .pace_for(settings.text.characters_per_second)
+        .characters
+        .0;
     ui.horizontal(|ui| {
         let range = typing.slowest.0..=typing.fastest.0;
         if controls::slider(ui, &mut speed, range)
             .labelled_by(label)
             .changed()
         {
-            settings.text.letters_per_second = Some(LettersPerSecond(speed.round()));
+            settings.text.characters_per_second = Some(CharactersPerSecond(speed.round()));
         }
-        slider_says(ui, format!("{:.0} letters/s", speed.round()));
+        slider_says(ui, format!("{:.0} characters/s", speed.round()));
     });
 }
 
@@ -904,8 +907,8 @@ fn default_snap() -> Option<WindowPx> {
 #[derive(Serialize, Deserialize, Default)]
 struct TextSettings {
     /// None keeps the game's own pace.
-    #[serde(default)]
-    letters_per_second: Option<LettersPerSecond>,
+    #[serde(default, alias = "letters_per_second")]
+    characters_per_second: Option<CharactersPerSecond>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -996,7 +999,7 @@ fn pace_typing(settings: Res<UserSettings>, typing: Option<Res<Typing>>, mut com
         return;
     };
     if settings.is_changed() || typing.is_changed() {
-        commands.insert_resource(typing.pace_for(settings.text.letters_per_second));
+        commands.insert_resource(typing.pace_for(settings.text.characters_per_second));
     }
 }
 

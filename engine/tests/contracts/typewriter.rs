@@ -1,12 +1,12 @@
 use std::time::Duration;
 
 use engine::core::text::{
-    InputRef, KeyCap, LettersPerSecond, StyledSpan, TextPiece, TypingPace, reveal_duration,
+    CharactersPerSecond, InputRef, KeyCap, StyledSpan, TextPiece, TypingPace, reveal_duration,
     revealed,
 };
 
 const TEN_PER_SECOND: TypingPace = TypingPace {
-    letters: LettersPerSecond(10.0),
+    characters: CharactersPerSecond(10.0),
     slow_by: 2.5,
 };
 

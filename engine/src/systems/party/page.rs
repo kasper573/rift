@@ -398,7 +398,7 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
     let server_now = time::server_now(world);
     let mut inviting = world.resource_mut::<Inviting>();
     let mut typed = inviting.typed.clone();
-    input::search(ui, &mut typed, "A name, two letters or more", None);
+    input::search(ui, &mut typed, "A name, two characters or more", None);
     if typed != inviting.typed {
         inviting.typed = typed;
         inviting.typed_at = now;
@@ -412,7 +412,7 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
             .as_ref()
             .filter(|found| found.starts == inviting.typed);
         match found {
-            _ if !search::searches(&inviting.typed) => caption(ui, "Two letters or more"),
+            _ if !search::searches(&inviting.typed) => caption(ui, "Two characters or more"),
             None => {
                 caption(ui, "Looking");
                 ui.ctx().request_repaint();

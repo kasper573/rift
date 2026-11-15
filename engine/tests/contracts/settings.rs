@@ -40,7 +40,7 @@ fn settings_saved_by_an_older_interface_keep_what_still_applies_and_lose_what_is
     settings::save_video(&profile, VideoPreferences::default());
     let saved = profile.settings().expect("the settings are saved");
     for kept in [
-        "\"letters_per_second\": 42.0",
+        "\"characters_per_second\": 42.0",
         "\"master\": 0.25",
         "\"voice\": 0.75",
         "\"frame_rate\": true",

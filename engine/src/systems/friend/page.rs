@@ -274,7 +274,7 @@ fn find(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
     let mut finding = world.resource_mut::<Finding>();
     let mut typed = finding.typed.clone();
-    input::search(ui, &mut typed, "A name, two letters or more", None);
+    input::search(ui, &mut typed, "A name, two characters or more", None);
     if typed != finding.typed {
         finding.typed = typed;
         finding.typed_at = now;
@@ -285,7 +285,7 @@ fn find(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
     }
     ui.add_space(GAP);
     if !search::searches(&finding.typed) {
-        caption(ui, "Two letters or more");
+        caption(ui, "Two characters or more");
         return None;
     }
     let Some(found) = finding.answer() else {

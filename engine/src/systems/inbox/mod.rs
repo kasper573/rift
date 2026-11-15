@@ -51,9 +51,9 @@ pub struct MessageSettings {
     pub inbox: u32,
     /// How many stacks of items a message carries at the most.
     pub attachments: u32,
-    /// How many letters a title is long at the most.
+    /// How many characters a title is long at the most.
     pub title_length: u32,
-    /// How many letters a text is long at the most.
+    /// How many characters a text is long at the most.
     pub text_length: u32,
     /// How many messages a player sends within a minute at the most.
     pub a_minute: u32,
