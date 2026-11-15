@@ -89,9 +89,17 @@ pub fn confer(sims: &mut [&mut Sim], above: &mut AboveWorlds) -> Vec<player::Dep
     worlds::confer(&mut views, above, now)
 }
 
-/// The next checkpoint of worlds that have conferred before, an interval on: how it went, once
-/// the store has answered.
+/// The next checkpoint of worlds that have conferred before, an interval on, taken once any
+/// that was under way is over: how it went, once the store has answered.
 pub fn checkpoint(sims: &mut [&mut Sim], above: &mut AboveWorlds) -> CheckpointReport {
+    for _ in 0..5000 {
+        if !above.checkpoints.writing() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+        confer(sims, above);
+    }
+    above.checkpoints.reports();
     for sim in sims.iter_mut() {
         sim.later(EVERY.0);
     }

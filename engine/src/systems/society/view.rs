@@ -10,6 +10,7 @@ use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
+use crate::systems::inbox;
 use crate::systems::player::CharacterAccount;
 use crate::systems::social_request::{
     AcceptsRequestsFrom, SocialRequest, SocialRequestId, SocialRequestKind,
@@ -79,6 +80,9 @@ pub fn greet(world: &mut World, arrived: &mut QueryState<Entity, Added<Character
     let society = society.read();
     for character in arrived {
         show(world, character, &society);
+        if let Some(account) = world.get::<CharacterAccount>(character).cloned() {
+            inbox::show(world, character, &account.0, &society);
+        }
     }
 }
 

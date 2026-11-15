@@ -90,6 +90,7 @@ use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
 use crate::systems::hud::menu::MenuTabName;
+use crate::systems::inbox::{self, page::ShownMessages};
 use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
 use crate::systems::input::scope::InputScope;
@@ -356,6 +357,8 @@ pub struct ProbeSnapshot {
     /// What the Friends page shows: the list, the requests in and out, the players kept away
     /// and what the search found.
     pub friends: ShownFriends,
+    /// What the Messages page shows: the inbox, the message chosen and the one being written.
+    pub messages: ShownMessages,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -1231,6 +1234,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         saving: save::notice::shown(world),
         social_requests: social_request::card::shown(world),
         friends: friend::page::shown(world),
+        messages: inbox::page::shown(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),

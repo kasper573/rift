@@ -17,6 +17,7 @@ pub mod friend;
 pub mod history;
 pub mod hud;
 pub mod identity;
+pub mod inbox;
 pub mod input;
 pub mod interact;
 pub mod interface;
@@ -113,6 +114,7 @@ pub fn protocol(app: &mut App) {
     social_request::register(app);
     society::view::register(app);
     friend::register(app);
+    inbox::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -271,6 +273,9 @@ pub struct GameSettings {
     /// How friends work. A game without it has no friends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub friends: Option<friend::FriendSettings>,
+    /// How messages work. A game without it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<inbox::MessageSettings>,
 }
 
 /// How much a player keeps.
@@ -406,6 +411,35 @@ pub struct GameWords {
     pub friends_full: String,
     /// What a player is told asking for friendship with as many requests waiting as they may have.
     pub too_many_friend_requests: String,
+    /// What a player is told sending a message that has no title.
+    pub message_needs_title: String,
+    /// What a player is told writing to someone who is neither a friend nor of their party.
+    pub only_to_friends: String,
+    /// What a player is told writing to `{name}`, who keeps them away.
+    pub not_taking_messages: String,
+    /// What a player is told writing to `{name}`, whose inbox has no room.
+    pub inbox_full: String,
+    /// What a player is told sending more messages within a minute than the game allows.
+    pub writing_too_fast: String,
+    /// What a player is told attaching `{item}`, which may not change hands.
+    pub stays_with_you: String,
+    /// What a player is told as their message to `{name}` is sent.
+    pub message_sent: String,
+    /// What a player is told as a message titled `{title}` arrives from `{name}`: `{key}` is the
+    /// key that opens the page it is read on.
+    pub message_arrived: String,
+    /// What a player is told taking what is attached to a message, as `{taken}` of `{attached}`
+    /// stacks fit their bag.
+    pub took_some: String,
+    /// The title of the message the game sends a player whose bag had no room for what they
+    /// carried.
+    pub did_not_fit_title: String,
+    /// The text of the message the game sends a player whose bag had no room for what they
+    /// carried.
+    pub did_not_fit_text: String,
+    /// What became of what a bag had no room for, in a game that has messages: it is sent to its
+    /// player in one.
+    pub sent_in_a_message: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -581,6 +615,8 @@ pub fn server_app(
                         society::view::greet,
                         social_request::requests,
                         friend::requests,
+                        inbox::requests,
+                        inbox::overflow,
                     ),
                     player::linger,
                     player::respawn,
@@ -747,6 +783,7 @@ pub fn client_app(
             social_request::card::plugin,
             society::tab::plugin,
             friend::page::plugin,
+            inbox::page::plugin,
         ));
     app
 }
@@ -996,6 +1033,17 @@ fn check_settings(loading: &mut Loading) {
             "seconds",
         );
     }
+    if let Some(messages) = &settings.messages {
+        check.at_least("/messages/inbox", messages.inbox, 1, "messages");
+        check.at_least(
+            "/messages/title_length",
+            messages.title_length,
+            1,
+            "letters",
+        );
+        check.at_least("/messages/text_length", messages.text_length, 1, "letters");
+        check.at_least("/messages/a_minute", messages.a_minute, 1, "messages");
+    }
     settings.cards.check("/cards", &mut check);
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
@@ -1049,7 +1097,11 @@ fn check_settings(loading: &mut Loading) {
             "too_many_friend_requests",
             &settings.words.too_many_friend_requests,
         ),
-    ] {
+        ("sent_in_a_message", &settings.words.sent_in_a_message),
+    ]
+    .into_iter()
+    .chain(inbox::words(&settings.words))
+    {
         check.text(format!("/words/{field}"), said, 1, 80);
     }
     check_typing(&mut check, &settings.typing);

@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "d8881367",
+  "content_version": "331e825f",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -149,7 +149,19 @@
     "friendship_accepted": "{name} is now your friend",
     "already_friends": "{name} is already your friend",
     "friends_full": "Your friends list is full",
-    "too_many_friend_requests": "You have too many friend requests waiting"
+    "too_many_friend_requests": "You have too many friend requests waiting",
+    "message_needs_title": "Give it a title",
+    "only_to_friends": "You can only write to friends and party members",
+    "not_taking_messages": "{name} is not taking messages",
+    "inbox_full": "{name}'s inbox is full",
+    "writing_too_fast": "Wait a moment before writing again",
+    "stays_with_you": "{item} stays with you",
+    "message_sent": "Message sent to {name}",
+    "message_arrived": "{name} wrote to you: {title}. {key} opens it",
+    "took_some": "{taken} of {attached} taken. The rest found no room and waits here",
+    "did_not_fit_title": "What your inventory had no room for",
+    "did_not_fit_text": "Your inventory had no room for these. They wait here until you take them.",
+    "sent_in_a_message": "It was sent to you in a message"
   },
   "typing": {
     "pace": 45.0,
@@ -365,5 +377,12 @@
     "most": 100,
     "requests": 20,
     "request_lasts": 604800.0
+  },
+  "messages": {
+    "inbox": 50,
+    "attachments": 6,
+    "title_length": 60,
+    "text_length": 1000,
+    "a_minute": 5
   }
 }

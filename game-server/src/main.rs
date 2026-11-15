@@ -99,7 +99,7 @@ fn main() {
     let society = runtime
         .block_on(Society::read(
             &store,
-            &ContentScope::of(&content),
+            &content,
             engine::systems::request_sources(),
         ))
         .unwrap_or_else(|problem| {

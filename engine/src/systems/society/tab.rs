@@ -5,7 +5,9 @@ use ui::egui::Ui;
 
 use super::SocietyMember;
 use crate::systems::friend::page::FriendsPage;
-use crate::systems::hud::menu::{MenuTab, MenuTabName, SubTabs};
+use crate::systems::hud::menu::{self, MenuTab, MenuTabName, SubTabs};
+use crate::systems::inbox::draft::WriteToPlayer;
+use crate::systems::inbox::page::MessagesPage;
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
 
@@ -38,6 +40,21 @@ pub fn player_actions(world: &World) -> Vec<&'static dyn PlayerAction> {
         .copied()
         .filter(|action| action.on(world))
         .collect()
+}
+
+/// Whether the menu shows the page titled `title`.
+pub fn showing(world: &World, title: &str) -> bool {
+    menu::showing(world) == Some(MenuTabName::Social)
+        && open_page(world).is_some_and(|page| page.title() == title)
+}
+
+/// Opens the menu on the page titled `title`, when the game has it.
+pub fn open_on(world: &mut World, title: &str) {
+    let Some(page) = pages(world).into_iter().find(|page| page.title() == title) else {
+        return;
+    };
+    world.resource_mut::<LastPage>().0 = Some(page.title());
+    menu::open_on(world, MenuTabName::Social);
 }
 
 pub struct SocialMenuTab;
@@ -100,9 +117,9 @@ pub(crate) fn plugin(app: &mut App) {
 struct LastPage(Option<&'static str>);
 
 // Their sub-tabs line up in this order.
-static PAGES: &[&dyn SocialPage] = &[&FriendsPage];
+static PAGES: &[&dyn SocialPage] = &[&FriendsPage, &MessagesPage];
 
-static PLAYER_ACTIONS: &[&dyn PlayerAction] = &[];
+static PLAYER_ACTIONS: &[&dyn PlayerAction] = &[&WriteToPlayer];
 
 /// The pages of the systems the game has on.
 fn pages(world: &World) -> Vec<&'static dyn SocialPage> {

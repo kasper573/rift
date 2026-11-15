@@ -3,6 +3,7 @@ pub mod effects;
 pub mod plates;
 pub mod rarity;
 pub mod render;
+pub mod tray;
 pub mod widget;
 
 use std::borrow::Cow;
@@ -222,6 +223,16 @@ impl Inventory {
         *self = unbounded;
         self.max = next.max;
         Ok(())
+    }
+
+    /// Gives each of `stacks` that fits, tried on its own and in order, so one that finds no
+    /// room never holds back the others: the stacks that did not fit.
+    pub fn give_what_fits(&mut self, content: &Content, stacks: &[ItemStack]) -> Vec<ItemStack> {
+        stacks
+            .iter()
+            .copied()
+            .filter(|&stack| self.exchange(content, &[], &[stack]).is_err())
+            .collect()
     }
 
     pub fn take_up_to(&mut self, stacks: &[ItemStack]) {

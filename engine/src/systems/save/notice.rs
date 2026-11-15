@@ -15,7 +15,7 @@ use crate::systems::history::{self, HistoryEntry, HistoryTopic};
 use crate::systems::player::{ClientId, Players};
 use crate::systems::screen::ClientScreen;
 use crate::systems::text::LineText;
-use crate::systems::{GameSettings, GameWords, visibility};
+use crate::systems::{GameSettings, visibility};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -60,9 +60,9 @@ pub fn tell_returned(world: &mut World, returned: &mut QueryState<(Entity, &Clie
         .collect();
     for (conn, character, changes) in back {
         world.entity_mut(conn).remove::<Returned>();
-        let words = &world.resource::<GameSettings>().words;
-        let heading = words.game_changed.clone();
-        let lines: Vec<ChangeLine> = changes.iter().map(|change| change.line(words)).collect();
+        let settings = world.resource::<GameSettings>();
+        let heading = settings.words.game_changed.clone();
+        let lines: Vec<ChangeLine> = changes.iter().map(|change| change.line(settings)).collect();
         for line in &lines {
             let text = LineText::plain(format!("{} {}", line.what, line.became));
             let entry = HistoryEntry::of(HistoryTopic::Notification, text);
@@ -99,8 +99,9 @@ pub fn tell_saving(
 }
 
 impl GameChange {
-    /// The change, in the game's `words`.
-    pub fn line(&self, words: &GameWords) -> ChangeLine {
+    /// The change, in the words of the game `settings` are of.
+    pub fn line(&self, settings: &GameSettings) -> ChangeLine {
+        let words = &settings.words;
         match self {
             GameChange::Gone { table, name } => ChangeLine {
                 what: words.gone.replace("{kind}", table).replace("{name}", name),
@@ -113,7 +114,10 @@ impl GameChange {
                 }
                 .replace("{slots}", &slots.to_string())
                 .replace("{stacks}", &stacks.to_string()),
-                became: words.kept_aside.clone(),
+                became: match settings.messages {
+                    Some(_) => words.sent_in_a_message.clone(),
+                    None => words.kept_aside.clone(),
+                },
             },
             GameChange::SkillsReset { class, points } => ChangeLine {
                 what: words.skills_rearranged.replace("{class}", class),

@@ -1,11 +1,15 @@
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
-use engine::core::content::{Content, ContentScope};
+use engine::core::content::Content;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::friend::{self, AskFriendship, FindPlayers, PlayersFound, RemoveFriend};
 use engine::systems::history::HistoryNews;
+use engine::systems::inbox::{
+    self, DeleteMessage, MessageAnswered, MessageText, OpenMessage, SendMessage, TakeAttached,
+};
+use engine::systems::player::snapshot::JoinAs;
 use engine::systems::player::{self, ClientId, SpawnPolicy, SpawnRules};
 use engine::systems::social_request::{
     self, AnswerSocialRequest, BlockPlayer, ChooseAcceptsRequests, RequestAnswer, SocialRequestAsk,
@@ -41,11 +45,7 @@ impl Server {
     pub fn saving(content: &Content, saves: &Saves, sources: Vec<SocialRequestSource>) -> Server {
         let society = saves
             .runtime
-            .block_on(Society::read(
-                &saves.store,
-                &ContentScope::of(content),
-                sources,
-            ))
+            .block_on(Society::read(&saves.store, content, sources))
             .expect("the store is read");
         let above = AboveWorlds {
             society: ServerSociety::of(society),
@@ -86,6 +86,18 @@ impl Server {
 
     /// The account called `name` signs in and joins the world of `area` as `client`.
     pub fn sign_in(&mut self, client: u32, name: &str, area: &str) -> Entity {
+        self.sign_in_as(client, name, area, None)
+    }
+
+    /// The account called `name` signs in and joins the world of `area` as `client`, with the
+    /// character `join_as` holds when its sign-in read one.
+    pub fn sign_in_as(
+        &mut self,
+        client: u32,
+        name: &str,
+        area: &str,
+        join_as: Option<JoinAs>,
+    ) -> Entity {
         let identity = AccountIdentity {
             id: AccountId(name.to_owned()),
             name: name.to_owned(),
@@ -99,7 +111,7 @@ impl Server {
             "village" => &mut self.village,
             _ => &mut self.forest,
         };
-        sim.sign_in(client, name, None)
+        sim.sign_in(client, name, join_as)
     }
 
     pub fn village_or_forest(&mut self, client: u32) -> &mut Sim {
@@ -190,16 +202,24 @@ fn serving(content: &Content, area: &str) -> Sim {
     sim.serve(area)
         .message::<ToClient<HistoryNews>>()
         .message::<ToClient<PlayersFound>>()
+        .message::<ToClient<MessageText>>()
+        .message::<ToClient<MessageAnswered>>()
         .accept::<AnswerSocialRequest>()
         .accept::<BlockPlayer>()
         .accept::<ChooseAcceptsRequests>()
         .accept::<AskFriendship>()
         .accept::<RemoveFriend>()
         .accept::<FindPlayers>()
+        .accept::<SendMessage>()
+        .accept::<OpenMessage>()
+        .accept::<TakeAttached>()
+        .accept::<DeleteMessage>()
         .add((
             society::view::greet,
             social_request::requests,
             friend::requests,
+            inbox::requests,
+            inbox::overflow,
             player::linger,
         ));
     sim.world.insert_resource(WallClock {

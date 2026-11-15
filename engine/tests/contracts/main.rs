@@ -27,6 +27,7 @@ mod launch;
 mod looks;
 mod loot_names;
 mod memory;
+mod messages;
 mod notification;
 mod poses;
 mod presence;

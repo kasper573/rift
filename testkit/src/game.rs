@@ -996,6 +996,19 @@ fn words() -> GameWords {
         already_friends: "{name} is already your friend".to_owned(),
         friends_full: "Your friends list is full".to_owned(),
         too_many_friend_requests: "You have too many friend requests waiting".to_owned(),
+        message_needs_title: "Give it a title".to_owned(),
+        only_to_friends: "You can only write to friends and party members".to_owned(),
+        not_taking_messages: "{name} is not taking messages".to_owned(),
+        inbox_full: "{name}'s inbox is full".to_owned(),
+        writing_too_fast: "Wait a moment before writing again".to_owned(),
+        stays_with_you: "{item} stays with you".to_owned(),
+        message_sent: "Message sent to {name}".to_owned(),
+        message_arrived: "{name} wrote to you: {title}. {key} opens it".to_owned(),
+        took_some: "{taken} of {attached} taken. The rest found no room and waits here".to_owned(),
+        did_not_fit_title: "What your inventory had no room for".to_owned(),
+        did_not_fit_text:
+            "Your inventory had no room for these. They wait here until you take them.".to_owned(),
+        sent_in_a_message: "It was sent to you in a message".to_owned(),
     }
 }
 

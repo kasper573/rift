@@ -19,6 +19,7 @@ use crate::systems::GameSettings;
 use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::area::AreaId;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
+use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
@@ -30,15 +31,23 @@ use crate::systems::social_request::{
 use crate::systems::visibility;
 use crate::systems::worlds::AboveWorlds;
 
+/// Where an account's character stands, and whether its player is away from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Playing {
+    area: AreaId,
+    away: bool,
+}
+
 #[derive(Default)]
 pub struct Society {
     accounts: Accounts,
     pub(crate) friends: Friendships,
     pub(crate) blocks: BlockLists,
     pub(crate) requests: SocialRequests,
+    pub(crate) inboxes: Inboxes,
     sources: Vec<SocialRequestSource>,
-    /// The accounts whose players are at their characters, and the area each plays in.
-    playing: HashMap<AccountId, AreaId>,
+    /// The accounts whose characters stand in a world, and where.
+    playing: HashMap<AccountId, Playing>,
     /// The accounts whose players see something of society that changed since they were shown.
     changed: BTreeSet<AccountId>,
 }
@@ -52,18 +61,31 @@ impl Society {
         }
     }
 
-    /// Society as `store` holds it: every record of the kinds it keeps whole in memory. Refused
-    /// when the store cannot be read, or holds a record this build does not read whole.
+    /// Society as `store` holds it for the game `content` is: every record of the kinds it keeps
+    /// whole in memory, and how many messages each inbox holds. Refused when the store cannot be
+    /// read, or holds a record this build does not read whole. It reads on the runtime it is
+    /// called on.
     pub async fn read(
         store: &RecordStore,
-        scope: &ContentScope,
+        content: &Content,
         sources: Vec<SocialRequestSource>,
     ) -> Result<Society, RecordStoreProblem> {
+        let scope = &ContentScope::of(content);
+        let reads = match content.built::<GameSettings>().messages {
+            Some(_) => InboxReads::from(
+                store.clone(),
+                tokio::runtime::Handle::current(),
+                scope.clone(),
+            ),
+            None => InboxReads::default(),
+        };
+        let messages = all::<InboxMessage>(store, &scope.clone().setting_aside()).await?;
         Ok(Society {
             accounts: Accounts::of(all::<Account>(store, scope).await?),
             friends: Friendships::of(all::<Friendship>(store, scope).await?),
             blocks: BlockLists::of(all::<Block>(store, scope).await?),
             requests: SocialRequests::of(all::<SocialRequest>(store, scope).await?),
+            inboxes: Inboxes::counted(messages, reads),
             sources,
             ..Society::default()
         })
@@ -83,6 +105,10 @@ impl Society {
 
     pub fn requests(&self) -> &SocialRequests {
         &self.requests
+    }
+
+    pub fn inboxes(&self) -> &Inboxes {
+        &self.inboxes
     }
 
     /// Who `account` takes requests from, in a game with these `settings`.
@@ -112,7 +138,7 @@ impl Society {
 
     /// The area the player of `account` plays in, while they are at their character.
     pub fn playing_in(&self, account: &AccountId) -> Option<AreaId> {
-        self.playing.get(account).copied()
+        seen_in(&self.playing, account)
     }
 
     pub(crate) fn source(&self, kind: SocialRequestKind) -> Option<SocialRequestSource> {
@@ -130,41 +156,54 @@ impl Society {
 
 impl Society {
     /// Notes who plays where as `roster` lists them, so everyone who sees a player come, go or
-    /// change areas is shown it, and an account that left is saved as last seen `now`.
+    /// change areas is shown it, an account whose player left is saved as last seen `now`, and
+    /// memory holds the inbox of every account that plays.
     fn note_playing(&mut self, roster: &ServerRoster, unwritten: &mut Unwritten, now: UnixMillis) {
-        let playing: HashMap<AccountId, AreaId> = roster
+        let playing: HashMap<AccountId, Playing> = roster
             .all()
             .into_iter()
-            .filter(|enrolled| !enrolled.away)
-            .filter_map(|enrolled| Some((enrolled.account?, enrolled.place.area)))
+            .filter_map(|enrolled| {
+                let playing = Playing {
+                    area: enrolled.place.area,
+                    away: enrolled.away,
+                };
+                Some((enrolled.account?, playing))
+            })
             .collect();
-        if playing == self.playing {
-            return;
-        }
-        let before = std::mem::replace(&mut self.playing, playing);
-        let moved: Vec<&AccountId> = before
-            .iter()
-            .filter(|&(account, area)| self.playing.get(account) != Some(area))
-            .map(|(account, _)| account)
-            .chain(
-                self.playing
-                    .keys()
-                    .filter(|&account| !before.contains_key(account)),
-            )
-            .collect();
-        for account in moved {
-            if !self.playing.contains_key(account) {
-                let left = self
-                    .accounts
-                    .change(account, |account| account.last_seen = now);
-                if let Some(left) = left.cloned() {
-                    unwritten.put(left);
+        if playing != self.playing {
+            let before = std::mem::replace(&mut self.playing, playing);
+            let moved: BTreeSet<&AccountId> = before
+                .keys()
+                .chain(self.playing.keys())
+                .filter(|&account| seen_in(&before, account) != seen_in(&self.playing, account))
+                .collect();
+            for account in moved {
+                if seen_in(&self.playing, account).is_none() {
+                    let left = self
+                        .accounts
+                        .change(account, |account| account.last_seen = now);
+                    if let Some(left) = left.cloned() {
+                        unwritten.put(left);
+                    }
+                } else if seen_in(&before, account).is_none() {
+                    self.inboxes.arrived(account);
                 }
+                let watching: Vec<AccountId> = self.friends.of_account(account).cloned().collect();
+                self.changed.extend(watching);
             }
-            let watching: Vec<AccountId> = self.friends.of_account(account).cloned().collect();
-            self.changed.extend(watching);
         }
+        let playing = &self.playing;
+        self.inboxes
+            .keep(|account| playing.contains_key(account), unwritten);
     }
+}
+
+/// The area the player of `account` plays in, while they are at their character.
+fn seen_in(playing: &HashMap<AccountId, Playing>, account: &AccountId) -> Option<AreaId> {
+    playing
+        .get(account)
+        .filter(|playing| !playing.away)
+        .map(|playing| playing.area)
 }
 
 /// The server's society, as every world of the server holds it. A world reads it as it stood
@@ -214,6 +253,7 @@ pub enum SocietyAsk {
     Block(BlockAsk),
     Accepts(AcceptsRequestsFrom),
     Friend(FriendAsk),
+    Inbox(InboxAsk),
 }
 
 /// What a world's players asked of society since the server's worlds last conferred.
@@ -321,6 +361,7 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
                 }
             }
             SocietyAsk::Friend(ask) => friend::settle(&mut settling, settings, &by, ask),
+            SocietyAsk::Inbox(ask) => inbox::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {
                     account.accepts_requests_from = Some(from);
@@ -336,6 +377,11 @@ pub fn settle(views: &mut [Option<&mut World>], above: &mut AboveWorlds, now: Un
     for account in std::mem::take(&mut settling.society.changed) {
         if let Some((world, character)) = reach(settling.views, settling.roster, &account) {
             view::show(world, character, settling.society);
+        }
+    }
+    for account in settling.society.inboxes.changed() {
+        if let Some((world, character)) = reach(settling.views, settling.roster, &account) {
+            inbox::show(world, character, &account, settling.society);
         }
     }
 }

@@ -185,6 +185,11 @@ impl Checkpoints {
         self.departed.clone()
     }
 
+    /// Whether a checkpoint is with the store, its outcome not yet heard.
+    pub fn writing(&self) -> bool {
+        self.writing.is_some()
+    }
+
     /// How many records wait to be written: what a crash right now would cost.
     pub fn waiting(&self) -> usize {
         self.unwritten.len()

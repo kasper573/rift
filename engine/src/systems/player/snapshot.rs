@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::content::{
-    Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, SavedList,
-    SetAside, id, serial,
+    Content, ContentFile, ContentProblem, ContentScope, Loading, NamedContent, Nearby, RowCheck,
+    SavedList, SetAside, id, serial, with_content,
 };
 use crate::core::math::Pos;
 use crate::core::script::{Value, ValueType};
@@ -404,7 +404,7 @@ macro_rules! saved_lists {
         [
             ("recipe_masteries", $snapshot.recipe_masteries.$of()),
             ("hotbar", $snapshot.hotbar.$of()),
-            ("bag", $snapshot.bag.$of()),
+            (BAG, $snapshot.bag.$of()),
             ("equipped", $snapshot.equipped.$of()),
             ("known_areas", $snapshot.known_areas.$of()),
             ("quests", $snapshot.quests.$of()),
@@ -414,6 +414,46 @@ macro_rules! saved_lists {
             ("cooldowns", $snapshot.cooldowns.$of()),
         ]
     };
+}
+
+impl KeptAside {
+    /// Whether it keeps stacks of the bag that name items the game has, and only found no room.
+    pub fn holds_overflow(&self) -> bool {
+        self.bag().any(|aside| aside.missing.is_empty())
+    }
+
+    /// Takes out the stacks the bag had no room for, to be handed over some other way.
+    pub fn take_overflow(&mut self, content: &Content) -> Vec<ItemStack> {
+        let Some((_, bag)) = self.lists.iter_mut().find(|(list, _)| *list == BAG) else {
+            return Vec::new();
+        };
+        let scope = ContentScope::of(content);
+        let mut over = Vec::new();
+        bag.retain(|aside| {
+            if !aside.missing.is_empty() {
+                return true;
+            }
+            let (stack, _) = with_content(scope.clone(), || {
+                serde_json::from_value::<ItemStack>(aside.entry.clone())
+            });
+            match stack {
+                Ok(stack) => {
+                    over.push(stack);
+                    false
+                }
+                Err(_) => true,
+            }
+        });
+        self.lists.retain(|(_, aside)| !aside.is_empty());
+        over
+    }
+
+    fn bag(&self) -> impl Iterator<Item = &SetAside> {
+        self.lists
+            .iter()
+            .filter(|(list, _)| *list == BAG)
+            .flat_map(|(_, aside)| aside)
+    }
 }
 
 impl CharacterSnapshot {
@@ -449,6 +489,7 @@ impl CharacterSnapshot {
 }
 
 const TRACKED_QUESTS: &str = "tracked_quests";
+const BAG: &str = "bag";
 
 /// The character a connection joins as, where it starts, and where the character is from.
 #[derive(Component, Clone, Debug, PartialEq)]

@@ -67,11 +67,7 @@ fn what_a_server_saved_as_it_stopped_is_what_the_next_one_plays_on() {
     let content = game(Some(&Map::open(9, 9))).load();
     let society = saves
         .runtime
-        .block_on(Society::read(
-            &saves.store,
-            &ContentScope::of(&content),
-            Vec::new(),
-        ))
+        .block_on(Society::read(&saves.store, &content, Vec::new()))
         .expect("the store is read");
     let known = society.accounts().get(&AccountId("wren".to_owned()));
     assert_eq!(
