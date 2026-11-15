@@ -5,15 +5,14 @@
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, UiBuilder};
+use ui::egui::{self, Align, Layout, Sense, Ui};
 use ui::input::InputField;
 use ui::{controls, form, ink, sheet};
 
 use super::{MessageAnswered, SendMessage};
 use crate::core::content::Content;
-use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::GameSettings;
-use crate::systems::input::map::{InputAction, input};
+use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::tray::{ItemTray, TrayDone, tray_slots};
 use crate::systems::item::widget::{
@@ -25,7 +24,6 @@ use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::society::tab::{self, PlayerAction};
 use crate::systems::society::{AccountNumber, SocietyMember, SocietyView};
-use ui::face::TextRole;
 
 /// Writing to a player a page lists.
 pub struct WriteToPlayer;
@@ -158,37 +156,25 @@ pub(super) fn show(ui: &mut Ui, world: &mut World, view: &SocietyView) {
         return;
     };
     let room = ui.available_rect_before_wrap();
-    let bag_at = Rect::from_min_max(Pos2::new(room.max.x - BAG_WIDTH, room.min.y), room.max);
-    let letter_at = Rect::from_min_max(
-        room.min,
-        Pos2::new(bag_at.min.x - sheet::GUTTER, room.max.y),
-    );
-    let column = |rect| {
-        UiBuilder::new()
-            .max_rect(rect)
-            .layout(Layout::top_down(Align::Min))
-    };
-    ui.scope_builder(column(letter_at), |ui| {
-        let area = egui::ScrollArea::vertical().id_salt("message being written");
-        sheet::scroll_pane(ui, sheet::Pane::bare(letter_at), area, |ui| {
-            letter(ui, world, view, &rules);
-        });
+    let message_width = room.width() - BAG_WIDTH - 4.0 * sheet::PANE_PAD.x;
+    let ([message_at], bag_at) = sheet::columns(ui, room, [message_width]);
+    let area = egui::ScrollArea::vertical().id_salt("message being written");
+    sheet::scroll_pane(ui, message_at, area, |ui| {
+        message(ui, world, view, &rules);
     });
-    ui.scope_builder(column(bag_at), |ui| {
-        let area = egui::ScrollArea::vertical().id_salt("bag to attach from");
-        sheet::scroll_pane(ui, sheet::Pane::bare(bag_at), area, |ui| {
-            let pane = InventoryPane {
-                width: ui.available_width(),
-                heading: Some("Your inventory"),
-                selected: None,
-            };
-            inventory_pane(ui, world, pane);
-        });
+    let area = egui::ScrollArea::vertical().id_salt("bag to attach from");
+    sheet::scroll_pane(ui, bag_at, area, |ui| {
+        let pane = InventoryPane {
+            width: ui.available_width(),
+            heading: Some("Your inventory"),
+            selected: None,
+        };
+        inventory_pane(ui, world, pane);
     });
-    ui.advance_cursor_after_rect(room);
+    ui.allocate_rect(room, Sense::hover());
 }
 
-fn letter(ui: &mut Ui, world: &mut World, view: &SocietyView, rules: &super::MessageSettings) {
+fn message(ui: &mut Ui, world: &mut World, view: &SocietyView, rules: &super::MessageSettings) {
     let receivers = receivers(view);
     let mut back = false;
     sheet::section_with(ui, "A new message", |ui| {
@@ -243,7 +229,10 @@ fn letter(ui: &mut Ui, world: &mut World, view: &SocietyView, rules: &super::Mes
             .show(ui)
             .labelled_by(text.id);
         let written = draft.text.chars().count();
-        caption(ui, &format!("{written} of {} letters", rules.text_length));
+        caption(
+            ui,
+            &format!("{written} of {} characters", rules.text_length),
+        );
     });
     ui.add_space(GAP);
     let (tray, sending) = (draft.tray.clone(), draft.sending);
@@ -263,19 +252,7 @@ fn letter(ui: &mut Ui, world: &mut World, view: &SocietyView, rules: &super::Mes
         Some(TrayDone::Dropped(slot)) => attach(world, slot, true),
         None => {}
     }
-    let hint = StyledLine::new(vec![
-        input(InputAction::PlaceItem),
-        TextPiece::text(" attaches one · "),
-        input(InputAction::PlaceStack),
-        TextPiece::text(" the stack · click an attached item to take it back"),
-    ]);
-    text::show(
-        ui,
-        world,
-        &hint,
-        TextLook::new(TextRole::Small.size(), ink::INK3),
-        None,
-    );
+    form::caption(ui, "Click an attached item to take it back", ink::INK3);
     ui.add_space(GAP);
     let draft = world.resource::<Draft>();
     let ready = draft.to.is_some() && !draft.title.trim().is_empty();

@@ -287,7 +287,7 @@ fn page(ui: &mut Ui, world: &mut World, frame: WindowFrame, shown: MenuTabName) 
 
 const STRIP_TOP: f32 = 4.0;
 const SUB_STRIP_TOP: f32 = 8.0;
-const FOOT_PAD: f32 = 6.0;
+const FOOT_PAD: f32 = 8.0;
 
 fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {
     let shown: Vec<&dyn MenuTab> = TABS

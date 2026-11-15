@@ -339,16 +339,9 @@ pub struct KeyHint<'a> {
 }
 
 pub fn hint_line(ui: &mut Ui, hints: &[KeyHint], leaves: Option<KeyHint>) {
-    let top = ui.cursor().min.y;
-    let span = ui.max_rect().x_range();
-    ui.painter().line_segment(
-        [Pos2::new(span.min, top), Pos2::new(span.max, top)],
-        Stroke::new(1.0, ink::ink_wash(0.2)),
-    );
-    ui.add_space(HINT_LINE_GAP);
     let row = Rect::from_min_size(
         ui.cursor().min,
-        Vec2::new(ui.available_width(), HINT_LINE_HEIGHT - HINT_LINE_GAP),
+        Vec2::new(ui.available_width(), HINT_LINE_HEIGHT),
     );
     let along = Layout::left_to_right(Align::Center);
     let mut beside = row;
@@ -374,8 +367,7 @@ pub fn hint_line(ui: &mut Ui, hints: &[KeyHint], leaves: Option<KeyHint>) {
     ui.allocate_rect(row, Sense::hover());
 }
 
-pub const HINT_LINE_HEIGHT: f32 = 28.0;
-const HINT_LINE_GAP: f32 = 6.0;
+pub const HINT_LINE_HEIGHT: f32 = 22.0;
 const HINT_GAP: f32 = 14.0;
 const HINT_INNER_GAP: f32 = 6.0;
 
