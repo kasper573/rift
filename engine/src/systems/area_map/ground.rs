@@ -15,9 +15,8 @@ use crate::systems::area::{self, Area, AreaId};
 
 #[derive(Resource, Default)]
 pub(super) struct MapGround {
-    area: Option<AreaId>,
-    tiles: HashMap<TileAt, TilePicture>,
-    making: Option<Making>,
+    tiles: HashMap<(AreaId, TileAt), TilePicture>,
+    making: Vec<Making>,
 }
 
 pub(super) struct TilePicture {
@@ -27,74 +26,110 @@ pub(super) struct TilePicture {
 }
 
 impl MapGround {
-    // A map never shows the ground of the place just left.
     pub fn pictures(&self, area: AreaId) -> impl Iterator<Item = &TilePicture> {
-        self.tiles.values().filter(move |_| self.area == Some(area))
+        self.tiles
+            .iter()
+            .filter(move |((of, _), _)| *of == area)
+            .map(|(_, picture)| picture)
     }
 }
 
-pub(super) fn keep(world: &mut World, area_id: AreaId, shown: &[Rect<Meters>]) {
+/// Keeps the ground pictured wherever a map shows it: `shown` is each stretch of ground on a
+/// map, with the area it is of.
+pub(super) fn keep(world: &mut World, shown: &[(AreaId, Rect<Meters>)]) {
     let content = world.resource::<Content>().clone();
-    let Some(area) = area::loaded(&content, area_id).cloned() else {
-        return;
-    };
     let Some(gui) = gui::context(world) else {
         return;
     };
     let mut ground = world.resource_mut::<MapGround>();
-    if ground.area != Some(area_id) {
-        *ground = MapGround {
-            area: Some(area_id),
-            ..default()
+    for mut making in std::mem::take(&mut ground.making) {
+        let Some(picture) = check_ready(&mut making.task) else {
+            ground.making.push(making);
+            continue;
         };
-    }
-    if let Some(making) = ground.making.as_mut()
-        && let Some(picture) = check_ready(&mut making.task)
-    {
-        let tile = making.tile;
-        ground.making = None;
+        let Some(area) = area::loaded(&content, making.area) else {
+            continue;
+        };
         let texture = gui.load_texture(
-            format!("minimap {}", tile.key()),
+            format!("minimap {} {}", making.area.index(), making.tile.key()),
             ColorImage::new(picture.size, picture.pixels),
             TextureOptions::LINEAR,
         );
         ground.tiles.insert(
-            tile,
+            (making.area, making.tile),
             TilePicture {
                 texture,
-                rect: tile.rect(area.ground_size()),
+                rect: making.tile.rect(area.ground_size()),
                 of: picture.of,
             },
         );
     }
-    // A picture is a quarter of a megabyte, and an area may hold thousands of tiles.
-    ground.tiles.retain(|_, picture| {
-        shown.iter().any(|shown| {
-            picture
-                .rect
-                .intersects(&shown.inflate(TILE_SIDE.0, TILE_SIDE.0))
-        })
-    });
-    if ground.making.is_some() {
-        return;
-    }
-    let tiles = shown
+    // What a drag or a walk shows next lies just past what is shown: its pictures are made
+    // before it comes into view, so none is seen being made.
+    let ahead: Vec<(AreaId, Rect<Meters>)> = shown
         .iter()
-        .flat_map(|shown| area.ground_size().tiles_within(*shown));
-    let stale = tiles.into_iter().find(|tile| {
-        ground
-            .tiles
-            .get(tile)
-            .is_none_or(|picture| picture.of != Drawn::of(&area, *tile))
+        .map(|(area, shown)| (*area, shown.inflate(TILE_SIDE.0, TILE_SIDE.0)))
+        .collect();
+    let wanted = |area: AreaId, rect: Rect<Meters>| {
+        ahead
+            .iter()
+            .any(|(of, ahead)| *of == area && rect.intersects(ahead))
+    };
+    // A picture is a megabyte, and an area may hold thousands of tiles.
+    ground
+        .tiles
+        .retain(|(area, _), picture| wanted(*area, picture.rect));
+    ground.making.retain(|making| {
+        area::loaded(&content, making.area)
+            .is_some_and(|area| wanted(making.area, making.tile.rect(area.ground_size())))
     });
-    if let Some(tile) = stale {
-        let colors = terrain_colors(&content, &area);
+    let mut free = AsyncComputeTaskPool::get()
+        .thread_num()
+        .saturating_sub(ground.making.len());
+    let mut stale: Vec<(AreaId, TileAt)> = Vec::new();
+    for (area_id, rect) in shown.iter().chain(&ahead) {
+        let Some(area) = area::loaded(&content, *area_id) else {
+            continue;
+        };
+        for tile in area.ground_size().tiles_within(*rect) {
+            let key = (*area_id, tile);
+            let pictured = ground
+                .tiles
+                .get(&key)
+                .is_some_and(|picture| picture.of == Drawn::of(area, tile));
+            let coming = ground
+                .making
+                .iter()
+                .any(|making| (making.area, making.tile) == key);
+            if !pictured && !coming && !stale.contains(&key) {
+                stale.push(key);
+            }
+        }
+    }
+    let mut colors: HashMap<AreaId, Vec<Color32>> = HashMap::new();
+    for (area_id, tile) in stale {
+        if free == 0 {
+            return;
+        }
+        free -= 1;
+        let Some(area) = area::loaded(&content, area_id).cloned() else {
+            continue;
+        };
+        let colors = colors
+            .entry(area_id)
+            .or_insert_with(|| terrain_colors(&content, &area))
+            .clone();
         let task = AsyncComputeTaskPool::get().spawn(async move { picture(&area, &colors, tile) });
-        ground.making = Some(Making { tile, task });
+        ground.making.push(Making {
+            area: area_id,
+            tile,
+            task,
+        });
     }
 }
 
 struct Making {
+    area: AreaId,
     tile: TileAt,
     task: Task<Picture>,
 }

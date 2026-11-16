@@ -1,6 +1,7 @@
 pub mod account;
 pub mod actor;
 pub mod area;
+pub mod area_instance;
 pub mod area_map;
 pub mod attention;
 pub mod belongings;
@@ -13,18 +14,23 @@ pub mod dialogue;
 pub mod emote;
 pub mod equipment;
 pub mod frame_rate;
+pub mod friend;
 pub mod history;
 pub mod hud;
 pub mod identity;
+pub mod inbox;
 pub mod input;
 pub mod interact;
 pub mod interface;
 pub mod item;
 pub mod launch;
 pub mod memory;
+pub mod mention;
+pub mod mount;
 pub mod movement;
 pub mod notification;
 pub mod npc;
+pub mod party;
 pub mod player;
 pub mod probe;
 pub mod prompt;
@@ -33,12 +39,15 @@ pub mod reach;
 pub mod region;
 pub mod resource;
 pub mod rewards;
+pub mod save;
 pub mod screen;
 pub mod script;
 pub mod settings;
 pub mod shop;
 pub mod skill;
 pub mod sleep;
+pub mod social_request;
+pub mod society;
 pub mod spawner;
 pub mod staging;
 pub mod stat;
@@ -105,6 +114,14 @@ pub fn protocol(app: &mut App) {
     status::register(app);
     equipment::register(app);
     history::register(app);
+    save::notice::register(app);
+    social_request::register(app);
+    society::view::register(app);
+    friend::register(app);
+    inbox::register(app);
+    party::register(app);
+    mount::register(app);
+    area_instance::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -124,12 +141,24 @@ pub fn protocol(app: &mut App) {
     plug_ins(app.world_mut());
 }
 
+/// The kinds of request between players the engine's systems bring.
+pub fn request_sources() -> Vec<social_request::SocialRequestSource> {
+    vec![
+        friend::request_source(),
+        party::request_source(),
+        mount::seat::request_source(),
+    ]
+}
+
 /// Wires each system's say into the registries other systems read, so neither names the other: what
 /// an actor's effective stats are made of, and what draws a player's attention.
 pub fn plug_ins(world: &mut World) {
     world.init_resource::<stat::Sources>();
     world.init_resource::<attention::MarkSources>();
     world.init_resource::<attention::BadgeSources>();
+    world.init_resource::<chat::Sources>();
+    chat::source(world, chat::area_channel());
+    chat::source(world, party::chat_channel());
     stat::source(world, status::boost::modifiers);
     stat::source(world, class::level_stats);
     stat::source(world, skill::casting::chase);
@@ -151,11 +180,14 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<player::Players>();
     world.init_resource::<player::Connected>();
     world.init_resource::<player::Unwelcomed>();
-    if player::roster::wanted(content) {
-        world.init_resource::<player::roster::ServerRoster>();
-        world.init_resource::<player::roster::Enrollment>();
-        world.init_resource::<player::errand::Errands>();
-    }
+    world.init_resource::<player::Departures>();
+    world.init_resource::<player::roster::ServerRoster>();
+    world.init_resource::<player::roster::Enrollment>();
+    world.init_resource::<player::roster::EnrollmentQuery>();
+    world.init_resource::<player::errand::Errands>();
+    world.init_resource::<society::ServerSociety>();
+    world.init_resource::<society::SocietyAsks>();
+    world.init_resource::<area_instance::AreaInstanceTally>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
@@ -250,6 +282,20 @@ pub struct GameSettings {
     pub history_merges_within: Seconds,
     /// How many ways to go on the terminal offers at the most for a command being typed.
     pub suggestions: u32,
+    /// How long a character stays in the world once its player is gone, however they left. At
+    /// zero it is gone at once.
+    pub lingers_for: Seconds,
+    pub requests: social_request::RequestSettings,
+    pub chat: chat::ChatSettings,
+    /// How friends work. A game without it has no friends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub friends: Option<friend::FriendSettings>,
+    /// How messages work. A game without it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<inbox::MessageSettings>,
+    /// How parties work. A game without it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub party: Option<party::PartySettings>,
 }
 
 /// How much a player keeps.
@@ -336,6 +382,158 @@ pub struct GameWords {
     pub command_refuses: String,
     /// What a player is told typing more than a command takes: `{usage}` spells it out.
     pub command_takes: String,
+    /// The heading over what a player is told the game changing did to their character.
+    pub game_changed: String,
+    /// What a player is told of something they had that the game no longer has: the file `{name}` of the type `{kind}`.
+    pub gone: String,
+    /// What became of something the game has no place for: it is kept, and returns when it has.
+    pub kept_aside: String,
+    /// What a player is told as their bag, now `{slots}` slots, is one stack short of what they carried.
+    pub stack_did_not_fit: String,
+    /// What a player is told as their bag, now `{slots}` slots, is `{stacks}` stacks short of what they carried.
+    pub stacks_did_not_fit: String,
+    /// What a player is told as the class `{class}` no longer allows the skills they had learned.
+    pub skills_rearranged: String,
+    /// What became of skills a class no longer allows: all `{points}` points are handed back.
+    pub points_returned: String,
+    /// The button a player puts away what they were told the game changing did with.
+    pub carry_on: String,
+    /// What the plate of a character says whose player is gone.
+    pub away: String,
+    /// The heading of what players are told while the game cannot save.
+    pub not_saving: String,
+    /// What players are told is at stake while the game cannot save: everything since `{time}`.
+    pub not_saving_since: String,
+    /// What players are told they may do while the game cannot save.
+    pub play_on: String,
+    /// The heading of what players are told as the game saves again.
+    pub saved: String,
+    /// What players are told as the game saves again.
+    pub saved_again: String,
+    /// What a player is told asking something of `{name}`, who takes no request from them.
+    pub not_taking_requests: String,
+    /// What a player is told asking something of `{name}`, whom they keep away themselves.
+    pub you_blocked: String,
+    /// What a player is told asking `{name}` for what needs them at their character, as they
+    /// are not.
+    pub not_here: String,
+    /// What a request for friendship from `{name}` says to the player asked.
+    pub friendship_asks: String,
+    /// What a request for friendship says to the player who asked `{name}`.
+    pub friendship_asked: String,
+    /// What a player is told as their request for friendship is sent to `{name}`.
+    pub friendship_sent: String,
+    /// What a player is told as `{name}` accepts their request for friendship.
+    pub friendship_accepted: String,
+    /// What a player is told asking `{name}`, a friend already, to be their friend.
+    pub already_friends: String,
+    /// What a player is told as their friends list has no room for one more.
+    pub friends_full: String,
+    /// What a player is told asking for friendship with as many requests waiting as they may have.
+    pub too_many_friend_requests: String,
+    /// What a player is told sending a message that has no title.
+    pub message_needs_title: String,
+    /// What a player is told writing to someone who is neither a friend nor of their party.
+    pub only_to_friends: String,
+    /// What a player is told writing to `{name}`, who keeps them away.
+    pub not_taking_messages: String,
+    /// What a player is told writing to `{name}`, whose inbox has no room.
+    pub inbox_full: String,
+    /// What a player is told sending more messages within a minute than the game allows.
+    pub writing_too_fast: String,
+    /// What a player is told attaching `{item}`, which may not change hands.
+    pub stays_with_you: String,
+    /// What a player is told as their message to `{name}` is sent.
+    pub message_sent: String,
+    /// What a player is told as a message titled `{title}` arrives from `{name}`: `{key}` is the
+    /// key that opens the page it is read on.
+    pub message_arrived: String,
+    /// What a player is told taking what is attached to a message, as `{taken}` of `{attached}`
+    /// stacks fit their bag.
+    pub took_some: String,
+    /// The title of the message the game sends a player whose bag had no room for what they
+    /// carried.
+    pub did_not_fit_title: String,
+    /// The text of the message the game sends a player whose bag had no room for what they
+    /// carried.
+    pub did_not_fit_text: String,
+    /// What became of what a bag had no room for, in a game that has messages: it is sent to its
+    /// player in one.
+    pub sent_in_a_message: String,
+    /// What an invitation to a party from `{name}` says to the player invited.
+    pub party_invite_asks: String,
+    /// What an invitation to a party says to the player who invited `{name}`.
+    pub party_invite_asked: String,
+    /// What a player is told as `{name}` denies their invitation to a party.
+    pub party_invite_denied: String,
+    /// What a player is told as their invitation to `{name}` runs out unanswered.
+    pub party_invite_lapsed: String,
+    /// What a player is told inviting someone to a party that has no room.
+    pub party_full: String,
+    /// What a player is told inviting `{name}`, who is in a party.
+    pub in_a_party: String,
+    /// What the members of a party are told as `{name}` joins it.
+    pub party_joined: String,
+    /// What the members of a party are told as `{name}` leaves it.
+    pub party_left: String,
+    /// What the members of a party are told as its leader removes `{name}` from it.
+    pub party_removed: String,
+    /// What a player is told as the leader of their party removes them from it.
+    pub you_were_removed: String,
+    /// What the members of a party are told as its leader `{name}` ends it.
+    pub party_disbanded: String,
+    /// What the members of a party are told as `{name}` comes to lead it.
+    pub party_leads: String,
+    /// What the party's chat says to a player as they join the party `{name}` leads.
+    pub you_joined_party: String,
+    /// What chat says to a player as they leave their party.
+    pub you_left_party: String,
+    /// What a player is told saying more lines than the game lets them in a while.
+    pub chat_too_fast: String,
+    /// What a player is told calling a mount where the area bars its kind.
+    pub mount_barred_here: String,
+    /// What a player is told calling a mount that floats at a spot where nothing floats it.
+    pub no_water_in_reach: String,
+    /// What a rider is told calling a mount, or asking for a seat on one.
+    pub step_off_first: String,
+    /// What a rider is told stepping off where no ground lies within their mount's reach.
+    pub no_ground_in_reach: String,
+    /// What a player is told aiming a skill at a spot farther off than it reaches.
+    pub spot_too_far: String,
+    /// What a rider is told doing what their seat on `{mount}` does not let them.
+    pub not_from_mount: String,
+    /// What a request for a seat on their `{about}` from `{name}` says to its driver.
+    pub seat_asks: String,
+    /// What a request for a seat says to the player who asked `{name}` for one.
+    pub seat_asked: String,
+    /// What a player is told as `{name}` denies them a seat.
+    pub seat_denied: String,
+    /// What a player is told as their request for a seat from `{name}` runs out unanswered.
+    pub seat_lapsed: String,
+    /// What a player is told asking for a seat on a mount that has none free.
+    pub seats_taken: String,
+    /// What both are told as a seat is granted to someone no longer beside the mount.
+    pub seat_out_of_reach: String,
+    /// What a passenger is told as their driver `{name}` sets them down.
+    pub set_down_by: String,
+    /// What the plate of a driver says under their name while their mount has a seat free.
+    pub seat_free: String,
+    /// What a player is told at the door of their party's instance of `{area}`, which holds
+    /// `{holds}` and does already.
+    pub instance_full: String,
+    /// What a player is told at a door that would open an instance, while the server runs as
+    /// many as it is set to.
+    pub instances_busy: String,
+    /// What everyone inside an instance of `{area}` is told as its time runs out uncleared.
+    pub instance_timed_out: String,
+    /// What a player inside an instance reads once it is no longer theirs to be in.
+    pub instance_not_yours: String,
+    /// The title of the message the game sends a player whose bag had no room for what clearing
+    /// an instance of `{area}` gave them.
+    pub instance_rewards_title: String,
+    /// The text of the message the game sends a player whose bag had no room for what clearing
+    /// an instance of `{area}` gave them.
+    pub instance_rewards_text: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -480,7 +678,7 @@ pub fn server_app(
                     combat::request,
                     skill::requests,
                     item::use_item,
-                    item::drop_item,
+                    (item::drop_item, item::arrange_stacks).chain(),
                     (item::pickup_request, resource::gather_request).chain(),
                     interact::interact_request,
                     dialogue::requests,
@@ -492,12 +690,19 @@ pub fn server_app(
                     skill::reset::expire,
                     (actor::playing::progress, resource::swings, crafting::moves).chain(),
                     reach::mirror_engaged,
-                    (rewards::grant, quest::credit, npc::defeated).chain(),
+                    (
+                        rewards::grant,
+                        quest::credit,
+                        npc::defeated,
+                        area_instance::count_defeats,
+                    )
+                        .chain(),
                 )
                     .chain(),
                 tick::run,
                 (
                     item::pickups,
+                    mount::seat::boarding,
                     (resource::gathering, resource::work).chain(),
                     interact::interactions,
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
@@ -505,14 +710,27 @@ pub fn server_app(
                     (prompt::hold, crafting::hold, crafting::work).chain(),
                     item::expire_drops,
                     player::join,
+                    (
+                        save::notice::tell_returned,
+                        save::notice::tell_saving,
+                        society::view::greet,
+                        social_request::requests,
+                        friend::requests,
+                        inbox::requests,
+                        inbox::overflow,
+                        party::requests,
+                        mount::seat::requests,
+                        area_instance::requests,
+                        chat::channel::list,
+                    ),
+                    player::linger,
                     player::respawn,
                     (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
                     chat::hear,
                     (command::run, command::retire, command::complete::answer).chain(),
-                    chat::overhear,
-                    chat::rebroadcast,
+                    chat::speak,
                     belongings::notify_changes,
                     history::backfill,
                 )
@@ -546,6 +764,9 @@ fn tick_planners() -> Tick {
         script::RunFlows::default(),
         npc::body::DriveBodies::default(),
         movement::AdvanceWalks::default(),
+    ));
+    tick.add((
+        mount::CarryRiders::default(),
         stat::SettleVitals::default(),
         actor::SettleActions::default(),
         attention::MarkAttention::default(),
@@ -629,8 +850,11 @@ pub fn client_app(
         .add_plugins((
             screen::ClientScreenPlugin { credentials },
             area::render::AreaRenderPlugin,
-            actor::render::ActorRenderPlugin,
-            actor::plate::PlatePlugin,
+            (
+                actor::render::ActorRenderPlugin,
+                actor::portrait::PortraitPlugin,
+                actor::plate::PlatePlugin,
+            ),
             movement::MovementRenderPlugin,
             combat::render::CombatRenderPlugin,
             (
@@ -663,7 +887,19 @@ pub fn client_app(
             terminal::TerminalPlugin,
             frame_rate::FrameRatePlugin,
         ))
-        .add_plugins(area_map::AreaMapPlugin);
+        .add_plugins((
+            area_map::AreaMapPlugin,
+            party::frames::PartyFramesPlugin,
+            save::notice::SavingNoticePlugin,
+            social_request::card::plugin,
+            society::tab::plugin,
+            friend::page::plugin,
+            inbox::page::plugin,
+            party::page::plugin,
+            mount::render::MountRenderPlugin,
+            mount::plate::plugin,
+            area_instance::plate::plugin,
+        ));
     app
 }
 
@@ -778,6 +1014,7 @@ pub fn tables() -> ContentRegistry {
         .fixture::<interface::InterfaceSound>()
         .fixture::<interface::CursorShape>()
         .fixture::<interface::InterfaceIcon>()
+        .fixture::<chat::ChatChannel>()
         .fixture::<vfx::VfxFixture>()
         .fixture::<vfx::VfxShaderFixture>()
         .fixture::<area::world_map::WorldMap>()
@@ -788,6 +1025,7 @@ pub fn tables() -> ContentRegistry {
         .file::<input::map::InputDef>()
         .file::<interface::CursorDef>()
         .file::<interface::InterfaceIconDef>()
+        .file::<chat::ChatChannelDef>()
         .file::<item::ItemDef>()
         .named::<item::ItemDef>()
         .modules::<item::ItemDef>()
@@ -830,6 +1068,9 @@ pub fn tables() -> ContentRegistry {
         .file::<status::StatusEffectDef>()
         .named::<status::StatusEffectDef>()
         .modules::<status::StatusEffectDef>()
+        .file::<mount::MountDef>()
+        .named::<mount::MountDef>()
+        .modules::<mount::MountDef>()
         .list_kind(MODULES, "unknown module type", "a module type")
         .hook(LoadStep::Files, crate::core::content::media::check_media);
     crate::core::babble::content(&mut registry);
@@ -849,6 +1090,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, class::check_all)
         .hook(LoadStep::Across, npc::check_all)
         .hook(LoadStep::Across, skill::check_all)
+        .hook(LoadStep::Across, mount::check_all)
         .hook(LoadStep::Across, emote::check_all)
         .hook(LoadStep::Across, item::check_pictures)
         .hook(LoadStep::Across, item::check_looks)
@@ -896,6 +1138,63 @@ fn check_settings(loading: &mut Loading) {
     check.at_least("/drops/least_size", drops.least_size.0, 0.0, "meters");
     check.at_least("/drops/fades_for", drops.fades_for.0, 0.0, "seconds");
     check.at_least("/drops/names_reach", drops.names_reach.0, 0.0, "meters");
+    check.at_least(
+        "/requests/card_shows",
+        settings.requests.card_shows.0,
+        0.0,
+        "seconds",
+    );
+    check.at_least("/chat/lines", settings.chat.lines, 1, "lines");
+    check.at_least("/chat/within", settings.chat.within.0, 0.0, "seconds");
+    check.at_least(
+        "/chat/name_colors",
+        settings.chat.name_colors.len(),
+        1,
+        "colors",
+    );
+    if let Some(friends) = &settings.friends {
+        check.at_least("/friends/most", friends.most, 1, "friends");
+        check.at_least("/friends/requests", friends.requests, 1, "requests");
+        check.at_least(
+            "/friends/request_lasts",
+            friends.request_lasts.0,
+            0.0,
+            "seconds",
+        );
+    }
+    if let Some(messages) = &settings.messages {
+        check.at_least("/messages/inbox", messages.inbox, 1, "messages");
+        check.at_least(
+            "/messages/title_length",
+            messages.title_length,
+            1,
+            "characters",
+        );
+        check.at_least(
+            "/messages/text_length",
+            messages.text_length,
+            1,
+            "characters",
+        );
+        check.at_least("/messages/a_minute", messages.a_minute, 1, "messages");
+    }
+    if let Some(party) = &settings.party {
+        check.at_least("/party/size", party.size, 2, "members");
+        check.at_least("/party/invite_lasts", party.invite_lasts.0, 0.0, "seconds");
+        check.at_least("/party/absent_for", party.absent_for.0, 0.0, "seconds");
+        check.at_least(
+            "/party/experience/range",
+            party.experience.range.0,
+            0.0,
+            "meters",
+        );
+        check.at_least(
+            "/party/experience/bonus",
+            party.experience.bonus,
+            0.0,
+            "percent",
+        );
+    }
     settings.cards.check("/cards", &mut check);
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
@@ -922,7 +1221,79 @@ fn check_settings(loading: &mut Loading) {
         ("command_needs", &settings.words.command_needs),
         ("command_refuses", &settings.words.command_refuses),
         ("command_takes", &settings.words.command_takes),
-    ] {
+        ("game_changed", &settings.words.game_changed),
+        ("gone", &settings.words.gone),
+        ("kept_aside", &settings.words.kept_aside),
+        ("stack_did_not_fit", &settings.words.stack_did_not_fit),
+        ("stacks_did_not_fit", &settings.words.stacks_did_not_fit),
+        ("skills_rearranged", &settings.words.skills_rearranged),
+        ("points_returned", &settings.words.points_returned),
+        ("carry_on", &settings.words.carry_on),
+        ("away", &settings.words.away),
+        ("not_saving", &settings.words.not_saving),
+        ("not_saving_since", &settings.words.not_saving_since),
+        ("play_on", &settings.words.play_on),
+        ("saved", &settings.words.saved),
+        ("saved_again", &settings.words.saved_again),
+        ("not_taking_requests", &settings.words.not_taking_requests),
+        ("you_blocked", &settings.words.you_blocked),
+        ("not_here", &settings.words.not_here),
+        ("friendship_asks", &settings.words.friendship_asks),
+        ("friendship_asked", &settings.words.friendship_asked),
+        ("friendship_sent", &settings.words.friendship_sent),
+        ("friendship_accepted", &settings.words.friendship_accepted),
+        ("already_friends", &settings.words.already_friends),
+        ("friends_full", &settings.words.friends_full),
+        (
+            "too_many_friend_requests",
+            &settings.words.too_many_friend_requests,
+        ),
+        ("sent_in_a_message", &settings.words.sent_in_a_message),
+        ("party_invite_asks", &settings.words.party_invite_asks),
+        ("party_invite_asked", &settings.words.party_invite_asked),
+        ("party_invite_denied", &settings.words.party_invite_denied),
+        ("party_invite_lapsed", &settings.words.party_invite_lapsed),
+        ("party_full", &settings.words.party_full),
+        ("in_a_party", &settings.words.in_a_party),
+        ("party_joined", &settings.words.party_joined),
+        ("party_left", &settings.words.party_left),
+        ("party_removed", &settings.words.party_removed),
+        ("you_were_removed", &settings.words.you_were_removed),
+        ("party_disbanded", &settings.words.party_disbanded),
+        ("party_leads", &settings.words.party_leads),
+        ("you_joined_party", &settings.words.you_joined_party),
+        ("you_left_party", &settings.words.you_left_party),
+        ("chat_too_fast", &settings.words.chat_too_fast),
+        ("mount_barred_here", &settings.words.mount_barred_here),
+        ("no_water_in_reach", &settings.words.no_water_in_reach),
+        ("step_off_first", &settings.words.step_off_first),
+        ("no_ground_in_reach", &settings.words.no_ground_in_reach),
+        ("spot_too_far", &settings.words.spot_too_far),
+        ("not_from_mount", &settings.words.not_from_mount),
+        ("seat_asks", &settings.words.seat_asks),
+        ("seat_asked", &settings.words.seat_asked),
+        ("seat_denied", &settings.words.seat_denied),
+        ("seat_lapsed", &settings.words.seat_lapsed),
+        ("seats_taken", &settings.words.seats_taken),
+        ("seat_out_of_reach", &settings.words.seat_out_of_reach),
+        ("set_down_by", &settings.words.set_down_by),
+        ("seat_free", &settings.words.seat_free),
+        ("instance_full", &settings.words.instance_full),
+        ("instances_busy", &settings.words.instances_busy),
+        ("instance_timed_out", &settings.words.instance_timed_out),
+        ("instance_not_yours", &settings.words.instance_not_yours),
+        (
+            "instance_rewards_title",
+            &settings.words.instance_rewards_title,
+        ),
+        (
+            "instance_rewards_text",
+            &settings.words.instance_rewards_text,
+        ),
+    ]
+    .into_iter()
+    .chain(inbox::words(&settings.words))
+    {
         check.text(format!("/words/{field}"), said, 1, 80);
     }
     check_typing(&mut check, &settings.typing);
@@ -959,26 +1330,32 @@ fn check_settings(loading: &mut Loading) {
     for error in check.into_errors() {
         loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
     }
+    area_instance::check_all(loading, &content, settings);
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);
     }
 }
 
 fn check_typing(check: &mut RowCheck, typing: &Typing) {
-    check.at_least("/typing/slowest", typing.slowest.0, 1.0, "letters a second");
+    check.at_least(
+        "/typing/slowest",
+        typing.slowest.0,
+        1.0,
+        "characters a second",
+    );
     check.range(
         "/typing/fastest",
         typing.fastest.0,
         typing.slowest.0,
         f32::MAX,
-        "letters a second, no slower than the slowest",
+        "characters a second, no slower than the slowest",
     );
     check.range(
         "/typing/pace",
         typing.pace.0,
         typing.slowest.0,
         typing.fastest.0,
-        "letters a second, between the slowest and the fastest",
+        "characters a second, between the slowest and the fastest",
     );
     check.at_least("/typing/slow_by", typing.slow_by, 1.0, "times");
 }

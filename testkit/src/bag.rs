@@ -34,7 +34,7 @@ impl Sim {
         self.give(who, key, 1);
         let item = self.id::<ItemDef>(key);
         equipment::equip_from_bag(&mut self.world, who, item)
-            .unwrap_or_else(|refused| panic!("{key} is worn: {refused}"));
+            .unwrap_or_else(|refused| panic!("{key} is worn: {}", refused.plain_words()));
         self.tick();
     }
 

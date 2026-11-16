@@ -11,7 +11,6 @@ import bevy_pbr::render::{
 import engine::core::render::world::shade::lighting;
 
 struct PrintLight {
-    clip: vec4<f32>,
     lamp: vec3<f32>,
     even: f32,
     foil: f32,
@@ -55,11 +54,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let sampled = textureSample(print_texture, print_sampler, in.uv);
     let pattern = textureSample(foil_texture, foil_sampler, in.uv_b).r;
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    let at = in.uv_b;
-    if at.x < light.clip.x || at.y < light.clip.y || at.x >= light.clip.z || at.y >= light.clip.w {
-        discard;
-    }
-    let painted = vec4<f32>(gamma_from_linear(sampled.rgb), sampled.a) * in.color;
+    // Smoothed, a triangle is drawn in pixels whose middle lies just past its edge, where a
+    // colour that fades out toward that edge reads as less than none.
+    let tint = saturate(in.color);
+    let painted = vec4<f32>(gamma_from_linear(sampled.rgb), sampled.a) * tint;
     let cover = painted.a;
     let ink = linear_from_gamma(painted.rgb);
     let flat = ink / max(cover, 0.0001);

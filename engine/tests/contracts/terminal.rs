@@ -1,14 +1,18 @@
 use bevy_ecs::message::MessageCursor;
+use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
 use bevy_terminal::{
-    LineKind, LineSpeaker, TerminalCompletionRequest, TerminalCompletions, TerminalInput,
-    TerminalLine,
+    EMBED, LineKind, LineSpeaker, TerminalCompletionRequest, TerminalCompletions, TerminalEmbed,
+    TerminalInput, TerminalLine,
 };
 use engine::core::content::Content;
 use engine::core::net::auth::TokenClaims;
 use engine::core::units::MeterPos;
 use engine::systems::account::{AccountIdentity, RoleDef};
+use engine::systems::chat::{ChatChannel, ChatEmbed, ChatEmbedKind, ChatLocation, ChatSpeaker};
 use engine::systems::input::map::InputMap;
+use engine::systems::player::{self, AreaDrawn};
+use engine::systems::terminal::draft::ChatDraft;
 use engine::systems::{chat, command, movement, region, script};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
@@ -67,6 +71,8 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
         at.distance(theirs).0 < 1.5,
         "an actor is warped to where another stands: {at:?} by {theirs:?}"
     );
+    let conn = sim.conn(1);
+    sim.send(conn, AreaDrawn);
 
     send(&mut sim, 2, "/commands");
     sim.tick();
@@ -470,6 +476,161 @@ fn game() -> Game {
         )
 }
 
+#[test]
+fn a_player_says_only_so_many_lines_in_a_while_and_is_told_when_one_is_too_many() {
+    let mut sim = serving(game().load(), "camp");
+    sim.join(1);
+    sim.join(2);
+    let (typist, listener) = (sim.conn(1), sim.conn(2));
+    let mut cursor = MessageCursor::<ToClient<TerminalLine>>::default();
+    let mut shown = |sim: &mut Sim, text: &str| -> Vec<(Entity, LineKind)> {
+        send(sim, 1, text);
+        sim.read(&mut cursor)
+            .into_iter()
+            .map(|sent| (sent.client, sent.message.kind))
+            .collect()
+    };
+
+    for line in 1..=5 {
+        let heard = shown(&mut sim, &format!("line {line}"));
+        assert!(
+            heard.iter().any(|(conn, _)| *conn == listener),
+            "line {line}"
+        );
+    }
+    assert_eq!(
+        shown(&mut sim, "line 6"),
+        [(typist, LineKind::Failed)],
+        "a line too many is said to nobody, and whoever typed it is told so alone"
+    );
+    assert_eq!(
+        lines(&mut sim, 1).last(),
+        Some(&("You are writing too fast".to_owned(), LineKind::Failed))
+    );
+
+    send(&mut sim, 1, "/give potion");
+    sim.tick();
+    let me = sim.player(1);
+    assert_eq!(sim.count(me, "potion"), 1, "a command is no line");
+
+    sim.run(10.0);
+    let heard = shown(&mut sim, "line 7");
+    assert!(
+        heard.iter().any(|(conn, _)| *conn == listener),
+        "once the while is over they speak again"
+    );
+}
+
+#[test]
+fn a_line_reaches_its_hearers_with_the_things_set_in_it_unless_one_is_no_thing_of_the_game() {
+    let mut sim = serving(game().load(), "camp");
+    sim.join(1);
+    sim.join(2);
+    let listener = sim.conn(2);
+    let mut cursor = MessageCursor::<ToClient<TerminalLine>>::default();
+    let mut heard =
+        |sim: &mut Sim, embeds: Vec<TerminalEmbed>| -> Vec<(String, Vec<TerminalEmbed>)> {
+            send_holding(sim, 1, &format!("who wants a {EMBED}?"), embeds);
+            sim.read(&mut cursor)
+                .into_iter()
+                .filter(|sent| sent.client == listener)
+                .map(|sent| (sent.message.text, sent.message.embeds))
+                .collect()
+        };
+    let thing = |kind: &str, key: &str| TerminalEmbed {
+        kind: kind.to_owned(),
+        key: key.to_owned(),
+    };
+    let potion = thing("item", "potion.item.json");
+
+    assert_eq!(
+        heard(&mut sim, vec![potion.clone()]),
+        vec![(format!("who wants a {EMBED}?"), vec![potion])],
+        "a hearer is told what the line holds where the line marks it"
+    );
+    for unknown in [
+        thing("item", "elixir.item.json"),
+        thing("quest", "potion.item.json"),
+        thing("spell", "potion.item.json"),
+    ] {
+        assert_eq!(
+            heard(&mut sim, vec![unknown.clone()]),
+            Vec::new(),
+            "a line holding {unknown:?}, which the game does not have, reaches nobody"
+        );
+    }
+
+    let content = sim.world.resource::<Content>().clone();
+    let speaker = sim.player(1);
+    let stands = movement::position(&sim.world, speaker).expect("somewhere");
+    let elsewhere = ChatEmbed::Location(ChatLocation {
+        area: content.by_path(&path("area", "wood")).expect("the wood"),
+        x: 4,
+        y: 4,
+    });
+    let told: Vec<Option<ChatEmbed>> = heard(&mut sim, vec![elsewhere.sent(&content)])
+        .iter()
+        .flat_map(|(_, held)| held)
+        .map(|sent| ChatEmbed::read(&content, sent))
+        .collect();
+    assert_eq!(
+        told,
+        [Some(ChatEmbed::Location(ChatLocation {
+            area: content.by_path(&path("area", "camp")).expect("the camp"),
+            x: stands.x.round() as i32,
+            y: stands.y.round() as i32,
+        }))],
+        "a location a line holds is where its speaker stands, whatever their client sent"
+    );
+}
+
+#[test]
+fn a_thing_set_in_a_line_being_typed_is_held_whole_and_sent_as_a_mark_in_its_place() {
+    let content = game().load();
+    let potion =
+        ChatEmbed::of(&content, ChatEmbedKind::Item, "potion.item.json").expect("the potion");
+    let held = |draft: &ChatDraft| draft.held().collect::<Vec<_>>();
+    let mut draft = ChatDraft::default();
+    draft.write("selling ".to_owned());
+
+    assert_eq!(draft.add(potion, "Potion"), 14, "the caret goes after it");
+    assert_eq!(draft.text(), "selling Potion");
+
+    assert_eq!(draft.retyped("selling Potion cheap", 20), None);
+    assert_eq!(draft.retyped("now selling Potion cheap", 4), None);
+    assert_eq!(
+        held(&draft),
+        vec![(12..18, potion)],
+        "typing round a thing leaves it be, wherever that moves it"
+    );
+    assert_eq!(
+        [12, 14, 18].map(|caret| draft.kept_out(caret)),
+        [12, 18, 18],
+        "a caret rests before a thing or after it, never inside its name"
+    );
+    let sent = TerminalEmbed {
+        kind: "item".to_owned(),
+        key: "potion.item.json".to_owned(),
+    };
+    assert_eq!(
+        draft.sent(&content),
+        (format!("now selling {EMBED} cheap"), vec![sent]),
+        "a line is sent with a mark where each thing stands, and the things in their order"
+    );
+
+    assert_eq!(
+        draft.retyped("now selling Potio cheap", 17),
+        Some(12),
+        "erasing right after a thing takes the whole of it out, and the caret to where it stood"
+    );
+    assert_eq!(draft.text(), "now selling  cheap");
+    assert_eq!(held(&draft), Vec::new());
+    assert_eq!(
+        draft.sent(&content),
+        ("now selling  cheap".to_owned(), Vec::new())
+    );
+}
+
 /// The server of one of the game's areas, running what takes a terminal's lines and runs its
 /// commands.
 fn serving(content: Content, area: &str) -> Sim {
@@ -477,18 +638,20 @@ fn serving(content: Content, area: &str) -> Sim {
     sim.serve(area)
         .accept::<TerminalInput>()
         .accept::<TerminalCompletionRequest>()
+        .accept::<AreaDrawn>()
         .message::<bevy_terminal::TerminalSaid>()
         .message::<bevy_terminal::TerminalCommanded>()
         .message::<ToClient<TerminalLine>>()
+        .message::<ToClient<ChatSpeaker>>()
         .message::<ToClient<TerminalCompletions>>()
         .message::<ToClient<engine::systems::item::ItemShown>>()
         .add((
             chat::hear,
-            chat::overhear,
-            chat::rebroadcast,
+            chat::speak,
             command::run,
             command::retire,
             command::complete::answer,
+            player::arrival_holds,
         ))
         .plan(script::RunFlows::default());
     chat::route_lines(&mut sim.world);
@@ -498,11 +661,19 @@ fn serving(content: Content, area: &str) -> Sim {
 
 /// The client sends `line` through its terminal, and the server takes it.
 fn send(sim: &mut Sim, client: u32, line: &str) {
+    send_holding(sim, client, line, Vec::new());
+}
+
+/// The client sends `line` through its terminal with `embeds` set at its marks, and the server
+/// takes it.
+fn send_holding(sim: &mut Sim, client: u32, line: &str, embeds: Vec<TerminalEmbed>) {
     let conn = sim.conn(client);
     sim.send(
         conn,
         TerminalInput {
             text: line.to_owned(),
+            channel: ChatChannel::Area.terminal(),
+            embeds,
         },
     );
     sim.tick();

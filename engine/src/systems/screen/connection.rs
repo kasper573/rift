@@ -58,7 +58,13 @@ pub struct PendingSession {
     task: Task<Result<String, FetchFailure>>,
 }
 
+/// Set while the server last refused a session because it could not read what it has saved of
+/// the account.
+#[derive(Resource)]
+struct RecordsUnreachable;
+
 fn begin_session(world: &mut World) {
+    world.remove_resource::<RecordsUnreachable>();
     let Some(credentials) = world.get_resource::<Credentials>().cloned() else {
         error!("no access token; cannot open a session");
         return;
@@ -105,6 +111,10 @@ pub(super) fn poll_session(world: &mut World) {
                 .resource_mut::<NextState<ClientScreen>>()
                 .set(ClientScreen::SigningIn);
         }
+        Err(FetchFailure::Status { status: 503, body }) => {
+            info!("the server refused the session: {body}");
+            world.insert_resource(RecordsUnreachable);
+        }
         // Loading again finds out what changed, and catches the client up or relaunches it.
         Err(FetchFailure::Status { status: 409, body }) => {
             info!("the server refused the session: {body}");
@@ -149,11 +159,20 @@ fn connection_lost(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
+    let (title, line, action) = if world.contains_resource::<RecordsUnreachable>() {
+        (
+            "The game cannot reach its records",
+            "Nothing of yours is lost. Try again in a moment.",
+            "Try again",
+        )
+    } else {
+        ("Connection lost", "Reconnecting…", "Retry now")
+    };
     let notice = Notice {
-        title: "Connection lost",
-        lines: &["Reconnecting…".to_owned()],
+        title,
+        lines: &[line.to_owned()],
         notes: &[],
-        action: Some("Retry now"),
+        action: Some(action),
     };
     let retry = notice_screen(&gui, "lost", world.resource::<Backdrop>().0, notice);
     if retry {

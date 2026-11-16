@@ -192,7 +192,7 @@ pub fn columns<const N: usize>(ui: &Ui, room: Rect, widths: [f32; N]) -> ([Pane;
     )
 }
 
-fn bars(ui: &mut Ui) {
+pub(crate) fn bars(ui: &mut Ui) {
     let scroll = &mut ui.spacing_mut().scroll;
     scroll.bar_width = BAR;
     scroll.bar_inner_margin = 0.0;
@@ -455,6 +455,8 @@ pub struct Tab<T> {
     pub shut_because: Option<String>,
     pub icon: Option<TextureId>,
     pub keys: Option<String>,
+    /// How much waits on the tab, counted on its face however little room it has.
+    pub badge: Option<String>,
 }
 
 impl<T> Tab<T> {
@@ -465,6 +467,7 @@ impl<T> Tab<T> {
             shut_because: None,
             icon: None,
             keys: None,
+            badge: None,
         }
     }
 }
@@ -549,6 +552,7 @@ struct TabFace {
     icon: Option<TextureId>,
     label: Option<Arc<Galley>>,
     cap: Option<Arc<Galley>>,
+    badge: Option<Arc<Galley>>,
 }
 
 impl TabFace {
@@ -560,6 +564,10 @@ impl TabFace {
             icon: tab.icon,
             label,
             cap: keys.map(|keys| controls::key_galley(ui, keys, ink::INK3)),
+            badge: tab.badge.as_ref().map(|count| {
+                let face = TextRole::Small.font_id();
+                ui.painter().layout_no_wrap(count.clone(), face, ink::LIGHT)
+            }),
         }
     }
 
@@ -567,7 +575,8 @@ impl TabFace {
         let icon = self.icon.map(|_| Vec2::splat(TAB_ICON));
         let label = self.label.as_ref().map(|label| label.size());
         let cap = self.cap.as_ref().map(controls::key_cap_size);
-        [icon, label, cap].into_iter().flatten()
+        let badge = self.badge.as_ref().map(badge_size);
+        [icon, label, cap, badge].into_iter().flatten()
     }
 
     fn size(&self, size: TabSize) -> Vec2 {
@@ -670,6 +679,14 @@ fn tab_button<T>(
         let cap_size = controls::key_cap_size(&cap);
         let at = Pos2::new(left, middle - cap_size.y / 2.0);
         controls::paint_key_cap(painter, Rect::from_min_size(at, cap_size), cap, ink::INK3);
+        left += cap_size.x + TAB_GAP;
+    }
+    if let Some(badge) = face.badge {
+        let size = badge_size(&badge);
+        let pill = Rect::from_min_size(Pos2::new(left, middle - size.y / 2.0), size);
+        painter.rect_filled(pill, size.y / 2.0, ink::RUBRIC);
+        let at = pill.center() - badge.size() / 2.0;
+        painter.galley(at, badge, ink::LIGHT);
     }
     if response.has_focus() {
         controls::focus_ring(painter, rect, radius);
@@ -677,8 +694,15 @@ fn tab_button<T>(
     response
 }
 
+/// The room a tab's count takes: a pill round its digits, a circle round one.
+fn badge_size(count: &Arc<Galley>) -> Vec2 {
+    let tall = count.size().y + 2.0;
+    Vec2::new((count.size().x + BADGE_PADDING).max(tall), tall)
+}
+
 const TAB_ICON: f32 = 18.0;
 const TAB_GAP: f32 = 7.0;
+const BADGE_PADDING: f32 = 10.0;
 
 pub fn section(ui: &mut Ui, text: &str) {
     section_with(ui, text, |_| ());

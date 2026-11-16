@@ -9,7 +9,7 @@ use ui::drag;
 use ui::egui;
 use ui::egui::{Rect, Response, Ui};
 use ui::face::{self, TextRole};
-use ui::glyph::CardKind;
+use ui::glyph::{self, CardKind, Mark};
 use ui::ink;
 use ui::sheet::Depth;
 
@@ -20,15 +20,19 @@ use crate::core::math::ColorGradient;
 use crate::core::stage::card::HungCardLamp;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::GameSettings;
+use crate::systems::chat::ChatEmbed;
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::{Condition, condition};
 use crate::systems::skill::{self, SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status;
+use crate::systems::terminal::chat;
+use crate::systems::text::LineText;
 
 pub(crate) const WINDOW_KEY: &str = "Item";
 
@@ -101,8 +105,15 @@ pub fn inspect(world: &mut World, response: Response, item: ItemId) -> Response 
     if map::clicked(world, InputAction::InspectItem, &response) {
         open(world, item, Some(response.rect));
     }
+    chat_shortcut(world, &response, &[item]);
     tooltip(world, &response, item);
     response
+}
+
+/// Sets the items `response` shows in chat once the player asks for it there, wherever items
+/// are drawn. `response` must sense clicks.
+pub fn chat_shortcut(world: &mut World, response: &Response, items: &[ItemId]) {
+    chat::shortcut(world, response, items.iter().copied().map(ChatEmbed::Item));
 }
 
 pub fn tooltip(world: &mut World, response: &Response, item: ItemId) {
@@ -116,7 +127,7 @@ pub fn tooltip_noted(
     world: &mut World,
     response: &Response,
     item: ItemId,
-    notes: impl IntoIterator<Item = String>,
+    notes: impl IntoIterator<Item = LineText>,
     hint: Option<&StyledLine>,
 ) {
     let content = world.resource::<Content>().clone();
@@ -126,9 +137,10 @@ pub fn tooltip_noted(
         .icon
         .as_ref()
         .and_then(|icon| gui::image(world, icon));
-    let lines: Vec<String> = std::iter::once(format!("{} · {}", rarity.name, overview(def)))
-        .chain(notes)
-        .collect();
+    let lines: Vec<LineText> =
+        std::iter::once(format!("{} · {}", rarity.name, overview(def)).into())
+            .chain(notes)
+            .collect();
     hud::tooltip_marked(response, world, &def.name, mark.as_ref(), &lines, hint);
 }
 
@@ -151,10 +163,12 @@ fn worn_as(wear: &Wear) -> String {
 }
 
 pub fn inspect_hint() -> Vec<TextPiece> {
-    vec![
+    let mut hint = vec![
         input(InputAction::InspectItem),
-        TextPiece::text(" for more information"),
-    ]
+        TextPiece::text(" for more information · "),
+    ];
+    hint.extend(chat::shortcut_hint());
+    hint
 }
 
 pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
@@ -173,8 +187,36 @@ pub fn kind(def: &ItemDef) -> CardKind {
     }
 }
 
+/// An item's card, the same wherever it shows: a view that has more to say of the item says it
+/// beside the card, never on it.
 pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> CardResponse {
-    show_noted(ui, world, item, look, &[])
+    let content = world.resource::<Content>().clone();
+    let def = item.get(&content);
+    let held = session::me(world)
+        .and_then(|me| world.get::<Inventory>(me))
+        .map_or(0, |bag| bag.count(item));
+    let tally = (def.stack_max() > 1 && held > 0).then(|| format!("{held} held"));
+    let mut card = face_of(&content, world, item, look);
+    card.tally = tally.as_deref();
+    card.action = Some(chat::card_action());
+    let shown = card.show(ui, |ui, plate| {
+        summary(ui, &content, item, plate);
+        let viewer = session::me(world);
+        details_named(ui, world, &content, item, |requirement| {
+            let viewer = viewer?;
+            Some(condition::holds(world, viewer, requirement))
+        });
+        grants(ui, world, &content, item, plate);
+        if let Some(verb) = use_verb(def) {
+            let hint = StyledLine::new(vec![
+                input(InputAction::UseItem),
+                TextPiece::text(format!(" in your inventory to {verb}")),
+            ]);
+            foot(ui, world, &hint);
+        }
+    });
+    chat::offered(world, &shown, ChatEmbed::Item(item));
+    shown
 }
 
 /// The colour behind the picture on an item's card, by the type of item: it stands in place of
@@ -195,61 +237,6 @@ impl ItemTypeArtColors {
             ItemKind::Resource => self.resource,
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ItemCardNote {
-    pub text: String,
-    pub tone: CardNoteTone,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CardNoteTone {
-    Plain,
-    Strong,
-    Warning,
-}
-
-pub fn show_noted(
-    ui: &mut Ui,
-    world: &mut World,
-    item: ItemId,
-    look: CardLook,
-    notes: &[ItemCardNote],
-) -> CardResponse {
-    let content = world.resource::<Content>().clone();
-    let def = item.get(&content);
-    let held = session::me(world)
-        .and_then(|me| world.get::<Inventory>(me))
-        .map_or(0, |bag| bag.count(item));
-    let tally = (def.stack_max() > 1 && held > 0).then(|| format!("{held} held"));
-    let mut card = face_of(&content, world, item, look);
-    card.tally = tally.as_deref();
-    card.show(ui, |ui, plate| {
-        summary(ui, &content, item, plate);
-        // Ahead of the item's own lines, so a long card never cuts off what the view has to say.
-        for note in notes {
-            let text = match note.tone {
-                CardNoteTone::Plain => TextRole::CardBody.rich(&note.text).color(ink::INK),
-                CardNoteTone::Strong => face::bold(&note.text).size(TextRole::CardBody.size()),
-                CardNoteTone::Warning => TextRole::CardBody.rich(&note.text).color(ink::RUBRIC),
-            };
-            ui.add(egui::Label::new(text).wrap());
-        }
-        let viewer = session::me(world);
-        details(ui, &content, item, |requirement| {
-            let viewer = viewer?;
-            Some(condition::holds(world, viewer, requirement))
-        });
-        grants(ui, world, &content, item, plate);
-        if let Some(verb) = use_verb(def) {
-            let hint = StyledLine::new(vec![
-                input(InputAction::UseItem),
-                TextPiece::text(format!(" in your inventory to {verb}")),
-            ]);
-            foot(ui, world, &hint);
-        }
-    })
 }
 
 /// The face of an item's card: drawn in the style its rarity names, on its item type's colour
@@ -294,11 +281,60 @@ pub fn details(
     item: ItemId,
     meets: impl Fn(&Condition) -> Option<bool>,
 ) {
+    details_drawn(ui, content, item, meets, |ui, met, line| {
+        let words = line.plain_words();
+        match met {
+            Some(met) => card::requirement(ui, met, &words),
+            None => card::fact(ui, &words),
+        }
+    });
+}
+
+/// `details` for a reader in the game, whose lines name what they mention.
+pub fn details_named(
+    ui: &mut Ui,
+    world: &World,
+    content: &Content,
+    item: ItemId,
+    meets: impl Fn(&Condition) -> Option<bool>,
+) {
+    details_drawn(ui, content, item, meets, |ui, met, line| {
+        detail_line(ui, world, met, line)
+    });
+}
+
+/// A line of a card's facts: a requirement with the mark of whether it is met, or else a fact.
+pub fn detail_line(ui: &mut Ui, world: &World, met: Option<bool>, line: &LineText) {
+    let Some(met) = met else {
+        let look = TextLook::role(TextRole::CardBody, ink::INK);
+        text::show(ui, world, &line.styled(), look, None);
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let (mark, color) = if met {
+            (Mark::Check, ink::VERDIGRIS)
+        } else {
+            (Mark::Cross, ink::VERMILION)
+        };
+        glyph::show(ui, mark, 12.0, color);
+        let look = TextLook::role(TextRole::CardBody, color);
+        text::show(ui, world, &line.styled(), look, None);
+    });
+}
+
+fn details_drawn(
+    ui: &mut Ui,
+    content: &Content,
+    item: ItemId,
+    meets: impl Fn(&Condition) -> Option<bool>,
+    mut line: impl FnMut(&mut Ui, Option<bool>, &LineText),
+) {
     let def = item.get(content);
     if let Some(flavor) = def.flavor() {
         card::flavour(ui, flavor);
     }
-    facts(ui, content, item, def, meets);
+    facts(ui, content, item, def, meets, &mut line);
 }
 
 /// The skills an item lends while worn. Answers each one's line, for a reader who may take the
@@ -337,6 +373,12 @@ pub struct CardLook {
 impl CardLook {
     pub const PINNED: CardLook = CardLook {
         closable: true,
+        depth: Depth::Front,
+    };
+
+    /// A card that is part of what stands around it, and goes when that does.
+    pub const DOCKED: CardLook = CardLook {
+        closable: false,
         depth: Depth::Front,
     };
 }
@@ -410,6 +452,7 @@ fn facts(
     item: ItemId,
     def: &ItemDef,
     meets: impl Fn(&Condition) -> Option<bool>,
+    line: &mut impl FnMut(&mut Ui, Option<bool>, &LineText),
 ) {
     let boosts = status::boosts_of(content, item);
     match &def.kind {
@@ -419,16 +462,15 @@ fn facts(
                 card::fact(ui, &modifier(*boost));
             }
             if let Some(requirement) = requires {
-                let line = format!("Requires {}", condition::describe(content, requirement));
-                match meets(requirement) {
-                    Some(met) => card::requirement(ui, met, &line),
-                    None => card::fact(ui, &line),
-                }
+                let requires = LineText::plain("Requires ")
+                    .then(LineText::from(&condition::describe(content, requirement)));
+                line(ui, meets(requirement), &requires);
             }
         }
         ItemKind::Usable { casts: None } => {}
         ItemKind::Usable { casts: Some(skill) } => {
-            card::fact(ui, &format!("Casts {}", skill.get(content).name))
+            let casts = LineText::plain("Casts ").then(Mention::Skill(*skill).span(content));
+            line(ui, None, &casts);
         }
         ItemKind::Resource => {
             for boost in &boosts {

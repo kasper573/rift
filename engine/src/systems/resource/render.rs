@@ -7,17 +7,17 @@ use ui::egui;
 use ui::face::TextRole;
 use ui::{float, ink, paint, slip};
 
-use super::{Left, Resource, ResourceId, StopGathering, Working, workers};
+use super::{Left, Resource, ResourceAfloat, ResourceId, StopGathering, Working, workers};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::render::{ground_height, window_point, world_point};
+use crate::core::render::{ground_height, surface_height, window_point, world_point};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::Meters;
-use crate::systems::actor::Hitbox;
 use crate::systems::actor::plate::PlateLabel;
+use crate::systems::actor::{Aloft, Hitbox};
 use crate::systems::hud;
 use crate::systems::input::map::{InputAction, input};
 use crate::systems::movement::{Position, RenderPosition};
@@ -119,14 +119,25 @@ fn dress(
     ));
 }
 
+/// Stands every resource where it is: on the ground, or on the water's surface for one that
+/// lies on water, which is where its plate and the pointer find it too.
 fn stand(world: &mut World) {
-    let standing: Vec<(Entity, Pos<Meters>)> = world
-        .query_filtered::<(Entity, &Position), With<Resource>>()
+    let standing: Vec<(Entity, Pos<Meters>, bool)> = world
+        .query_filtered::<(Entity, &Position, Has<ResourceAfloat>), With<Resource>>()
         .iter(world)
-        .map(|(entity, position)| (entity, position.pos))
+        .map(|(entity, position, afloat)| (entity, position.pos, afloat))
         .collect();
-    for (entity, at) in standing {
-        let at = world_point(at, ground_height(world, at));
+    for (entity, at, afloat) in standing {
+        let height = if afloat {
+            let surface = Aloft(surface_height(world, at));
+            if world.get::<Aloft>(entity) != Some(&surface) {
+                world.entity_mut(entity).insert(surface);
+            }
+            surface.0
+        } else {
+            ground_height(world, at)
+        };
+        let at = world_point(at, height);
         if let Some(mut transform) = world.get_mut::<Transform>(entity)
             && transform.translation != at
         {
@@ -156,7 +167,9 @@ fn draw_bars(world: &mut World) {
         gui::world_area(world, ("work bar", worker))
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(feet.x, feet.y + BAR_DROP))
-            .show(&gui, |ui| paint::progress_line(ui, BAR, share, ink::GOLD));
+            .show(&gui, |ui| {
+                paint::progress_line(ui, BAR, share, ink::GOLD);
+            });
     }
 }
 

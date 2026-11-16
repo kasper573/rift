@@ -21,10 +21,11 @@ use super::uniform::{
     LIMBS_PER_TREAD, PICTURE_WIDTH, TRAIL_EVERY, TRAIL_POINTS, TREADS, Tread, TreadingLimb,
     Weather, WeatherImage, texel_bytes,
 };
-use crate::core::render::CameraRig;
 use crate::core::render::sample::UploadedBytes;
+use crate::core::render::world::afloat::Afloat;
 use crate::core::render::world::body::Body;
 use crate::core::render::world::sky::Daylight;
+use crate::core::render::{CameraRig, GroundHeights, ground_pos};
 
 /// The weather over the shown area as the client draws it: the wind as a direction over the
 /// ground (x east, y south) scaled by its strength, from calm at 0 to a gale at 1, how much cloud
@@ -59,7 +60,8 @@ pub(super) struct WeatherSources<'w, 's> {
     shelter: Res<'w, Shelter>,
     daylight: Option<Res<'w, Daylight>>,
     rig: Option<Res<'w, CameraRig>>,
-    bodies: Query<'w, 's, (Entity, &'static GlobalTransform, &'static Body)>,
+    ground: Option<Res<'w, GroundHeights>>,
+    bodies: Query<'w, 's, (Entity, &'static GlobalTransform, &'static Body, Has<Afloat>)>,
     lying: Query<'w, 's, (&'static GlobalTransform, &'static PartsCover)>,
     joints: Query<'w, 's, &'static GlobalTransform>,
 }
@@ -69,6 +71,10 @@ pub(super) struct WeatherSources<'w, 's> {
 #[derive(Resource, Clone, Default, ExtractResource)]
 #[extract_app(RenderApp)]
 pub(super) struct WeatherWrites(Vec<(usize, Vec<Vec4>)>);
+
+/// How far over the ground or the water a body is drawn before it no longer treads them: what
+/// flies leaves no trail on what lies under it.
+const CARRIED_OVER: f32 = 0.5;
 
 /// How fast the gusts travel over the ground in the lightest wind, and how much faster in a gale,
 /// in metres a second.
@@ -93,6 +99,7 @@ pub(super) fn blow(
         shelter,
         daylight,
         rig,
+        ground,
         bodies,
         lying,
         joints,
@@ -101,15 +108,15 @@ pub(super) fn blow(
     // On the clock the shaders read the time by, so a trail's age is the frame's time less when
     // it was laid.
     let now = time.elapsed_secs_wrapped();
-    let mut nearest: Vec<(f32, Entity, &GlobalTransform, &Body)> = bodies
+    let mut nearest: Vec<(f32, Entity, &GlobalTransform, Option<&Body>)> = bodies
         .iter()
-        .filter(|(_, _, body)| !body.limbs().is_empty())
-        .map(|(entity, placed, body)| {
+        .filter(|(_, _, body, _)| !body.limbs().is_empty())
+        .map(|(entity, placed, body, afloat)| {
             (
                 placed.translation().distance_squared(subject),
                 entity,
                 placed,
-                body,
+                (!afloat).then_some(body),
             )
         })
         .collect();
@@ -132,10 +139,20 @@ pub(super) fn blow(
             .into_iter()
             .map(|(_, entity, placed, body)| {
                 let trail = trails.entry(entity).or_default();
-                lay_trail(trail, placed.translation().xz(), now);
+                let stands = placed.translation();
+                let carried_over = ground.as_ref().is_some_and(|ground| {
+                    stands.y > ground.surface_at(ground_pos(stands)).0 + CARRIED_OVER
+                });
+                if !carried_over {
+                    lay_trail(trail, stands.xz(), now);
+                }
+                let trod = match body {
+                    Some(body) => tread(placed, body, &joints),
+                    None => borne(placed),
+                };
                 Tread {
                     trail: trail.clone(),
-                    ..tread(placed, body, &joints)
+                    ..trod
                 }
             })
             .chain(
@@ -292,6 +309,17 @@ fn tread(placed: &GlobalTransform, body: &Body, joints: &Query<&GlobalTransform>
         ground,
         reach,
         limbs,
+        trail: Vec::new(),
+    }
+}
+
+/// A body afloat where it is `placed`: the water bears it, so no limb of it breaks the surface,
+/// and all it leaves is its trail.
+fn borne(placed: &GlobalTransform) -> Tread {
+    Tread {
+        ground: placed.translation().xz(),
+        reach: 0.0,
+        limbs: Vec::new(),
         trail: Vec::new(),
     }
 }

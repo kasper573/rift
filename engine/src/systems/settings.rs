@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::iter;
 use ui::egui;
 use ui::float::Hinted;
@@ -17,16 +17,20 @@ use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::render::video::{self, VideoPreferences};
 use crate::core::render::{CameraPreferences, CameraRig};
-use crate::core::text::{LettersPerSecond, Typing};
+use crate::core::text::{CharactersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
 use crate::systems::area_map::MapReachStep;
+use crate::systems::chat::ChatEmbedKind;
 use crate::systems::hud;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::plates::ItemNaming;
 use crate::systems::item::rarity::{ItemRarityDef, RarityRank};
+use crate::systems::player::session;
 use crate::systems::skill::HotbarSlot;
+use crate::systems::social_request::{self, setting::SocialChoice};
+use crate::systems::society::SocietyView;
 
 const SLIDER_WIDTH: f32 = 120.0;
 const ROW_GAP: f32 = 8.0;
@@ -130,22 +134,37 @@ impl MenuTab for SettingsMenuTab {
         InputAction::OpenSettings
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let typing = world.get_resource::<Typing>().copied();
-        let rarities = rarities(world.resource::<Content>());
-        let turn_ease = world
-            .get_resource::<CameraRig>()
-            .map(|rig| rig.framing().turn_ease);
+        let game = GameSide {
+            typing: world.get_resource::<Typing>().copied(),
+            turn_ease: world
+                .get_resource::<CameraRig>()
+                .map(|rig| rig.framing().turn_ease),
+            rarities: rarities(world.resource::<Content>()),
+            tabs: hud::menu::tab_names(world),
+            society: session::my_character(world)
+                .and_then(|me| me.get::<SocietyView>())
+                .cloned(),
+        };
         let ([], pane) = sheet::columns(ui, ui.available_rect_before_wrap(), []);
+        let mut chosen = None;
         sheet::scroll_pane(ui, pane, egui::ScrollArea::vertical(), |ui| {
-            show_settings(
-                ui,
-                &mut world.resource_mut::<UserSettings>(),
-                typing,
-                turn_ease,
-                &rarities,
-            )
+            chosen = show_settings(ui, &mut world.resource_mut::<UserSettings>(), &game);
         });
+        if let Some(chosen) = chosen {
+            chosen.send(world);
+        }
     }
+}
+
+/// What the settings show that is the game's or the server's to say, not the device's.
+struct GameSide {
+    typing: Option<Typing>,
+    turn_ease: Option<Seconds>,
+    rarities: Vec<(RarityRank, String)>,
+    /// The menu's tabs, as the game has them.
+    tabs: Vec<MenuTabName>,
+    /// How the player's account stands in society, once the server has said.
+    society: Option<SocietyView>,
 }
 
 /// The game's rarities by name, the lowest rank first.
@@ -164,49 +183,40 @@ fn rarities(content: &Content) -> Vec<(RarityRank, String)> {
 fn show_settings(
     ui: &mut Ui,
     settings: &mut Mut<UserSettings>,
-    typing: Option<Typing>,
-    turn_ease: Option<Seconds>,
-    rarities: &[(RarityRank, String)],
-) {
+    game: &GameSide,
+) -> Option<SocialChoice> {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     if ui.available_width() < 2.0 * COLUMN + sheet::GUTTER {
         ui.spacing_mut().item_spacing.x = ROW_GAP;
-        show_first_column(ui, settings, typing, turn_ease, rarities);
+        show_first_column(ui, settings, game);
         ui.add_space(SECTION_GAP);
-        show_second_column(ui, settings);
-        return;
+        return show_second_column(ui, settings, game);
     }
     ui.spacing_mut().item_spacing.x = sheet::GUTTER;
     ui.columns(2, |columns| {
         let [left, right] = columns else {
-            return;
+            return None;
         };
         left.spacing_mut().item_spacing.x = ROW_GAP;
         right.spacing_mut().item_spacing.x = ROW_GAP;
-        show_first_column(left, settings, typing, turn_ease, rarities);
-        show_second_column(right, settings);
-    });
+        show_first_column(left, settings, game);
+        show_second_column(right, settings, game)
+    })
 }
 
-fn show_first_column(
-    ui: &mut Ui,
-    settings: &mut Mut<UserSettings>,
-    typing: Option<Typing>,
-    turn_ease: Option<Seconds>,
-    rarities: &[(RarityRank, String)],
-) {
+fn show_first_column(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: &GameSide) {
     sheet::section(ui, "Interface");
-    show_interface(ui, settings, typing);
+    show_interface(ui, settings, game);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "HUD");
     show_hud(ui, settings);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "Items on the ground");
-    show_items(ui, settings, rarities);
+    show_items(ui, settings, &game.rarities);
     ui.add_space(SECTION_GAP);
     sheet::section(ui, "Camera");
     controls::form(ui, ("settings", "camera"), |ui| {
-        if let Some(turn_ease) = turn_ease {
+        if let Some(turn_ease) = game.turn_ease {
             let label = ui.label("Camera smoothing");
             smoothing_slider(ui, settings, turn_ease, label.id);
             ui.end_row();
@@ -214,7 +224,11 @@ fn show_first_column(
     });
 }
 
-fn show_second_column(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+fn show_second_column(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    game: &GameSide,
+) -> Option<SocialChoice> {
     sheet::section(ui, "Chat");
     show_chat(ui, settings);
     ui.add_space(SECTION_GAP);
@@ -234,12 +248,17 @@ fn show_second_column(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
             ui.end_row();
         }
     });
+    let society = game.society.as_ref()?;
+    ui.add_space(SECTION_GAP);
+    sheet::section(ui, "Social");
+    social_request::setting::section(ui, society, true)
 }
 
-fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<Typing>) {
+fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: &GameSide) {
+    let typing = game.typing;
     controls::form(ui, ("settings", "interface"), |ui| {
         let label = ui.label("Menu opens on");
-        menu_tab_picker(ui, settings, label.id);
+        menu_tab_picker(ui, settings, &game.tabs, label.id);
         ui.end_row();
         let mut snapping = settings.snapping_enabled();
         if controls::toggle(ui, "UI snapping", &mut snapping).changed() {
@@ -406,10 +425,30 @@ fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
         let label = ui.label("Chat text size");
         chat_text_slider(ui, settings, label.id);
         ui.end_row();
+        let label = ui.label("Show embedded chat content");
+        ui.horizontal(|ui| {
+            for &kind in ChatEmbedKind::VARIANTS {
+                let mut shown = settings.shows_chat_embeds(kind);
+                if ui
+                    .checkbox(&mut shown, kind.plural())
+                    .labelled_by(label.id)
+                    .hinted("Off, chat covers them with a black bar until you click it")
+                    .changed()
+                {
+                    settings.show_chat_embeds(kind, shown);
+                }
+            }
+        });
+        ui.end_row();
     });
 }
 
-fn menu_tab_picker(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+fn menu_tab_picker(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    tabs: &[MenuTabName],
+    label: egui::Id,
+) {
     let chosen = settings.menu_opens_on();
     let mut picked = chosen;
     controls::combo("menu opens on")
@@ -417,7 +456,7 @@ fn menu_tab_picker(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::I
         .show_ui(ui, |ui| {
             ui.selectable_value(&mut picked, None, LAST_USED_TAB);
             ui.separator();
-            for &tab in MenuTabName::VARIANTS {
+            for &tab in tabs {
                 ui.selectable_value(&mut picked, Some(tab), tab.title());
             }
         })
@@ -444,16 +483,19 @@ fn text_speed_slider(
     typing: Typing,
     label: egui::Id,
 ) {
-    let mut speed = typing.pace_for(settings.text.letters_per_second).letters.0;
+    let mut speed = typing
+        .pace_for(settings.text.characters_per_second)
+        .characters
+        .0;
     ui.horizontal(|ui| {
         let range = typing.slowest.0..=typing.fastest.0;
         if controls::slider(ui, &mut speed, range)
             .labelled_by(label)
             .changed()
         {
-            settings.text.letters_per_second = Some(LettersPerSecond(speed.round()));
+            settings.text.characters_per_second = Some(CharactersPerSecond(speed.round()));
         }
-        slider_says(ui, format!("{:.0} letters/s", speed.round()));
+        slider_says(ui, format!("{:.0} characters/s", speed.round()));
     });
 }
 
@@ -711,6 +753,19 @@ impl UserSettings {
         self.ui.chat.hidden = !self.ui.chat.hidden;
     }
 
+    /// Whether chat shows the things of `kind` its lines hold, rather than covering them.
+    pub(crate) fn shows_chat_embeds(&self, kind: ChatEmbedKind) -> bool {
+        !self.ui.chat.embeds_hidden.contains(&kind)
+    }
+
+    fn show_chat_embeds(&mut self, kind: ChatEmbedKind, shown: bool) {
+        if shown {
+            self.ui.chat.embeds_hidden.remove(&kind);
+        } else {
+            self.ui.chat.embeds_hidden.insert(kind);
+        }
+    }
+
     pub(crate) fn chat_background(&self) -> Percent {
         self.ui.chat.background.unwrap_or(CHAT_BACKGROUND)
     }
@@ -827,6 +882,9 @@ struct ChatSettings {
     background: Option<Percent>,
     #[serde(default)]
     text_size: Option<WindowPx>,
+    /// The kinds of thing a line can hold that chat covers until the player asks to see one.
+    #[serde(default)]
+    embeds_hidden: BTreeSet<ChatEmbedKind>,
 }
 
 const CHAT_BACKGROUND: Percent = Percent(35.0);
@@ -849,8 +907,8 @@ fn default_snap() -> Option<WindowPx> {
 #[derive(Serialize, Deserialize, Default)]
 struct TextSettings {
     /// None keeps the game's own pace.
-    #[serde(default)]
-    letters_per_second: Option<LettersPerSecond>,
+    #[serde(default, alias = "letters_per_second")]
+    characters_per_second: Option<CharactersPerSecond>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -903,7 +961,7 @@ fn within_smoothings(chose: Seconds) -> Seconds {
 
 #[derive(Serialize, Deserialize, Default)]
 struct ScreenSettings {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "still_offered")]
     transition: ScreenTransition,
     #[serde(default)]
     frame_rate: bool,
@@ -911,6 +969,26 @@ struct ScreenSettings {
     day_clock_hidden: bool,
     #[serde(default)]
     globe_amounts: bool,
+}
+
+/// A saved choice among what the interface offers, which is the default again once the
+/// interface no longer offers it.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedChoice<T> {
+    Offered(T),
+    Gone(serde::de::IgnoredAny),
+}
+
+fn still_offered<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Deserialize<'de> + Default,
+    D: serde::Deserializer<'de>,
+{
+    Ok(match SavedChoice::deserialize(deserializer)? {
+        SavedChoice::Offered(choice) => choice,
+        SavedChoice::Gone(_) => T::default(),
+    })
 }
 
 /// Saved on change rather than at each place that changes a setting. The initial load counts as a
@@ -941,7 +1019,7 @@ fn pace_typing(settings: Res<UserSettings>, typing: Option<Res<Typing>>, mut com
         return;
     };
     if settings.is_changed() || typing.is_changed() {
-        commands.insert_resource(typing.pace_for(settings.text.letters_per_second));
+        commands.insert_resource(typing.pace_for(settings.text.characters_per_second));
     }
 }
 

@@ -16,13 +16,15 @@ use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::window_point;
 use crate::core::render::world::opacity::Opacity;
 use crate::core::units::Meters;
+use crate::systems::GameSettings;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
 use crate::systems::attention;
 use crate::systems::combat::Attitude;
+use crate::systems::mount;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
-use crate::systems::player::{PlayedBy, session};
+use crate::systems::player::{Away, PlayedBy, session};
 use crate::systems::resource;
 use crate::systems::screen::ClientScreen;
 use ui::paint;
@@ -57,7 +59,8 @@ pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
                 .get::<RenderPosition>(actor)
                 .map(|rendered| rendered.0)
                 .or_else(|| world.get::<Position>(actor).map(|position| position.pos))?;
-            window_point(world, at, world.get::<Hitbox>(actor)?.0.height)
+            let lift = super::lift(world, actor, at);
+            window_point(world, at, lift + world.get::<Hitbox>(actor)?.0.height)
         }
     }
 }
@@ -65,21 +68,19 @@ pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
 #[derive(Resource, Default)]
 struct Plates(HashMap<Entity, egui::Rect>);
 
-/// What a plate says: a name in the colour of its wearer's standing, an npc's role under it, and
-/// under a resource's who works it.
+/// What a plate says: a name in the colour of its wearer's standing, and under a resource's who
+/// works it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlateLabel {
     pub name: Option<String>,
-    pub role: Option<String>,
     pub state: Option<String>,
     pub color: Color32,
 }
 
 impl PlateLabel {
-    pub fn npc(name: &str, role: &str, hostile: bool) -> PlateLabel {
+    pub fn npc(name: &str, hostile: bool) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            role: Some(role.to_owned()),
             state: None,
             color: if hostile { HOSTILE } else { Color32::WHITE },
         }
@@ -88,17 +89,16 @@ impl PlateLabel {
     pub fn resource(name: &str, working: u32, room: u32) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            role: None,
             state: resource::render::plate_line(working, room),
             color: Color32::WHITE,
         }
     }
 
-    pub fn player(name: &str) -> PlateLabel {
+    /// A player's plate, under its name what is `said` of a character whose player is gone.
+    pub fn player(name: &str, said: Option<&str>) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            role: None,
-            state: None,
+            state: said.map(str::to_owned),
             color: dusk::PLAYER,
         }
     }
@@ -111,6 +111,7 @@ pub fn label_of(world: &World, content: &Content, actor: Entity) -> Option<Plate
         world.get::<Name>(actor),
         world.get::<Npc>(actor),
         world.get::<PlayedBy>(actor),
+        world.get::<Away>(actor).is_some(),
         world.get::<Attitude>(actor),
         world.get::<AreaObject>(actor).is_some(),
     )
@@ -162,6 +163,7 @@ pub fn draw_plates(world: &mut World) {
             Option<&Name>,
             Option<&Npc>,
             Option<&PlayedBy>,
+            Has<Away>,
             Option<&Attitude>,
             Has<AreaObject>,
             Option<&RenderPosition>,
@@ -173,27 +175,30 @@ pub fn draw_plates(world: &mut World) {
         .filter(|(actor, ..)| viewer != Some(*actor))
         .filter(|(.., body)| body.is_none_or(|body| body.action != Action::Dead))
         .filter_map(
-            |(actor, name, npc, owner, attitude, object, rendered, at, hitbox, _)| {
-                let label = label(&content, name, npc, owner, attitude, object)?;
+            |(actor, name, npc, owner, away, attitude, object, rendered, at, hitbox, _)| {
+                let label = label(&content, name, npc, owner, away, attitude, object)?;
                 let at = rendered.map_or(at.pos, |rendered| rendered.0);
                 Some((actor, label, at, *hitbox))
             },
         )
         .collect();
+    let seat_free = content.built::<GameSettings>().words.seat_free.clone();
+    for (actor, label, ..) in &mut labelled {
+        if label.state.is_none() && mount::seat::free_seat(world, *actor).is_some() {
+            label.state = Some(seat_free.clone());
+        }
+    }
     labelled.extend(resource::render::plates(world));
     let plates: Vec<Plate> = labelled
         .into_iter()
         .filter_map(|(actor, label, at, hitbox)| {
-            let top = window_point(world, at, hitbox.0.height)?;
+            let lift = super::lift(world, actor, at);
+            let top = window_point(world, at, lift + hitbox.0.height)?;
             let icons: Vec<Option<GuiImage>> = attention::plate_marks(world, viewer, actor)
                 .into_iter()
                 .map(|mark| gui::image(world, &mark.get(&content).icon))
                 .collect();
-            if label.name.is_none()
-                && label.role.is_none()
-                && label.state.is_none()
-                && icons.is_empty()
-            {
+            if label.name.is_none() && label.state.is_none() && icons.is_empty() {
                 return None;
             }
             let size = plate_size(&gui, &label, &icons);
@@ -229,7 +234,8 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
     column.spacing_mut().item_spacing = egui::Vec2::ZERO;
     column.set_opacity(plate.shown);
     if !plate.icons.is_empty() {
-        column.horizontal(|ui| {
+        let row = Layout::left_to_right(Align::Center);
+        column.allocate_ui_with_layout(icons_size(plate.icons.len()), row, |ui| {
             ui.spacing_mut().item_spacing.x = ICON_GAP;
             for icon in &plate.icons {
                 match icon {
@@ -249,21 +255,17 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
             name,
             name_font(),
             plate.label.color,
-            dusk::SMALL_TEXT_SHADOW,
+            dusk::EDGED,
             TSTransform::IDENTITY,
         );
     }
-    let under = [
-        plate.label.role.as_deref().map(role_text),
-        plate.label.state.clone(),
-    ];
-    for line in under.into_iter().flatten() {
+    if let Some(state) = &plate.label.state {
         dusk::label(
             &mut column,
-            &line,
-            role_font(),
+            state,
+            state_font(),
             Color32::WHITE.gamma_multiply(0.7),
-            dusk::SMALL_TEXT_SHADOW,
+            dusk::EDGED,
             TSTransform::IDENTITY,
         );
     }
@@ -279,18 +281,10 @@ fn plate_rect(gui: &egui::Context, top: egui::Pos2, size: egui::Vec2) -> egui::R
 
 fn plate_size(gui: &egui::Context, label: &PlateLabel, icons: &[Option<GuiImage>]) -> egui::Vec2 {
     let text = |text: String, font: FontId| paint::text_size(gui, &text, font);
-    let icons = match icons.len() {
-        0 => egui::Vec2::ZERO,
-        count => egui::vec2(count as f32 * ICON + (count - 1) as f32 * ICON_GAP, ICON),
-    };
     [
-        Some(icons),
+        Some(icons_size(icons.len())),
         label.name.clone().map(|name| text(name, name_font())),
-        label
-            .role
-            .as_deref()
-            .map(|role| text(role_text(role), role_font())),
-        label.state.clone().map(|state| text(state, role_font())),
+        label.state.clone().map(|state| text(state, state_font())),
     ]
     .into_iter()
     .flatten()
@@ -299,18 +293,25 @@ fn plate_size(gui: &egui::Context, label: &PlateLabel, icons: &[Option<GuiImage>
     })
 }
 
+fn icons_size(count: usize) -> egui::Vec2 {
+    match count {
+        0 => egui::Vec2::ZERO,
+        count => egui::vec2(count as f32 * ICON + (count - 1) as f32 * ICON_GAP, ICON),
+    }
+}
+
 fn label(
     content: &Content,
     name: Option<&Name>,
     npc: Option<&Npc>,
     owner: Option<&PlayedBy>,
+    away: bool,
     attitude: Option<&Attitude>,
     object: bool,
 ) -> Option<PlateLabel> {
     if object {
         return Some(PlateLabel {
             name: None,
-            role: None,
             state: None,
             color: Color32::WHITE,
         });
@@ -318,23 +319,24 @@ fn label(
     match (npc, owner) {
         (Some(npc), _) => {
             let def = npc.def.get(content);
-            def.nameplate().map(|role| {
-                PlateLabel::npc(&def.name, role, matches!(attitude, Some(Attitude::Hostile)))
-            })
+            def.wears_nameplate()
+                .then(|| PlateLabel::npc(&def.name, matches!(attitude, Some(Attitude::Hostile))))
         }
-        (None, Some(_)) => Some(PlateLabel::player(&name?.name)),
+        (None, Some(_)) => {
+            let words = &content.built::<GameSettings>().words;
+            Some(PlateLabel::player(
+                &name?.name,
+                away.then_some(words.away.as_str()),
+            ))
+        }
         (None, None) => None,
     }
-}
-
-fn role_text(role: &str) -> String {
-    format!("<{role}>")
 }
 
 fn name_font() -> FontId {
     Face::BookBold.id(TEXT_SIZE)
 }
 
-fn role_font() -> FontId {
+fn state_font() -> FontId {
     Face::Book.id(TEXT_SIZE)
 }

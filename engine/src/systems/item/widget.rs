@@ -9,23 +9,26 @@ use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
 use crate::core::math::ColorGradient;
 use crate::core::text::StyledLine;
-use crate::systems::hud::{self, Carried};
+use crate::systems::hud::{self, AmountQuestion, Carried};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::{
-    DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, card,
+    DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, JoinStacksRequest,
+    SplitStackRequest, card,
 };
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::skill::bar;
+use crate::systems::text::LineText;
 
 pub(crate) const SLOT: f32 = controls::SLOT;
 const SLOT_GAP: f32 = 4.0;
 const GHOST: f32 = 0.35;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SlotVerdict {
-    Wanted(String),
-    Refused(String),
+    Wanted(LineText),
+    Refused(LineText),
 }
 
 pub type SlotVerdictSource = fn(&World, ItemStack) -> Option<SlotVerdict>;
@@ -110,8 +113,30 @@ pub struct InventoryPane<'a> {
     pub width: f32,
     /// A window that says how full the inventory is elsewhere leaves the heading out.
     pub heading: Option<&'a str>,
-    /// The slot a view lets its reader choose, where it has something to say about the choice.
-    pub selected: Option<&'a mut Option<u32>>,
+}
+
+/// Stacks kept apart from the bag, shown slot by slot as the bag shows its own, and split as
+/// the bag's are.
+pub struct StackPane<'a> {
+    pub width: f32,
+    pub stacks: &'a [ItemStack],
+    /// How many slots it shows, filled or not.
+    pub slots: u32,
+    /// How a slot is named to whoever reads the interface.
+    pub named: &'a str,
+    /// What picking a stack does, as its hint says it.
+    pub pick: &'static str,
+    /// Splits this many off the stack at this index, into a stack of its own beside it.
+    pub split: fn(&mut World, usize, u32),
+}
+
+/// What the player did to the slots of a stack pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackPaneDone {
+    /// Picked the stack at this index.
+    Picked(usize),
+    /// Dropped what they carried from this slot of the bag onto the pane.
+    Dropped(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +151,7 @@ impl InventoryRoom {
     }
 }
 
-pub fn inventory_pane(ui: &mut Ui, world: &mut World, mut pane: InventoryPane) {
+pub fn inventory_pane(ui: &mut Ui, world: &mut World, pane: InventoryPane) {
     let cells = inventory_cells(world);
     ui.allocate_ui_with_layout(
         Vec2::new(pane.width, 0.0),
@@ -140,11 +165,39 @@ pub fn inventory_pane(ui: &mut Ui, world: &mut World, mut pane: InventoryPane) {
             ui.spacing_mut().item_spacing = Vec2::splat(SLOT_GAP);
             ui.horizontal_wrapped(|ui| {
                 for cell in &cells {
-                    bag_slot(ui, world, cell, pane.selected.as_deref_mut());
+                    bag_slot(ui, world, cell);
                 }
             });
         },
     );
+}
+
+pub fn stack_pane(ui: &mut Ui, world: &mut World, pane: StackPane) -> Option<StackPaneDone> {
+    let mut picked = None;
+    let shown = ui
+        .allocate_ui_with_layout(
+            Vec2::new(pane.width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_width(pane.width);
+                ui.spacing_mut().item_spacing = Vec2::splat(SLOT_GAP);
+                ui.horizontal_wrapped(|ui| {
+                    for index in 0..pane.slots as usize {
+                        if apart_slot(ui, world, &pane, index) {
+                            picked = Some(index);
+                        }
+                    }
+                });
+            },
+        )
+        .response;
+    if let Some(index) = picked {
+        return Some(StackPaneDone::Picked(index));
+    }
+    match drag::dropped::<Carried>(&shown) {
+        Some(Carried::BagSlot(slot)) => Some(StackPaneDone::Dropped(slot)),
+        _ => None,
+    }
 }
 
 pub fn inventory_room(world: &World) -> InventoryRoom {
@@ -370,13 +423,14 @@ struct Filled {
     verdict: Option<SlotVerdict>,
 }
 
-const BUILT_IN: [InputAction; 3] = [
+const BUILT_IN: [InputAction; 4] = [
     InputAction::DropItem,
+    InputAction::SplitStack,
     InputAction::UseItem,
     InputAction::InspectItem,
 ];
 
-fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&mut Option<u32>>) {
+fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
     let Some(filled) = &cell.filled else {
         slot(ui, world, SlotLook::EMPTY, Sense::hover());
         return;
@@ -390,21 +444,18 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&m
     };
     let carried = drag::carried::<Carried>(ui.ctx()) == Some(Carried::BagSlot(cell.slot));
     let left = filled.stack.count.saturating_sub(filled.aside);
-    let is_selected = selected.as_deref() == Some(&Some(cell.slot));
     let look = SlotLook {
         count: left,
         wanted,
         faded: refused || carried || left == 0,
         quest: def.has(ItemModuleKind::QuestItem),
-        selected: is_selected,
         ..SlotLook::of(&content, filled.stack.item)
     };
     let response = slot(ui, world, look, Sense::click_and_drag());
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
+        egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
             true,
-            is_selected,
             format!("Inventory slot {}: {left} {}", cell.slot + 1, def.name),
         )
     });
@@ -419,19 +470,108 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&m
         .filter(|action| map::clicked(world, *action, &response))
         .collect();
     if !matched.is_empty() {
-        act(world, cell.slot, filled.stack.item, &matched, response.rect);
+        let held = ItemStack::new(filled.stack.item, left);
+        act(world, cell.slot, held, &matched, response.rect);
     }
     if map::drag_started(world, InputAction::CarryItem, &response) {
         drag::carry(ui.ctx(), Carried::BagSlot(cell.slot));
     }
-    let notes = filled.notes.iter().cloned().chain(verdict);
-    let hint = StyledLine::new(map::hints(filled.hints.iter().cloned()));
-    card::tooltip_noted(world, &response, filled.stack.item, notes, Some(&hint));
-    if let Some(selected) = selected
-        && map::clicked(world, InputAction::Select, &response)
+    if let Some(Carried::BagSlot(from)) = drag::dropped::<Carried>(&response)
+        && from != cell.slot
     {
-        *selected = Some(cell.slot);
+        world.write_message(JoinStacksRequest {
+            from,
+            onto: cell.slot,
+        });
     }
+    let notes = filled
+        .notes
+        .iter()
+        .cloned()
+        .map(LineText::from)
+        .chain(verdict);
+    let hint = StyledLine::new(map::hints(filled.hints.iter().cloned()));
+    card::chat_shortcut(world, &response, &[filled.stack.item]);
+    card::tooltip_noted(world, &response, filled.stack.item, notes, Some(&hint));
+}
+
+/// The slot at `index` of a stack pane. Whether its stack was picked.
+fn apart_slot(ui: &mut Ui, world: &mut World, pane: &StackPane, index: usize) -> bool {
+    let Some(&stack) = pane.stacks.get(index) else {
+        slot(ui, world, SlotLook::EMPTY, Sense::hover())
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Empty slot"));
+        return false;
+    };
+    let content = world.resource::<Content>().clone();
+    let def = stack.item.get(&content);
+    let look = SlotLook {
+        count: stack.count,
+        quest: def.has(ItemModuleKind::QuestItem),
+        ..SlotLook::of(&content, stack.item)
+    };
+    let response = slot(ui, world, look, Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("{}: {} {}", pane.named, stack.count, def.name),
+        )
+    });
+    let split = pane.split;
+    if map::clicked(world, InputAction::SplitStack, &response) {
+        ask_split(world, stack, move |world, count| split(world, index, count));
+    } else if map::clicked(world, InputAction::InspectItem, &response) {
+        card::open(world, stack.item, Some(response.rect));
+    }
+    let splits = (stack.count > 1).then(|| (InputAction::SplitStack, SPLITS.to_owned()));
+    let hints = [(InputAction::Select, format!(" to {}", pane.pick))]
+        .into_iter()
+        .chain(splits)
+        .chain([
+            (InputAction::InspectItem, INSPECTS.to_owned()),
+            (InputAction::AddToChat, CHATS.to_owned()),
+        ]);
+    let hint = StyledLine::new(map::hints(hints));
+    card::chat_shortcut(world, &response, &[stack.item]);
+    card::tooltip_noted(
+        world,
+        &response,
+        stack.item,
+        slot_notes(world, stack).into_iter().map(LineText::from),
+        Some(&hint),
+    );
+    map::clicked(world, InputAction::Select, &response)
+}
+
+/// Asks how many of `stack` to split off, and hands `split` the answer.
+fn ask_split(
+    world: &mut World,
+    stack: ItemStack,
+    split: impl FnOnce(&mut World, u32) + Send + Sync + 'static,
+) {
+    if stack.count < 2 {
+        return;
+    }
+    let named = Mention::Item(stack.item).span(world.resource::<Content>());
+    hud::ask_amount(
+        world,
+        AmountQuestion {
+            title: LineText::plain("Split stack of ").then(named),
+            amounts: 1..=stack.count - 1,
+            suggested: stack.count / 2,
+            says: Box::new(move |count| {
+                format!(
+                    "{count} in the new stack, {} left in this one.",
+                    stack.count - count
+                )
+            }),
+            answer: Box::new(move |world, count| {
+                if let Some(count) = count {
+                    split(world, count);
+                }
+            }),
+        },
+    );
 }
 
 fn inventory_cells(world: &World) -> Vec<CellData> {
@@ -455,10 +595,11 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                 .and_then(|inventory| inventory.slots.get(slot as usize))
                 .map(|&stack| {
                     let def = stack.item.get(content);
+                    let aside: u32 = asides.iter().map(|source| source(world, slot, stack)).sum();
                     Filled {
                         stack,
-                        aside: asides.iter().map(|source| source(world, slot, stack)).sum(),
-                        hints: hints(map, &takeovers, def),
+                        aside,
+                        hints: hints(map, &takeovers, def, stack.count.saturating_sub(aside)),
                         notes: slot_notes(world, stack),
                         verdict: verdicts.iter().find_map(|source| source(world, stack)),
                     }
@@ -472,7 +613,9 @@ fn bound_note(def: &ItemDef) -> Option<String> {
         .then(|| "bound · can't be sold or dropped".to_owned())
 }
 
-fn act(world: &mut World, slot: u32, item: ItemId, matched: &[InputAction], at: Rect) {
+/// Does what the inputs `matched` ask of the bag's slot `slot`, where `held` is what is left
+/// in it of what is set aside elsewhere: nothing but a look at the item, when that is none.
+fn act(world: &mut World, slot: u32, held: ItemStack, matched: &[InputAction], at: Rect) {
     let takeover = active_slot_actions(world)
         .into_iter()
         .find(|takeover| matched.contains(&takeover.action));
@@ -481,13 +624,17 @@ fn act(world: &mut World, slot: u32, item: ItemId, matched: &[InputAction], at: 
         return;
     }
     match BUILT_IN.into_iter().find(|action| matched.contains(action)) {
+        Some(InputAction::InspectItem) => card::open(world, held.item, Some(at)),
+        Some(_) if held.count == 0 => {}
         Some(InputAction::DropItem) => {
             world.write_message(DropItemRequest { slot });
         }
+        Some(InputAction::SplitStack) => ask_split(world, held, move |world, count| {
+            world.write_message(SplitStackRequest { slot, count });
+        }),
         Some(InputAction::UseItem) => {
             bar::use_bag_slot(world, slot);
         }
-        Some(InputAction::InspectItem) => card::open(world, item, Some(at)),
         _ => {}
     }
 }
@@ -516,16 +663,29 @@ fn shadowed(map: &InputMap, takeovers: &[SlotAction], action: InputAction) -> bo
     })
 }
 
-fn hints(map: &InputMap, takeovers: &[SlotAction], def: &ItemDef) -> Vec<(InputAction, String)> {
+fn hints(
+    map: &InputMap,
+    takeovers: &[SlotAction],
+    def: &ItemDef,
+    held: u32,
+) -> Vec<(InputAction, String)> {
     let inspect = (!shadowed(map, takeovers, InputAction::InspectItem))
-        .then(|| (InputAction::InspectItem, " for more information".to_owned()));
+        .then(|| (InputAction::InspectItem, INSPECTS.to_owned()));
     let usage = card::use_verb(def)
         .filter(|_| !shadowed(map, takeovers, InputAction::UseItem))
         .map(|verb| (InputAction::UseItem, format!(" to {verb}")));
+    let splits = (held > 1 && !shadowed(map, takeovers, InputAction::SplitStack))
+        .then(|| (InputAction::SplitStack, SPLITS.to_owned()));
     takeovers
         .iter()
         .map(|takeover| (takeover.action, format!(" to {}", takeover.verb)))
         .chain(inspect)
         .chain(usage)
+        .chain(splits)
+        .chain([(InputAction::AddToChat, CHATS.to_owned())])
         .collect()
 }
+
+const INSPECTS: &str = " for more information";
+const SPLITS: &str = " to split the stack";
+const CHATS: &str = " to add it to chat";

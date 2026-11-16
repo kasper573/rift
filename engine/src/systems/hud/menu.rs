@@ -14,12 +14,21 @@ use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::{self, Placed, UserSettings};
-use crate::systems::{area_map, history, quest, skill};
+use crate::systems::{area_map, history, quest, skill, society};
 
 pub trait MenuTab: Send + Sync {
     fn name(&self) -> MenuTabName;
     fn icon(&self) -> InterfaceIcon;
     fn opens(&self) -> InputAction;
+    /// Whether the game has what the tab shows: a tab that is not shown has no place in the
+    /// strip, and its key does nothing.
+    fn shown(&self, _world: &World) -> bool {
+        true
+    }
+    /// How much waits on the tab for the player, counted on its face.
+    fn badge(&self, _world: &World) -> Option<u32> {
+        None
+    }
     fn sub_tabs(&self, _world: &World) -> Option<SubTabs> {
         None
     }
@@ -46,6 +55,7 @@ pub enum MenuTabName {
     Quests,
     Map,
     History,
+    Social,
     Settings,
 }
 
@@ -61,12 +71,13 @@ pub(crate) fn open(world: &mut World) {
         .resource::<UserSettings>()
         .menu_opens_on()
         .or(menu.last_open)
+        .filter(|&tab| tab_of(tab).shown(world))
         .unwrap_or(TABS[0].name());
     open_on(world, tab);
 }
 
 pub(crate) fn open_on(world: &mut World, tab: MenuTabName) {
-    if yields(world) {
+    if yields(world) || !tab_of(tab).shown(world) {
         return;
     }
     let mut menu = world.resource_mut::<Menu>();
@@ -120,7 +131,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context) {
     let Some(pose) = panel::sheet_pose(world, gui, WINDOW_KEY, open.is_some()) else {
         return;
     };
-    let Some(shown) = open.or(last_open) else {
+    let Some(shown) = open.or(last_open).filter(|&tab| tab_of(tab).shown(world)) else {
         return;
     };
     let screen = gui.content_rect();
@@ -160,6 +171,7 @@ static TABS: &[&dyn MenuTab] = &[
     &quest::log::QuestsMenuTab,
     &area_map::tab::MapMenuTab,
     &history::widget::HistoryMenuTab,
+    &society::tab::SocialMenuTab,
     &settings::SettingsMenuTab,
 ];
 
@@ -172,7 +184,7 @@ struct Menu {
 fn tab_keys(world: &mut World) {
     let pressed = TABS
         .iter()
-        .find(|tab| map::just_pressed(world, tab.opens()));
+        .find(|tab| tab.shown(world) && map::just_pressed(world, tab.opens()));
     if let Some(tab) = pressed {
         toggle(world, tab.name());
     }
@@ -275,20 +287,44 @@ fn page(ui: &mut Ui, world: &mut World, frame: WindowFrame, shown: MenuTabName) 
 
 const STRIP_TOP: f32 = 4.0;
 const SUB_STRIP_TOP: f32 = 8.0;
-const FOOT_PAD: f32 = 6.0;
+const FOOT_PAD: f32 = 8.0;
 
 fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {
-    TABS.iter()
+    let shown: Vec<&dyn MenuTab> = TABS
+        .iter()
+        .copied()
+        .filter(|tab| tab.shown(world))
+        .collect();
+    shown
+        .into_iter()
         .map(|tab| {
             let image = tab.icon().get(world.resource::<Content>()).image.clone();
             Tab {
                 icon: gui::image(world, &image).map(|image| image.texture),
                 keys: world.resource::<InputMap>().name(tab.opens()),
+                badge: tab.badge(world).map(badge_text),
                 ..Tab::new(tab.name(), tab.name().title())
             }
         })
         .collect()
 }
+
+/// The tabs the game has, in the strip's order.
+pub(crate) fn tab_names(world: &World) -> Vec<MenuTabName> {
+    TABS.iter()
+        .filter(|tab| tab.shown(world))
+        .map(|tab| tab.name())
+        .collect()
+}
+
+fn badge_text(waiting: u32) -> String {
+    match waiting {
+        0..=MOST_COUNTED => waiting.to_string(),
+        _ => format!("{MOST_COUNTED}+"),
+    }
+}
+
+const MOST_COUNTED: u32 = 99;
 
 fn hints(ui: &mut Ui, world: &World, tab: &dyn MenuTab) {
     let keys = world.resource::<InputMap>();

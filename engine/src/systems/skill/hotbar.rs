@@ -7,8 +7,11 @@ use crate::systems::GameSettings;
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::HistoryTopic;
 use crate::systems::item::Inventory;
+use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
+use crate::systems::text::LineText;
 
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct AssignHotbarRequest {
@@ -31,12 +34,16 @@ pub enum BasicAttackPick {
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<AssignHotbarRequest>(world, false, |world, player, request| {
-        assign(world, player, request.slot, request.entry)
-    });
-    player_requests::<AssignBasicAttackRequest>(world, false, |world, player, request| {
-        assign_basic_attack(world, player, request.pick)
-    });
+    player_requests::<AssignHotbarRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| assign(world, player, request.slot, request.entry),
+    );
+    player_requests::<AssignBasicAttackRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| assign_basic_attack(world, player, request.pick),
+    );
 }
 
 /// Puts something the player has onto a slot: a skill they know or an item they hold.
@@ -45,25 +52,27 @@ pub fn assign(
     player: Entity,
     slot: HotbarSlot,
     entry: HotbarEntry,
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     if slot.0 >= content.built::<GameSettings>().slots.hotbar {
-        return Err("No such slot".to_owned());
+        return Err("No such slot".into());
     }
     match entry {
         HotbarEntry::Empty => {}
         HotbarEntry::Skill(skill) => {
             let def = skill.get(&content);
             if !super::known(world, player).contains_key(&skill) {
-                return Err(format!("You don't know {}", def.name));
+                return Err(unknown(skill, &content));
             }
             if def.kind == SkillKind::Passive {
-                return Err(super::unslotted(def));
+                return Err(super::unslotted(skill, &content));
             }
         }
         HotbarEntry::Item(item) => {
             if !holds_item(world, player, item) {
-                return Err(format!("You don't have {}", item.get(&content).name));
+                return Err(
+                    LineText::plain("You don't have ").then(Mention::Item(item).span(&content))
+                );
             }
         }
     }
@@ -78,23 +87,29 @@ pub fn assign_basic_attack(
     world: &mut World,
     player: Entity,
     pick: BasicAttackPick,
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let skill = match pick {
         BasicAttackPick::Empty => None,
         BasicAttackPick::Skill(skill) => {
             let def = skill.get(&content);
             if !super::known(world, player).contains_key(&skill) {
-                return Err(format!("You don't know {}", def.name));
+                return Err(unknown(skill, &content));
             }
             if !def.basic_attack {
-                return Err(format!("{} can't be a basic attack", def.name));
+                return Err(Mention::Skill(skill)
+                    .line(&content)
+                    .then(" can't be a basic attack"));
             }
             Some(skill)
         }
         BasicAttackPick::Weapon(item) => {
-            let skill = super::first_flagged_grant(&content, std::iter::once(item))
-                .ok_or_else(|| format!("{} has no basic attack", item.get(&content).name))?;
+            let skill =
+                super::first_flagged_grant(&content, std::iter::once(item)).ok_or_else(|| {
+                    Mention::Item(item)
+                        .line(&content)
+                        .then(" has no basic attack")
+                })?;
             if !equipment::wears(world, player, item) {
                 equipment::equip_from_bag(world, player, item)?;
             }
@@ -155,9 +170,13 @@ pub fn settle_basic_attack(
             None,
             Notification::feed(
                 HistoryTopic::Notification,
-                format!("{} is your basic attack", def.name),
+                LineText::from(Mention::Skill(skill).name(&content)).then(" is your basic attack"),
             )
             .icon(def.icon.path()),
         );
     }
+}
+
+fn unknown(skill: SkillId, content: &Content) -> LineText {
+    LineText::plain("You don't know ").then(Mention::Skill(skill).span(content))
 }

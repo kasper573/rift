@@ -1,9 +1,10 @@
 use bevy::prelude::*;
 use engine::core::math::Pos;
-use engine::core::units::Meters;
+use engine::core::render::Look;
+use engine::core::units::{Meters, Seconds};
 use engine::systems::identity::{self, ClientIdentityPlugin, Lingering, Names};
-use engine::systems::movement::RenderPosition;
-use engine::systems::player::session::MyClient;
+use engine::systems::movement::{Position, RenderPosition};
+use engine::systems::player::session::{self, ClientSessionPlugin, MyClient};
 use engine::systems::player::{ClientId, PlayedBy};
 
 /// While a client switches worlds (its own character gone from the one it was in, not yet come
@@ -85,6 +86,50 @@ fn what_doesnt_come_back_goes_with_the_switch_and_a_despawn_outside_one_goes_at_
         shown(app.world_mut()),
         1,
         "a despawn outside a switch shows nothing"
+    );
+}
+
+/// An area's world names its entities from its own pool, so the character a player arrives as
+/// is no entity of the world they left. What stood for them there fades where it stood, and
+/// is no longer theirs.
+#[test]
+fn the_character_a_world_replicates_is_the_clients_own_while_the_one_it_left_fades() {
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, ClientSessionPlugin));
+    app.insert_resource(MyClient(Some(MINE)));
+    app.insert_resource(Look {
+        presence_fades: Seconds(1.0),
+        ..testkit::look()
+    });
+    let (mut left, mut entered) = (Names::for_world(0), Names::for_world(1));
+    let world = app.world_mut();
+    let hero = world
+        .spawn((
+            left.give(),
+            PlayedBy { client: MINE },
+            Position::at(Pos::new(1.0, 2.0)),
+        ))
+        .id();
+    app.update();
+    assert_eq!(session::me(app.world()), Some(hero));
+
+    let world = app.world_mut();
+    vanish(world, hero);
+    let arrived = world
+        .spawn((
+            entered.give(),
+            PlayedBy { client: MINE },
+            Position::at(Pos::new(5.0, 6.0)),
+        ))
+        .id();
+    for _ in 0..3 {
+        app.update();
+        assert_eq!(session::me(app.world()), Some(arrived));
+    }
+    assert_eq!(
+        shown(app.world_mut()),
+        1,
+        "what was left behind is still fading where it stood"
     );
 }
 

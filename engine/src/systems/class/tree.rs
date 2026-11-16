@@ -9,9 +9,12 @@ use strum::{IntoStaticStr, VariantArray};
 use ui::egui::{Pos2, Rect, Vec2};
 
 use crate::core::content::ImageRef;
-use crate::core::content::{ContentNames, ContentProblem, RowCheck, id};
+use crate::core::content::{Content, ContentProblem, RowCheck, id};
+use crate::systems::mention::Mention;
+use crate::systems::script::condition::ConditionNames;
 use crate::systems::script::{Condition, condition};
 use crate::systems::skill::{Rank, SkillId};
+use crate::systems::text::LineText;
 
 /// How far apart two nodes must sit on the canvas, in canvas units, not to overlap.
 pub const NODE_EXTENT: f32 = 56.0;
@@ -336,7 +339,23 @@ impl AccessRequirement {
         })
     }
 
-    pub fn describe(&self, content: &impl ContentNames, tree: &SkillTree) -> String {
+    pub fn line(&self, content: &Content, tree: &SkillTree) -> LineText {
+        match self {
+            AccessRequirement::Skill { node, rank } => {
+                let name = tree.node(node).map_or_else(
+                    || LineText::plain(node.to_string()),
+                    |node| Mention::Skill(node.skill).line(content),
+                );
+                name.then(format!(" rank {}", rank.0))
+            }
+            AccessRequirement::Level { level } => LineText::plain(format!("Level {level}")),
+            AccessRequirement::Condition { condition } => {
+                LineText::from(&condition::describe(content, condition))
+            }
+        }
+    }
+
+    pub fn describe(&self, content: &impl ConditionNames, tree: &SkillTree) -> String {
         match self {
             AccessRequirement::Skill { node, rank } => {
                 let name = tree

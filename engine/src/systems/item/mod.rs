@@ -3,6 +3,7 @@ pub mod effects;
 pub mod plates;
 pub mod rarity;
 pub mod render;
+pub mod tray;
 pub mod widget;
 
 use std::borrow::Cow;
@@ -39,15 +40,19 @@ use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
 use crate::systems::interface::CursorId;
 use crate::systems::item::rarity::ItemRarityId;
+use crate::systems::mention::Mention;
+use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
+use crate::systems::party;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::{
     Condition, EventKind, Owner, RiftInstances, RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::systems::skill::{self, CastAim, SkillId};
-use crate::systems::text::{NameMark, SpanText};
+use crate::systems::text::LineText;
 use crate::systems::visibility::{self, Presence, seen_by};
 
 pub fn register(app: &mut App) {
@@ -60,6 +65,8 @@ pub fn register(app: &mut App) {
         .replicate::<Reservation>()
         .add_client_message::<UseItemRequest>()
         .add_client_message::<DropItemRequest>()
+        .add_client_message::<SplitStackRequest>()
+        .add_client_message::<JoinStacksRequest>()
         .add_mapped_client_message::<PickupRequest>()
         .add_server_message::<ItemShown>()
         .add_mapped_server_message::<ItemConsumed>()
@@ -136,6 +143,11 @@ impl ItemStack {
     pub fn describe(self, content: &Content) -> String {
         format!("{} {}", self.count, self.item.get(content).name)
     }
+
+    /// The stack as a line names it: how many, and the item as the interface mentions one.
+    pub fn named(self, content: &Content) -> LineText {
+        LineText::plain(format!("{} ", self.count)).then(Mention::Item(self.item).span(content))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +168,19 @@ impl ExchangeRefusal {
             ExchangeRefusal::NoRoom { slots } => {
                 words.needs_slots.replace("{slots}", &slots.to_string())
             }
+        }
+    }
+
+    /// The refusal as a line tells it: the item it is short of as the interface mentions one.
+    pub fn line(self, content: &Content) -> LineText {
+        match self {
+            ExchangeRefusal::Missing(stack) => {
+                let words = &content.built::<GameSettings>().words;
+                LineText::plain(words.needs_more.as_str())
+                    .filling("{count}", stack.count.to_string())
+                    .filling("{item}", Mention::Item(stack.item).span(content))
+            }
+            ExchangeRefusal::NoRoom { .. } => self.describe(content).into(),
         }
     }
 }
@@ -182,6 +207,62 @@ impl Inventory {
 
     pub fn free_slots(&self) -> u32 {
         self.max.saturating_sub(self.slots.len() as u32)
+    }
+
+    /// Splits `count` off the stack in `slot` into a stack of its own, right after it. A split
+    /// that would leave either stack empty changes nothing; one the bag has no slot for is
+    /// refused.
+    pub fn split(&mut self, slot: usize, count: u32) -> Result<(), ExchangeRefusal> {
+        let whole = match self.slots.get(slot) {
+            Some(stack) if (1..stack.count).contains(&count) => *stack,
+            _ => return Ok(()),
+        };
+        if self.free_slots() == 0 {
+            return Err(ExchangeRefusal::NoRoom { slots: 1 });
+        }
+        self.slots[slot].count = whole.count - count;
+        self.slots
+            .insert(slot + 1, ItemStack::new(whole.item, count));
+        Ok(())
+    }
+
+    /// Takes each of `taken` out of the slot it names. Unless every slot holds what is taken
+    /// from it, nothing is taken.
+    pub fn take_out(&mut self, taken: &[SlotStack]) -> bool {
+        let mut slots = self.slots.clone();
+        for SlotStack { slot, stack } in taken {
+            match slots.get_mut(*slot as usize) {
+                Some(held)
+                    if held.item == stack.item && (1..=held.count).contains(&stack.count) =>
+                {
+                    held.count -= stack.count;
+                }
+                _ => return false,
+            }
+        }
+        slots.retain(|slot| slot.count > 0);
+        self.slots = slots;
+        true
+    }
+
+    /// Joins the stack in `from` onto the stack of the same item in `onto`, as far as a stack
+    /// of that item holds: what does not fit stays where it was.
+    pub fn join(&mut self, content: &Content, from: usize, onto: usize) {
+        let (Some(&moved), Some(&kept)) = (self.slots.get(from), self.slots.get(onto)) else {
+            return;
+        };
+        if from == onto || moved.item != kept.item {
+            return;
+        }
+        let room = moved
+            .item
+            .get(content)
+            .stack_max()
+            .saturating_sub(kept.count);
+        let joined = moved.count.min(room);
+        self.slots[onto].count += joined;
+        self.slots[from].count -= joined;
+        self.slots.retain(|slot| slot.count > 0);
     }
 
     pub fn set_count(&mut self, item: ItemId, count: u32) {
@@ -222,6 +303,16 @@ impl Inventory {
         *self = unbounded;
         self.max = next.max;
         Ok(())
+    }
+
+    /// Gives each of `stacks` that fits, tried on its own and in order, so one that finds no
+    /// room never holds back the others: the stacks that did not fit.
+    pub fn give_what_fits(&mut self, content: &Content, stacks: &[ItemStack]) -> Vec<ItemStack> {
+        stacks
+            .iter()
+            .copied()
+            .filter(|&stack| self.exchange(content, &[], &[stack]).is_err())
+            .collect()
     }
 
     pub fn take_up_to(&mut self, stacks: &[ItemStack]) {
@@ -289,8 +380,37 @@ impl Reservation {
         self.by.filter(|_| now - self.at < lasts)
     }
 
-    pub fn allows(&self, account: Option<ClientId>) -> bool {
-        self.by.is_none_or(|by| account == Some(by))
+    /// Whether `taker` may take what is reserved so: its holder, and whoever plays in a party
+    /// with them. What is reserved for nobody is anyone's.
+    pub fn allows(&self, taker: &DropTaker) -> bool {
+        self.by
+            .is_none_or(|by| taker.client == Some(by) || taker.party.contains(&by))
+    }
+}
+
+/// Who would take a drop: the client that plays a character, and the clients playing the
+/// characters of its party, whose drops are open to it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DropTaker {
+    pub client: Option<ClientId>,
+    pub party: Vec<ClientId>,
+}
+
+impl DropTaker {
+    pub fn of(world: &World, character: Entity) -> DropTaker {
+        DropTaker {
+            client: world.get::<PlayedBy>(character).map(|by| by.client),
+            party: party::companions(world, character),
+        }
+    }
+
+    /// The player of this client.
+    pub fn me(world: &World) -> DropTaker {
+        let me = crate::systems::player::session::me(world);
+        DropTaker {
+            client: crate::systems::player::session::my_id(world),
+            party: me.map_or_else(Vec::new, |me| party::companions(world, me)),
+        }
     }
 }
 
@@ -316,6 +436,28 @@ pub struct ItemShown {
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DropItemRequest {
     pub slot: u32,
+}
+
+/// Some of what a slot of the bag holds: `stack.count` of the stack in `slot`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SlotStack {
+    pub slot: u32,
+    pub stack: ItemStack,
+}
+
+/// Splits `count` off the stack in the bag's slot `slot`, into a stack of its own beside it.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SplitStackRequest {
+    pub slot: u32,
+    pub count: u32,
+}
+
+/// Joins the stack in the bag's slot `from` onto the stack of the same item in `onto`, as far
+/// as a stack of that item holds.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct JoinStacksRequest {
+    pub from: u32,
+    pub onto: u32,
 }
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
@@ -477,19 +619,6 @@ pub fn check_looks(loading: &mut Loading) {
 impl NamedContent for ItemDef {
     fn shown_name(&self) -> &str {
         &self.name
-    }
-}
-
-/// An item's name as a line writes it, marked with its rarity.
-pub fn named(content: &Content, item: ItemId) -> SpanText {
-    let def = item.get(content);
-    let rarity = def.rarity.get(content);
-    SpanText::Named {
-        name: def.name.clone(),
-        mark: NameMark {
-            icon: rarity.icon.as_ref().map(ImageRef::path),
-            color: rarity.gradient.from,
-        },
     }
 }
 
@@ -895,29 +1024,37 @@ pub struct ItemSfx {
 }
 
 pub fn use_item(world: &mut World) {
-    player_requests::<UseItemRequest>(world, true, |world, player, request| {
-        use_slot(world, player, request.slot as usize)
+    player_requests::<UseItemRequest>(world, RequestNeeds::Command, |world, player, request| {
+        let slot = request.slot as usize;
+        let content = world.resource::<Content>().clone();
+        let leaves = world
+            .get::<Inventory>(player)
+            .and_then(|bag| bag.slots.get(slot))
+            .and_then(|stack| skill::cast_by(&content, stack.item))
+            .is_some_and(|skill| mount::left_by(world, player, skill));
+        if !leaves {
+            mount::seat::act(world, player, RiderAct::Items)?;
+        }
+        use_slot(world, player, slot)
     });
 }
 
-pub fn use_held(world: &mut World, actor: Entity, item: ItemId) -> Result<(), String> {
+pub fn use_held(world: &mut World, actor: Entity, item: ItemId) -> Result<(), LineText> {
     let slot = bag_slot(world, actor, item)?;
     use_slot(world, actor, slot)
 }
 
-pub fn bag_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, String> {
+pub fn bag_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, LineText> {
     world
         .get::<Inventory>(actor)
         .and_then(|inventory| inventory.slot_of(item))
         .ok_or_else(|| {
-            format!(
-                "{} is not in your inventory",
-                item.get(world.resource::<Content>()).name
-            )
+            LineText::from(Mention::Item(item).span(world.resource::<Content>()))
+                .then(" is not in your inventory")
         })
 }
 
-fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), String> {
+fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let item = world
         .get::<Inventory>(actor)
@@ -949,7 +1086,7 @@ pub fn raise(world: &mut World, item: ItemId, kind: EventKind, actor: Entity) {
 
 pub fn drop_item(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    player_requests::<DropItemRequest>(world, true, |world, player, request| {
+    player_requests::<DropItemRequest>(world, RequestNeeds::Command, |world, player, request| {
         let slot = request.slot as usize;
         let removed = match world.get_mut::<Inventory>(player) {
             Some(mut inventory)
@@ -969,21 +1106,46 @@ pub fn drop_item(world: &mut World) {
     });
 }
 
-pub fn pickup_request(world: &mut World) {
-    player_requests::<PickupRequest>(world, true, |world, player, request| {
-        let target = request.target;
-        if world.get::<DroppedItem>(target).is_some() && visibility::in_sight(world, player, target)
-        {
-            reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Pickup);
+/// Splits and joins the stacks of their bag as each player asks. A bag is its player's to
+/// arrange whatever else they are doing, so nothing holds these back.
+pub fn arrange_stacks(world: &mut World) {
+    let content = world.resource::<Content>().clone();
+    player_requests::<SplitStackRequest>(world, RequestNeeds::Nothing, |world, player, request| {
+        match world.get_mut::<Inventory>(player) {
+            Some(mut inventory) => inventory
+                .split(request.slot as usize, request.count)
+                .map_err(|refusal| refusal.describe(&content).into()),
+            None => Ok(()),
+        }
+    });
+    player_requests::<JoinStacksRequest>(world, RequestNeeds::Nothing, |world, player, request| {
+        if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
+            inventory.join(&content, request.from as usize, request.onto as usize);
         }
         Ok(())
     });
 }
 
+pub fn pickup_request(world: &mut World) {
+    player_requests::<PickupRequest>(
+        world,
+        RequestNeeds::Seat(RiderAct::PickUp),
+        |world, player, request| {
+            let target = request.target;
+            if world.get::<DroppedItem>(target).is_some()
+                && visibility::in_sight(world, player, target)
+            {
+                reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Pickup);
+            }
+            Ok(())
+        },
+    );
+}
+
 /// The item nearest `point` within a click's reach of it that the player may take.
 pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
-    let me = crate::systems::player::session::my_id(world);
-    dropped_at(world, point, |reservation| takeable(reservation, me))
+    let me = DropTaker::me(world);
+    dropped_at(world, point, |reservation| takeable(reservation, &me))
 }
 
 /// The item nearest `point` within a click's reach of it, whoever may take it.
@@ -1010,10 +1172,10 @@ fn dropped_at(
         .map(|(entity, ..)| entity)
 }
 
-/// Whether `account` may take a dropped item reserved as `reservation` says: anyone may take
+/// Whether `taker` may take a dropped item reserved as `reservation` says: anyone may take
 /// what is reserved for nobody.
-pub fn takeable(reservation: Option<&Reservation>, account: Option<ClientId>) -> bool {
-    reservation.is_none_or(|reservation| reservation.allows(account))
+pub fn takeable(reservation: Option<&Reservation>, taker: &DropTaker) -> bool {
+    reservation.is_none_or(|reservation| reservation.allows(taker))
 }
 
 pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
@@ -1107,9 +1269,10 @@ pub fn scatter_at(
         .now
         .after(life.unwrap_or(settings.last));
     let count = drops.len();
+    let turn = Rng::fork_of(world).rand_float() * std::f32::consts::TAU;
     let mut items = Vec::with_capacity(count);
     for (index, &(item, stack)) in drops.iter().enumerate() {
-        let pos = scatter_pos(from, scatter, index, count, area);
+        let pos = scatter_pos(from, scatter, turn, index, count, area);
         let entity = world
             .spawn((
                 Replicated,
@@ -1153,11 +1316,8 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     let Some(drop) = world.get::<DroppedItem>(item).cloned() else {
         return;
     };
-    let account = world.get::<PlayedBy>(player).map(|owner| owner.client);
-    if world
-        .get::<Reservation>(item)
-        .is_some_and(|reservation| !reservation.allows(account))
-    {
+    let taker = DropTaker::of(world, player);
+    if !takeable(world.get::<Reservation>(item), &taker) {
         return;
     }
     let content = world.resource::<Content>().clone();
@@ -1174,17 +1334,17 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     }
 }
 
+/// Where the drop `index` of `count` lands: each as far from `from` as drops scatter, evenly
+/// around it from the angle `turn`, on the ground nearest that.
 fn scatter_pos(
     from: Pos<Meters>,
     scatter: Meters,
+    turn: f32,
     index: usize,
     count: usize,
     area: &area::Area,
 ) -> Pos<Meters> {
-    if count == 1 {
-        return area.mesh().nearest(from).unwrap_or(from);
-    }
-    let angle = std::f32::consts::TAU * index as f32 / count as f32;
+    let angle = turn + std::f32::consts::TAU * index as f32 / count as f32;
     let spread = from + Offset::new(angle.cos() * scatter.0, angle.sin() * scatter.0);
     area.mesh().nearest(spread).unwrap_or(from)
 }

@@ -12,7 +12,9 @@ use crate::systems::actor::skeleton::{Declared, GestureName};
 use crate::systems::actor::{
     Action, Actor, ActorModel, Appearance, Motion, Playing, Pose, held, playing,
 };
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{PlayedBy, player_requests};
+use crate::systems::text::LineText;
 use crate::systems::{movement, reach};
 
 pub type EmoteId = ContentId<EmoteDef>;
@@ -48,18 +50,18 @@ pub struct EmoteRequest {
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<EmoteRequest>(world, true, |world, player, request| {
+    player_requests::<EmoteRequest>(world, RequestNeeds::Command, |world, player, request| {
         perform(world, player, request.emote)
     });
 }
 
 /// Has an actor do an emote where it stands, stopping its walk and whatever it was reaching
 /// for: a gesture from standing, a pose taken, or left when it is the one held.
-pub fn perform(world: &mut World, actor: Entity, emote: EmoteId) -> Result<(), String> {
+pub fn perform(world: &mut World, actor: Entity, emote: EmoteId) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let def = emote.get(&content);
     if !offered(world, actor, def) {
-        return Err(format!("You can't {} like this", def.name.to_lowercase()));
+        return Err(format!("You can't {} like this", def.name.to_lowercase()).into());
     }
     reach::drop_intent(world, actor);
     movement::halt(world, actor);

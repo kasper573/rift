@@ -1,10 +1,12 @@
 use bevy_ecs::prelude::*;
-use bevy_terminal::TerminalSaid;
+use bevy_replication::ToClient;
+use bevy_terminal::{TerminalLine, TerminalSaid};
 use engine::core::content::Content;
 use engine::core::math::{Offset, Pos, Rgb};
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
 use engine::systems::area::{self, AreaDef};
+use engine::systems::chat::{ChatChannel, ChatSpeaker};
 use engine::systems::combat::{self, Attitude};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::history::{History, HistoryTopic, RecordTally};
@@ -326,7 +328,7 @@ fn healing_a_level_and_a_status_each_pop_with_their_own_look_unless_the_status_k
 }
 
 #[test]
-fn an_item_gained_is_told_by_its_name_marked_with_its_rarity_and_kept_so_in_history() {
+fn an_item_gained_is_told_by_its_name_in_the_colour_of_its_rarity_and_kept_so_in_history() {
     let mut sim = island(&game());
     let player = sim.join(1);
     sim.run(0.5);
@@ -336,16 +338,16 @@ fn an_item_gained_is_told_by_its_name_marked_with_its_rarity_and_kept_so_in_hist
     sim.give(player, "ring", 1);
     sim.run(0.5);
 
-    let named = |name: &str, icon: Option<&str>, color: [u8; 3]| {
+    let named = |name: &str, color: [u8; 3]| {
         LineText(vec![SpanText::Named {
             name: name.to_owned(),
             mark: NameMark {
-                icon: icon.map(str::to_owned),
+                icon: None,
                 color: Rgb(color),
             },
         }])
     };
-    let ring = named("ring", Some("rarities/fine.png"), [90, 60, 200]);
+    let ring = named("ring", [90, 60, 200]);
     let gained: Vec<(LineText, Option<RecordTally>)> = sim
         .told(1)
         .into_iter()
@@ -355,10 +357,7 @@ fn an_item_gained_is_told_by_its_name_marked_with_its_rarity_and_kept_so_in_hist
         })
         .collect();
     assert!(gained.contains(&(ring.clone(), Some(RecordTally::Change(1)))));
-    assert!(gained.contains(&(
-        named("tusk", None, [128, 128, 128]),
-        Some(RecordTally::Change(2))
-    )));
+    assert!(gained.contains(&(named("tusk", [128, 128, 128]), Some(RecordTally::Change(2)))));
     let history = sim.world.get::<History>(player).expect("a history");
     assert!(history.records().any(|record| record.entry.text == ring));
 }
@@ -549,6 +548,7 @@ fn game() -> Content {
         .mark("repeatable_offered")
         .mark("quest_in_progress")
         .mark("quest_locked")
+        .default_card_style()
         .load()
 }
 
@@ -574,6 +574,8 @@ fn area(game: &Content, key: &str) -> Sim {
         .accept::<InteractRequest>()
         .accept::<ConversationRequest>()
         .message::<TerminalSaid>()
+        .message::<ToClient<TerminalLine>>()
+        .message::<ToClient<ChatSpeaker>>()
         .add((movement::file_by_chunk, status::expire))
         .add((
             vfx::expire,
@@ -596,12 +598,13 @@ fn area(game: &Content, key: &str) -> Sim {
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
-            chat::overhear,
+            chat::speak,
         ))
         .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default())
         .add(belongings::notify_changes);
+    chat::route_lines(&mut sim.world);
     script::spawn_stateless(&mut sim.world);
     sim
 }
@@ -611,7 +614,9 @@ fn say(sim: &mut Sim, client: u32, text: &str) {
     let conn = sim.conn(client);
     sim.world.write_message(TerminalSaid {
         conn,
+        channel: ChatChannel::Area.terminal(),
         text: text.to_owned(),
+        embeds: Vec::new(),
     });
 }
 

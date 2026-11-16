@@ -15,7 +15,7 @@ use engine::systems::equipment::{self, Equipment, EquipmentPlace, HoldRequest};
 use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, ItemId};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
-use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::skill::{self, SkillDef};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{GameSettings, rewards, script, status};
@@ -359,12 +359,13 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
     let settings = content.built::<GameSettings>();
     let mut snapshot =
         CharacterSnapshot::of_player(&content, "Hero", settings.player.get(&content));
-    snapshot.equipped = vec![sword, sim.id::<ItemDef>("helm")];
+    snapshot.equipped = vec![sword, sim.id::<ItemDef>("helm")].into();
     let joined = sim.join_as(
         2,
         JoinAs {
             snapshot,
             start: settings.initial_spawn,
+            origin: JoinOrigin::Staged,
         },
     );
     assert_eq!(
@@ -486,32 +487,33 @@ fn skill(game: Game, name: &str, motion: Value) -> Game {
     for (field, value) in motion.as_object().expect("a motion") {
         swing[field] = value.clone();
     }
-    game.row(
-        "skill",
-        name,
-        json!({
-            "name": name,
-            "icon": format!("icons/{name}.png"),
-            "target": "single_enemy",
-            "basic_attack": true,
-            "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
-            "modules": [{ "type": "script", "script": path("script", name) }],
-        }),
-    )
-    .script(
-        name,
-        "skill",
-        json!({
-            "used": { "type": "on", "event": "used", "next": "swing" },
-            "swing": swing,
-            "hit": {
-                "type": "damage",
-                "who": { "type": "skill_targets" },
-                "by": { "type": "stat", "stat": "damage" },
-            },
-        }),
-    )
-    .asset(&format!("icons/{name}.png"), testkit::png(1, 1))
+    game.default_card_style()
+        .row(
+            "skill",
+            name,
+            json!({
+                "name": name,
+                "icon": format!("icons/{name}.png"),
+                "target": "single_enemy",
+                "basic_attack": true,
+                "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
+                "modules": [{ "type": "script", "script": path("script", name) }],
+            }),
+        )
+        .script(
+            name,
+            "skill",
+            json!({
+                "used": { "type": "on", "event": "used", "next": "swing" },
+                "swing": swing,
+                "hit": {
+                    "type": "damage",
+                    "who": { "type": "skill_targets" },
+                    "by": { "type": "stat", "stat": "damage" },
+                },
+            }),
+        )
+        .asset(&format!("icons/{name}.png"), testkit::png(1, 1))
 }
 
 fn armed(game: Game) -> (Sim, Entity) {

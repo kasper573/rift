@@ -16,7 +16,9 @@ use crate::core::vfx::VfxSite;
 use crate::systems::GameSettings;
 use crate::systems::actor::{self, Actor};
 use crate::systems::area;
+use crate::systems::mount::RiderAct;
 use crate::systems::npc::Pack;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
 use crate::systems::reach;
 use crate::systems::skill::{self, BasicAttack, CastAim, Targeting};
@@ -183,18 +185,22 @@ pub fn regen(world: &mut World) {
 /// A click on an enemy casts whatever sits in the basic attack slot at it, again and again until
 /// it falls.
 pub fn request(world: &mut World) {
-    player_requests::<AttackRequest>(world, true, |world, player, request| {
-        if !visibility::in_sight(world, player, request.target)
-            || !attackable(world, player, request.target)
-        {
-            return Ok(());
-        }
-        let skill = world
-            .get::<BasicAttack>(player)
-            .and_then(|slot| slot.0)
-            .ok_or("Nothing to attack with")?;
-        skill::cast(world, player, skill, CastAim::Actor(request.target), true)
-    });
+    player_requests::<AttackRequest>(
+        world,
+        RequestNeeds::Seat(RiderAct::Skills),
+        |world, player, request| {
+            if !visibility::in_sight(world, player, request.target)
+                || !attackable(world, player, request.target)
+            {
+                return Ok(());
+            }
+            let skill = world
+                .get::<BasicAttack>(player)
+                .and_then(|slot| slot.0)
+                .ok_or("Nothing to attack with")?;
+            skill::cast(world, player, skill, CastAim::Actor(request.target), true)
+        },
+    );
 }
 
 pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, damage: f32) {

@@ -8,6 +8,7 @@ use crate::core::content::{Content, SchemaMark};
 use crate::core::math::Pos;
 use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault};
 use crate::core::units::Meters;
+use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::npc::Npc;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{self, SpawnPoint};
@@ -15,7 +16,8 @@ use crate::systems::script::effect::{self as effects, Aimed, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, Fill, OwnerRow, Place, RiftScripting, RiftScripts,
 };
-use crate::systems::{dialogue, movement, reach, region};
+use crate::systems::text::LineText;
+use crate::systems::{dialogue, mount, movement, reach, region};
 
 pub struct WarpObject {
     pub name: String,
@@ -66,6 +68,12 @@ impl EffectDef<RiftScripting> for Warp {
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let to = cx.place(&self.to)?;
+        if to.area.get(cx.content).instance.is_some() {
+            return Err(ScriptFault::new(
+                "warps into an instance",
+                "an enter_instance effect, the only way into an instanced area",
+            ));
+        }
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_anywhere(world, cx, &who);
             effects::reach(
@@ -120,8 +128,7 @@ impl EffectDef<RiftScripting> for WarpToActor {
                 Aimed::Here(other) => standing(world, other),
                 Aimed::Elsewhere(client) => world
                     .get_resource::<ServerRoster>()
-                    .and_then(|roster| roster.player(client))
-                    .map(|enrolled| enrolled.place),
+                    .and_then(|roster| roster.place_of(client)),
                 Aimed::Nobody => None,
             };
             effects::reach(
@@ -143,23 +150,48 @@ impl EffectDef<RiftScripting> for WarpToActor {
     }
 }
 
-pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
+pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), LineText> {
     let here = world.get::<AreaTag>(actor).map(|tag| tag.area);
     if here != Some(to.area) && world.get::<Npc>(actor).is_some() {
-        return Err("Npcs stay in their area".to_owned());
+        return Err("Npcs stay in their area".into());
+    }
+    let instanced = to.area.get(world.resource::<Content>()).instance.is_some();
+    if here != Some(to.area) && instanced {
+        return Err("Nobody is followed into an instance".into());
     }
     dialogue::close_for(world, actor);
     reach::forget(world, actor);
-    world.entity_mut(actor).insert(SpawnPoint(to.at));
-    if here == Some(to.area) {
-        land(world, actor, to.at);
-    } else {
-        world.entity_mut(actor).insert(Crossing {
-            dest_area: to.area,
-            dest: to.at,
-        });
+    let along = mount::warping(world, actor, to);
+    for warped in along.into_iter().chain([actor]) {
+        world.entity_mut(warped).insert(SpawnPoint(to.at));
+        if here == Some(to.area) {
+            land(world, warped, to.at);
+        } else {
+            world.entity_mut(warped).insert(Crossing {
+                dest_area: to.area,
+                dest: to.at,
+                instance: None,
+            });
+        }
     }
     Ok(())
+}
+
+/// Sends a player's character on foot to `to` in another world: the instance `instance` of the
+/// place's area, or the world everyone in that area shares. Whatever they rode stays behind,
+/// and nobody who rode with them is taken along.
+pub fn cross(world: &mut World, character: Entity, to: Place, instance: Option<AreaInstanceWorld>) {
+    dialogue::close_for(world, character);
+    reach::forget(world, character);
+    mount::set_down(world, character);
+    world.entity_mut(character).insert((
+        SpawnPoint(to.at),
+        Crossing {
+            dest_area: to.area,
+            dest: to.at,
+            instance,
+        },
+    ));
 }
 
 /// Puts an actor down at `at` in its own area, or beside it when someone else rests there. A

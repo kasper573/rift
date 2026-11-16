@@ -96,6 +96,7 @@ postcard.workspace = true
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 polyanya = "0.17"
 geo = { version = "0.33", default-features = false, features = ["earcut"] }
+i_overlay = "4.5"
 meshopt = "0.7"
 glam = "0.32"
 bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
@@ -108,6 +109,8 @@ ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 blocking = "1"
 arc-swap.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

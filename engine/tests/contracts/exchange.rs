@@ -1,6 +1,9 @@
 use engine::core::content::Content;
 use engine::systems::item::effects::move_between;
-use engine::systems::item::{ExchangeRefusal, Inventory, ItemDef, ItemId, ItemStack};
+use engine::systems::item::{
+    self, ExchangeRefusal, Inventory, ItemDef, ItemId, ItemStack, JoinStacksRequest,
+    SplitStackRequest,
+};
 use serde_json::json;
 use testkit::{Declared, Game, Map, Sim};
 
@@ -127,6 +130,70 @@ fn taking_up_to_stacks_takes_what_is_held_and_no_more() {
     assert_eq!(inventory.count(tusk), 0);
     assert_eq!(inventory.count(gold), 0);
     assert_eq!(inventory.count(bone), 1);
+}
+
+#[test]
+fn a_player_splits_a_stack_in_two_and_joins_stacks_as_far_as_one_holds() {
+    let mut sim = Sim::new(
+        goods()
+            .sfx("ui_refuse")
+            .area("market", &Map::open(5, 5), json!([]))
+            .hero("market", 2.0, 2.0)
+            .load(),
+    );
+    sim.serve("market")
+        .accept::<SplitStackRequest>()
+        .accept::<JoinStacksRequest>()
+        .add(item::arrange_stacks);
+    let player = sim.join(1);
+    let conn = sim.conn(1);
+    let [tusk, bone] = ["tusk", "bone"].map(|key| sim.id::<ItemDef>(key));
+    let held = |sim: &Sim| sim.world.get::<Inventory>(player).expect("a bag").clone();
+    sim.give(player, "tusk", 70);
+    sim.give(player, "bone", 1);
+
+    sim.send(conn, SplitStackRequest { slot: 0, count: 10 });
+    sim.tick();
+    let split = [
+        ItemStack::new(tusk, 40),
+        ItemStack::new(tusk, 10),
+        ItemStack::new(tusk, 20),
+        ItemStack::new(bone, 1),
+    ];
+    assert_eq!(held(&sim).slots, split, "the new stack lies beside its own");
+
+    for count in [0, 40, 41] {
+        sim.send(conn, SplitStackRequest { slot: 0, count });
+    }
+    sim.send(conn, JoinStacksRequest { from: 3, onto: 0 });
+    sim.tick();
+    assert_eq!(
+        held(&sim).slots,
+        split,
+        "a split leaves both stacks something, and only stacks of one item join"
+    );
+
+    sim.send(conn, JoinStacksRequest { from: 2, onto: 1 });
+    sim.tick();
+    sim.send(conn, JoinStacksRequest { from: 1, onto: 0 });
+    sim.tick();
+    let joined = [
+        ItemStack::new(tusk, 50),
+        ItemStack::new(tusk, 20),
+        ItemStack::new(bone, 1),
+    ];
+    assert_eq!(
+        held(&sim).slots,
+        joined,
+        "what a full stack has no room for stays where it was"
+    );
+
+    let free = held(&sim).free_slots();
+    sim.give(player, "bone", free);
+    let full = held(&sim);
+    sim.send(conn, SplitStackRequest { slot: 1, count: 5 });
+    sim.tick();
+    assert_eq!(held(&sim), full, "a full bag has no slot for a new stack");
 }
 
 fn goods() -> Game {

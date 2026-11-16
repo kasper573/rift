@@ -23,7 +23,9 @@ use crate::systems::actor::playing::{self, Motion};
 use crate::systems::actor::skeleton::{self, Declared, MoveName};
 use crate::systems::attention::AttentionId;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
+use crate::systems::mention::Mention;
 use crate::systems::notification;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::prompt::{self, Asked, CLOSED, PromptKind, PromptStep};
 use crate::systems::script::effect::Reaching;
@@ -313,20 +315,27 @@ fn scaled(stacks: &[ItemStack], times: u32) -> Vec<ItemStack> {
         .collect()
 }
 
-/// `stacks` as a player reads them: each item by its name, with its count where more than one.
-pub fn stacks_named(content: &Content, stacks: &[ItemStack]) -> String {
+/// `stacks` as a player reads them, with its count where a stack holds more than one: each item
+/// as the interface mentions one, but for the first `icons` stacks, whose items the line already
+/// stands behind the icons of.
+pub fn stacks_mentioned(content: &Content, stacks: &[ItemStack], icons: usize) -> LineText {
     stacks
         .iter()
-        .map(|stack| {
-            let name = &stack.item.get(content).name;
-            if stack.count > 1 {
-                format!("{name} ×{}", stack.count)
+        .enumerate()
+        .fold(LineText::default(), |line, (place, stack)| {
+            let item = Mention::Item(stack.item);
+            let item = if place < icons {
+                item.name(content)
             } else {
-                name.clone()
+                item.span(content)
+            };
+            let line = line.then(if place == 0 { "" } else { " + " }).then(item);
+            if stack.count > 1 {
+                line.then(format!(" ×{}", stack.count))
+            } else {
+                line
             }
         })
-        .collect::<Vec<_>>()
-        .join(" + ")
 }
 
 /// Where a crafting prompt reads the recipes it makes.
@@ -652,7 +661,7 @@ pub struct CraftingSession {
 pub struct CraftingMove(MoveName);
 
 pub fn requests(world: &mut World) {
-    player_requests::<CraftingRequest>(world, false, |world, player, request| {
+    player_requests::<CraftingRequest>(world, RequestNeeds::Nothing, |world, player, request| {
         let Some(session) = world.get::<CraftingSession>(player) else {
             return Ok(());
         };
@@ -1024,7 +1033,7 @@ fn begin(
     player: Entity,
     offer: Vec<ItemStack>,
     recipe: RecipeKey,
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let (craftable, times) = meant(world, &content, player, &offer, &recipe)?;
     world
@@ -1032,7 +1041,7 @@ fn begin(
         .cloned()
         .unwrap_or_else(Inventory::empty)
         .exchange(&content, &offer, &craftable.recipe.products(times))
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     let speed = Percent(stat::effective(world, player, StatKind::CraftingSpeed));
     let since = world.resource::<WallClock>().now;
     let until = since.after(craftable.recipe.takes_at(times, speed));
@@ -1086,7 +1095,7 @@ fn craft(
     player: Entity,
     offer: &[ItemStack],
     recipe: &RecipeKey,
-) -> Result<Crafted, String> {
+) -> Result<Crafted, LineText> {
     let content = world.resource::<Content>().clone();
     let (craftable, times) = meant(world, &content, player, offer, recipe)?;
     let came_off = craftable
@@ -1098,7 +1107,7 @@ fn craft(
         .get_mut::<Inventory>(player)
         .ok_or_else(no_recipe)?
         .exchange(&content, offer, &made)
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     Ok(Crafted {
         made,
         failed: times - came_off,

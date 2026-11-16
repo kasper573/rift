@@ -89,6 +89,7 @@ fn show_area(world: &mut World) {
     let area = super::shared(&content, area_id).clone();
     world.insert_resource(GroundHeights {
         heights: area.heights.clone(),
+        water: area.water.clone(),
         bounds: area.size.bounds(),
     });
     world.insert_resource(scenery::grade(&area.lighting));

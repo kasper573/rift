@@ -13,7 +13,7 @@ use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
 use engine::systems::region;
 use engine::systems::script::Place;
-use engine::systems::worlds;
+use engine::systems::worlds::{self, AboveWorlds};
 use engine::systems::{GameSettings, TICK_HZ, from_client, server_app, start_server};
 use strum::AsRefStr;
 
@@ -85,6 +85,7 @@ impl Layout {
 pub struct Bench {
     worlds: Vec<App>,
     rosters: Vec<Vec<Entity>>,
+    above: AboveWorlds,
     content: Content,
     ticks: usize,
 }
@@ -129,6 +130,7 @@ impl Bench {
         Bench {
             worlds,
             rosters,
+            above: AboveWorlds::unsaved(),
             content: content.clone(),
             ticks: 0,
         }
@@ -147,10 +149,11 @@ impl Bench {
             .iter_mut()
             .map(|app| Some(app.world_mut()))
             .collect();
+        let above = &mut self.above;
         match pool {
-            Some(pool) => pool.install(|| worlds::tick(&mut views, clock)),
-            None => worlds::tick(&mut views, clock),
-        }
+            Some(pool) => pool.install(|| worlds::tick(&mut views, clock, above)),
+            None => worlds::tick(&mut views, clock, above),
+        };
     }
 
     pub fn connect(&mut self) {

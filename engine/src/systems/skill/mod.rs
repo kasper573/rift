@@ -41,6 +41,7 @@ use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
 use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind, ItemStack};
+use crate::systems::mention::Mention;
 use crate::systems::movement;
 use crate::systems::npc::{Npc, NpcDef};
 use crate::systems::script::event::{USED_POINT, USED_RANK, USED_TARGET};
@@ -49,6 +50,7 @@ use crate::systems::script::{
     Condition, EventKind, OwnerRow, RiftScripts, RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::systems::stat::{self, StatKind};
+use crate::systems::text::LineText;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -200,7 +202,7 @@ impl ContentFile for SkillDef {
                 );
             }
         }
-        match (self.target.aimed_at_point(), self.area.is_some()) {
+        match (self.target.covers_area(), self.area.is_some()) {
             (true, false) => check.error(
                 "/area",
                 "area kind without an area",
@@ -328,14 +330,25 @@ pub enum Targeting {
     SingleEnemy,
     AreaAlly,
     AreaEnemy,
+    /// A spot within the skill's range of where the caster stands, which they are never walked
+    /// toward: nothing is hit there, and what comes of it is the skill's script's to say.
+    Spot,
     #[serde(rename = "self")]
     #[strum(serialize = "self")]
     Caster,
 }
 
 impl Targeting {
-    pub fn aimed_at_point(self) -> bool {
+    /// Whether the skill takes whoever stands in a shape at the point it is aimed at.
+    pub fn covers_area(self) -> bool {
         matches!(self, Targeting::AreaAlly | Targeting::AreaEnemy)
+    }
+
+    pub fn aimed_at_point(self) -> bool {
+        matches!(
+            self,
+            Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot
+        )
     }
 
     pub fn hostile(self) -> bool {
@@ -352,6 +365,7 @@ impl Targeting {
             Targeting::SingleEnemy => "One enemy",
             Targeting::AreaAlly => "Allies around the aimed point",
             Targeting::AreaEnemy => "Enemies around the aimed point",
+            Targeting::Spot => "A spot in range",
             Targeting::Caster => "Yourself",
         }
     }
@@ -680,20 +694,27 @@ pub fn known_from(
 }
 
 /// Why an actor could not use the skill at all, whatever its aim or readiness.
-pub fn unusable(world: &World, actor: Entity, skill: SkillId) -> Option<String> {
-    let def = skill.get(world.resource::<Content>());
+pub fn unusable(world: &World, actor: Entity, skill: SkillId) -> Option<LineText> {
+    let content = world.resource::<Content>();
+    let def = skill.get(content);
     if rank_of(world, actor, skill) == Rank::NONE {
-        Some(format!("You don't know {}", def.name))
+        Some(LineText::plain("You don't know ").then(Mention::Skill(skill).span(content)))
     } else if def.kind == SkillKind::Passive {
-        Some(format!("{} is passive: it holds on its own", def.name))
+        Some(
+            Mention::Skill(skill)
+                .line(content)
+                .then(" is passive: it holds on its own"),
+        )
     } else {
         None
     }
 }
 
 /// Why a passive skill takes no bar slot.
-pub fn unslotted(def: &SkillDef) -> String {
-    format!("{} is passive: it holds without a slot", def.name)
+pub fn unslotted(skill: SkillId, content: &Content) -> LineText {
+    Mention::Skill(skill)
+        .line(content)
+        .then(" is passive: it holds without a slot")
 }
 
 pub fn rank_of(world: &World, actor: Entity, skill: SkillId) -> Rank {
@@ -716,6 +737,16 @@ pub fn grants_of(content: &Content, item: ItemId) -> &[SkillId] {
         ItemKind::Equipment { grants, .. } => grants,
         _ => &[],
     }
+}
+
+/// Whether using `skill` is using an item `actor` carries: one whose use casts it.
+pub fn carried_as_item(world: &World, actor: Entity, skill: SkillId) -> bool {
+    let content = world.resource::<Content>();
+    world.get::<Inventory>(actor).is_some_and(|bag| {
+        bag.slots
+            .iter()
+            .any(|stack| cast_by(content, stack.item) == Some(skill))
+    })
 }
 
 /// The skill a use of the item casts, for a usable item that casts one.
@@ -754,6 +785,7 @@ pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
     let def = skill.get(world.resource::<Content>());
     match def.target {
         Targeting::Caster => vec![caster],
+        Targeting::Spot => Vec::new(),
         Targeting::SingleAlly | Targeting::SingleEnemy => used_target(world, cx)
             .filter(|who| casting::fits(world, caster, *who, def.target))
             .into_iter()
@@ -801,7 +833,9 @@ pub fn aimed_point(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Pos<Met
         Targeting::SingleAlly | Targeting::SingleEnemy => {
             movement::position(world, used_target(world, cx)?)
         }
-        Targeting::AreaAlly | Targeting::AreaEnemy => cx.event.get(USED_POINT)?.as_point(),
+        Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot => {
+            cx.event.get(USED_POINT)?.as_point()
+        }
     }
 }
 

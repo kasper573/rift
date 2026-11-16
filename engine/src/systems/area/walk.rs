@@ -14,6 +14,7 @@ use crate::core::ground::{TILE_SIDE, TileAt};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::units::{CellPos, GridSize, GroundCell, MeterSize, Meters};
 use crate::systems::movement::{NavMesh, SEAM_SNAP, TileLayer};
+use crate::systems::spawner::SpawnSurface;
 
 /// What a terrain is underfoot: whether actors walk on it, and what a step on it sounds like.
 #[derive(Clone, Debug)]
@@ -22,21 +23,30 @@ pub struct Underfoot {
     pub footstep: SfxId,
 }
 
-/// Where an area walks and flies, for everyone and for the wild, over the tiles of ground held:
-/// each tile triangulated as it is first held, and the four meshes joined anew over the held tiles
-/// whenever the tiles held change. A tile is held for as long as a [`GroundHold`] wants it, so a
+/// Where an area walks and flies, for everyone and for the wild, and where it floats whatever
+/// draws as much water as one of the game's `draughts`, over the tiles of ground held: each tile
+/// triangulated as it is first held, and the meshes joined anew over the held tiles whenever the
+/// tiles held change. A tile is held for as long as a [`GroundHold`] wants it, so a
 /// process holds the ground near its players or in its view alone, however wide the area and
 /// however far they have been. A mesh is read without a lock or a count, so every core reads it at
 /// once, and swapped whole when it is laid anew.
 pub struct Meshes {
     bounds: Rect<Meters>,
     held: RwLock<Held>,
-    patches: RwLock<BTreeMap<TileAt, Arc<[Rect<Meters>]>>>,
-    meshes: [ArcSwap<NavMesh>; KINDS],
+    patches: RwLock<BTreeMap<TileAt, Patches>>,
+    /// The water each floating mesh is laid over, at the shallowest: one mesh a draught, after
+    /// the four everyone and the wild walk and fly.
+    draughts: Vec<Meters>,
+    /// The patches of each tile too shallow for a draught, by the tile and the draught's place.
+    shallows: RwLock<BTreeMap<(TileAt, usize), Patches>>,
+    meshes: Vec<ArcSwap<NavMesh>>,
     /// Which change of the tiles held the meshes were last joined over. One join runs at a time,
     /// so whoever asks for one while another is under way waits for meshes that cover its tiles.
     joined: Mutex<u64>,
 }
+
+/// The patches of a tile that something keeps a mesh off.
+type Patches = Arc<[Rect<Meters>]>;
 
 /// A mesh as it is read: the one laid when the read began, kept whole until the read ends.
 pub type HeldMesh = Guard<Arc<NavMesh>>;
@@ -68,15 +78,18 @@ impl Drop for GroundHold {
 }
 
 impl Meshes {
-    /// The meshes over no ground yet, within `bounds`.
-    pub(super) fn empty(bounds: Rect<Meters>) -> Arc<Meshes> {
+    /// The meshes over no ground yet, within `bounds`, with one to float on for each of
+    /// `draughts`.
+    pub(super) fn empty(bounds: Rect<Meters>, draughts: Vec<Meters>) -> Arc<Meshes> {
         Arc::new(Meshes {
             bounds,
             held: RwLock::new(Held::default()),
             patches: RwLock::new(BTreeMap::new()),
-            meshes: std::array::from_fn(|_| {
-                ArcSwap::from_pointee(NavMesh::join(bounds, std::iter::empty()))
-            }),
+            meshes: (0..KINDS + draughts.len())
+                .map(|_| ArcSwap::from_pointee(NavMesh::join(bounds, std::iter::empty())))
+                .collect(),
+            draughts,
+            shallows: RwLock::new(BTreeMap::new()),
             joined: Mutex::new(0),
         })
     }
@@ -91,11 +104,11 @@ struct Held {
 }
 
 struct HeldTile {
-    layers: Arc<[TileLayer; KINDS]>,
+    layers: Arc<[TileLayer]>,
     holds: usize,
 }
 
-/// The meshes of an area: the ground and the air, each for everyone and for the wild.
+/// The meshes every area has: the ground and the air, each for everyone and for the wild.
 const KINDS: usize = 4;
 
 /// The tiles of `area` held: those its meshes cover.
@@ -133,9 +146,9 @@ pub(super) fn hold(
             .copied()
             .collect()
     };
-    let laid: BTreeMap<TileAt, Arc<[TileLayer; KINDS]>> = missing
+    let laid: BTreeMap<TileAt, Arc<[TileLayer]>> = missing
         .into_par_iter()
-        .map(|at| (at, Arc::new(triangulate(area, at))))
+        .map(|at| (at, triangulate(area, at)))
         .collect();
     let mut changed = false;
     {
@@ -147,7 +160,7 @@ pub(super) fn hold(
                     let layers = laid
                         .get(at)
                         .cloned()
-                        .unwrap_or_else(|| Arc::new(triangulate(area, *at)));
+                        .unwrap_or_else(|| triangulate(area, *at));
                     held.tiles.insert(*at, HeldTile { layers, holds: 1 });
                     changed = true;
                 }
@@ -177,6 +190,34 @@ pub(super) fn mesh(area: &Area, wild: bool, flies: bool) -> HeldMesh {
     area.meshes.meshes[kind(wild, flies)].load()
 }
 
+/// The least water there is: any at all. What an area spawns on water lies wherever it stands.
+pub(super) const ANY_WATER: Meters = Meters(0.0);
+
+/// The draughts `area_modules` and the game's mounts have an area lay a mesh of water for, the
+/// shallowest first: every mount's, and any water at all where something is spawned on it.
+pub(super) fn draughts(content: &Content, area_modules: &[super::Flattened]) -> Vec<Meters> {
+    let mut draughts = crate::systems::mount::draughts(content);
+    let spawns_afloat = area_modules.iter().any(|placed| {
+        matches!(
+            &placed.module,
+            super::AreaModule::Spawner(spawner) if spawner.on == SpawnSurface::Water
+        )
+    });
+    if spawns_afloat && !draughts.contains(&ANY_WATER) {
+        draughts.insert(0, ANY_WATER);
+    }
+    draughts
+}
+
+/// The mesh what draws `draught` of water floats on in `area`, over the tiles held: wherever
+/// water stands, at least that deep, whatever lies under it, less every prop's footprint. None
+/// for a draught the area lays no mesh for.
+pub(super) fn water(area: &Area, draught: Meters) -> Option<HeldMesh> {
+    let meshes = &area.meshes;
+    let place = meshes.draughts.iter().position(|held| *held == draught)?;
+    Some(meshes.meshes[KINDS + place].load())
+}
+
 /// An area's ground looked over a tile at a time, for a check of all of it, however wide: each
 /// question triangulates only the tiles it looks at, a few kept at hand for the next, and which
 /// ground connects to which across the whole area is worked out once, a tile at a time, keeping
@@ -199,6 +240,9 @@ pub enum SurveyQuestion {
     Walkable(Pos<Meters>),
     /// Whether some ground within the bounds is walked: by the wild, or by everyone.
     Covers { bounds: Rect<Meters>, wild: bool },
+    /// Whether water stands somewhere within the bounds, clear of every prop. Asked only of an
+    /// area that spawns on water.
+    Wet(Rect<Meters>),
     /// The islands of the ground everyone walks within the bounds.
     Islands(Rect<Meters>),
     /// The island of the ground everyone walks at the point, none where nobody walks there.
@@ -211,7 +255,9 @@ impl SurveyQuestion {
             SurveyQuestion::Walkable(at) | SurveyQuestion::IslandAt(at) => {
                 Rect::new(at, Size::zero())
             }
-            SurveyQuestion::Covers { bounds, .. } | SurveyQuestion::Islands(bounds) => bounds,
+            SurveyQuestion::Covers { bounds, .. }
+            | SurveyQuestion::Wet(bounds)
+            | SurveyQuestion::Islands(bounds) => bounds,
         }
     }
 
@@ -301,7 +347,10 @@ impl<'a> Survey<'a> {
                 let wild = asking.iter().any(|index| {
                     matches!(questions[*index], SurveyQuestion::Covers { wild: true, .. })
                 });
-                let tile = SurveyedTile::of(self.area, at, wild);
+                let wet = asking
+                    .iter()
+                    .any(|index| matches!(questions[*index], SurveyQuestion::Wet(_)));
+                let tile = SurveyedTile::of(self.area, at, wild, wet);
                 AnsweredTile {
                     at,
                     rims: lays_islands.then(|| tile.rims()),
@@ -390,7 +439,7 @@ impl<'a> Survey<'a> {
         {
             return tile.clone();
         }
-        let tile = Arc::new(SurveyedTile::of(self.area, at, false));
+        let tile = Arc::new(SurveyedTile::of(self.area, at, false, false));
         let mut at_hand = self.at_hand.lock().expect("the survey's tiles");
         if at_hand.len() == AT_HAND {
             at_hand.pop_front();
@@ -409,16 +458,17 @@ impl<'a> Survey<'a> {
 const AT_HAND: usize = 32;
 
 /// A tile as a survey looks at it: the layer and the ground everyone walks on it, and the wild's
-/// where a question asks of it.
+/// and the water standing on it where a question asks of them.
 struct SurveyedTile {
     layer: TileLayer,
     walks: NavMesh,
     wild: Option<NavMesh>,
+    wet: Option<NavMesh>,
 }
 
 impl SurveyedTile {
-    /// The tile at `at`, with the wild's ground where `wild`.
-    fn of(area: &Area, at: TileAt, wild: bool) -> SurveyedTile {
+    /// The tile at `at`, with the wild's ground where `wild` and its water where `wet`.
+    fn of(area: &Area, at: TileAt, wild: bool, wet: bool) -> SurveyedTile {
         let TileGround {
             tile,
             ground,
@@ -433,9 +483,20 @@ impl SurveyedTile {
         } else {
             (NavMesh::triangulate(tile, bounds, &ground, radius), None)
         };
+        let wet = wet.then(|| {
+            let any = area
+                .meshes
+                .draughts
+                .iter()
+                .position(|draught| *draught == ANY_WATER)
+                .expect("an area that spawns on water lays its water");
+            let water = NavMesh::triangulate(tile, bounds, &unfloatable(area, at, any), radius);
+            NavMesh::join(bounds, [&water])
+        });
         SurveyedTile {
             walks: NavMesh::join(bounds, [&layer]),
             wild,
+            wet,
             layer,
         }
     }
@@ -456,6 +517,12 @@ impl SurveyedTile {
             } else {
                 self.walks.covers(bounds)
             }),
+            SurveyQuestion::Wet(bounds) => TileAnswer::Yes(
+                self.wet
+                    .as_ref()
+                    .expect("the water, laid for the questions that ask of it")
+                    .covers(bounds),
+            ),
             SurveyQuestion::Islands(bounds) => TileAnswer::Islands(
                 self.walks
                     .ground_within(bounds)
@@ -503,7 +570,7 @@ impl SurveyIslands {
                 .each_tile()
                 .collect::<Vec<_>>()
                 .into_par_iter()
-                .map(|at| (at, SurveyedTile::of(area, at, false).rims()))
+                .map(|at| (at, SurveyedTile::of(area, at, false, false).rims()))
                 .collect(),
         )
     }
@@ -656,7 +723,7 @@ fn join(meshes: &Meshes) {
     let mut joined = meshes.joined.lock().expect("the join lock");
     loop {
         let started = std::time::Instant::now();
-        let (changes, tiles): (u64, Vec<Arc<[TileLayer; KINDS]>>) = {
+        let (changes, tiles): (u64, Vec<Arc<[TileLayer]>>) = {
             let held = meshes.held.read().expect("the held lock");
             (
                 held.changes,
@@ -669,7 +736,7 @@ fn join(meshes: &Meshes) {
         if *joined == changes {
             return;
         }
-        let laid: Vec<Arc<NavMesh>> = (0..KINDS)
+        let laid: Vec<Arc<NavMesh>> = (0..meshes.meshes.len())
             .into_par_iter()
             .map(|kind| {
                 Arc::new(NavMesh::join(
@@ -723,8 +790,8 @@ fn kind(wild: bool, flies: bool) -> usize {
     usize::from(wild) | usize::from(flies) << 1
 }
 
-/// The four layers of the tile at `at`.
-fn triangulate(area: &Area, at: TileAt) -> [TileLayer; KINDS] {
+/// The layers of the tile at `at`: the four everyone has, then one to float on a draught.
+fn triangulate(area: &Area, at: TileAt) -> Arc<[TileLayer]> {
     let TileGround {
         tile,
         ground,
@@ -734,12 +801,81 @@ fn triangulate(area: &Area, at: TileAt) -> [TileLayer; KINDS] {
     let radius = area.bodies.radius;
     let [walks, wild] =
         NavMesh::triangulate_sharing(tile, bounds, radius, &ground, [&[], &zones[..]]);
-    [
+    let mut layers = vec![
         walks,
         wild,
         NavMesh::triangulate(tile, bounds, &[], radius),
         NavMesh::triangulate(tile, bounds, &zones, radius),
-    ]
+    ];
+    layers.extend((0..area.meshes.draughts.len()).map(|draught| {
+        NavMesh::triangulate(tile, bounds, &unfloatable(area, at, draught), radius)
+    }));
+    layers.into()
+}
+
+/// The outlines nothing drawing the draught at `draught` floats within on the tile at `at`: the
+/// footprints of the props standing there, and the water too shallow for it.
+fn unfloatable(area: &Area, at: TileAt, draught: usize) -> Vec<Vec<Pos<Meters>>> {
+    let size = area.heights.size();
+    let tile = at.rect(size);
+    let reach = tile.inflate(area.bodies.radius.0, area.bodies.radius.0);
+    let mut outlines: Vec<Vec<Pos<Meters>>> = area
+        .footprint_index
+        .within(reach)
+        .map(|footprint| area.footprints[footprint].clone())
+        .collect();
+    outlines.extend(
+        size.tiles_within(tile.inflate(TILE_SIDE.0, TILE_SIDE.0))
+            .flat_map(|near| shallow(area, near, draught).to_vec())
+            .filter(|patch| patch.intersects(&reach))
+            .map(|patch| corners(patch).to_vec()),
+    );
+    outlines
+}
+
+/// The patches of tile `at` whose water stands shallower than the draught at `draught`, computed
+/// once, as the tiles meeting at a seam each triangulate the patches reaching across it.
+fn shallow(area: &Area, at: TileAt, draught: usize) -> Arc<[Rect<Meters>]> {
+    let key = (at, draught);
+    if let Some(patches) = area
+        .meshes
+        .shallows
+        .read()
+        .expect("the shallows lock")
+        .get(&key)
+    {
+        return patches.clone();
+    }
+    if let Err(problem) = area.heights.load(at) {
+        bevy::log::warn!("ground tile {} doesn't load: {problem}", at.key());
+    }
+    if let Err(problem) = area.water.load(at) {
+        bevy::log::warn!("water tile {} doesn't load: {problem}", at.key());
+    }
+    let grid = area.size.grid();
+    let side = TILE_SIDE.0 as u32;
+    let origin = CellPos::new((at.column * side) as i32, (at.row * side) as i32);
+    let dims = GridSize::new(
+        side.min(grid.width.saturating_sub(at.column * side)),
+        side.min(grid.height.saturating_sub(at.row * side)),
+    );
+    let deep = area.meshes.draughts[draught];
+    let cells: Vec<bool> = (0..dims.height)
+        .flat_map(|y| (0..dims.width).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let cell = origin + CellPos::new(x as i32, y as i32).to_vector();
+            let depth = area.water.depth_at(&area.heights, cell.bounds().center());
+            depth <= Meters(0.0) || depth < deep
+        })
+        .collect();
+    let patches: Arc<[Rect<Meters>]> = patches(origin, dims, &cells).into();
+    area.meshes
+        .shallows
+        .write()
+        .expect("the shallows lock")
+        .entry(key)
+        .or_insert(patches)
+        .clone()
 }
 
 /// The ground of a tile as it is triangulated: its rect, the outlines no one walks within, and the

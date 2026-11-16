@@ -13,6 +13,7 @@ pub mod media;
 pub mod reader;
 pub mod report;
 pub mod retarget;
+pub mod saved;
 pub mod serial;
 pub mod sound;
 pub mod store;
@@ -39,6 +40,7 @@ pub use load::{
 pub use mark::SchemaMark;
 pub use reader::{FolderReader, Unreadable, WrittenFiles};
 pub use report::{ContentProblem, ErrorPlace, LoadError, LoadReport, MISSING_FILE};
+pub use saved::{MissingFile, SavedList, SetAside};
 pub use table::{
     AnyTable, Content, ContentBuilder, ContentFile, ContentNames, MODULES, ModuleRule, ModuleSet,
     NamedContent, ReadRow, Table,

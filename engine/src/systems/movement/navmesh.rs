@@ -2,8 +2,13 @@ use crate::core::geometry::corners;
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterPos, Meters};
-use geo::TriangulateEarcut;
+use geo::{LineString, TriangulateEarcut};
 use glam::Vec2;
+use i_overlay::core::fill_rule::FillRule;
+use i_overlay::core::overlay::{Overlay, ShapeType};
+use i_overlay::core::overlay_rule::OverlayRule;
+use i_overlay::i_float::int::point::IntPoint;
+use i_overlay::i_shape::int::shape::{IntContour, IntShape};
 use polyanya::{Coords, Layer, Mesh, Polygon, Triangulation, Vertex};
 
 /// Where an area walks: its bounds less everything that blocks, each grown by the walker's radius,
@@ -80,7 +85,7 @@ impl NavMesh {
     }
 
     /// Layers of `tile` as [`NavMesh::triangulate`] lays them, each less the `shared` obstacles
-    /// and its own besides: the shared ones are grown once for them all.
+    /// and its own besides: the shared ones are cut out once for them all.
     pub fn triangulate_sharing<const LAYERS: usize>(
         tile: Rect<Meters>,
         bounds: Rect<Meters>,
@@ -95,16 +100,18 @@ impl NavMesh {
                 layer: Layer::default(),
             });
         };
-        let mut triangulation = Triangulation::from_outer_edges(&corners(rect).map(vec2));
-        triangulation.add_obstacles(reaching(shared, rect, radius));
-        triangulation.prebuild();
+        let grid = Grid::of(bounds);
+        let open = grid.less(
+            vec![vec![grid.contour(&corners(rect).map(vec2))]],
+            reaching(shared, rect, radius),
+        );
         own.map(|obstacles| {
-            let mut triangulation = triangulation.clone();
-            triangulation.add_obstacles(reaching(obstacles, rect, radius));
-            TileLayer {
-                rect,
-                layer: triangulation.as_layer(),
-            }
+            let mut obstacles = reaching(obstacles, rect, radius).peekable();
+            let layer = match obstacles.peek() {
+                Some(_) => grid.triangulated(&grid.less(open.clone(), obstacles)),
+                None => grid.triangulated(&open),
+            };
+            TileLayer { rect, layer }
         })
     }
 
@@ -502,39 +509,19 @@ fn fit(layer: &mut Layer) {
 /// The tiles as one layer: every vertex on a seam snapped onto it and shared by the tiles meeting
 /// there, so the polygons on both sides neighbour each other through it.
 fn joined<'a>(tiles: impl Iterator<Item = &'a Layer>, seams_x: &[f32], seams_y: &[f32]) -> Layer {
-    let mut vertices: Vec<Vertex> = Vec::new();
-    let mut polygons: Vec<Polygon> = Vec::new();
-    for layer in tiles {
-        let (first_vertex, first_polygon) = (vertices.len() as u32, polygons.len() as u32);
-        polygons.extend(layer.polygons.iter().map(|polygon| {
-            Polygon::new(
-                polygon.vertices.iter().map(|v| v + first_vertex).collect(),
-                polygon.is_one_way,
-            )
-        }));
-        vertices.extend(layer.vertices.iter().map(|vertex| {
-            let mut coords = vertex.coords;
-            if let Some(seam) = seams_x.iter().find(|x| (coords.x - *x).abs() <= SEAM_SNAP) {
-                coords.x = *seam;
-            }
-            if let Some(seam) = seams_y.iter().find(|y| (coords.y - *y).abs() <= SEAM_SNAP) {
-                coords.y = *seam;
-            }
-            Vertex::new(
-                coords,
-                vertex
-                    .polygons
-                    .iter()
-                    .map(|p| {
-                        if *p == u32::MAX {
-                            *p
-                        } else {
-                            p + first_polygon
-                        }
-                    })
-                    .collect(),
-            )
-        }));
+    let Layer {
+        mut vertices,
+        mut polygons,
+        ..
+    } = beside(tiles);
+    for vertex in &mut vertices {
+        let coords = &mut vertex.coords;
+        if let Some(seam) = seams_x.iter().find(|x| (coords.x - *x).abs() <= SEAM_SNAP) {
+            coords.x = *seam;
+        }
+        if let Some(seam) = seams_y.iter().find(|y| (coords.y - *y).abs() <= SEAM_SNAP) {
+            coords.y = *seam;
+        }
     }
     let mut parent: Vec<usize> = (0..vertices.len()).collect();
     fn root(parent: &mut [usize], mut index: usize) -> usize {
@@ -593,6 +580,113 @@ fn joined<'a>(tiles: impl Iterator<Item = &'a Layer>, seams_x: &[f32], seams_y: 
     layer.vertices = shared;
     layer.polygons = polygons;
     layer
+}
+
+/// The layers as one, each beside the others: no vertex is shared between two of them.
+fn beside<'a>(layers: impl Iterator<Item = &'a Layer>) -> Layer {
+    let mut all = Layer::default();
+    for layer in layers {
+        let (first_vertex, first_polygon) = (all.vertices.len() as u32, all.polygons.len() as u32);
+        all.polygons.extend(layer.polygons.iter().map(|polygon| {
+            Polygon::new(
+                polygon.vertices.iter().map(|v| v + first_vertex).collect(),
+                polygon.is_one_way,
+            )
+        }));
+        all.vertices.extend(layer.vertices.iter().map(|vertex| {
+            Vertex::new(
+                vertex.coords,
+                vertex
+                    .polygons
+                    .iter()
+                    .map(|p| {
+                        if *p == u32::MAX {
+                            *p
+                        } else {
+                            p + first_polygon
+                        }
+                    })
+                    .collect(),
+            )
+        }));
+    }
+    all
+}
+
+/// The finest grid a float holds every point of exactly, anywhere within an area. Ground is cut on
+/// it in whole numbers, where no rounding makes two outlines cross, and what is left of it comes
+/// back as the very floats: a triangulation is only ever handed outlines that keep clear of each
+/// other, which is all it lays reliably.
+struct Grid {
+    cells_per_meter: f32,
+}
+
+impl Grid {
+    fn of(bounds: Rect<Meters>) -> Grid {
+        let farthest = [
+            bounds.min_x(),
+            bounds.min_y(),
+            bounds.max_x(),
+            bounds.max_y(),
+        ]
+        .into_iter()
+        .map(f32::abs)
+        .fold(1.0, f32::max);
+        Grid {
+            cells_per_meter: 2f32.powi(f32::MANTISSA_DIGITS as i32 - farthest.log2().ceil() as i32),
+        }
+    }
+
+    fn contour(&self, outline: &[Vec2]) -> IntContour {
+        outline
+            .iter()
+            .map(|at| {
+                let cell = (*at * self.cells_per_meter).round();
+                IntPoint::new(cell.x as i32, cell.y as i32)
+            })
+            .collect()
+    }
+
+    /// The `open` ground less what the `obstacles`, each going round counter-clockwise, cover.
+    fn less(
+        &self,
+        open: Vec<IntShape>,
+        obstacles: impl Iterator<Item = Vec<Vec2>>,
+    ) -> Vec<IntShape> {
+        let obstacles: Vec<IntContour> = obstacles.map(|outline| self.contour(&outline)).collect();
+        if obstacles.is_empty() {
+            return open;
+        }
+        let edges = open.iter().flatten().chain(&obstacles).map(Vec::len).sum();
+        let mut overlay = Overlay::new(edges);
+        overlay.add_shapes(&open, ShapeType::Subject);
+        overlay.add_contours(&obstacles, ShapeType::Clip);
+        overlay.overlay(OverlayRule::Difference, FillRule::NonZero)
+    }
+
+    /// The `open` ground in triangles, each stretch of it triangulated on its own.
+    fn triangulated(&self, open: &[IntShape]) -> Layer {
+        let ring = |contour: &IntContour| {
+            LineString::from_iter(contour.iter().map(|at| {
+                (
+                    at.x as f32 / self.cells_per_meter,
+                    at.y as f32 / self.cells_per_meter,
+                )
+            }))
+        };
+        let mut stretches: Vec<Layer> = open
+            .iter()
+            .filter_map(|stretch| {
+                let (outer, holes) = stretch.split_first()?;
+                let ground = geo::Polygon::new(ring(outer), holes.iter().map(ring).collect());
+                Some(Triangulation::from_geo_polygon(ground).as_layer())
+            })
+            .collect();
+        match stretches.len() {
+            1 => stretches.remove(0),
+            _ => beside(stretches.iter()),
+        }
+    }
 }
 
 fn vec2(at: Pos<Meters>) -> Vec2 {

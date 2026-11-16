@@ -116,8 +116,8 @@ impl KeyNames {
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
-#[schemars(transform = SchemaMark::Unit.with("letters/s"))]
-pub struct LettersPerSecond(pub f32);
+#[schemars(transform = SchemaMark::Unit.with("characters/s"))]
+pub struct CharactersPerSecond(pub f32);
 
 /// How styled text sets its voices, key caps, halos and motions; sizes are shares of the text's
 /// own, distances in points.
@@ -127,7 +127,7 @@ pub struct Lettering {
     pub whisper: WhisperLettering,
     pub shout_size: f32,
     pub caps: CapLettering,
-    /// How far a halo spreads around each letter.
+    /// How far a halo spreads around each character.
     pub halo: f32,
     /// How a waving word bobs up and down.
     pub wave: Swing,
@@ -170,24 +170,24 @@ pub struct Swing {
 }
 
 /// How lines type out in the game: at its pace unless a player chooses another between its
-/// slowest and fastest, a slow span's letters each taking `slow_by` times as long.
+/// slowest and fastest, a slow span's characters each taking `slow_by` times as long.
 #[derive(JsonSchema, Resource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Typing {
-    pub pace: LettersPerSecond,
-    pub slowest: LettersPerSecond,
-    pub fastest: LettersPerSecond,
+    pub pace: CharactersPerSecond,
+    pub slowest: CharactersPerSecond,
+    pub fastest: CharactersPerSecond,
     pub slow_by: f32,
 }
 
 impl Typing {
     /// The pace lines type at for a player who `chose` one, or chose none.
-    pub fn pace_for(self, chose: Option<LettersPerSecond>) -> TypingPace {
-        let letters = chose.map_or(self.pace, |chose| {
-            LettersPerSecond(chose.0.clamp(self.slowest.0, self.fastest.0))
+    pub fn pace_for(self, chose: Option<CharactersPerSecond>) -> TypingPace {
+        let characters = chose.map_or(self.pace, |chose| {
+            CharactersPerSecond(chose.0.clamp(self.slowest.0, self.fastest.0))
         });
         TypingPace {
-            letters,
+            characters,
             slow_by: self.slow_by,
         }
     }
@@ -196,7 +196,7 @@ impl Typing {
 /// How fast lines type out where they are read.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct TypingPace {
-    pub letters: LettersPerSecond,
+    pub characters: CharactersPerSecond,
     pub slow_by: f32,
 }
 
@@ -312,7 +312,7 @@ impl From<StyledSpan> for TextPiece {
 
 pub fn reveal_times(pieces: &[TextPiece], pace: TypingPace) -> Vec<Duration> {
     let step =
-        |slowness: f32| Duration::from_secs_f64(f64::from(slowness) / f64::from(pace.letters.0));
+        |slowness: f32| Duration::from_secs_f64(f64::from(slowness) / f64::from(pace.characters.0));
     let mut clock = Duration::ZERO;
     let mut times = Vec::new();
     for piece in pieces {

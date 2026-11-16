@@ -4,6 +4,7 @@ use engine::core::content::{ContentFile, Fixture};
 use engine::core::vfx::{ParamKind, ShaderParam};
 use engine::systems::area::world_map::WorldMap;
 use engine::systems::attention::AttentionMark;
+use engine::systems::chat::ChatChannel;
 use engine::systems::input::map::{BoundAction, InputAction, InputBinding, InputDef, InputFixture};
 use engine::systems::interface::{CursorShape, InterfaceIcon, InterfaceSound};
 use engine::systems::vfx::{VfxFixture, VfxShaderFixture};
@@ -11,7 +12,6 @@ use serde_json::{Value, json};
 use strum::VariantArray;
 
 use crate::Game;
-use crate::art::png;
 
 impl Game {
     /// Every row the engine itself requires, each in its plainest form that keeps what the engine
@@ -22,10 +22,10 @@ impl Game {
         let game = each::<AttentionMark>(game, |game, key, _| game.mark(key));
         let game = each::<InterfaceSound>(game, |game, key, _| game.sfx(key));
         let game = each::<CursorShape>(game, |game, key, _| game.cursor(key));
-        let game = each::<InterfaceIcon>(game, |game, key, _| {
-            let image = format!("icons/interface/{key}.png");
-            game.row("interface_icon", key, json!({ "image": image }))
-                .asset(&image, png(1, 1))
+        let game = each::<InterfaceIcon>(game, |game, key, _| game.interface_icon(key));
+        let game = each::<ChatChannel>(game, |game, key, _| {
+            let channel = json!({ "name": key, "color": [255, 255, 255] });
+            game.row("chat_channel", key, channel)
         });
         let game = each::<VfxFixture>(game, |game, key, _| game.vfx(key));
         let game = each::<VfxShaderFixture>(game, |game, key, locks| {

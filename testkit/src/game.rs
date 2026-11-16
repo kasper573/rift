@@ -10,19 +10,22 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, FileShape, LoadReport,
     MemoryFolder, SETTINGS_FILE, content_path, name_of, table_of, version,
 };
-use engine::core::ground::{GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER};
+use engine::core::ground::{
+    GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER, WaterSurface,
+};
 use engine::core::math::Rgb;
 use engine::core::render::{
     CameraFraming, ClearingLook, CloudLook, LightLook, Look, PictureGrade, SkyLook, SurfaceFinish,
     Zooms,
 };
 use engine::core::text::{
-    CapLettering, Lettering, LettersPerSecond, ShakeLettering, Swing, Typing, WhisperLettering,
+    CapLettering, CharactersPerSecond, Lettering, ShakeLettering, Swing, Typing, WhisperLettering,
 };
 use engine::core::units::{Degrees, Radians, RadiansPerSec};
 use engine::core::units::{Meters, MetersPerSec, Stops};
 use engine::core::units::{Millis, Seconds};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
+use engine::systems::GameWords;
 use engine::systems::actor::Action;
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
@@ -268,33 +271,7 @@ impl Game {
                 },
                 "reading": { "glance": 2.0, "per_word": 0.3 },
                 "notices": { "pops_last": 1.0, "intro_after": 0.3 },
-                "words": {
-                    "accept_quest": "Accept",
-                    "decline_quest": "Decline",
-                    "not_yet": "Not yet.",
-                    "locked": "You can't do that yet.",
-                    "no_longer": "You can't do that any more.",
-                    "quest_log_full": "Your quest log is full.",
-                    "needs_more": "Needs {count} more {item}",
-                    "needs_a_slot": "Needs 1 free slot",
-                    "needs_slots": "Needs {slots} free slots",
-                    "needs_tool": "Needs a {tool}",
-                    "no_room": "No room",
-                    "bag_room": "No room in your bag",
-                    "ran_out": "It ran out",
-                    "confirm": "Confirm",
-                    "craft": "Craft",
-                    "cancel_craft": "Cancel",
-                    "recipes": "Recipes",
-                    "no_recipe": "No recipe",
-                    "choose_result": "Choose a result",
-                    "craft_failed": "Crafting failed",
-                    "requires_mastery": "Requires mastery",
-                    "unknown_command": "There is no command {command}",
-                    "command_needs": "{usage} needs its {input}",
-                    "command_refuses": "{value} is no {input}",
-                    "command_takes": "{usage} takes no more than that",
-                },
+                "words": words(),
                 "typing": typing(),
                 "lettering": lettering(),
                 "speech": speech(),
@@ -308,6 +285,13 @@ impl Game {
                 },
                 "history_merges_within": 10.0,
                 "suggestions": 10,
+                "lingers_for": 0.0,
+                "requests": { "card_shows": 20.0, "new_accounts_accept": "everyone" },
+                "chat": {
+                    "lines": 5,
+                    "within": 10.0,
+                    "name_colors": [[230, 120, 120], [120, 200, 230], [150, 220, 130]],
+                },
                 "look": look(),
                 "dialogue_shots": {
                     "shoulder": { "back": 1.6, "aside": 0.7, "up": 0.95, "aim": 0.75 },
@@ -318,9 +302,9 @@ impl Game {
 
     /// A sword that, held, lets its wearer strike: a basic attack on one enemy, landing the wearer's
     /// damage at the height of its swing; it puts its wearer in the sword stance and takes the main
-    /// hand.
+    /// hand. The strike is named to its wearer in the colour of the default card style.
     pub fn sword(self) -> Game {
-        self.row(
+        self.default_card_style().row(
             "skill",
             "strike",
             json!({
@@ -492,14 +476,37 @@ impl Game {
         self.row("card_style", name, row)
     }
 
-    /// A quest of `fields`, named after its file, with a picture for its art.
+    /// A quest of `fields`, named after its file, with a picture for its art. It is named to its
+    /// players in the colour of the default card style.
     pub fn quest(self, name: &str, fields: Value) -> Game {
         let art = format!("quests/{name}.png");
         let mut row = json!({ "art": art });
         for (field, value) in fields.as_object().expect("a quest's fields") {
             row[field] = value.clone();
         }
-        self.row("quest", name, row).asset(&art, png(1, 1))
+        self.default_card_style()
+            .row("quest", name, row)
+            .asset(&art, png(1, 1))
+    }
+
+    /// The card style a quest or a skill with none of its own is drawn in, and named in the
+    /// colour of: a plain one, unless the test declared its own.
+    pub fn default_card_style(self) -> Game {
+        if self
+            .files
+            .contains_key(&fields_path("card_style", "default"))
+        {
+            self
+        } else {
+            self.card_style("default", json!({}))
+        }
+    }
+
+    /// An icon of the interface, named after its file: a blank picture.
+    pub fn interface_icon(self, name: &str) -> Game {
+        let image = format!("icons/interface/{name}.png");
+        self.row("interface_icon", name, json!({ "image": image }))
+            .asset(&image, png(1, 1))
     }
 
     /// Changes the fields of a file declared before.
@@ -793,6 +800,29 @@ impl Game {
         }
     }
 
+    /// Lays `water` on the area `area`.
+    pub fn water(self, area: &str, water: &WaterSurface) -> Game {
+        let game = water
+            .size()
+            .each_tile()
+            .filter_map(|at| Some((at, water.encode_tile(at)?)))
+            .fold(self, |game, (at, bytes)| {
+                game.part(
+                    "area",
+                    area,
+                    &area::WATER.named(&at.key(), "png"),
+                    bytes.to_vec(),
+                )
+            });
+        let overview = water.encode_overview().expect("water to lie somewhere");
+        game.part(
+            "area",
+            area,
+            &area::WATER_OVERVIEW.named("", "png"),
+            overview,
+        )
+    }
+
     /// The two terrains every declared area is painted with: turf to walk on and rock that
     /// blocks, each sounding like a step, a tick of a clip unlike any other declared sound.
     pub fn terrains(self) -> Game {
@@ -958,10 +988,115 @@ fn json_bytes(value: &Value) -> Vec<u8> {
 /// How every test game types its lines out.
 pub fn typing() -> Typing {
     Typing {
-        pace: LettersPerSecond(45.0),
-        slowest: LettersPerSecond(15.0),
-        fastest: LettersPerSecond(120.0),
+        pace: CharactersPerSecond(45.0),
+        slowest: CharactersPerSecond(15.0),
+        fastest: CharactersPerSecond(120.0),
         slow_by: 2.5,
+    }
+}
+
+/// What every test game says where the engine has the game word it.
+fn words() -> GameWords {
+    GameWords {
+        accept_quest: "Accept".to_owned(),
+        decline_quest: "Decline".to_owned(),
+        not_yet: "Not yet.".to_owned(),
+        locked: "You can't do that yet.".to_owned(),
+        no_longer: "You can't do that any more.".to_owned(),
+        quest_log_full: "Your quest log is full.".to_owned(),
+        needs_more: "Needs {count} more {item}".to_owned(),
+        needs_a_slot: "Needs 1 free slot".to_owned(),
+        needs_slots: "Needs {slots} free slots".to_owned(),
+        needs_tool: "Needs a {tool}".to_owned(),
+        no_room: "No room".to_owned(),
+        bag_room: "No room in your bag".to_owned(),
+        ran_out: "It ran out".to_owned(),
+        confirm: "Confirm".to_owned(),
+        craft: "Craft".to_owned(),
+        cancel_craft: "Cancel".to_owned(),
+        recipes: "Recipes".to_owned(),
+        no_recipe: "No recipe".to_owned(),
+        choose_result: "Choose a result".to_owned(),
+        craft_failed: "Crafting failed".to_owned(),
+        requires_mastery: "Requires mastery".to_owned(),
+        unknown_command: "There is no command {command}".to_owned(),
+        command_needs: "{usage} needs its {input}".to_owned(),
+        command_refuses: "{value} is no {input}".to_owned(),
+        command_takes: "{usage} takes no more than that".to_owned(),
+        game_changed: "The game has changed since you were here".to_owned(),
+        gone: "The {kind} {name} is no longer in the game.".to_owned(),
+        kept_aside: "Kept aside for you, in case it returns.".to_owned(),
+        stack_did_not_fit: "Your inventory now holds {slots}. One stack did not fit.".to_owned(),
+        stacks_did_not_fit: "Your inventory now holds {slots}. {stacks} stacks did not fit."
+            .to_owned(),
+        skills_rearranged: "The {class}'s skills were rearranged.".to_owned(),
+        points_returned: "Your {points} skill points are yours to spend again.".to_owned(),
+        carry_on: "Carry on".to_owned(),
+        away: "Away".to_owned(),
+        not_saving: "The game cannot save right now".to_owned(),
+        not_saving_since: "What you have done since {time} may be lost if the server stops."
+            .to_owned(),
+        play_on: "You can go on playing.".to_owned(),
+        saved: "Saved".to_owned(),
+        saved_again: "Everything up to now is kept.".to_owned(),
+        not_taking_requests: "{name} is not taking requests".to_owned(),
+        you_blocked: "You have blocked {name}".to_owned(),
+        not_here: "{name} is not here".to_owned(),
+        friendship_asks: "{name} wants to be your friend".to_owned(),
+        friendship_asked: "You asked {name} to be your friend".to_owned(),
+        friendship_sent: "Friend request sent to {name}".to_owned(),
+        friendship_accepted: "{name} is now your friend".to_owned(),
+        already_friends: "{name} is already your friend".to_owned(),
+        friends_full: "Your friends list is full".to_owned(),
+        too_many_friend_requests: "You have too many friend requests waiting".to_owned(),
+        message_needs_title: "Give it a title".to_owned(),
+        only_to_friends: "You can only write to friends and party members".to_owned(),
+        not_taking_messages: "{name} is not taking messages".to_owned(),
+        inbox_full: "{name}'s inbox is full".to_owned(),
+        writing_too_fast: "Wait a moment before writing again".to_owned(),
+        stays_with_you: "{item} stays with you".to_owned(),
+        message_sent: "Message sent to {name}".to_owned(),
+        message_arrived: "{name} wrote to you: {title}. {key} opens it".to_owned(),
+        took_some: "{taken} of {attached} taken. The rest found no room and waits here".to_owned(),
+        did_not_fit_title: "What your inventory had no room for".to_owned(),
+        did_not_fit_text:
+            "Your inventory had no room for these. They wait here until you take them.".to_owned(),
+        sent_in_a_message: "It was sent to you in a message".to_owned(),
+        party_invite_asks: "{name} invites you to their party".to_owned(),
+        party_invite_asked: "You invited {name} to your party".to_owned(),
+        party_invite_denied: "{name} denied your invitation".to_owned(),
+        party_invite_lapsed: "{name} did not answer your invitation".to_owned(),
+        party_full: "The party is full".to_owned(),
+        in_a_party: "{name} is in a party".to_owned(),
+        party_joined: "{name} joined the party".to_owned(),
+        party_left: "{name} left the party".to_owned(),
+        party_removed: "{name} was removed from the party".to_owned(),
+        you_were_removed: "You were removed from the party".to_owned(),
+        party_disbanded: "{name} disbanded the party".to_owned(),
+        party_leads: "{name} leads the party now".to_owned(),
+        you_joined_party: "You joined {name}'s party".to_owned(),
+        you_left_party: "You left the party".to_owned(),
+        chat_too_fast: "You are writing too fast".to_owned(),
+        mount_barred_here: "This area does not allow mounts".to_owned(),
+        no_water_in_reach: "No water deep enough within reach".to_owned(),
+        step_off_first: "Step off first".to_owned(),
+        no_ground_in_reach: "No ground to step onto within reach".to_owned(),
+        spot_too_far: "That spot is too far away".to_owned(),
+        not_from_mount: "Not from the {mount}".to_owned(),
+        seat_asks: "{name} asks for a seat on your {about}".to_owned(),
+        seat_asked: "You asked {name} for a seat".to_owned(),
+        seat_denied: "{name} has no seat for you".to_owned(),
+        seat_lapsed: "{name} did not answer about a seat".to_owned(),
+        seats_taken: "Every seat is taken".to_owned(),
+        seat_out_of_reach: "Too far from the mount for a seat".to_owned(),
+        set_down_by: "{name} set you down".to_owned(),
+        seat_free: "Seat free".to_owned(),
+        instance_full: "{area} holds no more than {holds}".to_owned(),
+        instances_busy: "There is no room right now".to_owned(),
+        instance_timed_out: "Time ran out in {area}".to_owned(),
+        instance_not_yours: "You are no longer of this party".to_owned(),
+        instance_rewards_title: "Your rewards from {area}".to_owned(),
+        instance_rewards_text: "Your bag had no room for these.".to_owned(),
     }
 }
 

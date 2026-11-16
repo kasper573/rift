@@ -293,13 +293,19 @@ required unless it says otherwise, and a binary refuses to start without one.
 
 - **`game-server`** reads `RIFT_GAME_SERVER_*`: where it listens (`BIND`, `PORT` for HTTP, `UDP_PORT`
   for play), the address players reach the machine at (`PUBLIC_IP`), the game
-  folder (`CONTENT_DIR`), `MAX_CLIENTS`, `PLAYER_SPAWN_POLICY` (`map` or `dist`), `PLAYER_IMMORTAL`,
+  folder (`CONTENT_DIR`), `MAX_CLIENTS`, how many instances of the game's instanced areas it runs
+  at once (`MAX_INSTANCES`), `PLAYER_SPAWN_POLICY` (`map` or `dist`), `PLAYER_IMMORTAL`,
   `DAYLIGHT` (`turning`; `still`, which holds the game's day at its start hour for tests that
   compare how the world looks; or `fixed`, which holds it at `HOUR`, 0 to 24), `WEATHER` (`turning`,
   or `still`, which holds every area's weather at its first spell), `DAILY_RESET_UTC_HOUR`, `AUTH` (`oidc`, or `fake`, which takes a token's claims without checking
-  its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`
-  and, optionally, `RNG_SEED`. Started on port 0 it picks free ports, and prints them on stdout
-  once players can connect.
+  its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`,
+  where the game is saved (`STORE`: `postgres://…` for a database server, or `sqlite://…` for a
+  file, in which it makes its one table when there is none), how many seconds it plays on between
+  two saves (`CHECKPOINT_EVERY`) and, optionally, `RNG_SEED`. Started on port 0 it picks free
+  ports, and prints them on stdout once players can connect. It does not start when it cannot
+  reach its store. It saves every account and character as they stand at each save, and once more
+  when it is told to stop, trying again for as long as its store refuses; told to stop a second
+  time, it stops with what was not written named in its log.
 - **`game-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`),
   `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN` and `PROBE`.
 - **`web-server`** reads `RIFT_WEB_SERVER_*`: `BIND`, `PORT`, `REDIRECT_URI`, the game server as
@@ -324,10 +330,16 @@ The runtimes know no infrastructure, only protocols:
   and gets a connect token for `PUBLIC_IP` and one of its UDP ports (`UDP_PORT` and the ports after
   it, one for every 1024 of `MAX_CLIENTS`), good for one connection within half a minute;
   the connection is encrypted, and ends once it falls silent for a few seconds. Whatever stands
-  between players and the server must pass those UDP ports through as they are.
+  between players and the server must pass those UDP ports through as they are. A sign-in whose
+  saved character the server cannot read is answered 503, and gets no character in its place.
 - **Metrics** are served in the Prometheus exposition format at `/metrics`, and **profiles** in pprof's
   format at `/debug/pprof/profile?seconds=N` (CPU) and `/debug/pprof/heap`, on Linux and macOS. Both
-  servers serve them beside their own routes.
+  servers serve them beside their own routes. The game server's tell how saving goes:
+  `rift_last_checkpoint_timestamp_seconds`, the last save that worked and the one to alert on,
+  `rift_records_unwritten`, what stopping right now would lose, `rift_checkpoints_total` by
+  `outcome`, `rift_checkpoint_duration_seconds`, `rift_checkpoint_records_written_total`, and
+  `rift_sign_ins_total` by where each `character` was found (`in_play`, `memory`, `store`,
+  `refused`).
 - **Logs** go to stdout.
 - **The probe.** A game client started with `RIFT_CLIENT_PROBE=<host:port>` connects there and
   answers questions about what it shows, one JSON line each: a frame's snapshot, a picture of its

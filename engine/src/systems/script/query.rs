@@ -15,14 +15,17 @@ use crate::core::time::WallClock;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, Area, AreaId, AreaTag, TimeOfDayName, object};
+use crate::systems::area_instance;
 use crate::systems::class::{self, ClassId};
 use crate::systems::combat::{Attackers, Attitude};
 use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{DroppedItem, Inventory, ItemId};
 use crate::systems::memory::{self, MemoryId};
+use crate::systems::mount;
 use crate::systems::movement::{self, Position};
 use crate::systems::npc::{Npc, NpcId, Pack, Packs, body};
+use crate::systems::party;
 use crate::systems::player::{ArrivalHold, PlayedBy};
 use crate::systems::prompt::Offer;
 use crate::systems::quest::{self, Objective, QuestId};
@@ -259,6 +262,32 @@ pub enum RiftQuery {
         of: Option<Box<Condition>>,
         recipe: RecipeKey,
     },
+    /// Whether the character's player is in a party.
+    InParty {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+    },
+    /// Whether the character sits on a mount, as its driver or a passenger.
+    Riding {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+    },
+    /// Whether the character stands in an instance.
+    InInstance {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+    },
+    /// How many are inside the instance of `area` a door would let the character into: their
+    /// party's, or their own while they are in no party. None while there is no such instance.
+    InstanceHolds {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+        area: AreaId,
+    },
     FreeSlots {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
@@ -429,6 +458,7 @@ impl RiftQueryKind {
             | RiftQueryKind::FreeSlots
             | RiftQueryKind::Offered
             | RiftQueryKind::Count
+            | RiftQueryKind::InstanceHolds
             | RiftQueryKind::StatusCount
             | RiftQueryKind::GroundItems => ValueType::Integer,
             RiftQueryKind::Stat
@@ -453,6 +483,9 @@ impl RiftQueryKind {
             | RiftQueryKind::HasStatus
             | RiftQueryKind::Equipped
             | RiftQueryKind::MastersRecipe
+            | RiftQueryKind::InParty
+            | RiftQueryKind::Riding
+            | RiftQueryKind::InInstance
             | RiftQueryKind::SetWithin
             | RiftQueryKind::OnQuest
             | RiftQueryKind::QuestDone
@@ -493,6 +526,10 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::StatusCount { of, .. }
             | RiftQuery::Holding { of, .. }
             | RiftQuery::MastersRecipe { of, .. }
+            | RiftQuery::InParty { of }
+            | RiftQuery::Riding { of }
+            | RiftQuery::InInstance { of }
+            | RiftQuery::InstanceHolds { of, .. }
             | RiftQuery::FreeSlots { of }
             | RiftQuery::Offered { of, .. }
             | RiftQuery::Equipped { of, .. }
@@ -637,6 +674,37 @@ impl QueryDef<RiftScripting> for RiftQuery {
                         character(world, cx, &of)
                             .is_some_and(|who| crafting::masters(world, who, &recipe)),
                     )
+                })
+            }
+            RiftQuery::InParty { of } => {
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    Value::Bool(
+                        character(world, cx, &of).is_some_and(|who| party::in_one(world, who)),
+                    )
+                })
+            }
+            RiftQuery::Riding { of } => {
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    Value::Bool(
+                        character(world, cx, &of).is_some_and(|who| mount::rides(world, who)),
+                    )
+                })
+            }
+            RiftQuery::InInstance { of } => {
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    Value::Bool(character(world, cx, &of).is_some() && area_instance::inside(world))
+                })
+            }
+            RiftQuery::InstanceHolds { of, area } => {
+                let of = cx.actor(of.as_deref())?;
+                let area = *area;
+                Box::new(move |world, cx| {
+                    Value::Int(character(world, cx, &of).map_or(0, |who| {
+                        i64::from(area_instance::headcount(world, who, area))
+                    }))
                 })
             }
             RiftQuery::FreeSlots { of } => {

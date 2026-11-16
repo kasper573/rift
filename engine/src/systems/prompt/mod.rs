@@ -12,6 +12,7 @@ use crate::core::script::{
 use crate::systems::dialogue;
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::item::{ExchangeRefusal, Inventory, ItemStack};
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, effect as effects,
@@ -122,8 +123,10 @@ impl EffectDef<RiftScripting> for TakeOffer {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
                 return effects::refuse(world, cx, &refused, "Nobody offered anything");
             };
-            let outcome = take_offer(world, player);
-            effects::settle(world, cx, &refused, outcome)
+            match take_offer(world, player) {
+                Ok(()) => EffectStep::Done,
+                Err(why) => effects::refuse(world, cx, &refused, why),
+            }
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -250,7 +253,7 @@ pub fn submitted(
     player: Entity,
     step: PromptStep,
     offer: &[ItemStack],
-) -> Result<Option<FlowKey>, String> {
+) -> Result<Option<FlowKey>, LineText> {
     let Some(session) = world.get::<PromptSession>(player) else {
         return Ok(None);
     };
@@ -265,7 +268,7 @@ pub fn submitted(
         .unwrap_or_else(Inventory::empty)
         .exchange(&content, offer, &[]);
     if let Err(refusal) = covered {
-        return Err(refusal.describe(&content));
+        return Err(refusal.line(&content));
     }
     if offer.iter().any(|stack| stack.count == 0) {
         return Ok(None);
@@ -274,7 +277,7 @@ pub fn submitted(
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<PromptRequest>(world, false, |world, player, request| {
+    player_requests::<PromptRequest>(world, RequestNeeds::Nothing, |world, player, request| {
         let PromptRequest::Submit { step, offer } = request;
         if hosted(world, player) {
             return Ok(());
@@ -338,14 +341,14 @@ fn next_step(world: &mut World) -> PromptStep {
     PromptStep(steps.0)
 }
 
-fn take_offer(world: &mut World, player: Entity) -> Result<(), String> {
+fn take_offer(world: &mut World, player: Entity) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let offer = world.get::<Offer>(player).cloned().unwrap_or_default();
     world
         .get_mut::<Inventory>(player)
         .ok_or(ExchangeRefusal::NoRoom { slots: 0 })
         .and_then(|mut bag| bag.exchange(&content, &offer.0, &[]))
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     world.entity_mut(player).insert(Offer::default());
     Ok(())
 }

@@ -50,13 +50,14 @@
         }
       ]
     },
-    "sell_item": {
-      "label": "Sell an item to the open shop",
+    "split_stack": {
+      "label": "Split a stack of items in two",
       "bindings": [
         {
           "type": "click",
-          "button": "Right",
-          "times": 1
+          "button": "Left",
+          "times": 1,
+          "alt": true
         }
       ]
     },
@@ -135,12 +136,39 @@
         }
       ]
     },
+    "open_social": {
+      "label": "Open the Social tab",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyF"
+        }
+      ]
+    },
     "open_settings": {
       "label": "Open the Settings tab",
       "bindings": [
         {
           "type": "key",
           "key": "KeyO"
+        }
+      ]
+    },
+    "accept_request": {
+      "label": "Accept the request in front",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyY"
+        }
+      ]
+    },
+    "deny_request": {
+      "label": "Deny the request in front",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyN"
         }
       ]
     },
@@ -186,6 +214,27 @@
         {
           "type": "key",
           "key": "PageDown"
+        }
+      ]
+    },
+    "next_chat_tab": {
+      "label": "Show the next tab of chat",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "Tab",
+          "ctrl": true
+        }
+      ]
+    },
+    "previous_chat_tab": {
+      "label": "Show the tab of chat before this one",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "Tab",
+          "ctrl": true,
+          "shift": true
         }
       ]
     },
@@ -562,6 +611,17 @@
         }
       ]
     },
+    "add_to_chat": {
+      "label": "Add what the pointer is on to the chat message",
+      "bindings": [
+        {
+          "type": "click",
+          "button": "Right",
+          "times": 1,
+          "ctrl": true
+        }
+      ]
+    },
     "emotes": {
       "label": "Hold the wheel of emotes open",
       "bindings": [
@@ -586,6 +646,15 @@
         {
           "type": "key",
           "key": "Enter"
+        }
+      ]
+    },
+    "step_off": {
+      "label": "Step off what you ride",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyX"
         }
       ]
     }

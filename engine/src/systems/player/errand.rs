@@ -4,6 +4,7 @@
 use bevy_ecs::prelude::*;
 
 use super::ClientId;
+use crate::systems::text::LineText;
 
 /// Something to do to the character of `to`, in the world it stands in, and what the world that
 /// asked does once it knows how that went.
@@ -15,23 +16,21 @@ pub struct Errand {
 
 /// What an errand does to its player's character. It runs in another world than the one that
 /// made it, so it holds no entity of its own world, which would name some other entity there.
-pub type ErrandDeed = Box<dyn FnOnce(&mut World, Entity) -> Result<(), String> + Send + Sync>;
+pub type ErrandDeed = Box<dyn FnOnce(&mut World, Entity) -> Result<(), LineText> + Send + Sync>;
 
 /// What the world that asked for an errand does with how it went.
 pub type ErrandAnswer = Box<dyn FnOnce(&mut World, ErrandOutcome) + Send + Sync>;
 
 /// How an errand went.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ErrandOutcome {
     Done,
-    Refused(String),
+    Refused(LineText),
     /// The player's character stood in no world, or had fallen.
     Unreached,
 }
 
 /// The errands a world has asked for since the server's worlds last conferred.
-/// Only a world that keeps the server's roster has any: without one it knows of no player
-/// elsewhere to ask anything of.
 #[derive(Resource, Default)]
 pub struct Errands(Vec<Errand>);
 

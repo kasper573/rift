@@ -112,6 +112,8 @@ pub enum Mark {
     Raise,
     Hourglass,
     Clock,
+    Crown,
+    Chat,
 }
 
 impl Mark {
@@ -164,6 +166,8 @@ impl Mark {
             Mark::Raise => "above",
             Mark::Hourglass => "time left",
             Mark::Clock => "time of day",
+            Mark::Crown => "leader",
+            Mark::Chat => "chat",
         }
     }
 }
@@ -226,6 +230,8 @@ impl Mark {
             Mark::Raise => phosphor::ARROW_LINE_UP,
             Mark::Hourglass => phosphor::HOURGLASS,
             Mark::Clock => phosphor::CLOCK,
+            Mark::Crown => phosphor::CROWN,
+            Mark::Chat => phosphor::CHAT_TEXT,
         })
     }
 }
@@ -289,14 +295,24 @@ impl Icon {
     /// Draws the icon as large as fits in `rect`, centred on it.
     pub fn paint(self, painter: &Painter, rect: Rect, color: Color32) {
         let size = rect.width().min(rect.height());
-        painter.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            self.glyph,
-            FontId::new(size, self.weight.family()),
-            color,
-        );
+        let font = FontId::new(size, self.weight.family());
+        centered(painter, rect.center(), self.glyph, font, color);
     }
+}
+
+/// Paints `text` with the middle of what is drawn of it on `at`, and tells where that is. A font
+/// sets a letter in the box of its line, where the letter itself rarely sits in the middle, so a
+/// sign alone in a shape is centred by its own outline.
+pub fn centered(painter: &Painter, at: Pos2, text: &str, font: FontId, color: Color32) -> Rect {
+    let galley = painter.layout_no_wrap(text.to_owned(), font, color);
+    let drawn = if galley.mesh_bounds.is_positive() {
+        galley.mesh_bounds
+    } else {
+        galley.rect
+    };
+    let from = at - drawn.center().to_vec2();
+    painter.galley(from, galley, color);
+    drawn.translate(from.to_vec2())
 }
 
 pub fn show(ui: &mut Ui, mark: Mark, size: f32, color: Color32) -> Response {

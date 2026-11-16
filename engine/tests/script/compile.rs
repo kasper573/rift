@@ -296,7 +296,9 @@ fn entry(owner: RunnerKind, next: &str) -> Value {
         RunnerKind::Shop => json!({ "type": "on", "event": "bought", "next": next }),
         RunnerKind::Resource => json!({ "type": "on", "event": "extracted", "next": next }),
         RunnerKind::RecipeBook => json!({ "type": "on", "event": "crafted", "next": next }),
-        RunnerKind::StatusEffect => json!({ "type": "on", "event": "activated", "next": next }),
+        RunnerKind::StatusEffect | RunnerKind::Mount => {
+            json!({ "type": "on", "event": "activated", "next": next })
+        }
         RunnerKind::Command => json!({ "type": "on", "event": "invoked", "next": next }),
         RunnerKind::Blueprint | RunnerKind::Any => unreachable!("no entry for {owner:?}"),
     }
@@ -344,6 +346,8 @@ fn every_capability() -> Vec<Value> {
         json!({ "type": "set_attitude", "attitude": "hostile" }),
         json!({ "type": "spawn_npcs", "npc": "fighter.npc.json", "count": 1, "spread": 1.5, "near": "subject", "shown": "everyone" }),
         json!({ "type": "despawn" }),
+        json!({ "type": "leave_instance" }),
+        json!({ "type": "complete_goal", "task": "open_the_gate" }),
         json!({ "type": "play_sound", "sfx": "fixtures/interface/ui_pick.sfx", "for": "subject" }),
     ]
 }

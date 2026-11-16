@@ -20,6 +20,7 @@ use engine::systems::area::spawnable::SpawnableDef;
 use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
+use engine::systems::chat::ChatChannelDef;
 use engine::systems::class::ClassDef;
 use engine::systems::command::TerminalCommandDef;
 use engine::systems::crafting::RecipeBookDef;
@@ -29,6 +30,7 @@ use engine::systems::interface::{CursorDef, InterfaceIconDef};
 use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::item::{ItemDef, ToolTypeDef};
 use engine::systems::memory::MemoryDef;
+use engine::systems::mount::MountDef;
 use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::player::PlayerDef;
@@ -185,9 +187,11 @@ impl KindFamily {
             | StanceDef::TABLE
             | ToolTypeDef::TABLE
             | ItemRarityDef::TABLE => KindFamily::Items,
-            SkillDef::TABLE | StatusEffectDef::TABLE | VfxDef::TABLE | VfxShaderDef::TABLE => {
-                KindFamily::Abilities
-            }
+            SkillDef::TABLE
+            | StatusEffectDef::TABLE
+            | MountDef::TABLE
+            | VfxDef::TABLE
+            | VfxShaderDef::TABLE => KindFamily::Abilities,
             QuestDef::TABLE | MemoryDef::TABLE | NotificationDef::TABLE | ScriptDef::TABLE => {
                 KindFamily::Story
             }
@@ -197,6 +201,7 @@ impl KindFamily {
             | InterfaceIconDef::TABLE
             | AttentionDef::TABLE
             | CardStyleDef::TABLE
+            | ChatChannelDef::TABLE
             | TerminalCommandDef::TABLE => KindFamily::Interface,
             _ => return None,
         })
@@ -243,6 +248,7 @@ pub fn of_table(table: &str) -> KindIcon {
         SpawnableDef::TABLE => KindIcon::plain(phosphor::TENT),
         SkillDef::TABLE => KindIcon::plain(phosphor::LIGHTNING),
         StatusEffectDef::TABLE => KindIcon::plain(phosphor::HEARTBEAT),
+        MountDef::TABLE => KindIcon::plain(phosphor::HORSE).unpictured(),
         QuestDef::TABLE => KindIcon::plain(phosphor::SCROLL),
         ShopDef::TABLE => KindIcon::plain(phosphor::STOREFRONT),
         RecipeBookDef::TABLE => KindIcon::plain(phosphor::BOOK_OPEN_TEXT),
@@ -253,6 +259,7 @@ pub fn of_table(table: &str) -> KindIcon {
         CursorDef::TABLE => KindIcon::plain(phosphor::CURSOR),
         InterfaceIconDef::TABLE => KindIcon::plain(phosphor::APP_WINDOW),
         AttentionDef::TABLE => KindIcon::plain(phosphor::SEAL_WARNING),
+        ChatChannelDef::TABLE => KindIcon::plain(phosphor::CHAT_CIRCLE),
         TerminalCommandDef::TABLE => KindIcon::plain(phosphor::TERMINAL_WINDOW),
         RoleDef::TABLE => KindIcon::plain(phosphor::CROWN),
         SfxDef::TABLE => KindIcon::plain(phosphor::SPEAKER_HIGH),

@@ -367,11 +367,16 @@ fn a_single_target_cast_engages_its_target_while_walking_and_lets_go_after() {
         sim.world.get::<reach::Engaged>(player),
         Some(&reach::Engaged(dummy))
     );
+    assert!(
+        sim.world.get::<reach::Chasing>(player).is_some(),
+        "the caster's own client is told of the chase, whose pace the walk it shows keeps"
+    );
     assert!(sim.run_until(10.0, |world| {
         stat::effective(world, dummy, StatKind::Health) < full
     }));
     sim.run(0.5);
     assert_eq!(sim.world.get::<reach::Engaged>(player), None);
+    assert_eq!(sim.world.get::<reach::Chasing>(player), None);
 }
 
 #[test]

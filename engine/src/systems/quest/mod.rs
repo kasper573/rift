@@ -36,8 +36,10 @@ use crate::systems::dialogue::{self, ChoiceReveal, Revealable};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{Inventory, ItemId, ItemModuleKind, ItemStack, scatter_at};
+use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{PlayedBy, player_requests};
 use crate::systems::rewards::KillCredited;
 use crate::systems::script::condition::{self, CompiledCondition};
@@ -268,20 +270,23 @@ impl QuestDef {
         parties: &Parties,
         quest: QuestId,
         objective: &Objective,
-    ) -> String {
+    ) -> LineText {
         match objective {
-            Objective::Hold(stack) => stack.item.get(content).name.to_owned(),
+            Objective::Hold(stack) => Mention::Item(stack.item).line(content),
             Objective::Defeat { npc, .. } => {
-                format!("Defeat the {}", npc.get(content).name)
+                LineText::plain(crate::systems::npc::defeat_label(content, *npc))
             }
-            Objective::Task { label, .. } | Objective::Decide { label, .. } => (*label).to_owned(),
-            Objective::Deliver { item } => format!(
-                "Bring {} to {}",
-                item.get(content).name,
-                parties
-                    .turn_in(quest)
-                    .map_or("its taker", |party| party.name.as_str())
-            ),
+            Objective::Task { label, .. } | Objective::Decide { label, .. } => {
+                LineText::plain(label.clone())
+            }
+            Objective::Deliver { item } => LineText::plain("Bring ")
+                .then(Mention::Item(*item).span(content))
+                .then(" to ")
+                .then(
+                    parties
+                        .turn_in(quest)
+                        .map_or("its taker", |party| party.name.as_str()),
+                ),
         }
     }
 
@@ -377,21 +382,25 @@ impl QuestDef {
             .unwrap_or(&AttentionMark::QuestOffered.get(content).icon)
     }
 
-    pub fn hand_in_hint(&self, parties: &Parties, quest: QuestId) -> String {
+    pub fn hand_in_hint(&self, content: &Content, parties: &Parties, quest: QuestId) -> LineText {
         let giver = parties.giver(quest);
         let taker = parties.turn_in(quest);
         let verb = if giver == taker { "Return" } else { "Go" };
         match taker {
-            Some(party) => format!("{verb} to {}", party.name),
-            None => format!("{verb} and hand it in"),
+            Some(party) => LineText::plain(format!("{verb} to ")).then(party.named(content)),
+            None => format!("{verb} and hand it in").into(),
         }
     }
 
-    pub fn retry_hint(&self, parties: &Parties, quest: QuestId) -> String {
+    pub fn retry_hint(&self, content: &Content, parties: &Parties, quest: QuestId) -> LineText {
         match parties.giver(quest) {
-            Some(party) if party.item.is_some() => format!("Use the {} to try again", party.name),
-            Some(party) => format!("Talk to {} to try again", party.name),
-            None => "Try again".to_owned(),
+            Some(party) if party.item.is_some() => LineText::plain("Use the ")
+                .then(party.named(content))
+                .then(" to try again"),
+            Some(party) => LineText::plain("Talk to ")
+                .then(party.named(content))
+                .then(" to try again"),
+            None => "Try again".into(),
         }
     }
 
@@ -473,7 +482,7 @@ pub struct QuestDrop {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjectiveProgress {
-    pub label: String,
+    pub label: LineText,
     pub have: u32,
     pub need: u32,
     pub counted: bool,
@@ -499,6 +508,16 @@ pub struct QuestParty {
     pub name: String,
     pub item: Option<ItemId>,
     pub npc: Option<NpcId>,
+}
+
+impl QuestParty {
+    /// The party as a line names it: an item as the interface mentions one, anyone else by name.
+    pub fn named(&self, content: &Content) -> LineText {
+        match self.item {
+            Some(item) => Mention::Item(item).line(content),
+            None => self.name.as_str().into(),
+        }
+    }
 }
 
 impl Parties {
@@ -757,7 +776,7 @@ pub fn ready_to_hand_in(world: &World, player: Entity, quest: QuestId) -> bool {
         .is_some_and(|active| active.ready(content, parties, world.get::<Inventory>(player)))
 }
 
-pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), String> {
+pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), LineText> {
     if let Some(refusal) = accept_refusal(world, player, quest) {
         return Err(refusal);
     }
@@ -769,7 +788,7 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), S
         .ok_or_else(|| "Has no bag".to_owned())?;
     inventory
         .exchange(&content, &[], def.grants())
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     let mut log = world
         .get_mut::<QuestLog>(player)
         .ok_or_else(|| "Has no quest log".to_owned())?;
@@ -785,7 +804,7 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), S
     tell(
         world,
         player,
-        format!("Quest accepted · {}", def.title),
+        LineText::plain("Quest accepted · ").then(Mention::Quest(quest).span(&content)),
         Some(&offered_mark(def).get(&content).icon),
         Some(InterfaceSound::QuestAccepted.id(&content)),
     );
@@ -794,8 +813,10 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), S
     Ok(())
 }
 
-pub fn not_ready(content: &Content, quest: QuestId) -> String {
-    format!("{} isn't ready to hand in", quest.get(content).title)
+pub fn not_ready(content: &Content, quest: QuestId) -> LineText {
+    Mention::Quest(quest)
+        .line(content)
+        .then(" isn't ready to hand in")
 }
 
 pub fn turn_in(
@@ -803,7 +824,7 @@ pub fn turn_in(
     player: Entity,
     quest: QuestId,
     pick: Option<ItemStack>,
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let def = quest.get(&content);
     if !ready_to_hand_in(world, player, quest) {
@@ -815,7 +836,7 @@ pub fn turn_in(
         .ok_or_else(|| "Has no bag".to_owned())?;
     inventory
         .exchange(&content, def.hand_in(), &gives)
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     complete(world, player, quest);
     Ok(())
 }
@@ -845,7 +866,7 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
                 topic: HistoryTopic::Quest,
                 sfx: Some(InterfaceSound::QuestCompleted.id(&content)),
             },
-            LineText::plain(def.title.as_str()),
+            Mention::Quest(quest).line(&content),
         ),
     );
     raise(world, quest, EventKind::Completed, player);
@@ -918,10 +939,8 @@ pub fn complete_task(world: &mut World, player: Entity, quest: QuestId, index: u
         tell(
             world,
             player,
-            format!(
-                "Objective done · {}",
-                def.objective_label(&content, &parties, quest, objective)
-            ),
+            LineText::plain("Objective done · ")
+                .then(def.objective_label(&content, &parties, quest, objective)),
             objective.icon(&content),
             Some(InterfaceSound::TallyTick.id(&content)),
         );
@@ -950,7 +969,7 @@ fn raise(world: &mut World, quest: QuestId, kind: EventKind, player: Entity) {
 fn tell(
     world: &mut World,
     player: Entity,
-    text: String,
+    text: impl Into<LineText>,
     icon: Option<&ImageRef>,
     sfx: Option<SfxId>,
 ) {
@@ -965,7 +984,7 @@ fn tell(
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<QuestRequest>(world, false, |world, player, request| {
+    player_requests::<QuestRequest>(world, RequestNeeds::Nothing, |world, player, request| {
         match request {
             QuestRequest::Track { quest, tracked } => track(world, player, quest, tracked),
             QuestRequest::Abandon { quest } => abandon(world, player, quest),
@@ -1037,7 +1056,7 @@ enum Announcement {
     Expired,
     Settled {
         log: Option<QuestLog>,
-        told: Vec<(String, ImageRef, Option<SfxId>)>,
+        told: Vec<(LineText, ImageRef, Option<SfxId>)>,
     },
 }
 
@@ -1058,7 +1077,7 @@ fn announcement(world: &World, player: Entity, clock: WallClock) -> Option<Annou
     let parties = world.resource::<Parties>();
     let inventory = world.get::<Inventory>(player);
     let mut log = log.clone();
-    let mut told: Vec<(String, ImageRef, Option<SfxId>)> = Vec::new();
+    let mut told: Vec<(LineText, ImageRef, Option<SfxId>)> = Vec::new();
     let ready: Vec<QuestId> = log
         .active
         .iter()
@@ -1070,7 +1089,7 @@ fn announcement(world: &World, player: Entity, clock: WallClock) -> Option<Annou
             log.told_ready.push(quest);
             let def = quest.get(content);
             told.push((
-                format!("Quest ready · {}", def.hand_in_hint(parties, quest)),
+                LineText::plain("Quest ready · ").then(def.hand_in_hint(content, parties, quest)),
                 ready_mark(def).get(content).icon.clone(),
                 Some(InterfaceSound::UiChime.id(content)),
             ));
@@ -1078,11 +1097,12 @@ fn announcement(world: &World, player: Entity, clock: WallClock) -> Option<Annou
     }
     log.told_ready.retain(|quest| ready.contains(quest));
     for finished in &mut log.finished {
-        let def = finished.quest.get(content);
         if finished.resets_at.is_some_and(|at| clock.now >= at) {
             finished.resets_at = None;
             told.push((
-                format!("{} is open again", def.title),
+                Mention::Quest(finished.quest)
+                    .line(content)
+                    .then(" is open again"),
                 AttentionMark::RepeatableOffered.get(content).icon.clone(),
                 Some(InterfaceSound::UiPage.id(content)),
             ));
@@ -1278,30 +1298,31 @@ fn track(world: &mut World, player: Entity, quest: QuestId, tracked: bool) {
     }
 }
 
-pub fn offer_refusal(world: &World, player: Entity, quest: QuestId) -> Option<String> {
+pub fn offer_refusal(world: &World, player: Entity, quest: QuestId) -> Option<LineText> {
     let content = world.resource::<Content>();
     let log = log_of(world, player)?;
-    let def = quest.get(content);
     if log.active(quest).is_some() {
-        return Some(format!("You're already on {}", def.title));
+        return Some(
+            LineText::plain("You're already on ").then(Mention::Quest(quest).span(content)),
+        );
     }
     if log.done_for_now(content, quest, world.resource::<WallClock>().day()) {
-        return Some(format!("{} is done for now", def.title));
+        return Some(Mention::Quest(quest).line(content).then(" is done for now"));
     }
     let settings = content.built::<GameSettings>();
     if log.active.len() >= settings.slots.quest_log as usize {
-        return Some(settings.words.quest_log_full.clone());
+        return Some(LineText::plain(settings.words.quest_log_full.clone()));
     }
     None
 }
 
-fn accept_refusal(world: &World, player: Entity, quest: QuestId) -> Option<String> {
+fn accept_refusal(world: &World, player: Entity, quest: QuestId) -> Option<LineText> {
     if let Some(refusal) = offer_refusal(world, player, quest) {
         return Some(refusal);
     }
     let def = quest.get(world.resource::<Content>());
     condition::first_unmet(world, player, def.requires().into_iter().chain(def.shown()))
-        .map(|unmet| format!("Needs {unmet}"))
+        .map(|unmet| LineText::plain("Needs ").then(LineText::from(&unmet)))
 }
 
 pub fn open_to(world: &World, player: Entity, quest: QuestId) -> bool {
@@ -1355,7 +1376,7 @@ fn announce(world: &mut World, player: Entity, clock: WallClock) {
     let Some(mut log) = log_of(world, player).cloned() else {
         return;
     };
-    let mut told: Vec<(String, &ImageRef, Option<SfxId>)> = Vec::new();
+    let mut told: Vec<(LineText, &ImageRef, Option<SfxId>)> = Vec::new();
     let ready: Vec<QuestId> = log
         .active
         .iter()
@@ -1367,7 +1388,7 @@ fn announce(world: &mut World, player: Entity, clock: WallClock) {
             log.told_ready.push(quest);
             let def = quest.get(&content);
             told.push((
-                format!("Quest ready · {}", def.hand_in_hint(&parties, quest)),
+                LineText::plain("Quest ready · ").then(def.hand_in_hint(&content, &parties, quest)),
                 &ready_mark(def).get(&content).icon,
                 Some(InterfaceSound::UiChime.id(&content)),
             ));
@@ -1375,11 +1396,12 @@ fn announce(world: &mut World, player: Entity, clock: WallClock) {
     }
     log.told_ready.retain(|quest| ready.contains(quest));
     for finished in &mut log.finished {
-        let def = finished.quest.get(&content);
         if finished.resets_at.is_some_and(|at| clock.now >= at) {
             finished.resets_at = None;
             told.push((
-                format!("{} is open again", def.title),
+                Mention::Quest(finished.quest)
+                    .line(&content)
+                    .then(" is open again"),
                 &AttentionMark::RepeatableOffered.get(&content).icon,
                 Some(InterfaceSound::UiPage.id(&content)),
             ));
@@ -1480,10 +1502,13 @@ fn still_needs(def: &QuestDef, item: ItemId, inventory: Option<&Inventory>) -> b
     })
 }
 
-pub fn pick_label(content: &Content, pick: ItemStack) -> String {
+pub fn pick_label(content: &Content, pick: ItemStack) -> LineText {
+    let item = Mention::Item(pick.item).name(content);
     match pick.count {
-        1 => format!("I'll take the {}.", pick.item.get(content).name),
-        _ => format!("I'll take {}.", pick.describe(content)),
+        1 => LineText::plain("I'll take the ").then(item).then("."),
+        count => LineText::plain(format!("I'll take {count} "))
+            .then(item)
+            .then("."),
     }
 }
 

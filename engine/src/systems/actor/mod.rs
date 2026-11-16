@@ -8,6 +8,7 @@ pub mod model;
 pub mod part;
 pub mod plate;
 pub mod playing;
+pub mod portrait;
 pub mod render;
 pub mod rigging;
 pub mod skeleton;
@@ -180,6 +181,23 @@ pub struct Actor {
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Hitbox(pub Capsule);
 
+/// How high an actor's feet are drawn where that is not the ground under them: on what carries
+/// them over it. A client's own, kept by whatever draws them carried.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Aloft(pub Meters);
+
+/// How high the feet of `actor`, standing at `at`, are drawn.
+pub fn foot_height(world: &World, actor: Entity, at: Pos<Meters>) -> Meters {
+    world
+        .get::<Aloft>(actor)
+        .map_or_else(|| ground_height(world, at), |aloft| aloft.0)
+}
+
+/// How far over the ground at `at` the feet of `actor` are drawn.
+pub fn lift(world: &World, actor: Entity, at: Pos<Meters>) -> Meters {
+    foot_height(world, actor, at) - ground_height(world, at)
+}
+
 /// Whom the pointer picks: the nearest actor its ray runs through or thing lying under the ground
 /// it points at that `accept` takes, the dead and `except` passed over.
 pub fn target_at(
@@ -199,7 +217,7 @@ pub fn target_at(
     let mut hits: Vec<(Entity, f32)> = bodies
         .into_iter()
         .filter_map(|(entity, at, capsule)| {
-            let foot = world_point(at, ground_height(world, at));
+            let foot = world_point(at, foot_height(world, entity, at));
             capsule_hit(pointed.ray, foot, capsule.radius.0, capsule.height.0)
                 .map(|along| (entity, along))
         })

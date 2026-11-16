@@ -39,7 +39,8 @@ pub enum InputAction {
     InspectItem,
     UseItem,
     DropItem,
-    SellItem,
+    /// Asks how many to split off a stack of items into a stack of its own.
+    SplitStack,
     PlaceItem,
     PlaceStack,
     CarryItem,
@@ -48,7 +49,12 @@ pub enum InputAction {
     OpenQuests,
     OpenMap,
     OpenHistory,
+    OpenSocial,
     OpenSettings,
+    /// Accepts the request on the card in front.
+    AcceptRequest,
+    /// Denies the request on the card in front.
+    DenyRequest,
     Dismiss,
     SubmitText,
     /// Takes the selected way to go on with what is being typed.
@@ -56,6 +62,9 @@ pub enum InputAction {
     /// Turns what is being read a page back, toward what came earlier.
     PageBack,
     PageForward,
+    /// Shows the next of chat's tabs, round to the first from the last.
+    NextChatTab,
+    PreviousChatTab,
     TakeDefault,
     Respawn,
     TurnLeft,
@@ -96,11 +105,14 @@ pub enum InputAction {
     InspectSkill,
     UseSlot,
     SlotOptions,
+    AddToChat,
     /// Held, to keep the wheel of emotes open round the player's character.
     Emotes,
     /// Held or tapped, to name the items lying round the player's character.
     NameItems,
     FocusChat,
+    /// Leaves the seat of what the player's character rides.
+    StepOff,
 }
 
 /// The one file that binds every action, a fixture every game provides.
@@ -162,7 +174,7 @@ impl InputAction {
             | InputAction::InspectItem
             | InputAction::UseItem
             | InputAction::DropItem
-            | InputAction::SellItem
+            | InputAction::SplitStack
             | InputAction::PlaceItem
             | InputAction::PlaceStack
             | InputAction::PinToBar
@@ -170,12 +182,15 @@ impl InputAction {
             | InputAction::LowerRank
             | InputAction::InspectSkill
             | InputAction::UseSlot
-            | InputAction::SlotOptions => &[ActionReading::Click],
+            | InputAction::SlotOptions
+            | InputAction::AddToChat => &[ActionReading::Click],
             InputAction::CarryItem => &[ActionReading::Drag],
             InputAction::SubmitText
             | InputAction::CompleteText
             | InputAction::PageBack
             | InputAction::PageForward
+            | InputAction::NextChatTab
+            | InputAction::PreviousChatTab
             | InputAction::TakeDefault => &[ActionReading::Shortcut],
             InputAction::ZoomIn | InputAction::ZoomOut => {
                 &[ActionReading::Press, ActionReading::Wheel]

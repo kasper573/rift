@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use super::SchemaMark;
 use super::files::{bundle_of, name_of, table_of};
 use super::report::ContentProblem;
+use super::saved::MissingFile;
 use super::table::{Content, ContentFile};
 
 /// In files the path of a content file from the game folder, in memory and on the wire the index
@@ -257,6 +258,7 @@ pub struct ContentScope {
     media: Option<Arc<Vec<String>>>,
     bundles: Arc<[&'static str]>,
     renames: Option<Arc<BTreeMap<String, String>>>,
+    sets_aside: bool,
     leaves: Vec<Leaf>,
 }
 
@@ -267,6 +269,7 @@ impl ContentScope {
             media: None,
             bundles: Arc::new([]),
             renames: None,
+            sets_aside: false,
             leaves: Vec::new(),
         }
     }
@@ -277,8 +280,22 @@ impl ContentScope {
             media: None,
             bundles: Arc::new([]),
             renames: None,
+            sets_aside: false,
             leaves: Vec::new(),
         }
+    }
+
+    /// This scope for reading what was saved under files that may since have gone: an entry of
+    /// a saved list that names a missing file is set aside, where it is a dangling reference in
+    /// any other scope.
+    pub fn setting_aside(mut self) -> ContentScope {
+        self.sets_aside = true;
+        self
+    }
+
+    /// Whether the scope's game has the file `id` stands for.
+    pub fn holds<Row: ContentFile>(&self, id: ContentId<Row>) -> bool {
+        id.index() < self.paths_of::<Row>().len()
     }
 
     /// The paths this scope resolves content among, with no media checked against them.
@@ -462,6 +479,52 @@ pub fn scope_asset(path: &str) {
             scope.asset(path);
         }
     });
+}
+
+/// Whether the scope being read in sets aside the saved entries that name missing files.
+pub(super) fn sets_aside() -> bool {
+    SCOPE.with(|scope| {
+        scope
+            .borrow()
+            .as_ref()
+            .is_some_and(|scope| scope.sets_aside)
+    })
+}
+
+/// How many references the scope being read in has met so far.
+pub(super) fn references_met() -> usize {
+    SCOPE.with(|scope| {
+        scope
+            .borrow()
+            .as_ref()
+            .map_or(0, |scope| scope.leaves.len())
+    })
+}
+
+/// The files the references met since `met` of them had been name and the game lacks. When
+/// there are any, those references are forgotten, so the scope reports none of them.
+pub(super) fn forget_missing_since(met: usize) -> Vec<MissingFile> {
+    SCOPE.with(|scope| {
+        let mut scope = scope.borrow_mut();
+        let Some(scope) = scope.as_mut() else {
+            return Vec::new();
+        };
+        let missing: Vec<MissingFile> = scope.leaves[met..]
+            .iter()
+            .filter(|leaf| leaf.problem.is_some())
+            .filter_map(|leaf| match leaf.kind {
+                LeafKind::Row(table) => Some(MissingFile {
+                    table,
+                    path: leaf.value.clone(),
+                }),
+                LeafKind::Asset => None,
+            })
+            .collect();
+        if !missing.is_empty() {
+            scope.leaves.truncate(met);
+        }
+        missing
+    })
 }
 
 pub fn with_content<T>(scope: ContentScope, f: impl FnOnce() -> T) -> (T, ContentScope) {

@@ -16,7 +16,7 @@ use engine::systems::player::{
 };
 use engine::systems::region;
 use engine::systems::script::{self, Place};
-use engine::systems::{npc, stat};
+use engine::systems::{notification, npc, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, dialogue, labels, lines, locked};
 
@@ -27,11 +27,19 @@ fn an_arrival_holds_until_the_client_reports_its_area_drawn_or_the_patience_runs
     let mut sim = harbour();
     let player = arriving(&mut sim);
     assert!(commands_locked(&sim.world, player));
+    notification::error(&mut sim.world, player, "Mind the gap");
+    sim.tick();
+    assert_eq!(
+        sim.errors(1),
+        Vec::<String>::new(),
+        "what an arrival is told waits while it is held"
+    );
 
     let conn = sim.conn(1);
     sim.send(conn, AreaDrawn);
     sim.tick();
     assert!(!commands_locked(&sim.world, player));
+    assert_eq!(sim.errors(1), ["Mind the gap"]);
 
     let start = position(&sim.world, player).expect("placed");
     let aside = Place {

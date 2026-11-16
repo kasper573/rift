@@ -31,6 +31,7 @@ pub mod slip;
 pub mod suggest;
 pub mod theme;
 pub mod timespans;
+pub mod tracker;
 pub mod tree;
 pub mod wheel;
 pub mod words;

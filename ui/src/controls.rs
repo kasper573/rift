@@ -77,57 +77,16 @@ pub fn dropdown_primary(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
 }
 
 pub fn slider(ui: &mut Ui, value: &mut f32, range: RangeInclusive<f32>) -> Response {
-    let width = ui.spacing().slider_width;
-    let (rect, mut response) =
-        ui.allocate_exact_size(Vec2::new(width, CONTROL_HEIGHT), Sense::click_and_drag());
-    let (low, high) = (*range.start(), *range.end());
-    let span = (high - low).max(f32::EPSILON);
-    let rail = Rangef::new(rect.min.x + BEAD, rect.max.x - BEAD);
-    let step = span / 100.0;
-    let mut wanted = None;
-    if (response.dragged() || response.is_pointer_button_down_on())
-        && let Some(pointer) = response.interact_pointer_pos()
-    {
-        let t = ((pointer.x - rail.min) / rail.span()).clamp(0.0, 1.0);
-        wanted = Some(low + t * span);
-    }
-    if response.has_focus() {
-        let (left, right) = ui.input(|input| {
-            (
-                input.key_pressed(Key::ArrowLeft),
-                input.key_pressed(Key::ArrowRight),
-            )
-        });
-        if left {
-            wanted = Some(*value - step);
-        }
-        if right {
-            wanted = Some(*value + step);
-        }
-    }
-    if let Some(wanted) = wanted {
-        let wanted = rounded_to(wanted.clamp(low.min(high), high.max(low)), step);
-        if wanted != *value {
-            *value = wanted;
-            response.mark_changed();
-        }
-    }
-    let shown = *value;
-    response.widget_info(|| WidgetInfo::slider(ui.is_enabled(), f64::from(shown), ""));
-    let t = ((shown - low) / span).clamp(0.0, 1.0);
-    let y = rect.center().y;
-    let at = Pos2::new(rail.min + rail.span() * t, y);
-    let painter = ui.painter();
-    painter.hline(rail, y, Stroke::new(1.0, ink::ink_wash(0.35)));
-    painter.line_segment([Pos2::new(rail.min, y), at], Stroke::new(2.0, ink::RUBRIC));
-    painter.circle(at, BEAD, ink::GOLD, Stroke::new(1.0, ink::INK));
-    if response.has_focus() {
-        focus_ring(
-            painter,
-            Rect::from_center_size(at, Vec2::splat(BEAD * 2.0)),
-            BEAD,
-        );
-    }
+    let step = (range.end() - range.start()).max(f32::EPSILON) / 100.0;
+    stepped_slider(ui, value, range, step)
+}
+
+/// A slider over whole numbers, which the arrow keys move by one.
+pub fn count_slider(ui: &mut Ui, count: &mut u32, range: RangeInclusive<u32>) -> Response {
+    let mut value = *count as f32;
+    let range = *range.start() as f32..=*range.end() as f32;
+    let response = stepped_slider(ui, &mut value, range, 1.0);
+    *count = value.round() as u32;
     response
 }
 
@@ -233,7 +192,7 @@ pub enum Pill {
 impl Pill {
     pub fn color(self) -> Color32 {
         match self {
-            Pill::Gold => ink::GOLD,
+            Pill::Gold => ink::OCHRE,
             Pill::Rubric => ink::RUBRIC,
             Pill::Azure => ink::AZURE,
             Pill::Verdigris => ink::VERDIGRIS,
@@ -339,16 +298,9 @@ pub struct KeyHint<'a> {
 }
 
 pub fn hint_line(ui: &mut Ui, hints: &[KeyHint], leaves: Option<KeyHint>) {
-    let top = ui.cursor().min.y;
-    let span = ui.max_rect().x_range();
-    ui.painter().line_segment(
-        [Pos2::new(span.min, top), Pos2::new(span.max, top)],
-        Stroke::new(1.0, ink::ink_wash(0.2)),
-    );
-    ui.add_space(HINT_LINE_GAP);
     let row = Rect::from_min_size(
         ui.cursor().min,
-        Vec2::new(ui.available_width(), HINT_LINE_HEIGHT - HINT_LINE_GAP),
+        Vec2::new(ui.available_width(), HINT_LINE_HEIGHT),
     );
     let along = Layout::left_to_right(Align::Center);
     let mut beside = row;
@@ -374,8 +326,7 @@ pub fn hint_line(ui: &mut Ui, hints: &[KeyHint], leaves: Option<KeyHint>) {
     ui.allocate_rect(row, Sense::hover());
 }
 
-pub const HINT_LINE_HEIGHT: f32 = 28.0;
-const HINT_LINE_GAP: f32 = 6.0;
+pub const HINT_LINE_HEIGHT: f32 = 22.0;
 const HINT_GAP: f32 = 14.0;
 const HINT_INNER_GAP: f32 = 6.0;
 
@@ -902,6 +853,60 @@ pub(crate) fn key_galley(ui: &Ui, keys: &str, color: Color32) -> Arc<egui::Galle
     ui.painter().layout_job(TextRole::KeyHint.job(keys, color))
 }
 
+fn stepped_slider(ui: &mut Ui, value: &mut f32, range: RangeInclusive<f32>, step: f32) -> Response {
+    let width = ui.spacing().slider_width;
+    let (rect, mut response) =
+        ui.allocate_exact_size(Vec2::new(width, CONTROL_HEIGHT), Sense::click_and_drag());
+    let (low, high) = (*range.start(), *range.end());
+    let span = (high - low).max(f32::EPSILON);
+    let rail = Rangef::new(rect.min.x + BEAD, rect.max.x - BEAD);
+    let mut wanted = None;
+    if (response.dragged() || response.is_pointer_button_down_on() || response.clicked())
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        let t = ((pointer.x - rail.min) / rail.span()).clamp(0.0, 1.0);
+        wanted = Some(low + t * span);
+    }
+    if response.has_focus() {
+        let (left, right) = ui.input(|input| {
+            (
+                input.key_pressed(Key::ArrowLeft),
+                input.key_pressed(Key::ArrowRight),
+            )
+        });
+        if left {
+            wanted = Some(*value - step);
+        }
+        if right {
+            wanted = Some(*value + step);
+        }
+    }
+    if let Some(wanted) = wanted {
+        let wanted = rounded_to(wanted.clamp(low.min(high), high.max(low)), step);
+        if wanted != *value {
+            *value = wanted;
+            response.mark_changed();
+        }
+    }
+    let shown = *value;
+    response.widget_info(|| WidgetInfo::slider(ui.is_enabled(), f64::from(shown), ""));
+    let t = ((shown - low) / span).clamp(0.0, 1.0);
+    let y = rect.center().y;
+    let at = Pos2::new(rail.min + rail.span() * t, y);
+    let painter = ui.painter();
+    painter.hline(rail, y, Stroke::new(1.0, ink::ink_wash(0.35)));
+    painter.line_segment([Pos2::new(rail.min, y), at], Stroke::new(2.0, ink::RUBRIC));
+    painter.circle(at, BEAD, ink::GOLD, Stroke::new(1.0, ink::INK));
+    if response.has_focus() {
+        focus_ring(
+            painter,
+            Rect::from_center_size(at, Vec2::splat(BEAD * 2.0)),
+            BEAD,
+        );
+    }
+    response
+}
+
 /// `value` to the decimals `step` needs, so a slid value reads as plainly as one typed.
 fn rounded_to(value: f32, step: f32) -> f32 {
     let decimals = (-step.log10()).ceil().max(0.0);
@@ -922,7 +927,7 @@ pub(crate) fn paint_key_cap(
     painter.rect_stroke(
         rect,
         3.0,
-        Stroke::new(1.0, ink::ink_wash(0.35)),
+        Stroke::new(1.0, ink::ink_wash(0.5)),
         StrokeKind::Inside,
     );
     painter.galley(rect.center() - galley.size() / 2.0, galley, color);

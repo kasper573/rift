@@ -22,7 +22,7 @@ use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
 use engine::systems::launch::{ServerDay, ServerWeather};
 use engine::systems::movement::Position;
 use engine::systems::npc::{self, NpcDef};
-use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, SnapshotSkill};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, SnapshotSkill};
 use engine::systems::player::{ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules};
 use engine::systems::script::{Condition, Place, RiftQuery};
 use engine::systems::skill::casting::{self, CastAim};
@@ -215,7 +215,7 @@ impl LiveWorld {
                         };
                         self.report = format!("{} · cast {casts}", def.name);
                     }
-                    Err(reason) => self.report = reason,
+                    Err(reason) => self.report = reason.plain_words(),
                 }
             }
             Phase::Resting { .. } => {}
@@ -282,7 +282,16 @@ pub fn join(
     start: Place,
     client: ClientId,
 ) -> Result<Joined, String> {
-    let conn = world.spawn((client, JoinAs { snapshot, start })).id();
+    let conn = world
+        .spawn((
+            client,
+            JoinAs {
+                snapshot,
+                start,
+                origin: JoinOrigin::Staged,
+            },
+        ))
+        .id();
     from_client(world, conn, JoinRequest);
     tick(world);
     let actor = world
@@ -350,6 +359,7 @@ fn skill_setup(
     let beside = Pos::new(spawn.at.x + TARGET_REACH, spawn.at.y);
     let (targets, aim) = match def.target {
         Targeting::Caster => (Vec::new(), CastAim::None),
+        Targeting::Spot => (Vec::new(), CastAim::Point(beside)),
         Targeting::SingleEnemy => {
             let enemy = spawn_sturdy(
                 world,

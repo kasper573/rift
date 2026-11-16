@@ -9,12 +9,14 @@ use engine::core::audio::loader::SoundClip;
 use engine::core::audio::playback::{HushVoice, PlayClip, SfxPlace};
 use engine::core::babble::{BabbleId, BabblePlugin, BabbleRank, Babbling};
 use engine::core::content::Content;
-use engine::core::text::{LettersPerSecond, StyledLine, StyledTextPlugin, Typewriter, TypingPace};
+use engine::core::text::{
+    CharactersPerSecond, StyledLine, StyledTextPlugin, Typewriter, TypingPace,
+};
 use testkit::{Declared, Game};
 
 const FRAME: Duration = Duration::from_millis(50);
 const TEN_PER_SECOND: TypingPace = TypingPace {
-    letters: LettersPerSecond(10.0),
+    characters: CharactersPerSecond(10.0),
     slow_by: 2.5,
 };
 

@@ -17,6 +17,7 @@ use super::{LearnSkillsRequest, Learned, Rank, SkillId, SkillKind, card};
 use crate::core::content::Content;
 use crate::core::gui;
 use crate::core::text::StyledLine;
+use crate::systems::chat::ChatEmbed;
 use crate::systems::class::{self, ClassDef, NodeKey, SkillPoints};
 use crate::systems::hud::Carried;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
@@ -25,6 +26,7 @@ use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::notification;
 use crate::systems::player::session;
 use crate::systems::skill::bar;
+use crate::systems::terminal::chat;
 use ui::words::counted;
 
 const NODE_RADIUS: f32 = 24.0;
@@ -362,7 +364,7 @@ fn node_input(
         }
     } else if map::clicked(world, InputAction::PinToBar, response) {
         if passive {
-            let refusal = super::unslotted(skill.get(world.resource::<Content>()));
+            let refusal = super::unslotted(skill, world.resource::<Content>());
             notification::local_error(world, refusal);
         } else if held > Rank::NONE {
             bar::pin(world, super::HotbarEntry::Skill(skill));
@@ -376,6 +378,7 @@ fn node_input(
     } else if map::clicked(world, InputAction::RaiseRank, response) {
         raise(world, sheet, key, state);
     }
+    chat::shortcut(world, response, [ChatEmbed::Skill(skill)]);
     let can = NodeInputs {
         raise: next_rank(world, sheet, key, state).is_some(),
         lower: world.resource::<SkillPlan>().0.contains_key(key),
@@ -388,6 +391,7 @@ fn node_input(
             (InputAction::InspectSkill, " shows its card", true),
             (InputAction::PinToBar, " puts it on the bar", can.slot),
             (InputAction::CarryItem, " carries it to a slot", can.slot),
+            (InputAction::AddToChat, " adds it to chat", true),
         ]
         .into_iter()
         .filter(|(_, _, does)| *does)

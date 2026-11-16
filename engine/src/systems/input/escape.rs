@@ -5,7 +5,7 @@ use super::scope::InputScope;
 use crate::core::gui;
 use crate::systems::dialogue::stage;
 use crate::systems::hud::menu;
-use crate::systems::{crafting, hud, item, resource, skill, terminal};
+use crate::systems::{crafting, hud, item, quest, resource, skill, terminal};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, step_out.run_if(resource_exists::<InputMap>));
@@ -50,6 +50,7 @@ fn close_front(world: &mut World) -> bool {
             menu::WINDOW_KEY => menu::close(world),
             item::card::WINDOW_KEY => item::card::close(world),
             skill::card::WINDOW_KEY => skill::card::close(world),
+            quest::card::WINDOW_KEY => quest::card::close(world),
             _ => false,
         })
 }

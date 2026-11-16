@@ -22,6 +22,7 @@ use crate::core::gui::{self, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::Seconds;
+use crate::systems::chat::ChatEmbed;
 use crate::systems::equipment::{self, EquipmentPlace, UnequipRequest};
 use crate::systems::hud::{self, Carried, Confirm};
 use crate::systems::input::map::{
@@ -32,12 +33,16 @@ use crate::systems::interface::InterfaceSound;
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::widget::{SLOT, SlotLook, SlotRarity, slot};
 use crate::systems::item::{Inventory, ItemId, ItemKind, UseItemRequest, card as item_card};
+use crate::systems::mention::Mention;
+use crate::systems::mount::{self, RiderAct};
 use crate::systems::player::session;
 use crate::systems::reach::Engaged;
 use crate::systems::script::condition;
 use crate::systems::settings::{BarKey, BarShape, UserSettings};
 use crate::systems::skill::{CastAim, aim};
 use crate::systems::stat::{self, Vital};
+use crate::systems::terminal::chat;
+use crate::systems::text::LineText;
 use crate::systems::{GameSettings, notification};
 use ui::paint;
 use ui::panel::{self, GripCorner};
@@ -184,6 +189,8 @@ pub struct SlotReport {
     pub cooling: bool,
     pub blocked: bool,
     pub dimmed: bool,
+    /// Its skill called the mount the character drives, and pressing it steps off.
+    pub ridden: bool,
     /// Waiting for the next key pressed to become its key.
     pub rebinding: bool,
     /// How the last press on the slot went, if it was ever pressed.
@@ -255,7 +262,8 @@ pub fn cancel_rebind(world: &mut World) -> bool {
 /// Uses what a slot holds: a skill is cast or aimed, an item is used from the bag. A slot drawn as
 /// cooling or blocked counts its press as denied whatever the use comes to.
 pub fn fire(world: &mut World, entry: HotbarEntry) -> SlotPress {
-    let ready = matches!(SlotView::of(world, entry).fill, SlotFill::Ready);
+    let view = SlotView::of(world, entry);
+    let ready = matches!(view.fill, SlotFill::Ready) || view.ridden;
     let used = match entry {
         HotbarEntry::Empty => false,
         HotbarEntry::Skill(skill) => use_skill(world, skill),
@@ -281,14 +289,18 @@ pub fn drop_off_bar(world: &mut World) {
         return;
     }
     let content = world.resource::<Content>().clone();
-    let name = entry_name(&content, entry);
+    let named = match entry {
+        HotbarEntry::Empty => return,
+        HotbarEntry::Skill(skill) => Mention::Skill(skill),
+        HotbarEntry::Item(item) => Mention::Item(item),
+    };
     hud::confirm(
         world,
         Confirm {
-            title: format!("Take {name} off the bar?"),
-            body: vec![
-                "It stays in your tree or your inventory; only the slot empties.".to_owned(),
-            ],
+            title: LineText::plain("Take ")
+                .then(named.span(&content))
+                .then(" off the bar?"),
+            body: vec!["It stays in your tree or your inventory; only the slot empties.".into()],
             confirm: "Take off".to_owned(),
             cancel: "Keep".to_owned(),
             answer: Box::new(move |world, taken| {
@@ -324,6 +336,7 @@ pub fn report(world: &World) -> Vec<SlotReport> {
                 cooling: matches!(view.fill, SlotFill::Cooling { .. }),
                 blocked: matches!(view.fill, SlotFill::Blocked(_)),
                 dimmed: view.dimmed,
+                ridden: view.ridden,
                 rebinding: state.rebinding == Some(slot),
                 pressed: state.presses.get(&slot).map(|press| press.outcome),
                 primed: primed(world, slot, entry),
@@ -376,6 +389,8 @@ struct SlotView {
     dimmed: bool,
     fill: SlotFill,
     name: String,
+    /// Its skill called the mount the character drives.
+    ridden: bool,
 }
 
 impl SlotView {
@@ -387,6 +402,7 @@ impl SlotView {
             dimmed: false,
             fill: SlotFill::Ready,
             name: "empty".to_owned(),
+            ridden: false,
         }
     }
 
@@ -404,9 +420,10 @@ impl SlotView {
                     icon: Some(def.icon.clone()),
                     rarity: None,
                     count: 0,
-                    dimmed: rank == Rank::NONE,
+                    dimmed: rank == Rank::NONE || shut(world, me, entry).is_some(),
                     fill: skill_fill(world, me, skill, rank),
                     name: def.name.clone(),
+                    ridden: mount::left_by(world, me, skill),
                 }
             }
             HotbarEntry::Item(item) => {
@@ -419,16 +436,30 @@ impl SlotView {
                     icon: Some(def.icon.clone()),
                     rarity: Some(def.rarity),
                     count: held,
-                    dimmed: !holds,
+                    dimmed: !holds || shut(world, me, entry).is_some(),
                     fill: if !holds {
                         SlotFill::Blocked(Glyph::Zero)
                     } else {
                         SlotFill::Ready
                     },
                     name: def.name.clone(),
+                    ridden: super::cast_by(content, item)
+                        .is_some_and(|skill| mount::left_by(world, me, skill)),
                 }
             }
         }
+    }
+}
+
+/// Why the entry cannot be used from where the character sits or stands, in the game's words.
+fn shut(world: &World, me: Entity, entry: HotbarEntry) -> Option<String> {
+    match entry {
+        HotbarEntry::Empty => None,
+        HotbarEntry::Skill(skill) => mount::shut(world, me, skill),
+        HotbarEntry::Item(item) => match super::cast_by(world.resource::<Content>(), item) {
+            Some(skill) => mount::shut(world, me, skill),
+            None => mount::seat::barred(world, me, RiderAct::Items),
+        },
     }
 }
 
@@ -516,6 +547,13 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     if primed(world, index, entry) {
         controls::primed_ring(ui.painter(), response.rect, ui.input(|input| input.time));
         ui.ctx().request_repaint();
+    } else if view.ridden {
+        ui.painter().rect_stroke(
+            response.rect,
+            3.0,
+            Stroke::new(2.0, ink::GOLD),
+            StrokeKind::Inside,
+        );
     }
     if rebinding {
         ui.painter()
@@ -549,6 +587,12 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     {
         drag::carry(ui.ctx(), Carried::BarEntry { from: index, entry });
     }
+    let held = match entry {
+        HotbarEntry::Empty => None,
+        HotbarEntry::Skill(skill) => Some(ChatEmbed::Skill(skill)),
+        HotbarEntry::Item(item) => Some(ChatEmbed::Item(item)),
+    };
+    chat::shortcut(world, &response, held);
     let options = map::clicked(world, InputAction::SlotOptions, &response);
     menu::at_pointer(&response, options, |ui| {
         if ui.button("Rebind key").clicked() {
@@ -693,16 +737,24 @@ fn carried_pick(world: &World, carried: Carried) -> Option<BasicAttackPick> {
 
 /// Why the basic attack slot turns a pick away, judged from the content alone; whether the player
 /// knows the skill or holds the weapon is the server's to say.
-fn refusal(content: &Content, pick: BasicAttackPick) -> Option<String> {
+fn refusal(content: &Content, pick: BasicAttackPick) -> Option<LineText> {
     match pick {
         BasicAttackPick::Empty => None,
         BasicAttackPick::Skill(skill) => {
             let def = skill.get(content);
-            (!def.basic_attack).then(|| format!("{} can't be a basic attack", def.name))
+            (!def.basic_attack).then(|| {
+                Mention::Skill(skill)
+                    .line(content)
+                    .then(" can't be a basic attack")
+            })
         }
         BasicAttackPick::Weapon(item) => super::first_flagged_grant(content, std::iter::once(item))
             .is_none()
-            .then(|| format!("{} has no basic attack", item.get(content).name)),
+            .then(|| {
+                Mention::Item(item)
+                    .line(content)
+                    .then(" has no basic attack")
+            }),
     }
 }
 
@@ -767,14 +819,20 @@ fn slot_tooltip(
             TextPiece::text(" to bind one"),
         ],
     };
-    let uses = key.map_or_else(Vec::new, |key| {
-        vec![
-            key,
-            TextPiece::text(" or "),
-            input(InputAction::UseSlot),
-            TextPiece::text(" uses it · "),
-        ]
-    });
+    let shut = session::me(world)
+        .and_then(|me| shut(world, me, entry))
+        .map(|why| TextPiece::text(format!("{why} · ")));
+    let uses: Vec<TextPiece> = shut
+        .into_iter()
+        .chain(key.into_iter().flat_map(|key| {
+            [
+                key,
+                TextPiece::text(" or "),
+                input(InputAction::UseSlot),
+                TextPiece::text(" uses it · "),
+            ]
+        }))
+        .collect();
     let take_off = [
         TextPiece::text(" · "),
         input(InputAction::PinToBar),
@@ -902,7 +960,7 @@ const CREAM_HALO: Halo = Halo {
 fn press(world: &mut World, slot: HotbarSlot, entry: HotbarEntry) {
     let outcome = fire(world, entry);
     let since = time::uptime(world);
-    let arms = aim::aiming(world).is_some_and(|aimed| entry == HotbarEntry::Skill(aimed.skill));
+    let arms = arms(world, entry);
     let mut state = world.resource_mut::<BarState>();
     state.presses.insert(slot, Press { outcome, since });
     if arms {
@@ -912,8 +970,17 @@ fn press(world: &mut World, slot: HotbarSlot, entry: HotbarEntry) {
 
 /// The slot whose press armed the skill now waiting on its target.
 fn primed(world: &World, slot: HotbarSlot, entry: HotbarEntry) -> bool {
-    world.resource::<BarState>().primed == Some(slot)
-        && aim::aiming(world).is_some_and(|aimed| entry == HotbarEntry::Skill(aimed.skill))
+    world.resource::<BarState>().primed == Some(slot) && arms(world, entry)
+}
+
+/// Whether what is armed is the skill `entry` uses: the skill itself, or the one its item casts.
+fn arms(world: &World, entry: HotbarEntry) -> bool {
+    let uses = match entry {
+        HotbarEntry::Skill(skill) => Some(skill),
+        HotbarEntry::Item(item) => super::cast_by(world.resource::<Content>(), item),
+        HotbarEntry::Empty => None,
+    };
+    uses.is_some() && aim::aiming(world).and_then(aim::Aimed::skill) == uses
 }
 
 fn cooldown_text(left: Seconds) -> String {
@@ -929,7 +996,9 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
     let Some(me) = session::me(world) else {
         return false;
     };
-    if let Some(refusal) = super::unusable(world, me, skill) {
+    let refusal = super::unusable(world, me, skill)
+        .or_else(|| mount::shut(world, me, skill).map(LineText::from));
+    if let Some(refusal) = refusal {
         notification::local_error(world, refusal);
         return false;
     }
@@ -960,7 +1029,9 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
                 None => aim_or_cast(world, skill, rank),
             }
         }
-        Targeting::AreaAlly | Targeting::AreaEnemy => aim_or_cast(world, skill, rank),
+        Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot => {
+            aim_or_cast(world, skill, rank)
+        }
     }
 }
 
@@ -1008,7 +1079,12 @@ fn use_item(world: &mut World, item: ItemId) -> bool {
                 true
             }
             None => {
-                notification::local_error(world, format!("No {} left", def.name));
+                notification::local_error(
+                    world,
+                    LineText::plain("No ")
+                        .then(Mention::Item(item).span(&content))
+                        .then(" left"),
+                );
                 false
             }
         },

@@ -13,7 +13,9 @@ pub struct AccountIdentity {
     pub roles: Vec<RoleId>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+/// The stable id an account's sign-in gives it: what is saved about a player is saved under it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct AccountId(pub String);
 
 impl AccountIdentity {

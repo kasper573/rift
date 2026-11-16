@@ -112,6 +112,13 @@ impl Memory {
         self.0.keys().copied()
     }
 
+    /// Everything remembered, each with when it was.
+    pub fn recollections(&self) -> impl Iterator<Item = (MemoryId, &Value, UnixMillis)> {
+        self.0
+            .iter()
+            .map(|(&key, recollection)| (key, &recollection.value, recollection.at))
+    }
+
     pub fn leave_area(&mut self, content: &Content) {
         self.0
             .retain(|key, _| key.get(content).resets != Resets::LeavingArea);

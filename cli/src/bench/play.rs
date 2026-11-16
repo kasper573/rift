@@ -10,7 +10,7 @@ use engine::systems::area::AreaId;
 use engine::systems::from_client;
 use engine::systems::movement::Position;
 use engine::systems::npc::Npc;
-use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, start_of};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, start_of};
 use engine::systems::player::{ClientId, Players};
 use engine::systems::script::Place;
 use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
@@ -33,7 +33,11 @@ pub fn characters_in(content: &Content, zone: AreaId) -> Vec<(CharacterSnapshot,
 
 pub fn join_as(world: &mut World, conn: Entity, character: &(CharacterSnapshot, Place)) {
     let (snapshot, start) = character.clone();
-    world.entity_mut(conn).insert(JoinAs { snapshot, start });
+    world.entity_mut(conn).insert(JoinAs {
+        snapshot,
+        start,
+        origin: JoinOrigin::Staged,
+    });
 }
 
 /// Every player whose turn it is this tick casts the next skill on its bar.
@@ -81,7 +85,7 @@ pub fn act(world: &mut World, content: &Content, roster: &[Entity], tick: usize)
             Targeting::AreaEnemy => {
                 CastAim::Point(nearest_npc(world, at).map_or(at, |(_, pos)| pos))
             }
-            Targeting::AreaAlly => CastAim::Point(at),
+            Targeting::AreaAlly | Targeting::Spot => CastAim::Point(at),
         };
         from_client(world, conn, UseSkillRequest { skill, aim });
     }

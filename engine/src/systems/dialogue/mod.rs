@@ -1,7 +1,7 @@
 pub mod camera;
 pub mod stage;
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bevy_app::App;
@@ -27,6 +27,7 @@ use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::movement::Position;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
+use crate::systems::player::RequestNeeds;
 use crate::systems::player::{CommandLock, player_requests};
 use crate::systems::quest::QuestId;
 use crate::systems::reach::{self, Tether};
@@ -134,7 +135,7 @@ pub enum ConversationRequest {
     Leave { step: ConversationStep },
 }
 
-pub type CardPick = Arc<dyn Fn(&mut World, Entity) -> Result<Answer, String> + Send + Sync>;
+pub type CardPick = Arc<dyn Fn(&mut World, Entity) -> Result<Answer, LineText> + Send + Sync>;
 
 pub struct CardOffer {
     pub label: LineText,
@@ -147,15 +148,22 @@ pub struct CardOffer {
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-pub struct Heard(HashSet<String>);
+pub struct Heard(BTreeSet<(String, String)>);
 
 impl Heard {
     pub fn has(&self, script: &str, node: &str) -> bool {
-        self.0.contains(&heard_key(script, node))
+        self.0.contains(&(script.to_owned(), node.to_owned()))
     }
 
     pub fn hear(&mut self, script: &str, node: &str) {
-        self.0.insert(heard_key(script, node));
+        self.0.insert((script.to_owned(), node.to_owned()));
+    }
+
+    /// Every line heard: the script it is of, and its node there.
+    pub fn lines(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.0
+            .iter()
+            .map(|(script, node)| (script.as_str(), node.as_str()))
     }
 }
 
@@ -426,20 +434,24 @@ pub fn counterpart_of(world: &World, player: Entity) -> Option<Entity> {
 }
 
 pub fn requests(world: &mut World) {
-    player_requests::<ConversationRequest>(world, false, |world, player, request| {
-        match request {
-            ConversationRequest::Pick { step, choice } => pick(world, player, step, choice),
-            ConversationRequest::Leave { step } => {
-                if world
-                    .get::<ConversationSession>(player)
-                    .is_some_and(|session| session.step == step)
-                {
-                    leave(world, player);
+    player_requests::<ConversationRequest>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, request| {
+            match request {
+                ConversationRequest::Pick { step, choice } => pick(world, player, step, choice),
+                ConversationRequest::Leave { step } => {
+                    if world
+                        .get::<ConversationSession>(player)
+                        .is_some_and(|session| session.step == step)
+                    {
+                        leave(world, player);
+                    }
                 }
             }
-        }
-        Ok(())
-    });
+            Ok(())
+        },
+    );
 }
 
 pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, With<ConversationSession>>) {
@@ -567,10 +579,6 @@ fn bystanders(world: &mut World, player: Entity, lines: &[SpokenLine]) -> Vec<En
                 .map(|(body, ..)| *body)
         })
         .collect()
-}
-
-fn heard_key(script: &str, node: &str) -> String {
-    format!("{script}#{node}")
 }
 
 fn begin(world: &mut World, flow: FlowKey, subject: Entity) -> bool {
@@ -782,7 +790,9 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
         } => match script::run::choice_state::<RiftScripting>(world, flow, index) {
             ChoiceState::Open => affordable(world, player, &costs).map(|()| Answer::Pick(index)),
             ChoiceState::Locked => Err(unmet(world, player, requires.as_ref())),
-            ChoiceState::Gone => Err(world.resource::<GameSettings>().words.no_longer.clone()),
+            ChoiceState::Gone => Err(LineText::plain(
+                world.resource::<GameSettings>().words.no_longer.clone(),
+            )),
         },
         Pick::Card(card) => card(world, player),
     };
@@ -811,7 +821,7 @@ fn revealed_costs(choice: &ChoiceOffer<RiftScripting>) -> Vec<ItemStack> {
         .unwrap_or_default()
 }
 
-fn affordable(world: &World, player: Entity, costs: &[ItemStack]) -> Result<(), String> {
+fn affordable(world: &World, player: Entity, costs: &[ItemStack]) -> Result<(), LineText> {
     if costs.is_empty() {
         return Ok(());
     }
@@ -821,17 +831,17 @@ fn affordable(world: &World, player: Entity, costs: &[ItemStack]) -> Result<(), 
         .cloned()
         .unwrap_or_else(Inventory::empty)
         .exchange(content, costs, &[])
-        .map_err(|refusal| refusal.describe(content))
+        .map_err(|refusal| refusal.line(content))
 }
 
-fn unmet(world: &World, player: Entity, requires: Option<&Condition>) -> String {
+fn unmet(world: &World, player: Entity, requires: Option<&Condition>) -> LineText {
     condition::first_unmet(world, player, requires).map_or_else(
-        || world.resource::<GameSettings>().words.locked.clone(),
-        |unmet| format!("Needs {unmet}"),
+        || LineText::plain(world.resource::<GameSettings>().words.locked.clone()),
+        |unmet| LineText::plain("Needs ").then(LineText::from(&unmet)),
     )
 }
 
-fn refuse(world: &mut World, player: Entity, choice: u32, reason: String) {
+fn refuse(world: &mut World, player: Entity, choice: u32, reason: LineText) {
     notification::error(world, player, reason);
     if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
         session.refusals += 1;

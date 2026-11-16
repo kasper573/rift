@@ -19,11 +19,12 @@ use engine::systems::actor::{Action, Appearance, Motion, Pose as BodyPose, appea
 use engine::systems::class::ClassDef;
 use engine::systems::equipment::{self, Equipment};
 use engine::systems::item::ItemId;
+use engine::systems::item::card::CardLook;
 use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
-use engine::systems::quest::card::QuestMoment;
+use engine::systems::quest::card::{QuestCardLook, QuestMoment};
 use engine::systems::quest::{self, Parties, QuestDef};
 use engine::systems::script::{EffectReach, RiftScripts};
 use engine::systems::skill::SkillDef;
@@ -234,8 +235,8 @@ fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
     ));
 }
 
-/// What a full resource comes to, worked out from its fields: what it gives, how long one worker
-/// takes to empty it, and the bag room work needs.
+/// What a full resource comes to, worked out from its fields: what it gives and spends, how long
+/// one worker takes to empty it, the bag room work needs and how far off it is done from.
 fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
     let mut lines: Vec<String> = def
         .drops
@@ -253,6 +254,10 @@ fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
             }
         })
         .collect();
+    lines.extend(def.spends.iter().map(|spent| {
+        let all = def.quantity * spent.count;
+        format!("Spends {all} {}", spent.item.get(content).name)
+    }));
     lines.push(format!(
         "Empty after {} s of one worker's work",
         def.quantity as f32 * def.takes.0
@@ -264,6 +269,9 @@ fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
         1 => "Work needs room in the bag for 1 kind of item".to_owned(),
         kinds => format!("Work needs room in the bag for {kinds} kinds of item"),
     });
+    if let Some(reach) = def.reach {
+        lines.push(format!("Worked from up to {} m off", reach.0));
+    }
     lines
 }
 
@@ -565,7 +573,7 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
 }
 
 /// How the row's actor stands on the stage: its appearance, what it wears in each slot and shows
-/// in each hand, and the plate it wears in game, an npc's name and role once it has a nameplate,
+/// in each hand, and the plate it wears in game, an npc's name once it has a nameplate,
 /// a test character's name as a player.
 struct Dressed {
     appearance: Appearance,
@@ -597,8 +605,8 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
                 worn: BTreeMap::new(),
                 hands: held::listed(content, model.hands().len(), &npc.held).hands,
                 plate: npc
-                    .nameplate()
-                    .map(|role| PlateLabel::npc(&npc.name, role, hostile)),
+                    .wears_nameplate()
+                    .then(|| PlateLabel::npc(&npc.name, hostile)),
             })
         }
         CharacterSnapshot::TABLE => {
@@ -613,7 +621,7 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
                     .map(|(slot, item)| (slot.clone(), *item))
                     .collect(),
                 hands: equipment::hands(&equipment),
-                plate: Some(PlateLabel::player(&snapshot.name)),
+                plate: Some(PlateLabel::player(&snapshot.name, None)),
             })
         }
         _ => None,
@@ -631,8 +639,12 @@ pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Cont
     let width = ui.available_width();
     ui.vertical(|ui| {
         ui.set_width(width);
-        let moment = Some(QuestMoment::Offer);
-        quest::card::show(ui, images, content, quest, moment, |ui, images, plate| {
+        let shown_as = QuestCardLook {
+            moment: Some(QuestMoment::Offer),
+            action: None,
+            look: CardLook::DOCKED,
+        };
+        quest::card::show(ui, images, content, quest, shown_as, |ui, images, plate| {
             quest::card::offer(ui, images, content, &parties, quest, None, plate);
         });
     });

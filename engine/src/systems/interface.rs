@@ -52,6 +52,8 @@ pub enum CursorShape {
     Open,
     Read,
     Target,
+    /// Over a mount with a seat free, which a click asks its driver for.
+    Board,
 }
 
 impl Fixture for CursorShape {
@@ -82,6 +84,7 @@ pub enum InterfaceIcon {
     Quests,
     Map,
     History,
+    Social,
     Settings,
 }
 

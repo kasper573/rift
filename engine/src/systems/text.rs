@@ -185,7 +185,7 @@ pub enum SpanText {
 
 /// What marks a name as one of a kind: the kind's icon before it, and the kind's colour where
 /// the ground is dark enough to show it.
-#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
 #[serde(deny_unknown_fields)]
 pub struct NameMark {
     pub icon: Option<String>,
@@ -204,7 +204,61 @@ impl From<String> for LineText {
     }
 }
 
+impl From<SpanText> for LineText {
+    fn from(span: SpanText) -> LineText {
+        LineText(vec![span])
+    }
+}
+
 impl LineText {
+    /// This line with `more` after it.
+    pub fn then(mut self, more: impl Into<LineText>) -> LineText {
+        self.0.extend(more.into().0);
+        self
+    }
+
+    /// This line with `with` wherever its words read `hole`: how a line worded by the game's
+    /// settings takes what it is about.
+    pub fn filling(self, hole: &str, with: impl Into<LineText>) -> LineText {
+        let with = with.into();
+        let mut filled = Vec::new();
+        for span in self.0 {
+            let SpanText::Text { text, fx } = span else {
+                filled.push(span);
+                continue;
+            };
+            let mut parts = text.split(hole).peekable();
+            while let Some(part) = parts.next() {
+                if !part.is_empty() {
+                    filled.push(SpanText::Text {
+                        text: part.to_owned(),
+                        fx: fx.clone(),
+                    });
+                }
+                if parts.peek().is_some() {
+                    filled.extend(with.0.iter().cloned());
+                }
+            }
+        }
+        LineText(filled)
+    }
+
+    /// The `lines` as one, told apart the way a sentence lists things.
+    pub fn listed(lines: Vec<LineText>) -> LineText {
+        let last = lines.len().saturating_sub(1);
+        lines
+            .into_iter()
+            .enumerate()
+            .fold(LineText::default(), |listed, (place, line)| {
+                let between = match place {
+                    0 => "",
+                    place if place == last => " and ",
+                    _ => ", ",
+                };
+                listed.then(between).then(line)
+            })
+    }
+
     pub fn spoken(spans: &[Span], values: &[Value]) -> LineText {
         let mut values = values.iter();
         LineText(

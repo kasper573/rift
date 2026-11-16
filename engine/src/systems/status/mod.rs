@@ -3,7 +3,7 @@ pub mod boost;
 pub mod effects;
 pub mod widget;
 
-pub use aspect::{ActiveAspects, AspectSource};
+pub use aspect::{ActiveAspects, AspectSource, CarriedStatus, CarriedStatuses, StatusBeat};
 pub use boost::{Boosts, HeldBoost};
 pub use effects::{ApplyStatus, Boost, RemoveStatus, boosts_of};
 

@@ -39,7 +39,7 @@ pub struct Names {
 impl Names {
     pub fn for_world(ordinal: u64) -> Names {
         assert!(
-            ordinal < 1 << WORLD_BITS,
+            ordinal < MOST_WORLDS,
             "world ordinal {ordinal} out of the name space"
         );
         Names {
@@ -57,6 +57,9 @@ impl Names {
 }
 
 const WORLD_BITS: u32 = 24;
+
+/// How many worlds a server names in one run, each under an ordinal no other has had.
+pub const MOST_WORLDS: u64 = 1 << WORLD_BITS;
 
 pub fn register(app: &mut App) {
     app.replicate_once::<GlobalId>();

@@ -299,6 +299,13 @@ pub struct InputOption {
     key: String,
 }
 
+impl InputOption {
+    /// The file the option stands for, where it stands for one.
+    pub fn file(&self) -> Option<&str> {
+        (!self.key.is_empty()).then_some(self.key.as_str())
+    }
+}
+
 const YES: &str = "yes";
 const NO: &str = "no";
 
@@ -375,16 +382,16 @@ fn players_elsewhere(world: &World) -> Vec<InputOption> {
     };
     let content = world.resource::<Content>();
     let here = world.resource::<Players>();
-    let mut elsewhere: Vec<InputOption> = roster
-        .all()
-        .into_iter()
-        .filter(|enrolled| !here.0.contains_key(&enrolled.client))
-        .map(|enrolled| InputOption {
-            detail: enrolled.place.area.get(content).shown_name().to_owned(),
-            text: enrolled.name,
-            key: String::new(),
-        })
-        .collect();
+    let mut elsewhere: Vec<InputOption> = Vec::new();
+    roster.each(|enrolled| {
+        if !here.0.contains_key(&enrolled.client) {
+            elsewhere.push(InputOption {
+                detail: enrolled.area.get(content).shown_name().to_owned(),
+                text: enrolled.name.clone(),
+                key: String::new(),
+            });
+        }
+    });
     elsewhere.sort_by(|a, b| a.text.cmp(&b.text));
     elsewhere
 }

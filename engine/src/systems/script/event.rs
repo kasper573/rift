@@ -123,6 +123,7 @@ pub(crate) const ASPECT: &[RunnerKind] = &[
     RunnerKind::Item,
     RunnerKind::Skill,
     RunnerKind::StatusEffect,
+    RunnerKind::Mount,
 ];
 pub(crate) const QUEST: &[RunnerKind] = &[RunnerKind::Quest];
 pub(crate) const SHOP: &[RunnerKind] = &[RunnerKind::Shop];

@@ -63,12 +63,14 @@ use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, GridDims, MeterSize, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
+use crate::systems::area_instance::AreaInstanceRules;
+use crate::systems::mount::MountKind;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
 use crate::systems::script::{
     self, Condition, EffectReach, OwnerRow, RiftScripts, ScriptModule, SkyCondition, SkyTable,
 };
-use crate::systems::spawner::Spawner;
+use crate::systems::spawner::{SpawnSurface, Spawner};
 use blueprint::{FlattenAt, FlattenError};
 use lighting::MAX_LIGHTS;
 use prop::MAX_PROPS;
@@ -180,6 +182,14 @@ pub struct AreaDef {
     pub lighting: Lighting,
     #[serde(default, skip_serializing_if = "Climate::is_still")]
     pub climate: Climate,
+    /// The kinds of mount nobody rides here: one called here is refused, and a rider who warps in
+    /// arrives on foot.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bars_mounts: Vec<MountKind>,
+    /// With it, the area is never shared: it is only ever entered as an instance, a copy of it
+    /// that is one party's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<AreaInstanceRules>,
     #[serde(skip)]
     pub scene: Vec<SceneNode>,
     #[serde(skip)]
@@ -213,6 +223,8 @@ impl ContentFile for AreaDef {
             terrains: vec![near.file()?],
             lighting: Lighting::day(),
             climate: Climate::always(Weather::breezy()),
+            bars_mounts: Vec::new(),
+            instance: None,
             scene: vec![SceneNode::Module(scene::ModuleNode::new(AreaModule::Fog(
                 FogBank::light_over(size.bounds()),
             )))],
@@ -243,6 +255,9 @@ impl ContentFile for AreaDef {
         );
         self.lighting.check("/lighting", cx);
         self.climate.check("/climate", cx);
+        if let Some(rules) = &self.instance {
+            rules.check("/instance", cx);
+        }
     }
 }
 
@@ -874,13 +889,6 @@ pub fn warp_at(world: &mut World, at: Pos<Meters>) -> Option<Entity> {
         .map(|(entity, _)| entity)
 }
 
-pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
-    crate::systems::player::session::my_character(world)
-        .map(|me| me.id())
-        .and_then(|entity| of(world, entity))
-        .is_some_and(|area| area.mesh().walkable(at))
-}
-
 /// An area as the game plays it: its ground, where it walks and flies, what stands and shines on
 /// it, and what it sounds like.
 pub struct Area {
@@ -943,6 +951,18 @@ impl Area {
     /// cut around the safe zones for the wild; with no safe zone the wild moves on everyone's.
     pub fn mesh_for(&self, wild: bool, flies: bool) -> HeldMesh {
         walk::mesh(self, wild && !self.safe_zones.is_empty(), flies)
+    }
+
+    /// The mesh whatever draws `draught` of water floats on, as far as the tiles held: none for
+    /// a draught no mount of the game floats at.
+    pub fn water_mesh(&self, draught: Meters) -> Option<HeldMesh> {
+        walk::water(self, draught)
+    }
+
+    /// The mesh of wherever water stands, as far as the tiles held: none in an area that spawns
+    /// nothing on water.
+    pub fn standing_water(&self) -> Option<HeldMesh> {
+        walk::water(self, walk::ANY_WATER)
     }
 
     /// The ground everyone walks within a tile of `at`, laid for a look at one place of the area
@@ -1482,7 +1502,7 @@ fn build_area(
         prop_origins,
         lights,
         playing,
-        meshes: walk::Meshes::empty(ground.size.bounds()),
+        meshes: walk::Meshes::empty(ground.size.bounds(), walk::draughts(content, modules)),
         modules_by_tile,
         placements_by_tile,
     };
@@ -1635,10 +1655,16 @@ fn check_footing(
             ObjectShape::Rect(_) => None,
         },
         AreaModule::Resident(resident) => Some(SurveyQuestion::Walkable(resident.at)),
-        AreaModule::Spawner(spawner) => Some(SurveyQuestion::Covers {
-            bounds: spawner.within.unwrap_or(area.size.bounds()),
-            wild: spawner.keeps_wild(),
-        }),
+        AreaModule::Spawner(spawner) => {
+            let bounds = spawner.within.unwrap_or(area.size.bounds());
+            Some(match spawner.on {
+                SpawnSurface::Ground => SurveyQuestion::Covers {
+                    bounds,
+                    wild: spawner.keeps_wild(),
+                },
+                SpawnSurface::Water => SurveyQuestion::Wet(bounds),
+            })
+        }
         _ => None,
     };
     let ground_of = |object: &ObjectDef| match object.shape {
@@ -1707,15 +1733,21 @@ fn check_footing(
                 }
             }
             AreaModule::Spawner(spawner) if !stands => {
+                let (rule, wanted) = match spawner.on {
+                    SpawnSurface::Water => ("no water to spawn on", "water to spawn on"),
+                    SpawnSurface::Ground if spawner.keeps_wild() => (
+                        "no ground to spawn on",
+                        "walkable ground outside every safe zone to spawn on",
+                    ),
+                    SpawnSurface::Ground => {
+                        ("no ground to spawn on", "walkable ground to spawn on")
+                    }
+                };
                 check.error(
                     site(""),
-                    "no ground to spawn on",
+                    rule,
                     format!("{} in {}", spawner.named(content), id.path(content)),
-                    if spawner.keeps_wild() {
-                        "walkable ground outside every safe zone to spawn on"
-                    } else {
-                        "walkable ground to spawn on"
-                    },
+                    wanted,
                 );
             }
             _ => {}
@@ -1875,6 +1907,25 @@ pub fn check_islands(
         }
     }
     problems
+}
+
+/// `place` when a character can be put there, else the nearest place of its area where one can:
+/// on walkable ground, outside every warp object. None where the area has no such place.
+pub fn standable(content: &Content, place: script::Place) -> Option<script::Place> {
+    if check_place(content, place).is_ok() {
+        return Some(place);
+    }
+    let area = loaded(content, place.area)?;
+    let warps = warp_objects(content, place.area);
+    let at = area
+        .survey()
+        .nearest_where(place.at, area.bodies.spacing(), |at| {
+            !warps.iter().any(|(_, object)| object.shape.covers(at))
+        })?;
+    Some(script::Place {
+        area: place.area,
+        at,
+    })
 }
 
 pub fn check_place(content: &Content, place: script::Place) -> Result<(), ContentProblem> {

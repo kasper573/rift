@@ -12,7 +12,7 @@ use ui::{ink, paint, sheet};
 
 use super::{
     Craftable, CraftingRequest, CraftingView, Recipe, RecipeKey, craftables, locked, matches,
-    stacks_named,
+    stacks_mentioned,
 };
 use crate::core::content::Content;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
@@ -25,11 +25,13 @@ use crate::systems::input::map::{self, InputAction, InputMap, input};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::widget::{SLOT, SlotLook, listed_icon, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemStack};
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::prompt::tray;
 use crate::systems::prompt::{PromptKind, PromptStep, PromptView};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
+use crate::systems::text::LineText;
 
 const SHEET: Vec2 = Vec2::new(970.0, 400.0);
 const RECIPES_WIDTH: f32 = 262.0;
@@ -333,7 +335,9 @@ fn recipe_row(
     laid_out: bool,
 ) -> egui::Response {
     let content = world.resource::<Content>().clone();
-    let name = stacks_named(&content, &row.recipe.makes);
+    let named = stacks_mentioned(&content, &row.recipe.makes, 1);
+    let name = named.plain_words();
+    let named = named.styled();
     let requires_mastery = &content.built::<GameSettings>().words.requires_mastery;
     let (status, status_ink) = if row.locked {
         (requires_mastery.as_str(), ink::INK3)
@@ -373,7 +377,8 @@ fn recipe_row(
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         sheet::label(ui, TextRole::Small, status, status_ink);
                         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                            ui.add(egui::Label::new(face::body(&name)).truncate());
+                            let look = TextLook::new(TextRole::Body.size(), ink::INK);
+                            text::show(ui, world, &named, look, None);
                         });
                     });
                 });
@@ -389,8 +394,9 @@ fn recipe_row(
                                 ui.allocate_exact_size(Vec2::splat(CROSS), Sense::hover());
                             Mark::Cross.paint(ui.painter(), cross, ink::RUBRIC);
                         }
-                        let material = format!("{} {}", stack.count, stack.item.get(&content).name);
-                        sheet::label(ui, TextRole::Small, &material, ink::INK2);
+                        let material = stack.named(&content).styled();
+                        let look = TextLook::new(TextRole::Small.size(), ink::INK2);
+                        text::show(ui, world, &material, look, None);
                         ui.add_space(4.0);
                     }
                 });
@@ -405,6 +411,7 @@ fn recipe_row(
             format!("Recipe: {name}, {status}"),
         )
     });
+    item::card::chat_shortcut(world, &response, &made_items(&row.recipe.makes));
     response
 }
 
@@ -482,7 +489,7 @@ fn no_result(ui: &mut Ui, world: &mut World) {
             .no_recipe
             .clone()
     };
-    beside(ui, None, Some(&note));
+    beside(ui, world, None, Some(&note));
 }
 
 fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
@@ -492,7 +499,7 @@ fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
             count: made.count,
             ..SlotLook::of(&content, made.item)
         };
-        let response = slot(ui, world, look, Sense::hover());
+        let response = slot(ui, world, look, Sense::click());
         response.widget_info(|| {
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Label,
@@ -500,13 +507,15 @@ fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
                 format!("Result: {}", made.describe(&content)),
             )
         });
-        item::card::tooltip_noted(world, &response, made.item, crafts_note(result), None);
+        item::card::chat_shortcut(world, &response, &[made.item]);
+        let note = crafts_note(result).map(LineText::from);
+        item::card::tooltip_noted(world, &response, made.item, note, None);
     }
     let name = match result.makes.as_slice() {
-        [made] => Some(made.item.get(&content).name.as_str()),
+        [made] => Some(LineText::from(Mention::Item(made.item).name(&content))),
         _ => None,
     };
-    beside(ui, name, crafts_note(result).as_deref());
+    beside(ui, world, name.as_ref(), crafts_note(result).as_deref());
 }
 
 fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
@@ -515,7 +524,9 @@ fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
     ui.spacing_mut().item_spacing.y = 0.0;
     for (index, result) in found.iter().enumerate() {
         let wanted = chosen.as_ref() == Some(&result.recipe);
-        let name = stacks_named(&content, &result.makes);
+        let named = stacks_mentioned(&content, &result.makes, result.makes.len());
+        let name = named.plain_words();
+        let named = named.styled();
         let look = RowLook {
             selected: wanted,
             ..RowLook::default()
@@ -543,7 +554,8 @@ fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
                                 }
                                 ui.vertical(|ui| {
                                     ui.spacing_mut().item_spacing.y = 1.0;
-                                    ui.add(egui::Label::new(face::body(&name)).wrap());
+                                    let look = TextLook::new(TextRole::Body.size(), ink::INK);
+                                    text::show(ui, world, &named, look, None);
                                     if let Some(note) = crafts_note(result) {
                                         sheet::label(ui, TextRole::Small, &note, ink::INK3);
                                     }
@@ -567,7 +579,12 @@ fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
             choose(world, result.recipe.clone());
             InterfaceSound::UiMove.play(world);
         }
+        item::card::chat_shortcut(world, &response, &made_items(&result.makes));
     }
+}
+
+fn made_items(makes: &[ItemStack]) -> Vec<ItemId> {
+    makes.iter().map(|made| made.item).collect()
 }
 
 fn lacks_mastery(world: &World, craftable: &Craftable) -> bool {
@@ -577,35 +594,32 @@ fn lacks_mastery(world: &World, craftable: &Craftable) -> bool {
 /// The words beside a result's slots, painted over the rest of their line: its name over a
 /// smaller note, each cut short where the line ends, taking a slot's height however many there
 /// are.
-fn beside(ui: &mut Ui, name: Option<&str>, note: Option<&str>) {
+fn beside(ui: &mut Ui, world: &World, name: Option<&LineText>, note: Option<&str>) {
     const BETWEEN: f32 = 1.0;
     let across = ui.available_size_before_wrap().x;
     if across <= 0.0 || (name.is_none() && note.is_none()) {
         return;
     }
     let (rect, response) = ui.allocate_exact_size(Vec2::new(across, SLOT), Sense::hover());
-    let lines: Vec<_> = [
-        name.map(|name| (TextRole::Body, name, ink::INK)),
-        note.map(|note| (TextRole::Small, note, ink::INK3)),
-    ]
-    .into_iter()
-    .flatten()
-    .map(|(role, words, color)| {
-        let mut job = role.job(words, color);
-        job.wrap = egui::text::TextWrapping::truncate_at_width(across);
-        (ui.painter().layout_job(job), color)
-    })
-    .collect();
-    let tall: f32 = lines.iter().map(|(line, _)| line.size().y).sum::<f32>()
-        + BETWEEN * (lines.len() as f32 - 1.0);
-    let mut top = rect.center().y - tall / 2.0;
-    for (line, color) in lines {
-        let high = line.size().y;
-        ui.painter()
-            .galley(egui::pos2(rect.left(), top), line, color);
-        top += high + BETWEEN;
-    }
-    let said = [name, note]
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(rect)
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = BETWEEN;
+                if let Some(name) = name {
+                    let look = TextLook::new(TextRole::Body.size(), ink::INK);
+                    text::show(ui, world, &name.styled(), look, None);
+                }
+                if let Some(note) = note {
+                    ui.add(egui::Label::new(face::small(note).color(ink::INK3)).truncate());
+                }
+            });
+        },
+    );
+    let name = name.map(LineText::plain_words);
+    let said = [name.as_deref(), note]
         .into_iter()
         .flatten()
         .collect::<Vec<_>>()
@@ -641,11 +655,12 @@ fn craft(world: &mut World, step: PromptStep, recipe: RecipeKey) {
 /// Asks the player whether to go through with a craft that may fail, and crafts it if so.
 fn confirm_risk(world: &mut World, step: PromptStep, result: &CraftResult) {
     let content = world.resource::<Content>().clone();
-    let made: Vec<&str> = result
+    let made = result
         .makes
         .iter()
-        .map(|stack| stack.item.get(&content).name.as_str())
-        .collect();
+        .map(|stack| Mention::Item(stack.item).line(&content))
+        .reduce(|made, more| made.then(" + ").then(more))
+        .unwrap_or_default();
     let each = if result.times > 1 {
         format!("Each of the {} crafts", result.times)
     } else {
@@ -655,10 +670,10 @@ fn confirm_risk(world: &mut World, step: PromptStep, result: &CraftResult) {
     hud::confirm(
         world,
         Confirm {
-            title: format!("Craft {}?", made.join(" + ")),
+            title: LineText::plain("Craft ").then(made).then("?"),
             body: vec![
-                format!("{each} has a {}.", chance_note(result.chance)),
-                "One that fails spends its materials and makes nothing.".to_owned(),
+                format!("{each} has a {}.", chance_note(result.chance)).into(),
+                "One that fails spends its materials and makes nothing.".into(),
             ],
             confirm: "Craft anyway".to_owned(),
             cancel: "Keep materials".to_owned(),

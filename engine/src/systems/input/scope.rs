@@ -36,7 +36,9 @@ impl InputAction {
             InputAction::SubmitText
             | InputAction::CompleteText
             | InputAction::PageBack
-            | InputAction::PageForward => &[Typing],
+            | InputAction::PageForward
+            | InputAction::NextChatTab
+            | InputAction::PreviousChatTab => &[Typing],
             InputAction::TakeDefault => &[Modal],
             InputAction::Advance
             | InputAction::PickChoice
@@ -51,6 +53,7 @@ impl InputAction {
             | InputAction::Choice7
             | InputAction::Choice8
             | InputAction::Choice9 => &[Conversation],
+            InputAction::AcceptRequest | InputAction::DenyRequest => &[Conversation, Menu, World],
             InputAction::Respawn
             | InputAction::TurnLeft
             | InputAction::TurnRight
@@ -60,12 +63,14 @@ impl InputAction {
             | InputAction::ZoomIn
             | InputAction::ZoomOut
             | InputAction::Emotes
-            | InputAction::NameItems => &[World],
+            | InputAction::NameItems
+            | InputAction::StepOff => &[World],
             InputAction::OpenCharacter
             | InputAction::OpenSkills
             | InputAction::OpenQuests
             | InputAction::OpenMap
             | InputAction::OpenHistory
+            | InputAction::OpenSocial
             | InputAction::OpenSettings
             | InputAction::BarSlot1
             | InputAction::BarSlot2
@@ -85,7 +90,7 @@ impl InputAction {
             | InputAction::InspectItem
             | InputAction::UseItem
             | InputAction::DropItem
-            | InputAction::SellItem
+            | InputAction::SplitStack
             | InputAction::PlaceItem
             | InputAction::PlaceStack
             | InputAction::CarryItem
@@ -94,7 +99,8 @@ impl InputAction {
             | InputAction::LowerRank
             | InputAction::InspectSkill
             | InputAction::UseSlot
-            | InputAction::SlotOptions => &[Typing, Modal, Conversation, Menu, World],
+            | InputAction::SlotOptions
+            | InputAction::AddToChat => &[Typing, Modal, Conversation, Menu, World],
         }
     }
 }

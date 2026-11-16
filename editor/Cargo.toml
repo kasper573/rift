@@ -32,6 +32,7 @@ rayon.workspace = true
 thread-priority.workspace = true
 base64 = "0.23"
 walkdir.workspace = true
+tempfile.workspace = true
 imbl = "7"
 quick_cache = "0.7"
 jwalk = "0.9"
@@ -43,7 +44,6 @@ gltf = { version = "1.4", default-features = false, features = ["names", "utils"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
-tempfile.workspace = true
 
 [lints]
 workspace = true

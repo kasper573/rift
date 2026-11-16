@@ -19,7 +19,8 @@ use serde::{Deserialize, Serialize};
 
 use super::gpu::draw::{GroundDraw, GroundPaint};
 use super::material::SurfaceFinish;
-use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
+use crate::core::ground::SAMPLES_PER_METER;
+use crate::core::math::Pos;
 use crate::core::units::Meters;
 
 /// The side of every picture laid over the ground, in pixels: all one size, so the ground draws
@@ -228,10 +229,16 @@ fn stack(side: u32, pictures: &[RgbaImage]) -> Image {
     image
 }
 
-/// A patch of ground `size` metres across, centred on `at` and turned by `yaw`, as a grid of
-/// quads half a metre apart laid `lift` above the terrain, for what is drawn on the ground. Its uv
-/// runs 0..1 over the patch, y down as a picture's does.
-pub fn patch(heights: &Heightfield, at: Vec2, size: Vec2, yaw: f32, lift: f32) -> Mesh {
+/// A patch `size` metres across, centred on `at` and turned by `yaw`, as a grid of quads half a
+/// metre apart laid `lift` above what stands as high as `height` says, for what is drawn on the
+/// ground or the water over it. Its uv runs 0..1 over the patch, y down as a picture's does.
+pub fn patch(
+    height: impl Fn(Pos<Meters>) -> Meters,
+    at: Vec2,
+    size: Vec2,
+    yaw: f32,
+    lift: f32,
+) -> Mesh {
     let step = 1.0 / SAMPLES_PER_METER as f32;
     let across = ((size.x / step).ceil() as u32).max(1) + 1;
     let down = ((size.y / step).ceil() as u32).max(1) + 1;
@@ -246,9 +253,7 @@ pub fn patch(heights: &Heightfield, at: Vec2, size: Vec2, yaw: f32, lift: f32) -
             let local = Vec2::new((u - 0.5) * size.x, (v - 0.5) * size.y);
             let turned = Vec2::new(local.x * cos - local.y * sin, local.x * sin + local.y * cos);
             let ground = at + turned;
-            let height = heights
-                .height_at(crate::core::math::Pos::new(ground.x, ground.y))
-                .0;
+            let height = height(Pos::new(ground.x, ground.y)).0;
             positions.push([ground.x, height + lift, ground.y]);
             normals.push([0.0, 1.0, 0.0]);
             uvs.push([u, v]);

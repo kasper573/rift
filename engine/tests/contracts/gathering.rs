@@ -2,25 +2,32 @@ use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
 use engine::core::audio::playback::{SfxDef, SfxId};
+use engine::core::content::Content;
+use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{Meters, Seconds};
 use engine::systems::actor::held::Held;
 use engine::systems::actor::skeleton::MoveName;
 use engine::systems::actor::{Motion, Playing};
-use engine::systems::area::AreaDef;
+use engine::systems::area::{self, AreaDef};
 use engine::systems::item::{ItemDef, ItemId};
-use engine::systems::movement::{self, MoveRequest, position};
+use engine::systems::movement::{self, MoveRequest, Position, position};
 use engine::systems::notification::SoundPlayed;
-use engine::systems::resource::{self, GatherRequest, Left, ResourceDef, StopGathering, Working};
+use engine::systems::resource::{
+    self, GatherRequest, Left, ResourceAfloat, ResourceDef, StopGathering, Working,
+};
+use engine::systems::spawner::Spawned;
 use engine::systems::stat::{self, StatKind, Stats};
-use engine::systems::{actor, script};
+use engine::systems::{actor, region, script};
 use serde_json::{Value, json};
-use testkit::{APEX, BODY, Game, Map, Sim, path, rig_clips};
+use testkit::{APEX, BODY, Game, HEIGHTS, Map, Sim, path, rig_clips};
 
 const TAKES: f32 = 2.0;
 const SWING: f32 = 0.5;
 const AWAY: f32 = 4.0;
 const WALK: f32 = 3.0;
+/// Where the lake of a meadow that has one begins.
+const SHORE: f32 = 10.0;
 
 #[test]
 fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_tool_room_or_bag_room()
@@ -218,9 +225,189 @@ fn two_workers_never_both_get_the_last_one() {
     }
 }
 
+#[test]
+fn a_resource_takes_what_it_spends_with_every_extraction_and_is_worked_from_as_far_as_it_reaches() {
+    let blasted = json!({
+        "quantity": 5,
+        "spends": [{ "item": path("item", "powder") }],
+        "reach": 3.0,
+    });
+    let (mut sim, vein) = quarry(blasted, |game| game);
+    let miner = sim.join(1);
+    sim.equip(miner, "pickaxe");
+    let start = position(&sim.world, miner).expect("it stands");
+    ask(&mut sim, 1, vein);
+    sim.run(1.0);
+    assert_eq!(
+        (sim.errors(1), position(&sim.world, miner)),
+        (vec!["Needs 1 more powder".to_owned()], Some(start)),
+        "what it spends is asked for before a step is taken, as its tool is"
+    );
+    sim.forget_notified();
+
+    sim.give(miner, "powder", 2);
+    ask(&mut sim, 1, vein);
+    assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
+    let stands = position(&sim.world, miner).expect("it stands");
+    let stood = position(&sim.world, vein).expect("it stands");
+    assert!(
+        (2.0..=3.0).contains(&stands.distance_to(stood)),
+        "it is worked from as far off as it reaches: {stands:?}"
+    );
+    sim.run(TAKES / 2.0);
+    let conn = sim.conn(1);
+    sim.send(conn, StopGathering);
+    sim.tick();
+    sim.run(TAKES);
+    assert_eq!(
+        (sim.count(miner, "powder"), left(&sim, vein)),
+        (2, Some(5)),
+        "work stopped under way spends nothing"
+    );
+
+    ask(&mut sim, 1, vein);
+    sim.run(TAKES + 0.2);
+    assert_eq!(
+        (
+            sim.count(miner, "powder"),
+            sim.count(miner, "ore"),
+            left(&sim, vein)
+        ),
+        (1, 2, Some(4)),
+        "an extraction takes what it spends as it gives what it drops"
+    );
+    sim.run(TAKES);
+    assert_eq!(
+        (
+            sim.count(miner, "powder"),
+            sim.count(miner, "ore"),
+            left(&sim, vein),
+            sim.world.get::<Working>(miner).is_some(),
+            sim.errors(1),
+        ),
+        (0, 4, Some(3), false, vec!["Needs 1 more powder".to_owned()]),
+        "the extraction that spent the last of it is the last, and the worker is told what is missing"
+    );
+
+    let barren = json!({
+        "quantity": 5,
+        "spends": [{ "item": path("item", "powder"), "count": 2 }],
+        "drops": [{ "item": path("item", "ore"), "chance": 0.0 }],
+    });
+    let (mut sim, vein) = quarry(barren, |game| game);
+    let miner = sim.join(1);
+    sim.equip(miner, "pickaxe");
+    sim.give(miner, "powder", 3);
+    ask(&mut sim, 1, vein);
+    assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
+    sim.run(TAKES + 0.2);
+    assert_eq!(
+        (
+            sim.count(miner, "powder"),
+            sim.count(miner, "ore"),
+            left(&sim, vein),
+            sim.errors(1),
+        ),
+        (1, 0, Some(4), vec!["Needs 1 more powder".to_owned()]),
+        "an extraction that drops nothing spends all the same"
+    );
+}
+
+#[test]
+fn a_spawner_on_water_keeps_its_resources_afloat_where_water_stands() {
+    let shoals = |more: Value| {
+        let mut spawner = json!({
+            "type": "spawner",
+            "spawns": [{ "type": "resource", "resource": path("resource", "vein") }],
+            "count": 8,
+            "on": "water",
+        });
+        spawner
+            .as_object_mut()
+            .expect("the spawner")
+            .extend(more.as_object().expect("fields").clone());
+        spawner
+    };
+    let far = json!({ "reach": 8.0, "max_occupants": 8 });
+    let (mut sim, on_land) = quarry(far.clone(), |game| lake(game, shoals(json!({}))));
+    region::hold_whole(&mut sim.world);
+    let mut spawned = sim
+        .world
+        .query_filtered::<(Entity, &Position, Has<ResourceAfloat>), With<Spawned>>();
+    let afloat: Vec<(Entity, Pos<Meters>, bool)> = spawned
+        .iter(&sim.world)
+        .map(|(shoal, at, afloat)| (shoal, at.pos, afloat))
+        .collect();
+    assert_eq!(afloat.len(), 8);
+    let meadow = area::load(sim.world.resource::<Content>(), sim.id::<AreaDef>("meadow"));
+    let wet = |at: Pos<Meters>| meadow.water.depth_at(&meadow.heights, at) > Meters(0.0);
+    assert!(
+        afloat.iter().all(|(_, at, afloat)| wet(*at) && *afloat),
+        "each lies where water stands, and is told apart from what stands on the ground: {afloat:?}"
+    );
+    assert!(!wet(Pos::new(2.0, 5.0)), "the meadow's west is dry");
+    assert!(
+        sim.world.get::<ResourceAfloat>(on_land).is_none(),
+        "what stands on the ground is not afloat"
+    );
+    let miner = sim.join(1);
+    sim.equip(miner, "pickaxe");
+    let nearest = afloat
+        .iter()
+        .min_by(|a, b| a.1.x.total_cmp(&b.1.x))
+        .expect("a shoal");
+    ask(&mut sim, 1, nearest.0);
+    assert!(
+        sim.run_until(4.0 * WALK, |world| world.get::<Working>(miner).is_some()),
+        "one on the water is worked as any other, from within its reach"
+    );
+
+    let dry = shoals(json!({ "within": { "x": 1.0, "y": 1.0, "w": 6.0, "h": 6.0 } }));
+    assert_eq!(
+        refused(lake(game(far.clone()), dry)),
+        ["no water to spawn on"]
+    );
+    let mut walkers = shoals(json!({}));
+    walkers["spawns"] = json!([{ "type": "npc", "npc": path("npc", "wolf") }]);
+    let wolves = lake(game(far), walkers)
+        .npc("wolf", 20.0, json!([]))
+        .vfx("damage_taken")
+        .shader("damage_pop")
+        .vfx("defeated");
+    assert_eq!(refused(wolves), ["walks on water"]);
+}
+
 /// A meadow holding one vein of `fields` a walk away from where players start, worked with a
 /// pick for two ore an extraction, in the game `more` adds to.
 fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
+    let mut sim = Sim::new(more(game(fields)).load());
+    sim.serve("meadow")
+        .accept::<MoveRequest>()
+        .accept::<GatherRequest>()
+        .accept::<StopGathering>()
+        .message::<ToClient<SoundPlayed>>()
+        .add((
+            movement::move_request,
+            movement::file_by_chunk,
+            resource::gather_request,
+            actor::playing::progress,
+            resource::swings,
+        ))
+        .plan(movement::AdvanceWalks::default())
+        .add((resource::gathering, resource::work))
+        .plan(stat::SettleVitals::default())
+        .plan(actor::SettleActions::default());
+    script::spawn_stateless(&mut sim.world);
+    let area = sim.id::<AreaDef>("meadow");
+    let def = sim.id::<ResourceDef>("vein");
+    let at = Pos::<Meters>::new(2.0, 5.0) + Offset::new(AWAY, 0.0);
+    let vein = resource::spawn(&mut sim.world, def, at, area);
+    (sim, vein)
+}
+
+/// A game of one meadow and a vein of `fields`, with the tools, the moves and the sounds its
+/// work takes.
+fn game(fields: Value) -> Game {
     let mut vein = json!({
         "name": "Vein",
         "look": path("prop", "rock"),
@@ -263,7 +450,7 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
     let mut clips = rig_clips();
     clips.extend(["mine", "hew", "pluck"].map(|swing| (swing, Seconds(SWING))));
     let lands = |clip: &str| json!({ "clip": testkit::clip(clip), "cues": [{ "at": APEX.0, "apex": true }] });
-    let game = Game::new()
+    Game::new()
         .skeleton_of(
             BODY,
             &clips,
@@ -295,30 +482,34 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
         .sfx("crack")
         .sfx("crumble")
         .sfx("ui_refuse")
-        .row("resource", "vein", vein);
-    let mut sim = Sim::new(more(game).load());
-    sim.serve("meadow")
-        .accept::<MoveRequest>()
-        .accept::<GatherRequest>()
-        .accept::<StopGathering>()
-        .message::<ToClient<SoundPlayed>>()
-        .add((
-            movement::move_request,
-            movement::file_by_chunk,
-            resource::gather_request,
-            actor::playing::progress,
-            resource::swings,
-        ))
-        .plan(movement::AdvanceWalks::default())
-        .add((resource::gathering, resource::work))
-        .plan(stat::SettleVitals::default())
-        .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
-    let area = sim.id::<AreaDef>("meadow");
-    let def = sim.id::<ResourceDef>("vein");
-    let at = Pos::<Meters>::new(2.0, 5.0) + Offset::new(AWAY, 0.0);
-    let vein = resource::spawn(&mut sim.world, def, at, area);
-    (sim, vein)
+        .resource("powder", 20)
+        .row("resource", "vein", vein)
+}
+
+/// The meadow of `game` with a lake over its eastern half, `spawner` placed in it.
+fn lake(game: Game, spawner: Value) -> Game {
+    let size = GroundSize {
+        width: 20,
+        height: 10,
+    };
+    let water = WaterSurface::from_fn(size, HEIGHTS, |column, _| {
+        Meters(if column as f32 >= SHORE * 2.0 {
+            1.0
+        } else {
+            0.0
+        })
+    });
+    game.area("meadow", &Map::open(20, 10), json!([spawner]))
+        .water("meadow", &water)
+}
+
+fn refused(game: Game) -> Vec<&'static str> {
+    let report = game.try_load().err().expect("refused");
+    report
+        .errors
+        .iter()
+        .map(|error| error.problem.rule)
+        .collect()
 }
 
 fn ask(sim: &mut Sim, client: u32, target: Entity) {

@@ -242,6 +242,40 @@ fn every_card_is_one_size_whatever_it_holds_and_however_it_is_dressed() {
 }
 
 #[test]
+fn a_card_holding_more_than_it_has_room_for_scrolls_it_by_a_bar_inside_its_frame() {
+    let ctx = context();
+    let mut shown = Vec::new();
+    // A card learns how much it holds as it writes it, so its bar stands from the next pass on.
+    for _ in 0..2 {
+        shown.clear();
+        pass(&ctx, |ui| {
+            for (name, lines) in [("Rusty Sword", 1), ("A long errand", 40)] {
+                let mut room = Rect::NOTHING;
+                let response = Card::new(CardKind::Equipment, name).show(ui, |ui, _| {
+                    room = ui.max_rect();
+                    for line in 0..lines {
+                        card::fact(ui, &format!("Line {line}"));
+                    }
+                });
+                shown.push((room, response.frame));
+            }
+        });
+    }
+    let [(short, short_frame), (long, long_frame)] = shown[..] else {
+        panic!("two cards");
+    };
+    let beside = |room: Rect, frame: Rect| frame.right() - room.right();
+    assert!(
+        beside(long, long_frame) > beside(short, short_frame),
+        "what overruns the card leaves its bar a lane inside the frame: {long:?} in {long_frame:?}"
+    );
+    assert_eq!(
+        long.left() - long_frame.left(),
+        short.left() - short_frame.left()
+    );
+}
+
+#[test]
 fn a_card_turns_toward_the_pointer_by_degrees_and_lies_flat_again_once_it_leaves() {
     let flat = Rect::from_min_size(Pos2::new(100.0, 100.0), Vec2::new(300.0, 400.0));
     let (most, settles_in, frame) = (4.0, 0.25, 1.0 / 60.0);

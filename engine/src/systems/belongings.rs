@@ -7,7 +7,8 @@ use crate::systems::class::{self, Class, SkillPoints};
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::{self, Inventory, ItemId};
+use crate::systems::item::{Inventory, ItemId};
+use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::Xp;
 use crate::systems::skill::Learned;
@@ -130,14 +131,11 @@ fn item_row(content: &Content, item: ItemId, change: i32) -> Notification {
     } else {
         sounds.trade
     };
-    Notification::feed(
-        HistoryTopic::Item,
-        LineText(vec![item::named(content, item)]),
-    )
-    .icon(item.get(content).icon.path())
-    .tally(RecordTally::Change(change))
-    .sound(sfx)
-    .into()
+    Notification::feed(HistoryTopic::Item, Mention::Item(item).name(content))
+        .icon(item.get(content).icon.path())
+        .tally(RecordTally::Change(change))
+        .sound(sfx)
+        .into()
 }
 
 /// How far a count moved, as a tally shows it.
@@ -151,7 +149,7 @@ fn worn_row(content: &Content, did: &str, item: ItemId) -> Notification {
             text: did.to_owned(),
             fx: Vec::new(),
         },
-        item::named(content, item),
+        Mention::Item(item).name(content),
     ]);
     Notification::feed(HistoryTopic::Item, text)
         .icon(item.get(content).icon.path())

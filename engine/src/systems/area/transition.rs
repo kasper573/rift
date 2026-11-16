@@ -6,9 +6,11 @@ use super::AreaId;
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
+use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
+use crate::systems::mount::{self, CrossingRide};
 use crate::systems::npc::Npc;
-use crate::systems::player::{CharacterState, ClientId, PlayedBy, Players};
+use crate::systems::player::{CharacterState, Played, Players};
 use crate::systems::script::{EventKind, RiftEvent, RiftInstances, area_owner};
 use crate::systems::text::LineText;
 
@@ -16,9 +18,11 @@ use crate::systems::text::LineText;
 pub struct Crossing {
     pub dest_area: AreaId,
     pub dest: Pos<Meters>,
+    /// The instance of the area they are bound for, or the world everyone there shares.
+    pub instance: Option<AreaInstanceWorld>,
 }
 
-#[derive(Component, Clone, Debug, Default)]
+#[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Discovered(BTreeSet<AreaId>);
 
 impl Discovered {
@@ -33,13 +37,21 @@ impl Discovered {
     pub fn knows(&self, area: AreaId) -> bool {
         self.0.contains(&area)
     }
+
+    pub fn areas(&self) -> impl Iterator<Item = AreaId> + '_ {
+        self.0.iter().copied()
+    }
 }
 
 pub struct Traveler {
-    pub client: ClientId,
+    pub played: Played,
     pub dest_area: AreaId,
     pub dest: Pos<Meters>,
+    /// The instance of the area they are bound for, or the world everyone there shares.
+    pub instance: Option<AreaInstanceWorld>,
     pub state: CharacterState,
+    /// The mount they rode out on, and where on it they sat.
+    pub ride: Option<CrossingRide>,
 }
 
 pub fn departing(world: &mut World) -> Vec<Traveler> {
@@ -48,10 +60,18 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
         .iter(world)
         .map(|(entity, crossing)| (entity, *crossing))
         .collect();
-    crossings
+    let rides: Vec<Option<CrossingRide>> = crossings
+        .iter()
+        .map(|(entity, _)| mount::crossing(world, *entity))
+        .collect();
+    let mut travelers: Vec<Traveler> = crossings
         .into_iter()
-        .filter_map(|(entity, crossing)| leave(world, entity, crossing.dest_area, crossing.dest))
-        .collect()
+        .zip(rides)
+        .filter_map(|((entity, crossing), ride)| leave(world, entity, crossing, ride))
+        .collect();
+    // A driver arrives before whoever rode with them, who are seated beside them as they arrive.
+    travelers.sort_by_key(|traveler| traveler.ride.map(|ride| ride.seat));
+    travelers
 }
 
 pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
@@ -59,11 +79,14 @@ pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
     let first_visit = traveler.state.discovered.discover(traveler.dest_area);
     let entity = crate::systems::player::place(
         world,
-        traveler.client,
+        traveler.played,
         traveler.dest_area,
         traveler.dest,
         traveler.state,
     );
+    if let Some(ride) = traveler.ride {
+        mount::arrive(world, entity, ride);
+    }
     let arrived = HistoryEntry::of(
         HistoryTopic::Notification,
         LineText::plain(&*traveler.dest_area.get(&content).name),
@@ -95,20 +118,25 @@ pub fn raise_area(world: &mut World, kind: EventKind, subject: Entity) {
 fn leave(
     world: &mut World,
     entity: Entity,
-    dest_area: AreaId,
-    dest: Pos<Meters>,
+    crossing: Crossing,
+    ride: Option<CrossingRide>,
 ) -> Option<Traveler> {
     let content = world.resource::<Content>().clone();
-    let mut state = CharacterState::of(world, entity, dest)?;
+    let mut state = CharacterState::of(world, entity, crossing.dest)?;
     state.memory.leave_area(&content);
     let traveler = Traveler {
-        client: world.get::<PlayedBy>(entity)?.client,
-        dest_area,
-        dest,
+        played: Played::of(world, entity)?,
+        dest_area: crossing.dest_area,
+        dest: crossing.dest,
+        instance: crossing.instance,
         state,
+        ride,
     };
     raise_area(world, EventKind::Left, entity);
-    world.resource_mut::<Players>().0.remove(&traveler.client);
+    world
+        .resource_mut::<Players>()
+        .0
+        .remove(&traveler.played.client);
     world.despawn(entity);
     Some(traveler)
 }

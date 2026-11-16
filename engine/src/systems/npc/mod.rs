@@ -157,6 +157,11 @@ fn check_held(
     }
 }
 
+/// What a goal of defeating `npc` reads as.
+pub fn defeat_label(content: &Content, npc: NpcId) -> String {
+    format!("Defeat the {}", npc.get(content).name)
+}
+
 pub fn can_be_fought(scripts: &RiftScripts, npc: NpcId) -> bool {
     scripts
         .may_do(OwnerRow::of_row(npc))
@@ -337,16 +342,11 @@ impl ScriptedRow for NpcDef {
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NpcModule {
-    Nameplate(Nameplate),
+    Nameplate,
     Voice(Voice),
     Loot(Loot),
     Script(ScriptModule),
     Absence(Absence),
-}
-
-#[derive(JsonSchema, Clone, Serialize, Deserialize)]
-pub struct Nameplate {
-    pub role: String,
 }
 
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
@@ -362,11 +362,10 @@ pub struct Loot {
 }
 
 impl NpcDef {
-    pub fn nameplate(&self) -> Option<&str> {
-        self.modules.iter().find_map(|module| match module {
-            NpcModule::Nameplate(nameplate) => Some(nameplate.role.as_str()),
-            _ => None,
-        })
+    pub fn wears_nameplate(&self) -> bool {
+        self.modules
+            .iter()
+            .any(|module| matches!(module, NpcModule::Nameplate))
     }
 
     pub fn voice(&self) -> Option<BabbleId> {

@@ -12,7 +12,7 @@ use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::notification::NotificationKind;
-use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::prompt::{self, PromptRequest, PromptView};
 use engine::systems::skill::{self, Rank};
 use engine::systems::stat::{StatKind, Stats};
@@ -471,11 +471,20 @@ fn a_recipe_that_requires_mastery_is_listed_to_all_and_made_only_by_one_who_mast
         2,
         JoinAs {
             snapshot: CharacterSnapshot {
-                recipe_masteries: vec![key(&sim, DAGGER)],
+                recipe_masteries: vec![key(&sim, DAGGER)].into(),
                 ..CharacterSnapshot::of_player(&content, "Journeyman", player::def(&content))
             },
             start: content.built::<GameSettings>().initial_spawn,
+            origin: JoinOrigin::Staged,
         },
+    );
+    assert_eq!(
+        CharacterSnapshot::of_live(&sim.world, journeyman)
+            .expect("a character in the world")
+            .recipe_masteries
+            .to_vec(),
+        [key(&sim, DAGGER)],
+        "and is saved with it"
     );
     sim.give(journeyman, "ingot", 1);
     open(&mut sim, 2, "smith");

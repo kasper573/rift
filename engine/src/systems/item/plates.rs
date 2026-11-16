@@ -20,13 +20,14 @@ use crate::core::render::{self, window_point};
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
+use crate::systems::actor::Name;
 use crate::systems::dialogue;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::rarity::{DropNaming, ItemRarityDef, RarityRank};
 use crate::systems::item::render::DropAnim;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
 use crate::systems::movement::{Position, position};
-use crate::systems::player::session;
+use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
 
@@ -101,6 +102,11 @@ pub struct PointedItem {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Landed(pub Seconds);
 
+/// When the pointer last rested on the names of the pile an item lies in, by the world's clock:
+/// a name does not run out under the pointer, where the pile's column would shift beneath it.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+struct Rested(Seconds);
+
 /// The items named now and why, the highest ranks first and then the nearest, and those left
 /// unnamed for want of room.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -126,6 +132,8 @@ pub struct PlateLine {
     pub count: u32,
     pub why: Named,
     pub mine: bool,
+    /// Whose it is, when it is reserved for another player: theirs alone, or their party's.
+    pub whose: Option<String>,
 }
 
 /// Which items on the ground are named now. None is while the player talks or the screen
@@ -155,7 +163,7 @@ pub fn named(world: &mut World) -> NamedItems {
         .get_resource::<OpenedPile>()
         .map(|pile| pile.0.clone())
         .unwrap_or_default();
-    let account = session::my_id(world);
+    let account = item::DropTaker::me(world);
     let now = time::uptime(world);
     let mut wanted: Vec<(Entity, Named, RarityRank, Meters)> = world
         .query_filtered::<(
@@ -164,20 +172,22 @@ pub fn named(world: &mut World) -> NamedItems {
             &Position,
             Option<&Reservation>,
             Option<&Landed>,
+            Option<&Rested>,
         ), Without<DropAnim>>()
         .iter(world)
-        .filter_map(|(entity, dropped, at, reservation, landed)| {
+        .filter_map(|(entity, dropped, at, reservation, landed, rested)| {
             let rarity = dropped.item.get(&content).rarity.get(&content);
             let away = eye.distance(at.pos);
             let near = away <= drops.names_reach;
-            let mine = item::takeable(reservation, account);
+            let mine = item::takeable(reservation, &account);
             let why = if mine && asked && near && rarity.rank >= naming.from {
                 Named::ByKey
             } else if pointed == Some(entity) {
                 Named::ByPointer
             } else if !mine {
                 return None;
-            } else if naming.as_dropped && names_itself(rarity, landed, near, now) {
+            } else if naming.as_dropped && names_itself(rarity, landed, rested, near, now).is_some()
+            {
                 Named::Unprompted
             } else {
                 return None;
@@ -211,7 +221,7 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
     // A drop lays its items in a ring the game's scatter from where it fell, so two of one drop
     // lie up to twice that apart.
     let together = Meters(content.built::<GameSettings>().drops.scatter.0 * 2.0);
-    let account = session::my_id(world);
+    let account = item::DropTaker::me(world);
     let eye = session::me(world).and_then(|me| position(world, me));
     let mut lying: Vec<LyingItem> = named
         .shown
@@ -255,11 +265,12 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
                 column.folded.push(item.entity);
                 continue;
             };
-            let mine = item::takeable(world.get::<Reservation>(item.entity), account);
-            let line = column
-                .lines
-                .iter_mut()
-                .find(|line| line.item == item.dropped.item && line.mine == mine);
+            let reservation = world.get::<Reservation>(item.entity).cloned();
+            let mine = item::takeable(reservation.as_ref(), &account);
+            let whose = whose(world, reservation.as_ref(), &account);
+            let line = column.lines.iter_mut().find(|line| {
+                line.item == item.dropped.item && line.mine == mine && line.whose == whose
+            });
             match line {
                 Some(line) => {
                     line.items.push(item.entity);
@@ -272,6 +283,7 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
                     count: item.dropped.count,
                     why,
                     mine,
+                    whose,
                 }),
             }
         }
@@ -298,6 +310,26 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
     columns
 }
 
+/// Whose a drop reserved as `reservation` says is, to `taker`: nobody's to name when it is
+/// their own or anyone's, else its holder's, or its holder's party's when that is theirs too.
+fn whose(
+    world: &mut World,
+    reservation: Option<&Reservation>,
+    taker: &item::DropTaker,
+) -> Option<String> {
+    let holder = reservation?.by.filter(|by| Some(*by) != taker.client)?;
+    let name = world
+        .query::<(&PlayedBy, &Name)>()
+        .iter(world)
+        .find(|(by, _)| by.client == holder)
+        .map(|(_, name)| name.name.clone())?;
+    Some(if taker.party.contains(&holder) {
+        format!("{name}'s party")
+    } else {
+        format!("{name}'s")
+    })
+}
+
 /// The item a click where the pointer rests takes by its plate: the nearest of the plate's
 /// items, when they are the player's to take and the plate shows for one of `whys`.
 pub fn taken_by_plate(world: &World, whys: &[Named]) -> Option<Entity> {
@@ -305,7 +337,7 @@ pub fn taken_by_plate(world: &World, whys: &[Named]) -> Option<Entity> {
     let item = pointed
         .item
         .filter(|_| pointed.plate.is_some_and(|why| whys.contains(&why)))?;
-    item::takeable(world.get::<Reservation>(item), session::my_id(world)).then_some(item)
+    item::takeable(world.get::<Reservation>(item), &item::DropTaker::me(world)).then_some(item)
 }
 
 /// Where the plate that names `item` is drawn, when one is.
@@ -325,7 +357,7 @@ fn outline(world: &mut World, named: &NamedItems) {
     let content = world.resource::<Content>().clone();
     let drops = content.built::<GameSettings>().drops;
     let always = world.resource::<UserSettings>().outlines_items_always();
-    let account = session::my_id(world);
+    let account = item::DropTaker::me(world);
     let asked = world.resource::<NamingItems>().0;
     let pointed = world.resource::<PointedItem>().item;
     let changed: Vec<(Entity, Option<Outline>)> = world
@@ -342,7 +374,7 @@ fn outline(world: &mut World, named: &NamedItems) {
                 Some(_) if pointed == Some(entity) => Some(drops.outline_hover),
                 Some(Named::ByKey) => Some(drops.outline),
                 Some(Named::ByPointer | Named::Unprompted) | None => (folded
-                    || always && item::takeable(reservation, account))
+                    || always && item::takeable(reservation, &account))
                 .then_some(drops.outline),
             };
             let wanted = width.map(|width| Outline {
@@ -406,15 +438,50 @@ const OVER_PILE: Meters = Meters(0.7);
 /// player's feet.
 const FAR_SCALE: f32 = 0.82;
 const FAR_OPACITY: f32 = 0.7;
+/// How long a name that has run out takes to fade away.
+const NAME_FADES: Seconds = Seconds(0.6);
 const MUTED: Color32 = Color32::from_rgb(150, 150, 156);
 const TIE: Color32 = Color32::from_rgba_premultiplied(70, 70, 70, 70);
 
-fn names_itself(rarity: &ItemRarityDef, landed: Option<&Landed>, near: bool, now: Seconds) -> bool {
+/// How strongly an item's rarity names it by itself, of 1, if it does: wholly for as long as the
+/// name lasts, counted from when the item landed or the pointer last rested on its pile, and
+/// ever fainter while it then fades away.
+fn names_itself(
+    rarity: &ItemRarityDef,
+    landed: Option<&Landed>,
+    rested: Option<&Rested>,
+    near: bool,
+    now: Seconds,
+) -> Option<f32> {
     match rarity.dropped.named {
-        DropNaming::OnKey => false,
-        DropNaming::Always => near,
-        DropNaming::For { seconds } => landed.is_some_and(|landed| now - landed.0 < seconds),
+        DropNaming::OnKey => None,
+        DropNaming::Always => near.then_some(1.0),
+        DropNaming::For { seconds } => {
+            let lasts = landed.map(|landed| landed.0 + seconds);
+            let until = match (lasts, rested.map(|rested| rested.0)) {
+                (Some(lasts), Some(rested)) if rested > lasts => rested,
+                (lasts, rested) => lasts.or(rested)?,
+            };
+            let faded = (now - until).ratio(NAME_FADES).clamp(0.0, 1.0);
+            (faded < 1.0).then_some(1.0 - faded)
+        }
     }
+}
+
+/// How strongly the plate of `item` shows, of 1: a name its rarity gave it fades as it runs out.
+fn strength(world: &World, content: &Content, item: Entity, near: bool, now: Seconds) -> f32 {
+    world
+        .get::<DroppedItem>(item)
+        .and_then(|dropped| {
+            names_itself(
+                dropped.item.get(content).rarity.get(content),
+                world.get::<Landed>(item),
+                world.get::<Rested>(item),
+                near,
+                now,
+            )
+        })
+        .unwrap_or(0.0)
 }
 
 fn read_naming_key(world: &mut World) {
@@ -457,6 +524,7 @@ fn draw_plates(world: &mut World) {
     let pointed = *world.resource::<PointedItem>();
     let full = bag_refuses(world, &content, pointed.item);
     let now = time::server_now(world);
+    let uptime = time::uptime(world);
     let fades_for = content.built::<GameSettings>().drops.fades_for;
     let screen = gui.content_rect();
     let mut drawn = DrawnPlates::default();
@@ -473,6 +541,7 @@ fn draw_plates(world: &mut World) {
         });
         let scale = 1.0 + (FAR_SCALE - 1.0) * far;
         let opacity = 1.0 + (FAR_OPACITY - 1.0) * far;
+        let near = far < 1.0;
         let mut lines: Vec<PlateLook> = column
             .lines
             .iter()
@@ -500,8 +569,17 @@ fn draw_plates(world: &mut World) {
                     mine: line.mine,
                     hovered,
                     leaving,
+                    strength: match line.why {
+                        Named::Unprompted => line
+                            .items
+                            .iter()
+                            .map(|item| strength(world, &content, *item, near, uptime))
+                            .fold(0.0, f32::max),
+                        Named::ByKey | Named::ByPointer => 1.0,
+                    },
                     note: (hovered && full)
-                        .then(|| content.built::<GameSettings>().words.needs_a_slot.clone()),
+                        .then(|| content.built::<GameSettings>().words.needs_a_slot.clone())
+                        .or_else(|| line.whose.clone()),
                     scale,
                 }
             })
@@ -575,23 +653,24 @@ fn draw_plates(world: &mut World) {
         .show(&gui, |ui| {
             for column in &laid {
                 ui.set_opacity(column.opacity);
-                let painter = ui.painter();
-                painter.line_segment(
+                ui.painter().line_segment(
                     [
                         Pos2::new(column.rect.center().x, column.rect.bottom()),
                         column.foot,
                     ],
                     Stroke::new(1.0, TIE),
                 );
-                for (at, line) in &column.lines {
-                    line.paint(painter, *at);
-                }
                 if let Some((at, kinds)) = column.chip {
-                    paint_chip(painter, at, kinds, column.scale);
+                    paint_chip(ui.painter(), at, kinds, column.scale);
+                }
+                for (at, line) in &column.lines {
+                    ui.set_opacity(column.opacity * line.strength);
+                    line.paint(ui.painter(), *at);
                 }
             }
         });
     open_pile(world, &drawn, pointer);
+    rest_on_pile(world, &drawn, pointer, uptime);
     world.insert_resource(drawn);
     outline(world, &named);
 }
@@ -643,6 +722,29 @@ fn open_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>) {
         on_chip.map(|column| column.folded.clone()).or_else(kept)
     });
     world.insert_resource(OpenedPile(opened.unwrap_or_default()));
+}
+
+/// Notes the pointer resting on the names of a pile, on every item named there.
+fn rest_on_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>, now: Seconds) {
+    let Some(column) = pointer.and_then(|pointer| {
+        drawn
+            .columns
+            .iter()
+            .find(|column| column.rect.contains(pointer))
+    }) else {
+        return;
+    };
+    let named: Vec<Entity> = drawn
+        .plates
+        .iter()
+        .filter(|plate| column.rect.contains(plate.rect.center()))
+        .flat_map(|plate| plate.items.iter().copied())
+        .collect();
+    for item in named {
+        if let Ok(mut item) = world.get_entity_mut(item) {
+            item.insert(Rested(now));
+        }
+    }
 }
 
 /// Whether the player's bag has no room for `item`, as taking it would find out.
@@ -698,6 +800,8 @@ struct PlateLook {
     mine: bool,
     hovered: bool,
     leaving: bool,
+    /// How strongly it shows, of 1.
+    strength: f32,
     note: Option<String>,
     scale: f32,
 }

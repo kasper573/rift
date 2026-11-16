@@ -42,6 +42,7 @@ use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::{self, ChoiceReveal};
 use crate::systems::item::{ItemDef, ItemId, ItemKind};
 use crate::systems::memory::{MemoryDef, MemoryId};
+use crate::systems::mount::{MountDef, MountId};
 use crate::systems::notification::{NotificationDef, NotificationId};
 use crate::systems::npc::{self, AbsenceSpanAt, Npc, NpcDef, NpcId};
 use crate::systems::player::roster::ServerRoster;
@@ -85,6 +86,7 @@ pub enum RunnerKind {
     RecipeBook,
     Skill,
     StatusEffect,
+    Mount,
     Blueprint,
     Spawnable,
     Command,
@@ -104,6 +106,7 @@ impl RunnerKindDef for RunnerKind {
                 | RunnerKind::RecipeBook
                 | RunnerKind::Skill
                 | RunnerKind::StatusEffect
+                | RunnerKind::Mount
                 | RunnerKind::Command
         )
     }
@@ -320,6 +323,15 @@ pub enum EffectReach {
     Boosts(StatKind, Option<f32>),
     GrantsXp,
     Casts(SkillId),
+    /// Seats someone as the driver of the mount.
+    Mounts(MountId),
+    /// Lets someone into an instance of the area `to` is in, which they leave for `return_to`,
+    /// and whether clearing it gives items.
+    EntersInstance {
+        to: Place,
+        return_to: Place,
+        items: bool,
+    },
     ResetsSkills,
     Animates,
     ShowsVfx,
@@ -514,6 +526,7 @@ pub fn build_all(loading: &mut Loading) {
     bind_table::<RecipeBookDef>(loading, &mut bind);
     bind_table::<SkillDef>(loading, &mut bind);
     bind_table::<StatusEffectDef>(loading, &mut bind);
+    bind_table::<MountDef>(loading, &mut bind);
     bind_table::<SpawnableDef>(loading, &mut bind);
     for (id, _) in loading.rows::<AreaDef>(&content) {
         let key = id.path(&content);
@@ -686,6 +699,7 @@ pub fn owner_site(content: &Content, row: OwnerRow) -> ScriptSite {
         RunnerKind::RecipeBook => row.id::<RecipeBookDef>().path(content),
         RunnerKind::Skill => row.id::<SkillDef>().path(content),
         RunnerKind::StatusEffect => row.id::<StatusEffectDef>().path(content),
+        RunnerKind::Mount => row.id::<MountDef>().path(content),
         RunnerKind::Spawnable => row.id::<SpawnableDef>().path(content),
         RunnerKind::Command => row.id::<TerminalCommandDef>().path(content),
         RunnerKind::Any => "",
@@ -717,7 +731,8 @@ pub fn spawn_stateless(world: &mut World) {
             | RunnerKind::Resource
             | RunnerKind::RecipeBook
             | RunnerKind::Skill
-            | RunnerKind::StatusEffect => Owner::Row(row.kind, row.row),
+            | RunnerKind::StatusEffect
+            | RunnerKind::Mount => Owner::Row(row.kind, row.row),
             _ => continue,
         };
         instances.spawn_owner(owner, procedures.clone());
@@ -758,18 +773,27 @@ pub fn check_all(loading: &mut Loading) {
         let may_do = scripts.may_do(*row);
         for reach in &may_do.reaches {
             match reach {
-                EffectReach::Warp(place) if thorough => {
-                    if let Err(problem) = area::check_place(&content, *place) {
-                        loading.json_error(
-                            &site.file,
-                            &site.pointer,
-                            ContentProblem::new(
-                                problem.rule,
-                                format!("{label} warps to {}", problem.found),
-                                problem.expected,
-                            )
-                            .near(problem.nearest),
-                        );
+                EffectReach::Warp(_) | EffectReach::EntersInstance { .. } if thorough => {
+                    let leads = match reach {
+                        EffectReach::EntersInstance { to, return_to, .. } => {
+                            vec![("enters an instance at", *to), ("returns to", *return_to)]
+                        }
+                        EffectReach::Warp(place) => vec![("warps to", *place)],
+                        _ => Vec::new(),
+                    };
+                    for (does, place) in leads {
+                        if let Err(problem) = area::check_place(&content, place) {
+                            loading.json_error(
+                                &site.file,
+                                &site.pointer,
+                                ContentProblem::new(
+                                    problem.rule,
+                                    format!("{label} {does} {}", problem.found),
+                                    problem.expected,
+                                )
+                                .near(problem.nearest),
+                            );
+                        }
                     }
                 }
                 EffectReach::Speaks(npc) => {

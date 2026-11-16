@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::audio::Hearing;
 use crate::core::audio::mix::AudioCategory;
-use crate::core::audio::playback::Listener;
+use crate::core::audio::playback::{self, Listener};
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
@@ -60,7 +60,7 @@ use crate::core::render::world::layers::Layered;
 use crate::core::render::world::outline::Outline;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::world::{OnItsWay, missing_drawn};
-use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
+use crate::core::render::{self, CameraRig, Pointed, ground_height, world_point};
 use crate::core::stage::card::HungCardLamp;
 use crate::core::time;
 use crate::core::units::{
@@ -75,39 +75,47 @@ use crate::systems::actor::render::{Hung, Puppet, RenderActor};
 use crate::systems::actor::skeleton::{Clip, Naming, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{
-    self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing, Pose,
+    self, Action, Actor, ActorModel, Aloft, Appearance, Hitbox, Motion, Playing, Pose,
 };
 use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayName};
+use crate::systems::area_instance::{self, plate::ShownAreaInstance};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::crafting::{self, RecipeId};
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::stage;
 use crate::systems::equipment::{self, EquipmentPlace};
+use crate::systems::friend::{self, page::ShownFriends};
 use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
 use crate::systems::hud::menu::MenuTabName;
+use crate::systems::inbox::{self, page::ShownMessages};
 use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
 use crate::systems::input::scope::InputScope;
 use crate::systems::interface::CursorId;
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
+use crate::systems::mount::{self, plate::ShownMount};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
 use crate::systems::npc::{Npc, NpcId};
-use crate::systems::player::{PlayedBy, commands_locked, session};
+use crate::systems::party::{self, page::ShownParty};
+use crate::systems::player::{Away, PlayedBy, commands_locked, session};
 use crate::systems::prompt;
-use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
+use crate::systems::quest::{self, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
+use crate::systems::save::{self, notice::ShownSaving};
 use crate::systems::script::{RiftScripts, sky};
 use crate::systems::shop::{self, ShopId};
-use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
+use crate::systems::skill::{self, Rank, SkillId, aim::SpotAim, bar::SlotReport};
+use crate::systems::social_request::{self, card::ShownRequestCard};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
+use crate::systems::terminal::{self, chat::ShownChat};
 
 /// The probe's question about the game `line`, read against the game it names places of.
 pub fn read_question(content: &Content, line: &str) -> Result<ProbeGameQuestion, String> {
@@ -346,6 +354,26 @@ pub struct ProbeSnapshot {
     pub notifications: ProbeNotifications,
     pub feed: Vec<String>,
     pub feed_place: feed::FeedPlace,
+    /// What the interface shows of saving.
+    pub saving: ShownSaving,
+    /// The request cards on the HUD, the one in front first.
+    pub social_requests: Vec<ShownRequestCard>,
+    /// What the Friends page shows: the list, the requests in and out, the players kept away
+    /// and what the search found.
+    pub friends: ShownFriends,
+    /// What the Messages page shows: the inbox, the message chosen and the one being written.
+    pub messages: ShownMessages,
+    /// The party the player is in, and the invitations that wait for their answer.
+    pub party: ShownParty,
+    /// The tabs of chat, which is shown and how much waits on each.
+    pub chat: ShownChat,
+    /// The mount the player's character rides, the seat they hold and who sits where.
+    pub mount: Option<ShownMount>,
+    /// The instance the player's character is inside, as the plate shows it.
+    pub instance: Option<ShownAreaInstance>,
+    /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
+    /// spot has against it.
+    pub spot_aim: Option<SpotAim>,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -353,6 +381,7 @@ pub struct ProbeSnapshot {
     pub crafting: Option<ProbeCrafting>,
     pub item_card: Option<ProbeItemCard>,
     pub skill_card: Option<ProbeSkillCard>,
+    pub quest_card: Option<ProbeQuestCard>,
     pub bag: Vec<ProbeStack>,
     pub quests: ProbeQuests,
     pub bar_slots: Vec<SlotReport>,
@@ -453,6 +482,10 @@ pub struct ProbeTerrain {
     #[schemars(with = "SizeSchema")]
     pub size: Size<Meters>,
     pub heights: Vec<Meters>,
+    /// How deep water stands over each of the heights, nothing over dry ground. The pointer of
+    /// someone a mount carries over water, and an aim at a spot, meet the water's surface there
+    /// rather than the ground under it.
+    pub depths: Vec<Meters>,
 }
 
 impl ProbeTerrain {
@@ -481,6 +514,8 @@ pub struct ProbeBody {
     pub appearance: Appearance,
     pub flies: bool,
     pub player: bool,
+    /// Whether it is a character whose player is gone, standing in the world without them.
+    pub away: bool,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
     /// Where it shows on screen, which runs behind `at` for others and ahead of it for the player's
@@ -520,7 +555,6 @@ pub struct ProbeBody {
     pub mana: f32,
     pub max_mana: f32,
     pub npc: Option<NpcId>,
-    pub role: Option<String>,
     pub friendly: bool,
     pub locked: bool,
     pub marks: Vec<AttentionId>,
@@ -726,6 +760,10 @@ pub struct ProbeShop {
     pub shop: ShopId,
     pub offers: Vec<ProbeOffer>,
     pub buyback: Vec<ProbeStack>,
+    /// What the player has set out to sell, stack by stack.
+    pub offered: Vec<ProbeStack>,
+    /// What the shop pays for all that is offered.
+    pub pays: Vec<ProbeStack>,
 }
 
 /// The prompt before the player and what they have placed in its tray.
@@ -811,6 +849,15 @@ pub struct ProbeItemCard {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
 pub struct ProbeSkillCard {
     pub skill: SkillId,
+    #[schemars(with = "RectSchema")]
+    pub rect: Rect<WindowPx>,
+    pub tilt: ProbeCardTilt,
+    pub lamp: Option<ProbeCardLamp>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+pub struct ProbeQuestCard {
+    pub quest: QuestId,
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
     pub tilt: ProbeCardTilt,
@@ -951,6 +998,8 @@ pub struct ProbeWeather {
 pub struct ProbeSoundscape {
     pub zones: Vec<ProbeSoundZone>,
     pub voices: Vec<ProbeVoice>,
+    /// Every sound effect that sounds right now, by its file, once for each time it plays.
+    pub effects: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -1155,6 +1204,7 @@ fn publish(world: &mut World) {
 fn snapshot(world: &mut World) -> ProbeSnapshot {
     let content = world.resource::<Content>().clone();
     let me = session::me(world);
+    let offered_sale = shop::counter::offered(world);
     let area = me
         .and_then(|seen| world.get::<AreaTag>(seen))
         .map(|tag| tag.area);
@@ -1216,6 +1266,15 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         notifications: notifications(world),
         feed: feed::rows(world),
         feed_place: feed::place(world),
+        saving: save::notice::shown(world),
+        social_requests: social_request::card::shown(world),
+        friends: friend::page::shown(world),
+        messages: inbox::page::shown(world),
+        party: party::page::shown(world),
+        chat: terminal::chat::shown(world),
+        mount: mount::plate::shown(world),
+        instance: area_instance::plate::shown(world),
+        spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),
@@ -1241,6 +1300,12 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 tilt: skill::card::tilt(world).into(),
                 lamp: skill::card::lamp(world).map(Into::into),
             }),
+        quest_card: quest::card::shown(world).map(|(quest, rect)| ProbeQuestCard {
+            quest,
+            rect: gui::window_rect(rect),
+            tilt: quest::card::tilt(world).into(),
+            lamp: quest::card::lamp(world).map(Into::into),
+        }),
         prompt: prompt::tray::view(world).map(|view| ProbePrompt {
             title: view.title.clone(),
             text: view
@@ -1293,32 +1358,36 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 progress: crafting::panel::progress(world),
             }
         }),
-        shop: shop::counter::view(world).map(|shown| ProbeShop {
-            shop: shown.shop,
-            offers: shown
-                .shop
-                .get(&content)
-                .sells()
-                .zip(&shown.offers)
-                .map(|(offer, view)| ProbeOffer {
-                    item: offer.item,
-                    count: offer.count,
-                    left: view.left,
-                    refusal: view
-                        .refusal
-                        .as_ref()
-                        .map(|refusal| refusal.describe(&content)),
-                })
-                .collect(),
-            buyback: shown
-                .buyback
-                .iter()
-                .map(|buyback| ProbeStack {
-                    item: buyback.sale.item,
-                    count: buyback.sale.count,
-                })
-                .collect(),
-        }),
+        shop: shop::counter::view(world)
+            .zip(offered_sale)
+            .map(|(shown, sale)| ProbeShop {
+                offered: sale.stacks.iter().map(probe_stack).collect(),
+                pays: sale.pays.iter().map(probe_stack).collect(),
+                shop: shown.shop,
+                offers: shown
+                    .shop
+                    .get(&content)
+                    .sells()
+                    .zip(&shown.offers)
+                    .map(|(offer, view)| ProbeOffer {
+                        item: offer.item,
+                        count: offer.count,
+                        left: view.left,
+                        refusal: view
+                            .refusal
+                            .as_ref()
+                            .map(|refusal| refusal.line(&content).plain_words()),
+                    })
+                    .collect(),
+                buyback: shown
+                    .buyback
+                    .iter()
+                    .map(|buyback| ProbeStack {
+                        item: buyback.sale.item,
+                        count: buyback.sale.count,
+                    })
+                    .collect(),
+            }),
         bag: me
             .and_then(|seen| world.get::<Inventory>(seen))
             .map(|inventory| {
@@ -1440,6 +1509,7 @@ fn weather(world: &World, area: AreaId, me: Option<Entity>) -> Option<ProbeWeath
 }
 
 fn soundscape(world: &World) -> ProbeSoundscape {
+    let content = world.resource::<Content>();
     let listener = world.resource::<Listener>().0;
     let hearing = world.get_resource::<Hearing>();
     ProbeSoundscape {
@@ -1464,6 +1534,10 @@ fn soundscape(world: &World) -> ProbeSoundscape {
                     })
                     .collect(),
             })
+            .collect(),
+        effects: playback::sounding(world)
+            .into_iter()
+            .map(|sfx| sfx.path(content).to_owned())
             .collect(),
         voices: world
             .resource::<SoundscapeMixer>()
@@ -1497,7 +1571,7 @@ fn skills(world: &World, me: Entity) -> Option<ProbeSkills> {
             .iter()
             .map(rank)
             .collect(),
-        aiming: skill::aim::aiming(world).map(|aimed| aimed.skill),
+        aiming: skill::aim::aiming(world).and_then(skill::aim::Aimed::skill),
         reset_prompt: skill::prompt::showing(world),
         view: tree_view(world),
     })
@@ -1597,8 +1671,10 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
         .heights
         .size()
         .tiles_within(window)
-        .filter(|&tile| area.heights.is_loaded(tile))
-        .count();
+        .map(|tile| {
+            usize::from(area.heights.is_loaded(tile)) + usize::from(area.water.is_loaded(tile))
+        })
+        .sum();
     let sending = TerrainSent(Some((area_id, window, loaded)));
     let mut sent = world.resource_mut::<TerrainSent>();
     if *sent == sending {
@@ -1608,17 +1684,18 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
     let area = area::load(world.resource::<Content>(), area_id);
     let size = Size::new(window.size.width.floor(), window.size.height.floor());
     let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);
-    let heights = (0..rows)
-        .flat_map(|row| (0..columns).map(move |column| (column, row)))
-        .map(|(column, row)| {
-            area.heights
-                .height_at(window.origin + Offset::new(column as f32, row as f32))
-        })
-        .collect();
+    let samples = || {
+        (0..rows)
+            .flat_map(|row| (0..columns).map(move |column| (column, row)))
+            .map(|(column, row)| window.origin + Offset::new(column as f32, row as f32))
+    };
     Some(ProbeTerrain {
         origin: window.origin,
         size,
-        heights,
+        heights: samples().map(|at| area.heights.height_at(at)).collect(),
+        depths: samples()
+            .map(|at| area.water.depth_at(&area.heights, at))
+            .collect(),
     })
 }
 
@@ -1645,13 +1722,18 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
     let capsule = entity.get::<Hitbox>()?.0;
     let actor = entity.get::<Actor>()?;
     let drawn = entity.get::<RenderPosition>().map_or(at, |drawn| drawn.0);
-    let ground = world
-        .get::<AreaTag>(entity.id())
-        .map_or(Meters(0.0), |tag| {
-            area::load(world.resource::<Content>(), tag.area)
-                .heights
-                .height_at(drawn)
-        });
+    let ground = entity.get::<Aloft>().map_or_else(
+        || {
+            world
+                .get::<AreaTag>(entity.id())
+                .map_or(Meters(0.0), |tag| {
+                    area::load(world.resource::<Content>(), tag.area)
+                        .heights
+                        .height_at(drawn)
+                })
+        },
+        |aloft| aloft.0,
+    );
     let appearance = entity.get::<Appearance>()?.clone();
     let built = ActorModel::get(world.resource::<Content>(), appearance.model);
     let flies = built.airborne();
@@ -1703,6 +1785,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         appearance,
         flies,
         player: entity.contains::<PlayedBy>(),
+        away: entity.contains::<Away>(),
         at,
         drawn,
         aim: at,
@@ -1723,9 +1806,6 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         mana: stat(StatKind::Mana),
         max_mana: stat(StatKind::MaxMana),
         npc,
-        role: npc
-            .and_then(|npc| npc.get(world.resource::<Content>()).nameplate())
-            .map(str::to_owned),
         friendly: entity.get::<Attitude>() == Some(&Attitude::Friendly),
         locked,
         marks,
@@ -1838,17 +1918,14 @@ fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> 
         return at;
     };
     let eye = view.eye();
-    let foot = ground_height(world, at);
+    let foot = actor::foot_height(world, entity, at);
     for share in HEIGHTS {
         let point = world_point(at, foot + Meters(capsule.height.0 * share));
         let Ok(direction) = Dir3::new(point - eye) else {
             continue;
         };
-        let ray = Ray3d::new(eye, direction);
-        let ground = world
-            .get_resource::<GroundHeights>()
-            .and_then(|ground| ground.hit(ray));
-        match (clicked(world, &Pointed { ray, ground }), ground) {
+        let pointed = Pointed::along(world, Ray3d::new(eye, direction));
+        match (clicked(world, &pointed), pointed.ground) {
             (Some(clicked), Some(ground)) if clicked == entity => return ground,
             (Some(_), _) => {}
             (None, _) => break,
@@ -1887,8 +1964,8 @@ fn pointed_at(world: &mut World, spot: Pos<Meters>) -> Option<Pointed> {
     let eye = view.eye();
     let direction = Dir3::new(world_point(spot, ground_height(world, spot)) - eye).ok()?;
     Some(Pointed {
-        ray: Ray3d::new(eye, direction),
         ground: Some(spot),
+        ..Pointed::along(world, Ray3d::new(eye, direction))
     })
 }
 
@@ -1897,6 +1974,7 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
         ClickClaim::Attack(entity)
         | ClickClaim::Interact(entity)
         | ClickClaim::Aim(entity)
+        | ClickClaim::Board(entity)
         | ClickClaim::Pickup(entity)
         | ClickClaim::Gather(entity) => Some(entity),
         ClickClaim::Interface
@@ -1909,7 +1987,7 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
 
 fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
     let content = world.resource::<Content>().clone();
-    let me = session::my_id(world);
+    let me = item::DropTaker::me(world);
     world
         .query::<(
             Entity,
@@ -1926,7 +2004,7 @@ fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
             rarity: dropped.item.get(&content).rarity,
             count: dropped.count,
             at: at.pos,
-            mine: item::takeable(reservation, me),
+            mine: item::takeable(reservation, &me),
             plate: None,
             effects: false,
             outlined: false,
@@ -2075,7 +2153,10 @@ pub fn interface_elements(
                 .iter()
                 .find_map(|by| labels.get(by))
                 .map(|label| label.to_string());
-            let editable = role == accesskit::Role::TextInput;
+            let editable = matches!(
+                role,
+                accesskit::Role::TextInput | accesskit::Role::MultilineTextInput
+            );
             if text.is_none() && image.is_none() && !editable && slider.is_none() {
                 return None;
             }
@@ -2107,6 +2188,7 @@ fn shown_role(role: accesskit::Role) -> bool {
             | Role::ComboBox
             | Role::Slider
             | Role::TextInput
+            | Role::MultilineTextInput
             | Role::Image
             | Role::Link
             | Role::Splitter
@@ -2205,4 +2287,11 @@ fn vfx_seen(world: &mut World) -> Vec<ProbeVfx> {
             over: now.zip(seen.over()).is_some_and(|(now, over)| over <= now),
         })
         .collect()
+}
+
+fn probe_stack(stack: &ItemStack) -> ProbeStack {
+    ProbeStack {
+        item: stack.item,
+        count: stack.count,
+    }
 }

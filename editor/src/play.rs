@@ -26,6 +26,7 @@ use engine::systems::launch::{
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
 use engine::systems::script::Place;
 use process_wrap::std::{ChildWrapper, CommandWrap};
+use tempfile::TempDir;
 use ui::controls::{self, Pill};
 use ui::egui::{RichText, Ui};
 use ui::glyph::{self, Mark};
@@ -80,6 +81,8 @@ pub struct RunningPlayTest {
     phase: Phase,
     started: Instant,
     server: Process,
+    /// The folder the server saves into, gone with the play-test.
+    _saves: TempDir,
     client: Option<Process>,
     lines: ChannelInbox<OutputLine>,
     sender: Sender<OutputLine>,
@@ -378,8 +381,14 @@ fn launch(
         "editor",
         format!("starting {}", binaries.folder.join(SERVER).display()),
     );
-    let server = match spawn_server(&binaries.folder, &folder, sender.clone()) {
-        Ok(process) => process,
+    let started = tempfile::tempdir().and_then(|saves| {
+        Ok((
+            spawn_server(&binaries.folder, &folder, saves.path(), sender.clone())?,
+            saves,
+        ))
+    });
+    let (server, saves) = match started {
+        Ok(started) => started,
         Err(error) => {
             fail(
                 editor,
@@ -401,6 +410,7 @@ fn launch(
         phase: Phase::Starting,
         started: Instant::now(),
         server,
+        _saves: saves,
         client: None,
         lines: ChannelInbox::new(lines),
         sender,
@@ -920,8 +930,13 @@ fn editor_folder(editor: &Editor) -> PathBuf {
         .unwrap_or_default()
 }
 
-fn spawn_server(binaries: &Path, folder: &Path, sender: Sender<OutputLine>) -> io::Result<Process> {
-    let config = ServerConfig::local(folder.to_path_buf());
+fn spawn_server(
+    binaries: &Path,
+    folder: &Path,
+    saves: &Path,
+    sender: Sender<OutputLine>,
+) -> io::Result<Process> {
+    let config = ServerConfig::local(folder.to_path_buf(), saves);
     let mut command = Command::new(binaries.join(SERVER));
     command.envs(launch::env_of(SERVER_ENV_PREFIX, &config));
     spawn(command, SERVER, sender)

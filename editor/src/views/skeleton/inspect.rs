@@ -10,6 +10,7 @@ use engine::core::script::node::Node;
 use engine::systems::actor::playing::Animate;
 use engine::systems::actor::skeleton::{GestureName, MAX_JOINTS, MoveName, SkeletonDef};
 use engine::systems::actor::{Action, MaterialDef, ModelDef, ModelPartDef, Motion};
+use engine::systems::mount::{self, MountDef};
 use engine::systems::script::{RiftEffect, ScriptDef};
 use strum::VariantArray;
 use ui::egui::Ui;
@@ -136,7 +137,7 @@ fn rig(ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging, content: Op
             ),
         },
     );
-    let lacking = def.unfinished();
+    let lacking = def.unfinished(&sat_moves(Some(content)));
     if !lacking.is_empty() {
         ui.add_space(4.0);
         ui.label(theme::muted("no body can wear it yet: it"));
@@ -234,9 +235,10 @@ fn sets(
             Action::VARIANTS.len()
         ),
     );
+    let sat = sat_moves(content);
     let lacking: BTreeSet<String> = def
         .sets()
-        .flat_map(|(_, set)| set.attacks().map(|(_, clip)| clip.clip().clone()))
+        .flat_map(|(_, set)| set.hits(&sat).map(|(_, clip)| clip.clip().clone()))
         .filter(|clip| !def.cues_of(clip).iter().any(|cue| cue.apex))
         .filter(|clip| rigging.playable(clip).is_some())
         .map(|clip| clip.shown())
@@ -274,6 +276,13 @@ fn sets(
         "A move a skill asks for and no skeleton declares is shown on every skeleton's sets page. \
          Once any skeleton declares it, the others play their stance's attack.",
     );
+}
+
+/// The moves the game's mounts are ridden with, which land nowhere and so need no apex.
+fn sat_moves(content: Option<&Content>) -> BTreeSet<MoveName> {
+    content.map_or_else(BTreeSet::new, |content| {
+        mount::sat_moves(content.table::<MountDef>().rows())
+    })
 }
 
 /// Every move a script asks an animate node to play, with the script's path, as its file reads.

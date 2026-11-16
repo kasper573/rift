@@ -357,7 +357,7 @@ fn experience_row(ui: &mut Ui, world: &World, row: Rect, experience: &Experience
         Pos2::new(row.max.x, row.center().y + EXPERIENCE_BAR / 2.0),
     );
     paint::ticked_bar(ui.painter(), bar, share, ink::GOLD, TENTHS);
-    hud::tooltip(&response, world, "Experience", &[toward], None);
+    hud::tooltip(&response, world, "Experience", &[toward.into()], None);
 }
 
 fn gain_float(ui: &Ui, gain: Gain, x: f32, paper_top: f32, now: f64) {

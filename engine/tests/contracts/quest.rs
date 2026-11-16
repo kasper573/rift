@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine::systems::dialogue::{self, ConversationPanel, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{
-    self, DropItemRequest, DroppedItem, Inventory, ItemDef, ItemStack, UseItemRequest,
+    self, DropItemRequest, DroppedItem, Inventory, ItemDef, ItemStack, SlotStack, UseItemRequest,
 };
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::player::Xp;
@@ -167,7 +167,8 @@ fn quest_items_never_sell_or_drop() {
     for kept in ["letter", "tusk"] {
         let slot = sim.slot_of(player, kept);
         let stack = ItemStack::new(sim.id::<ItemDef>(kept), 1);
-        sim.send(conn, ShopRequest::Sell { slot, stack });
+        let stacks = vec![SlotStack { slot, stack }];
+        sim.send(conn, ShopRequest::Sell { stacks });
         sim.tick();
     }
     assert_eq!(sim.count(player, "letter"), 1);
