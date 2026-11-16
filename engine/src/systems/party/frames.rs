@@ -9,7 +9,6 @@ use super::{PartyMemberRow, PartyShown};
 use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::hud::{self, HudWidget};
-use crate::systems::mount::{Riding, SeatIndex};
 use crate::systems::player::{ClientId, PlayedBy, session};
 use crate::systems::settings::UserSettings;
 use crate::systems::social_request::card::time_left;
@@ -139,7 +138,6 @@ fn frame(
     at: Pos2,
 ) -> f32 {
     let standing = standing(world, member);
-    let seat = shared_seat(world, member);
     let id = ui.id().with(("party member", member.player.account));
     let top = at.y + tracker::ENTRY_GAP;
     let rows = Pos2::new(at.x + INDENT, top);
@@ -174,10 +172,6 @@ fn frame(
         Standing::Elsewhere(_) => row(ui, foot, &said(&standing, now), TrackerTone::Plain, "at"),
         Standing::Away(_) => row(ui, foot, &said(&standing, now), TrackerTone::Timed, "at"),
     };
-    if let Some(seat) = seat {
-        let seat = format!("seat {}", seat.0 + 1);
-        foot = row(ui, foot, &seat, TrackerTone::Plain, "seat");
-    }
     let said = format!(
         "{}, {}",
         super::page::named(party, member),
@@ -198,16 +192,6 @@ fn health_over_the_world(ui: &Ui, at: Pos2, health: f32) -> Rect {
     let full = Rect::from_min_size(rect.min, Vec2::new(rect.width() * health, rect.height()));
     painter.rect_filled(full, BAR_HEIGHT / 2.0, ink::VERMILION);
     rect
-}
-
-/// The seat `member` holds on the mount the player's character rides, where they ride together.
-fn shared_seat(world: &mut World, member: &PartyMemberRow) -> Option<SeatIndex> {
-    let mine = session::my_character(world)?.get::<Riding>()?.driver;
-    let character = character_of(world, member.client?)?;
-    world
-        .get::<Riding>(character)
-        .filter(|riding| riding.driver == mine)
-        .map(|riding| riding.seat)
 }
 
 const BAR_WIDTH: f32 = 120.0;

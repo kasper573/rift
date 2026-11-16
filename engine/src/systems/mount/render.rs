@@ -1,6 +1,6 @@
-//! Mounts as the client draws them: a body of the mount's model stood under each driver, every
-//! rider hung on the joint of their seat making their seat's move, and all of them drawn as high
-//! as the mount travels, over the land for one that flies and on the water for one that floats.
+//! Mounts as the client draws them: a body of the mount's model stood under each rider, the rider
+//! hung on the joint of their seat making their seat's move, and both drawn as high as the mount
+//! travels, over the land for one that flies and on the water for one that floats.
 
 use std::collections::HashMap;
 
@@ -43,15 +43,14 @@ impl Plugin for MountRenderPlugin {
     }
 }
 
-/// The body of the mount a driver rides, which stands where its driver does.
+/// The body of the mount a rider rides, which stands where its rider does.
 #[derive(Component)]
 struct Steed {
-    driver: Entity,
+    rider: Entity,
 }
 
-/// Shows every passenger where their driver shows, and every rider as high as their mount
-/// travels: one that flies its height over the land or water below, risen and sunk to over the
-/// time it eases, one that floats on the water.
+/// Shows every rider as high as their mount travels: one that flies its height over the land or
+/// water below, risen and sunk to over the time it eases, one that floats on the water.
 fn carry(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let delta = Seconds(world.resource::<Time>().delta_secs());
@@ -60,9 +59,8 @@ fn carry(world: &mut World) {
         .iter(world)
         .map(|(rider, riding)| (rider, *riding))
         .collect();
-    let mut heights: HashMap<Entity, Option<Aloft>> = HashMap::new();
-    for (driver, riding) in riders.iter().filter(|(_, riding)| riding.drives()) {
-        let Some(at) = world.get::<RenderPosition>(*driver).map(|at| at.0) else {
+    for (rider, riding) in &riders {
+        let Some(at) = world.get::<RenderPosition>(*rider).map(|at| at.0) else {
             continue;
         };
         let ground = world.resource::<GroundHeights>();
@@ -71,7 +69,7 @@ fn carry(world: &mut World) {
             Travels::Riding => None,
             Travels::Floating { .. } => Some(Aloft(surface)),
             Travels::Flying { height, eases } => {
-                let from = world.get::<Aloft>(*driver).map_or(land, |aloft| aloft.0);
+                let from = world.get::<Aloft>(*rider).map_or(land, |aloft| aloft.0);
                 let closed = if eases.0 > 0.0 {
                     1.0 - (-3.0 * delta.0 / eases.0).exp()
                 } else {
@@ -81,16 +79,8 @@ fn carry(world: &mut World) {
                 Some(Aloft(Meters(risen.max(surface.0))))
             }
         };
-        heights.insert(*driver, aloft);
-    }
-    for (rider, riding) in &riders {
-        let shown = world.get::<RenderPosition>(riding.driver).copied();
-        let aloft = heights.get(&riding.driver).copied().flatten();
         let floats = matches!(riding.mount.get(&content).travels, Travels::Floating { .. });
         let mut rider = world.entity_mut(*rider);
-        if let (false, Some(shown)) = (riding.drives(), shown) {
-            rider.insert(shown);
-        }
         match aloft {
             Some(aloft) => rider.insert(aloft),
             None => rider.remove::<Aloft>(),
@@ -110,8 +100,8 @@ fn carry(world: &mut World) {
     }
 }
 
-/// Stands a body of the mount's model under every driver, shown where its driver shows and
-/// moving as its driver moves, and has every rider make their seat's move.
+/// Stands a body of the mount's model under every rider, shown where its rider shows and moving
+/// as its rider moves, and has every rider make their seat's move.
 fn stable(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let riders: Vec<(Entity, Riding)> = world
@@ -120,32 +110,27 @@ fn stable(world: &mut World) {
         .map(|(rider, riding)| (rider, *riding))
         .collect();
     let mut steeds = steeds(world);
-    for (steed, driver) in steeds.clone() {
+    for (steed, rider) in steeds.clone() {
         let looks = world
-            .get::<Riding>(driver)
-            .filter(|riding| riding.drives())
+            .get::<Riding>(rider)
             .map(|riding| riding.mount.get(&content).look);
         let stands = world.get::<Appearance>(steed).map(|shown| shown.model);
         if looks.is_none() || looks != stands {
             world.despawn(steed);
-            steeds.retain(|(_, driven)| *driven != driver);
+            steeds.retain(|(_, ridden)| *ridden != rider);
         }
     }
     for (rider, riding) in &riders {
         let def = riding.mount.get(&content);
-        match def.seats.get(usize::from(riding.seat.0)) {
-            Some(seat) => world.entity_mut(*rider).insert(Seated(seat.rides.clone())),
-            None => world.entity_mut(*rider).remove::<Seated>(),
-        };
-        if !riding.drives() {
-            continue;
-        }
+        world
+            .entity_mut(*rider)
+            .insert(Seated(def.rider.rides.clone()));
         let steed = steeds
             .iter()
-            .find(|(_, driver)| driver == rider)
+            .find(|(_, ridden)| ridden == rider)
             .map(|(steed, _)| *steed)
             .unwrap_or_else(|| {
-                let steed = Steed { driver: *rider };
+                let steed = Steed { rider: *rider };
                 world.spawn((steed, Appearance::of(def.look))).id()
             });
         lead(world, steed, *rider, def);
@@ -159,14 +144,14 @@ fn stable(world: &mut World) {
     }
 }
 
-/// Shows `steed` where `driver` shows, facing as they face, at the gait its own body covers the
+/// Shows `steed` where `rider` shows, facing as they face, at the gait its own body covers the
 /// ground with as fast as they go.
-fn lead(world: &mut World, steed: Entity, driver: Entity, def: &MountDef) {
+fn lead(world: &mut World, steed: Entity, rider: Entity, def: &MountDef) {
     let content = world.resource::<Content>().clone();
     let (Some(shown), Some(at), Some(actor)) = (
-        world.get::<RenderActor>(driver).copied(),
-        world.get::<RenderPosition>(driver).copied(),
-        world.get::<Actor>(driver).cloned(),
+        world.get::<RenderActor>(rider).copied(),
+        world.get::<RenderPosition>(rider).copied(),
+        world.get::<Actor>(rider).cloned(),
     ) else {
         return;
     };
@@ -175,8 +160,8 @@ fn lead(world: &mut World, steed: Entity, driver: Entity, def: &MountDef) {
     } else {
         Action::Idle
     };
-    let aloft = world.get::<Aloft>(driver).copied();
-    let area = world.get::<AreaTag>(driver).cloned();
+    let aloft = world.get::<Aloft>(rider).copied();
+    let area = world.get::<AreaTag>(rider).cloned();
     let mut steed = world.entity_mut(steed);
     steed.insert((
         RenderActor {
@@ -212,7 +197,7 @@ fn seat(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let steeds: HashMap<Entity, Entity> = steeds(world)
         .into_iter()
-        .map(|(steed, driver)| (driver, steed))
+        .map(|(steed, rider)| (rider, steed))
         .collect();
     let riders: Vec<(Entity, Riding)> = world
         .query::<(Entity, &Riding)>()
@@ -220,18 +205,16 @@ fn seat(world: &mut World) {
         .map(|(rider, riding)| (rider, *riding))
         .collect();
     for (rider, riding) in riders {
-        let Some(&steed) = steeds.get(&riding.driver) else {
+        let Some(&steed) = steeds.get(&rider) else {
             continue;
         };
         let Some(stands) = world.get::<Transform>(steed).copied() else {
             continue;
         };
         let def = riding.mount.get(&content);
-        let joint = def
-            .seats
-            .get(usize::from(riding.seat.0))
-            .zip(world.get::<Body>(steed))
-            .and_then(|(seat, body)| body.joint(seat.joint.as_str()));
+        let joint = world
+            .get::<Body>(steed)
+            .and_then(|body| body.joint(def.rider.joint.as_str()));
         let on_mount = joint
             .and_then(|joint| world.get::<GlobalTransform>(joint))
             .zip(world.get::<GlobalTransform>(steed))
@@ -267,6 +250,6 @@ fn steeds(world: &mut World) -> Vec<(Entity, Entity)> {
     world
         .query::<(Entity, &Steed)>()
         .iter(world)
-        .map(|(steed, of)| (steed, of.driver))
+        .map(|(steed, of)| (steed, of.rider))
         .collect()
 }

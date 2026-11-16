@@ -50,7 +50,7 @@ pub struct Traveler {
     /// The instance of the area they are bound for, or the world everyone there shares.
     pub instance: Option<AreaInstanceWorld>,
     pub state: CharacterState,
-    /// The mount they rode out on, and where on it they sat.
+    /// The mount they rode out on.
     pub ride: Option<CrossingRide>,
 }
 
@@ -64,14 +64,11 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
         .iter()
         .map(|(entity, _)| mount::crossing(world, *entity))
         .collect();
-    let mut travelers: Vec<Traveler> = crossings
+    crossings
         .into_iter()
         .zip(rides)
         .filter_map(|((entity, crossing), ride)| leave(world, entity, crossing, ride))
-        .collect();
-    // A driver arrives before whoever rode with them, who are seated beside them as they arrive.
-    travelers.sort_by_key(|traveler| traveler.ride.map(|ride| ride.seat));
-    travelers
+        .collect()
 }
 
 pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {

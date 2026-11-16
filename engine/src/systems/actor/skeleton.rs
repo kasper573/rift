@@ -1749,7 +1749,7 @@ impl SkeletonDef {
 
     /// What a body needs of the skeleton that it lacks yet, each said of the skeleton: a skeleton
     /// is made up step by step, and only a finished one may be worn. The moves `sat` are the
-    /// game's seats', which land nowhere and so need no apex.
+    /// game's mounts' riders, which land nowhere and so need no apex.
     pub fn unfinished(&self, sat: &BTreeSet<MoveName>) -> Vec<String> {
         let mut lacking = Vec::new();
         if self.rig.files.is_empty() {

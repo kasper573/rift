@@ -248,7 +248,10 @@ pub fn describe(content: &impl ConditionNames, condition: &Condition) -> Wording
         describe(content, a).then(sign).then(describe(content, b))
     };
     match condition {
-        Expr::Not { of } => Wording::words("not ").then(describe(content, of)),
+        Expr::Not { of } => match &**of {
+            Expr::Query(RiftQuery::InCombat { .. }) => "you out of combat".into(),
+            of => Wording::words("not ").then(describe(content, of)),
+        },
         Expr::All { of: parts } => {
             Wording::joined(parts.iter().map(|part| describe(content, part)), " and ")
         }
@@ -339,6 +342,7 @@ fn describe_query(content: &impl ConditionNames, query: &RiftQuery) -> Wording {
         RiftQuery::MastersRecipe { recipe, .. } => format!("{} mastery", recipe.recipe.0),
         RiftQuery::InParty { .. } => "in a party".to_owned(),
         RiftQuery::Riding { .. } => "riding".to_owned(),
+        RiftQuery::InCombat { .. } => "in combat".to_owned(),
         RiftQuery::InInstance { .. } => "in an instance".to_owned(),
         RiftQuery::FreeSlots { .. } => "free slots".to_owned(),
         RiftQuery::Offered { .. } => "items offered".to_owned(),

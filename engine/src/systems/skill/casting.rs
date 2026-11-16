@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Cooldowns, Rank, SkillId, Targeting};
 use crate::core::content::Content;
-use crate::core::content::SchemaMark;
+use crate::core::content::{SchemaMark, serial};
 use crate::core::math::Pos;
 use crate::core::par;
 use crate::core::script::{
@@ -50,6 +50,17 @@ pub enum CastAim {
     None,
 }
 
+/// How a cast is set out on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CastWay {
+    /// Once, by a caster who knows the skill.
+    Once,
+    /// Again and again until the target falls or the caster turns away, as a basic attack lands.
+    Repeated,
+    /// Once, lent by a script to a caster who need not know the skill, at its first rank.
+    Lent,
+}
+
 /// A script casts a skill as a player would: aimed, checked, walked into range and performed.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("skill"))]
@@ -67,6 +78,9 @@ pub struct UseSkill {
     #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
+    /// Lends the skill for this one cast, so a caster who doesn't know it may cast it.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub lent: bool,
 }
 
 pub fn request(world: &mut World) {
@@ -84,28 +98,32 @@ pub fn request(world: &mut World) {
             };
             mount::seat::act(world, caster, act)?;
         }
-        cast(world, caster, request.skill, request.aim, false)
+        cast(world, caster, request.skill, request.aim, CastWay::Once)
     });
 }
 
-/// Sets out to use a skill: refused at once when the caster does not know it, it is cooling down,
-/// its requirements or cost are not met, or the aim does not fit its kind.
+/// Sets out to use a skill: refused at once when the caster does not know it and it isn't lent,
+/// it is cooling down, its requirements or cost are not met, or the aim does not fit its kind.
 pub fn cast(
     world: &mut World,
     caster: Entity,
     skill: SkillId,
     aim: CastAim,
-    repeat: bool,
+    way: CastWay,
 ) -> Result<(), LineText> {
-    if let Some(refusal) = super::unusable(world, caster, skill) {
+    let refusal = match way {
+        CastWay::Lent => super::passive(world, skill),
+        CastWay::Once | CastWay::Repeated => super::unusable(world, caster, skill),
+    };
+    if let Some(refusal) = refusal {
         return Err(refusal);
     }
     let content = world.resource::<Content>().clone();
     let def = skill.get(&content);
     if let Some(mount) = mount::called_by(world, skill) {
-        // The skill of the mount its caster drives is how they leave it, which is no cast:
+        // The skill of the mount its caster rides is how they leave it, which is no cast:
         // nothing is spent, and no cooldown starts.
-        if mount::drives(world, caster, mount) {
+        if mount::rides_on(world, caster, mount) {
             let spot = match aim {
                 CastAim::Point(spot) => Some(spot),
                 CastAim::Actor(_) | CastAim::None => None,
@@ -147,7 +165,7 @@ pub fn cast(
             return Err(named(skill, &content).then(" needs a spot to aim at"));
         }
     };
-    reach::intend(world, caster, target, ReachAct::Cast { skill, repeat });
+    reach::intend(world, caster, target, ReachAct::Cast { skill, way });
     Ok(())
 }
 
@@ -162,7 +180,7 @@ pub fn spot_refused(
     spot: Pos<Meters>,
 ) -> Option<String> {
     let mount = mount::called_by(world, skill);
-    if mount.is_some_and(|mount| mount::drives(world, caster, mount)) {
+    if mount.is_some_and(|mount| mount::rides_on(world, caster, mount)) {
         return mount::landing(world, caster, Some(spot)).err();
     }
     let range = super::range_of(world, caster, skill, super::rank_of(world, caster, skill));
@@ -277,10 +295,13 @@ enum CastStep {
 }
 
 fn step_of(world: &World, caster: Entity, intent: ReachIntent) -> CastStep {
-    let (ReachAct::Cast { skill, .. }, target) = (intent.act, intent.target) else {
+    let (ReachAct::Cast { skill, way }, target) = (intent.act, intent.target) else {
         return CastStep::Wait;
     };
-    let rank = super::rank_of(world, caster, skill);
+    let rank = match way {
+        CastWay::Lent => super::rank_of(world, caster, skill).max(Rank::FIRST),
+        CastWay::Once | CastWay::Repeated => super::rank_of(world, caster, skill),
+    };
     if stat::is_dead(world, caster) || rank == Rank::NONE {
         return CastStep::Forget { refused: None };
     }
@@ -328,7 +349,11 @@ fn apply(world: &mut World, caster: Entity, intent: ReachIntent, step: CastStep)
         CastStep::Settle(berths) => berths.settle(world, caster),
         CastStep::Perform { skill, rank } => {
             perform(world, caster, skill, rank, intent.target);
-            if let ReachAct::Cast { repeat: false, .. } = intent.act {
+            if let ReachAct::Cast {
+                way: CastWay::Once | CastWay::Lent,
+                ..
+            } = intent.act
+            {
                 reach::drop_intent(world, caster);
             }
         }
@@ -395,6 +420,11 @@ impl EffectDef<RiftScripting> for UseSkill {
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
         let skill = self.skill;
+        let way = if self.lent {
+            CastWay::Lent
+        } else {
+            CastWay::Once
+        };
         let at: Option<Eval> = match &self.at {
             Some(at) => {
                 let (eval, ty) = cx.typed(at)?;
@@ -420,7 +450,7 @@ impl EffectDef<RiftScripting> for UseSkill {
                     _ => CastAim::None,
                 },
             };
-            match cast(world, caster, skill, aim, false) {
+            match cast(world, caster, skill, aim, way) {
                 Ok(()) => EffectStep::Output(NEXT),
                 Err(_) => EffectStep::Output(REFUSED),
             }

@@ -151,7 +151,7 @@ impl Server {
         let ask = SocialRequestAsk::Ask {
             kind,
             of: self.number(of),
-            about: (kind == SocialRequestKind::Seat).then(|| "Rowboat".to_owned()),
+            about: (kind == SocialRequestKind::PartyInvitation).then(|| "crew".to_owned()),
         };
         let world = &mut self.village_or_forest(client).world;
         society::ask(world, ClientId(client), SocietyAsk::Request(ask));

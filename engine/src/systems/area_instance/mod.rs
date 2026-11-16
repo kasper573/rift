@@ -27,6 +27,7 @@ use crate::systems::combat::Died;
 use crate::systems::history::HistoryTopic;
 use crate::systems::item::{DropRow, ItemStack};
 use crate::systems::mention::Mention;
+use crate::systems::mount;
 use crate::systems::notification::{self, Notification};
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::party::{PartyId, PlayerParties};
@@ -669,6 +670,7 @@ fn step_in(world: &mut World, character: Entity, to: Place, run: AreaInstanceWor
         .get_resource::<AreaInstanceWorld>()
         .map(|here| here.id);
     if here == Some(run.id) {
+        mount::warping(world, character, to);
         world
             .entity_mut(character)
             .insert(player::SpawnPoint(to.at));

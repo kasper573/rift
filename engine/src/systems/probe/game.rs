@@ -199,14 +199,13 @@ pub struct ProbeSkill {
     pub area: Option<Shape>,
 }
 
-/// A mount of the game: how it travels and so where it goes, how many it seats with its driver,
-/// how far off it a rider steps and a seat is asked for, and the skills that call it.
+/// A mount of the game: how it travels and so where it goes, how far off it its rider steps, and
+/// the skills that call it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeMount {
     pub mount: MountId,
     pub name: String,
     pub kind: MountKind,
-    pub seats: usize,
     pub reach: Meters,
     pub called_by: Vec<SkillId>,
 }
@@ -505,7 +504,6 @@ fn game(content: &Content) -> ProbeGame {
                     mount,
                     name: def.name.clone(),
                     kind: MountKind::from(def.travels),
-                    seats: def.seats.len(),
                     reach: def.reach,
                     called_by: mount::callers(content, mount),
                 }

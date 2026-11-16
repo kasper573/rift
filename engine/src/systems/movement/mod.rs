@@ -249,7 +249,7 @@ pub fn move_request(world: &mut World) {
         if let Some(mut heard) = world.get_mut::<HeardMove>(player) {
             heard.0 = heard.0.max(request.message.seq);
         }
-        if !may_command(world, player) || mount::carried(world, player) {
+        if !may_command(world, player) {
             continue;
         }
         reach::drop_intent(world, player);
@@ -454,9 +454,6 @@ fn stride(world: &World, id: Entity, dt: Seconds) -> MoverStep {
 
 /// How fast the actor moves: its pace, slowed by the water it wades through.
 pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {
-    if mount::carried(world, entity) {
-        return MetersPerSec(Meters(0.0));
-    }
     let pace = stat::effective(world, entity, StatKind::MovementSpeed);
     MetersPerSec(Meters(pace * wading_share(world, entity)))
 }
@@ -534,9 +531,9 @@ pub fn pointed_spot(world: &World, walker: Entity, pointed: &Pointed) -> Option<
     }
 }
 
-/// Whether `walker` goes to `at` on what they walk: nowhere for one their driver carries.
+/// Whether `walker` goes to `at` on what they walk.
 pub fn walks_at(world: &World, walker: Entity, at: Pos<Meters>) -> bool {
-    !mount::carried(world, walker) && mesh_in(world, walker).is_some_and(|mesh| mesh.walkable(at))
+    mesh_in(world, walker).is_some_and(|mesh| mesh.walkable(at))
 }
 
 fn mesh_in(world: &World, entity: Entity) -> Option<HeldMesh> {

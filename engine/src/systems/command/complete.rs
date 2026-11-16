@@ -40,19 +40,29 @@ pub fn completions(
     let commands = super::allowed(world, conn);
     let keeping = |typing: &str| (asked.text.chars().count() - typing.chars().count()) as u32;
     if typed.naming {
+        let caller = player::conn_player(world, conn);
         let names = commands.iter().map(|command| command.name(content));
         let options = best_matches(typed.name, names, most)
             .into_iter()
             .map(|place| commands[place])
             .map(|command| {
                 let takes_inputs = !command.get(content).inputs.is_empty();
+                let cooling = caller.and_then(|caller| super::cooling(world, caller, command));
                 TerminalOption {
                     text: if takes_inputs {
                         format!("{} ", command.name(content))
                     } else {
                         command.name(content).to_owned()
                     },
-                    detail: command.usage(content),
+                    detail: match cooling {
+                        Some(left) => format!(
+                            "{} · ready in {}",
+                            command.usage(content),
+                            super::cooldown::worded(left)
+                        ),
+                        None => command.usage(content),
+                    },
+                    muted: cooling.is_some(),
                 }
             })
             .collect();
@@ -89,6 +99,7 @@ pub fn completions(
         .map(|place| TerminalOption {
             text: options[place].text.clone(),
             detail: options[place].detail.clone(),
+            muted: false,
         })
         .collect(),
         usage: format!("{}: {usage}", slot.name()),

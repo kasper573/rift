@@ -21,7 +21,7 @@ use crate::systems::npc::Pack;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
 use crate::systems::reach;
-use crate::systems::skill::{self, BasicAttack, CastAim, Targeting};
+use crate::systems::skill::{self, BasicAttack, CastAim, CastWay, Targeting};
 use crate::systems::stat::{self, Stats, Vital};
 use crate::systems::vfx::{self, VfxFixture};
 use crate::systems::visibility;
@@ -198,7 +198,13 @@ pub fn request(world: &mut World) {
                 .get::<BasicAttack>(player)
                 .and_then(|slot| slot.0)
                 .ok_or("Nothing to attack with")?;
-            skill::cast(world, player, skill, CastAim::Actor(request.target), true)
+            skill::cast(
+                world,
+                player,
+                skill,
+                CastAim::Actor(request.target),
+                CastWay::Repeated,
+            )
         },
     );
 }
@@ -209,12 +215,31 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
     }
     let time = time::uptime(world);
     if let Some(attacker) = attacker {
+        for fighter in [attacker, target] {
+            world.entity_mut(fighter).insert(Fought { at: time });
+        }
         add_attacker(world, target, attacker);
         crate::systems::item::reserve(world, target, attacker, time);
         crate::systems::npc::attacked(world, target, attacker);
         crate::systems::dialogue::interrupt(world, target, "you're under attack");
     }
     stat::apply_damage(world, target, damage);
+}
+
+/// When an actor last struck someone or was struck by someone.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Fought {
+    pub at: Seconds,
+}
+
+/// Whether `actor` is in combat: they struck someone or were struck by someone within the time
+/// the game's claims last.
+pub fn in_combat(world: &World, actor: Entity) -> bool {
+    let lasts = world.resource::<GameSettings>().claims_last;
+    let now = time::uptime(world);
+    world
+        .get::<Fought>(actor)
+        .is_some_and(|fought| now - fought.at < lasts)
 }
 
 /// The actors still standing whose stats just changed: an entity falls only as its stats change.

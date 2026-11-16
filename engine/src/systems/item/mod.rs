@@ -1063,7 +1063,7 @@ fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), LineTex
     match item.get(&content).kind {
         ItemKind::Equipment { .. } => equipment::equip(world, actor, slot, None),
         ItemKind::Usable { casts: Some(skill) } => {
-            skill::cast(world, actor, skill, CastAim::None, false)
+            skill::cast(world, actor, skill, CastAim::None, skill::CastWay::Once)
         }
         ItemKind::Usable { casts: None } => {
             announce_consumed(world, actor, item);

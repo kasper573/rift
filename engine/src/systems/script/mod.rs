@@ -323,7 +323,7 @@ pub enum EffectReach {
     Boosts(StatKind, Option<f32>),
     GrantsXp,
     Casts(SkillId),
-    /// Seats someone as the driver of the mount.
+    /// Seats someone on the mount.
     Mounts(MountId),
     /// Lets someone into an instance of the area `to` is in, which they leave for `return_to`.
     EntersInstance {

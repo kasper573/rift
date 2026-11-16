@@ -4,6 +4,7 @@
 //! what a player may type for each is what the variable's type takes.
 
 pub mod complete;
+pub mod cooldown;
 pub mod input;
 
 use std::collections::BTreeMap;
@@ -19,14 +20,19 @@ use crate::core::content::{
 };
 use crate::core::script::compile::compile_row;
 use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault};
+use crate::core::time::WallClock;
+use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::account::{AccountIdentity, RoleId};
 use crate::systems::player::{self, Connected, PlayedBy};
+use crate::systems::script::condition;
 use crate::systems::script::effect::{self as effects, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, EventKind, Owner, OwnerRow, RiftInstances, RiftScripting,
     RunnerKind, ScriptDef, ScriptId, ScriptModule,
 };
+use crate::systems::text::LineText;
+pub use cooldown::CommandCooldowns;
 use input::{CommandInput, InputRefusal};
 
 /// A command of the terminal: the file's name is what a player types to send it.
@@ -36,6 +42,12 @@ pub struct TerminalCommandDef {
     /// The roles that may send the command, any one of them; without any, everyone may.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<RoleId>,
+    /// What must hold of whoever sends it. A command refused for it starts no cooldown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<Condition>,
+    /// How long after it runs before the same character may send it again.
+    #[serde(default, skip_serializing_if = "Seconds::is_zero")]
+    pub cooldown: Seconds,
     /// What the command does: run with whoever sent it as its subject.
     pub script: ScriptId,
     /// The script's variables the command line fills, in the order they are typed. One with a
@@ -62,6 +74,8 @@ impl ContentFile for TerminalCommandDef {
             .collect();
         Ok(TerminalCommandDef {
             roles: Vec::new(),
+            requires: None,
+            cooldown: Seconds(0.0),
             script,
             inputs,
         })
@@ -83,6 +97,33 @@ impl TerminalCommandId {
         .trim_end()
         .to_owned()
     }
+
+    /// The command as `/commands` lists it to `character`: its usage, and its cooldown with the
+    /// time left while it cools.
+    pub fn listed(self, world: &World, character: Entity) -> String {
+        let content = world.resource::<Content>();
+        let cooldown = self.get(content).cooldown;
+        if cooldown.is_zero() {
+            return self.usage(content);
+        }
+        let every = format!(
+            "{} · every {}",
+            self.usage(content),
+            cooldown::worded(cooldown)
+        );
+        match cooling(world, character, self) {
+            Some(left) => format!("{every} · ready in {}", cooldown::worded(left)),
+            None => every,
+        }
+    }
+}
+
+/// How long until `character` may send `command` again: nothing once they may.
+pub fn cooling(world: &World, character: Entity, command: TerminalCommandId) -> Option<Seconds> {
+    let now = world.resource::<WallClock>().now;
+    world
+        .get::<CommandCooldowns>(character)
+        .and_then(|cooldowns| cooldowns.left(command, now))
 }
 
 /// Every command the connection `conn` may send, by name.
@@ -151,6 +192,7 @@ fn invoke(world: &mut World, conn: Entity, line: &str) -> Result<(), String> {
         .find(|command| command.name(&content) == typed.name)
         .ok_or_else(unknown)?;
     let def = command.get(&content);
+    let named = format!("{COMMAND_PREFIX}{}", command.name(&content));
     let parts: Vec<&str> = typed.parts.iter().map(|part| part.trim()).collect();
     let values =
         input::bind(world, caller, &input::inputs(&content, def), &parts).map_err(|refusal| {
@@ -167,7 +209,28 @@ fn invoke(world: &mut World, conn: Entity, line: &str) -> Result<(), String> {
                 InputRefusal::TooMany => words.command_takes.replace("{usage}", &usage),
             }
         })?;
-    start(world, &content, command, caller, values)
+    if let Some(unmet) = condition::first_unmet(world, caller, def.requires.iter()) {
+        let needs = LineText::plain(format!("{named} needs ")).then(LineText::from(&unmet));
+        return Err(needs.plain_words());
+    }
+    let cooling_said = |left: Seconds| {
+        words
+            .command_cooling
+            .replace("{command}", &named)
+            .replace("{left}", &cooldown::worded(left))
+    };
+    if let Some(left) = cooling(world, caller, command) {
+        return Err(cooling_said(left));
+    }
+    start(world, &content, command, caller, values)?;
+    if !def.cooldown.is_zero() {
+        let now = world.resource::<WallClock>().now;
+        if let Some(mut cooldowns) = world.get_mut::<CommandCooldowns>(caller) {
+            cooldowns.start(command, now, def.cooldown);
+        }
+        bevy_terminal::reply(world, conn, cooling_said(def.cooldown));
+    }
+    Ok(())
 }
 
 fn start(
@@ -243,10 +306,9 @@ impl EffectDef<RiftScripting> for ListCommands {
                 Reaching::quietly(NEXT),
                 |world, character| {
                     if let Some(conn) = connection(world, character) {
-                        let content = world.resource::<Content>().clone();
                         let lines: Vec<String> = allowed(world, conn)
                             .into_iter()
-                            .map(|command| command.usage(&content))
+                            .map(|command| command.listed(world, character))
                             .collect();
                         bevy_terminal::reply(world, conn, lines.join("\n"));
                     }

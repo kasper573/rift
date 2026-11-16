@@ -1,5 +1,5 @@
-//! Mounts: what a player rides, and whoever rides along. A mount is no creature of its own: it is
-//! its driver's ride, drawn under them for as long as they sit on it and gone when they leave.
+//! Mounts: what a player rides. A mount is no creature of its own: it is its rider's ride, drawn
+//! under them for as long as they sit on it and gone when they leave.
 
 pub mod effect;
 pub mod plate;
@@ -9,7 +9,6 @@ pub mod seat;
 use std::collections::BTreeSet;
 
 use bevy_app::App;
-use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,10 +24,11 @@ use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::model::{ActorModel, ModelId};
 use crate::systems::actor::skeleton::{self, Declared, JointName, MoveName, SkeletonDef};
-use crate::systems::actor::{Actor, Appearance, Hitbox};
+use crate::systems::actor::{Appearance, Hitbox};
 use crate::systems::area::{self, AreaId, AreaTag, HeldMesh};
-use crate::systems::movement::{self, Position, Spot};
-use crate::systems::player::{self, ClientId, PlayedBy, Players};
+use crate::systems::history::HistoryTopic;
+use crate::systems::movement;
+use crate::systems::notification::{self, Notification};
 use crate::systems::region;
 use crate::systems::script::{
     EffectReach, OwnerRow, Place, RiftScripts, RunnerKind, ScriptModule, ScriptedRow,
@@ -42,23 +42,23 @@ use crate::systems::text::LineText;
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
     app.replicate::<Riding>()
-        .add_mapped_client_message::<seat::MountRequest>();
+        .add_client_message::<seat::MountRequest>();
 }
 
 pub type MountId = ContentId<MountDef>;
 
-/// Something a player rides. Whatever it changes about its driver comes from its script, which
-/// runs on the driver for as long as they drive it.
+/// Something a player rides. Whatever it changes about its rider comes from its script, which
+/// runs on the rider for as long as they ride it.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MountDef {
     pub name: String,
     pub look: ModelId,
     pub travels: Travels,
-    /// How far from the mount a rider may step off it, and a seat on it be asked for.
+    /// How far from the mount its rider may step off it.
     pub reach: Meters,
-    /// Where its riders sit: the first seat is its driver's.
-    pub seats: Vec<MountSeat>,
+    /// Where its rider sits, and what they may do from there.
+    pub rider: MountSeat,
     /// What comes of a rider doing what their seat does not let them.
     pub barred: BarredAct,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -98,8 +98,8 @@ pub struct MountSeat {
     pub may: Vec<RiderAct>,
 }
 
-/// What a seat may let its rider do. Steering is the driver's alone, and everyone may always
-/// chat, emote, open their menus and step off.
+/// What a seat may let its rider do. A rider may always steer, chat, emote, open their menus and
+/// step off.
 #[derive(
     JsonSchema,
     Serialize,
@@ -156,11 +156,11 @@ impl ContentFile for MountDef {
             look,
             travels: Travels::Riding,
             reach: Meters(3.0),
-            seats: vec![MountSeat {
+            rider: MountSeat {
                 joint: joint.ok_or_else(|| format!("it needs {JOINTED}: make one first"))?,
                 rides: skeleton::nearest_move(near)?,
                 may: Vec::new(),
-            }],
+            },
             barred: BarredAct::Refuse,
             modules: Vec::new(),
         })
@@ -169,7 +169,6 @@ impl ContentFile for MountDef {
     fn check(&self, check: &mut RowCheck) {
         check.text("/name", &self.name, 1, 40);
         check.at_least("/reach", self.reach.0, 0.0, "meters");
-        check.range("/seats", self.seats.len(), 1, MOST_SEATS, "seats");
         match self.travels {
             Travels::Riding => {}
             Travels::Flying { height, eases } => {
@@ -182,9 +181,6 @@ impl ContentFile for MountDef {
         }
     }
 }
-
-/// A plate lists every seat, and a seat's place is told in a byte.
-const MOST_SEATS: usize = 8;
 
 impl NamedContent for MountDef {
     fn shown_name(&self) -> &str {
@@ -218,42 +214,23 @@ impl ScriptedRow for MountDef {
     }
 }
 
-/// Which seat of a mount, the driver's first.
-#[derive(
-    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
-pub struct SeatIndex(pub u8);
-
-impl SeatIndex {
-    pub const DRIVER: SeatIndex = SeatIndex(0);
-}
-
-/// On every rider: the mount they ride, the seat they hold and who drives it, the driver naming
-/// themselves. Both the server and every client pick a rider's mesh and pace from it.
-#[derive(Component, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
+/// On every rider: the mount they ride. Both the server and every client pick a rider's mesh and
+/// pace from it.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct Riding {
     pub mount: MountId,
-    pub seat: SeatIndex,
-    #[entities]
-    pub driver: Entity,
 }
 
-impl Riding {
-    pub fn drives(&self) -> bool {
-        self.seat == SeatIndex::DRIVER
-    }
-}
-
-/// The moves the seats of `mounts` are ridden with: made over and over for as long as a rider
-/// sits, where any other move is made once and lands.
+/// The moves `mounts` are ridden with: made over and over for as long as a rider sits, where any
+/// other move is made once and lands.
 pub fn sat_moves<'a>(mounts: impl IntoIterator<Item = &'a MountDef>) -> BTreeSet<MoveName> {
     mounts
         .into_iter()
-        .flat_map(|mount| mount.seats.iter().map(|seat| seat.rides.clone()))
+        .map(|mount| mount.rider.rides.clone())
         .collect()
 }
 
-/// Whether `entity` sits on a mount, as its driver or a passenger.
+/// Whether `entity` sits on a mount.
 pub fn rides(world: &World, entity: Entity) -> bool {
     world.get::<Riding>(entity).is_some()
 }
@@ -274,24 +251,15 @@ pub fn lifted(content: &Content, world: &World, entity: Entity) -> bool {
     )
 }
 
-/// How far from their mount `rider` may step off it, and a seat on it be asked for from.
+/// How far from their mount `rider` may step off it.
 pub fn reach_of(world: &World, rider: Entity) -> Option<Meters> {
     let riding = world.get::<Riding>(rider)?;
     Some(riding.mount.get(world.resource::<Content>()).reach)
 }
 
-/// Whether `rider` is a passenger: carried by their driver, with no walk of their own.
-pub fn carried(world: &World, rider: Entity) -> bool {
-    world
-        .get::<Riding>(rider)
-        .is_some_and(|riding| !riding.drives())
-}
-
 /// Whether what `rider` rides is on its way somewhere.
 pub fn under_way(world: &World, rider: Entity) -> bool {
-    world
-        .get::<Riding>(rider)
-        .is_some_and(|riding| movement::moving(world, riding.driver))
+    rides(world, rider) && movement::moving(world, rider)
 }
 
 /// Every depth of water some mount of the game floats at, the shallowest first.
@@ -345,33 +313,21 @@ pub fn called_by(world: &World, skill: SkillId) -> Option<MountId> {
     })
 }
 
-/// Whether using `skill` is how `rider` leaves the mount they drive: the skill that called it.
+/// Whether using `skill` is how `rider` leaves the mount they ride: the skill that called it.
 pub fn left_by(world: &World, rider: Entity, skill: SkillId) -> bool {
-    called_by(world, skill).is_some_and(|mount| drives(world, rider, mount))
+    called_by(world, skill).is_some_and(|mount| rides_on(world, rider, mount))
 }
 
-/// Whether `rider` drives a `mount` of their own.
-pub fn drives(world: &World, rider: Entity, mount: MountId) -> bool {
+/// Whether `rider` rides a `mount`.
+pub fn rides_on(world: &World, rider: Entity, mount: MountId) -> bool {
     world
         .get::<Riding>(rider)
-        .is_some_and(|riding| riding.drives() && riding.mount == mount)
-}
-
-/// Everyone riding along with `driver`, each with the seat they hold, by their seats.
-pub fn passengers(world: &mut World, driver: Entity) -> Vec<(Entity, SeatIndex)> {
-    let mut riders: Vec<(Entity, SeatIndex)> = world
-        .query::<(Entity, &Riding)>()
-        .iter(world)
-        .filter(|(rider, riding)| riding.driver == driver && *rider != driver)
-        .map(|(rider, riding)| (rider, riding.seat))
-        .collect();
-    riders.sort_by_key(|(_, seat)| *seat);
-    riders
+        .is_some_and(|riding| riding.mount == mount)
 }
 
 /// Why `actor` could not use `skill` from where they are, whatever they aim it at, in the game's
-/// words: the seat they hold does not let them, or the mount it calls may not be called here.
-/// Nothing for the skill that called the mount they drive, which is how they leave it.
+/// words: their seat does not let them, or the mount it calls may not be called here. Nothing for
+/// the skill that called the mount they ride, which is how they leave it.
 pub fn shut(world: &World, actor: Entity, skill: SkillId) -> Option<String> {
     if left_by(world, actor, skill) {
         return None;
@@ -423,8 +379,8 @@ fn unwelcome(world: &World, caster: Entity, mount: MountId) -> Option<String> {
     (!welcome).then(|| words.mount_barred_here.clone())
 }
 
-/// Seats `caster` as the driver of a `mount` of their own: where they stand, or for a mount that
-/// floats on the water at the spot `aim` picks.
+/// Seats `caster` on a `mount` of their own: where they stand, or for a mount that floats on the
+/// water at the spot `aim` picks.
 pub fn call(
     world: &mut World,
     caster: Entity,
@@ -434,29 +390,26 @@ pub fn call(
     if let Some(refusal) = uncallable(world, caster, mount, aim) {
         return Err(refusal.into());
     }
-    let riding = Riding {
-        mount,
-        seat: SeatIndex::DRIVER,
-        driver: caster,
-    };
+    let riding = Riding { mount };
     let travels = mount.get(world.resource::<Content>()).travels;
     match (travels, aim) {
         (Travels::Floating { .. }, CastAim::Point(spot)) => movement::hop(world, caster, spot),
         _ => movement::halt(world, caster),
     }
-    drive(world, caster, riding);
+    seat(world, caster, riding);
     Ok(())
 }
 
-/// The rider leaves their seat by choice: for the spot `at` when they picked one, else for the
-/// free ground nearest them. Refused when that lies farther from the mount than its reach. A
-/// driver who leaves takes the mount with them, and everyone on it is set down beside them.
+/// The rider leaves their seat: for the spot `at` when they picked one, else for the free ground
+/// nearest them. Refused when that lies farther from the mount than its reach, which is the only
+/// way off a mount: nothing moves a rider to ground anywhere else.
 pub fn step_off(world: &mut World, rider: Entity, at: Option<Pos<Meters>>) -> Result<(), LineText> {
-    let Some(riding) = world.get::<Riding>(rider).copied() else {
+    if !rides(world, rider) {
         return Ok(());
-    };
+    }
     let spot = landing(world, rider, at)?;
-    leave(world, rider, riding, spot);
+    unseat(world, rider);
+    movement::hop_beside(world, rider, spot);
     Ok(())
 }
 
@@ -495,23 +448,16 @@ pub fn landing(
     Ok(spot)
 }
 
-/// The game takes `rider` off what they ride, onto the nearest free ground however far that is.
-/// A driver takes the mount with them, and everyone on it is set down beside them.
-pub fn set_down(world: &mut World, rider: Entity) {
-    let Some(riding) = world.get::<Riding>(rider).copied() else {
-        return;
-    };
-    if let Some(from) = movement::position(world, rider) {
-        leave(world, rider, riding, from);
-    }
+/// Whether a rider of a mount that travels as `travels` stays on it arriving at `place`: the area
+/// must allow its kind, and the spot must be one it travels over. Every warp asks this.
+pub fn carried_to(content: &Content, place: Place, travels: Travels) -> bool {
+    welcome_in(content, place.area, travels) && rides_at(content, place.area, travels, place.at)
 }
 
-/// What a rider takes through a warp into another world, to sit as they sat once they arrive.
+/// What a rider takes through a warp into another world, to ride on once they arrive.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CrossingRide {
     pub mount: MountId,
-    pub seat: SeatIndex,
-    pub driver: ClientId,
 }
 
 /// The ride `rider` would take into another world with them.
@@ -519,75 +465,45 @@ pub fn crossing(world: &World, rider: Entity) -> Option<CrossingRide> {
     let riding = world.get::<Riding>(rider)?;
     Some(CrossingRide {
         mount: riding.mount,
-        seat: riding.seat,
-        driver: world.get::<PlayedBy>(riding.driver)?.client,
     })
 }
 
-/// Seats `rider` as they sat before they crossed into this world: a driver where the mount may
-/// be ridden here, and a passenger beside a driver who arrived driving. Anyone else arrives on
-/// foot, on the ground nearest where they came in.
+/// Seats `rider` on what they rode before they crossed into this world, where it may be at the
+/// spot they arrived at. Otherwise they arrive on foot, told why.
 pub fn arrive(world: &mut World, rider: Entity, ride: CrossingRide) {
     let content = world.resource::<Content>().clone();
-    let def = ride.mount.get(&content);
-    let Some((area, at)) = world
-        .get::<AreaTag>(rider)
-        .map(|tag| tag.area)
-        .zip(movement::position(world, rider))
-    else {
+    let Some(place) = standing(world, rider) else {
         return;
     };
-    region::hold_around(world, at);
-    let driver = match ride.seat {
-        SeatIndex::DRIVER => rides_at(&content, area, def.travels, at).then_some(rider),
-        _ => {
-            let driver = world.resource::<Players>().0.get(&ride.driver).copied();
-            driver.filter(|driver| drives(world, *driver, ride.mount))
-        }
-    };
-    let riding = driver.map(|driver| Riding {
-        mount: ride.mount,
-        seat: ride.seat,
-        driver,
-    });
-    match riding {
-        Some(riding) if riding.drives() => drive(world, rider, riding),
-        Some(riding) => seat_beside(world, rider, riding),
-        None => movement::hop_beside(world, rider, at),
+    region::hold_around(world, place.at);
+    let travels = ride.mount.get(&content).travels;
+    if carried_to(&content, place, travels) {
+        seat(world, rider, Riding { mount: ride.mount });
+    } else {
+        movement::hop_beside(world, rider, place.at);
+        tell_on_foot(world, rider, ride.mount, place.area);
     }
 }
 
-/// Who goes through a warp to `to` with `actor`: the passengers of a driver, still on the mount
-/// where it may be ridden at `to`. Where it may not, everyone on it is on foot before they
-/// leave. A passenger who warps alone leaves their seat first.
-pub fn warping(world: &mut World, actor: Entity, to: Place) -> Vec<Entity> {
+/// Takes `actor` off their mount before a warp to `to`, where it may not be at the spot the warp
+/// leads to, telling them why. Only the world of an area holds its ground, so whether the spot
+/// carries a mount in another world is settled there, as its rider arrives.
+pub fn warping(world: &mut World, actor: Entity, to: Place) {
     let Some(riding) = world.get::<Riding>(actor).copied() else {
-        return Vec::new();
+        return;
     };
-    if !riding.drives() {
-        set_down(world, actor);
-        return Vec::new();
-    }
-    let along: Vec<Entity> = passengers(world, actor)
-        .into_iter()
-        .map(|(passenger, _)| passenger)
-        .collect();
     let content = world.resource::<Content>().clone();
-    let def = riding.mount.get(&content);
-    // Only the world of an area holds its ground, so whether the ground a mount lands on in
-    // another world carries it is settled there, as its riders arrive.
+    let travels = riding.mount.get(&content).travels;
     let carried = if world.get::<AreaTag>(actor).map(|tag| tag.area) == Some(to.area) {
         region::hold_around(world, to.at);
-        rides_at(&content, to.area, def.travels, to.at)
+        carried_to(&content, to, travels)
     } else {
-        welcome_in(&content, to.area, def.travels)
+        welcome_in(&content, to.area, travels)
     };
     if !carried {
-        for rider in along.iter().copied().chain([actor]) {
-            unseat(world, rider);
-        }
+        unseat(world, actor);
+        tell_on_foot(world, actor, riding.mount, to.area);
     }
-    along
 }
 
 /// Whether `rider` stands, on what they ride, where they could stand on foot.
@@ -602,96 +518,65 @@ pub fn over_ground(world: &World, rider: Entity) -> bool {
     }
 }
 
-/// Carries every passenger with their driver, and sets down whoever can no longer ride: the
-/// fallen, those whose player is gone, and everyone whose driver no longer drives.
+/// Takes every fallen rider off their mount where they fell: nobody is moved for it.
 #[derive(Default)]
-pub struct CarryRiders {
+pub struct UnseatFallen {
     riders: Cached<(Entity, &'static Riding), ()>,
-    fates: Vec<(Entity, RiderFate)>,
+    fallen: Vec<Entity>,
 }
 
-enum RiderFate {
-    Rides,
-    Leaves,
-    Follows(Pos<Meters>),
-}
-
-impl Planner for CarryRiders {
+impl Planner for UnseatFallen {
     fn prepare(&mut self, world: &mut World) {
         self.riders.ready(world);
     }
 
     fn plan(&mut self, world: &World) {
-        self.fates = self
+        self.fallen = self
             .riders
             .query(world)
             .iter()
-            .map(|(rider, riding)| (rider, fate(world, rider, riding)))
+            .map(|(rider, _)| rider)
+            .filter(|rider| stat::is_dead(world, *rider))
             .collect();
     }
 
     fn apply(&mut self, world: &mut World) {
-        for (rider, fate) in self.fates.drain(..) {
-            match fate {
-                RiderFate::Rides => {}
-                RiderFate::Leaves => set_down(world, rider),
-                RiderFate::Follows(at) => {
-                    if let Some(mut position) = world.get_mut::<Position>(rider)
-                        && position.pos != at
-                    {
-                        position.pos = at;
-                    }
-                }
-            }
+        for rider in self.fallen.drain(..) {
+            unseat(world, rider);
         }
     }
 }
 
-fn fate(world: &World, rider: Entity, riding: &Riding) -> RiderFate {
-    if stat::is_dead(world, rider) || !player::attended(world, rider) {
-        return RiderFate::Leaves;
-    }
-    if riding.drives() {
-        return RiderFate::Rides;
-    }
-    let driven = drives(world, riding.driver, riding.mount) && stat::stands(world, riding.driver);
-    match movement::position(world, riding.driver).filter(|_| driven) {
-        Some(at) => RiderFate::Follows(at),
-        None => RiderFate::Leaves,
-    }
-}
-
-/// What every mount must hold against the rest of the game: seats on joints of its own model,
-/// ridden with moves some skeleton declares, and a skill that calls it aimed as it travels.
+/// What every mount must hold against the rest of the game: its rider seated on a joint of its own
+/// model, riding with a move some skeleton declares, and a skill that calls it aimed as it
+/// travels.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let declared = content.built::<Declared>();
     for (id, mount) in loading.rows::<MountDef>(&content) {
         let model = ActorModel::loaded(&content, mount.look);
-        for (index, seat) in mount.seats.iter().enumerate() {
-            let jointed = model.is_none_or(|model| model.has_joint(&seat.joint));
-            if !jointed {
-                loading.row_error(
-                    id,
-                    &format!("/seats/{index}/joint"),
-                    ContentProblem::new(
-                        "unknown joint",
-                        seat.joint.as_str(),
-                        "a joint of the mount's model",
-                    ),
-                );
-            }
-            if !declared.moves.contains(&seat.rides) {
-                loading.row_error(
-                    id,
-                    &format!("/seats/{index}/rides"),
-                    ContentProblem::new(
-                        "undeclared move",
-                        seat.rides.as_str(),
-                        "a move some skeleton's set declares",
-                    ),
-                );
-            }
+        let seat = &mount.rider;
+        if !model.is_none_or(|model| model.has_joint(&seat.joint)) {
+            loading.row_error(
+                id,
+                "/rider/joint",
+                ContentProblem::new(
+                    "unknown joint",
+                    seat.joint.as_str(),
+                    "a joint of the mount's model",
+                ),
+            );
+        }
+        if !declared.moves.contains(&seat.rides) {
+            loading.row_error(
+                id,
+                "/rider/rides",
+                ContentProblem::new(
+                    "undeclared move",
+                    seat.rides.as_str(),
+                    "a move some skeleton's set declares",
+                ),
+            );
         }
     }
     let scripts = content.built::<RiftScripts>();
@@ -740,35 +625,19 @@ fn welcome_in(content: &Content, area: AreaId, travels: Travels) -> bool {
         .contains(&MountKind::from(travels))
 }
 
-/// Seats `driver` on the mount `riding` names, where they are: what a pointer lands on is the
+/// Seats `rider` on the mount `riding` names, where they are: what a pointer lands on is the
 /// mount, and its script holds on them.
-fn drive(world: &mut World, driver: Entity, riding: Riding) {
+fn seat(world: &mut World, rider: Entity, riding: Riding) {
     let content = world.resource::<Content>().clone();
     let look = riding.mount.get(&content).look;
     let hitbox = Hitbox(ActorModel::get(&content, look).hitbox());
-    world.entity_mut(driver).insert((riding, hitbox));
-    aspect::resettle(world, driver);
+    world.entity_mut(rider).insert((riding, hitbox));
+    aspect::resettle(world, rider);
 }
 
-/// Takes `rider` out of their seat and stands them on the free ground nearest `near`, everyone
-/// riding along with a driver first.
-fn leave(world: &mut World, rider: Entity, riding: Riding, near: Pos<Meters>) {
-    if riding.drives() {
-        for (passenger, _) in passengers(world, rider) {
-            stand(world, passenger, near);
-        }
-    }
-    stand(world, rider, near);
-}
-
-fn stand(world: &mut World, rider: Entity, near: Pos<Meters>) {
-    unseat(world, rider);
-    movement::hop_beside(world, rider, near);
-}
-
-/// Takes `rider` out of their seat where they are: they are themselves to hit again, and a
-/// driver's mount no longer holds on them.
-fn unseat(world: &mut World, rider: Entity) {
+/// Takes `rider` out of their seat where they are: they are themselves to hit again, and their
+/// mount's script no longer holds on them.
+pub(crate) fn unseat(world: &mut World, rider: Entity) {
     let content = world.resource::<Content>().clone();
     let own = world
         .get::<Appearance>(rider)
@@ -783,21 +652,24 @@ fn unseat(world: &mut World, rider: Entity) {
     aspect::resettle(world, rider);
 }
 
-/// Whether `rider` plays a character a player is at, alive, on a seat or not.
-pub(crate) fn may_ride(world: &World, rider: Entity) -> bool {
-    world.get::<PlayedBy>(rider).is_some()
-        && world.get::<Actor>(rider).is_some()
-        && stat::stands(world, rider)
-        && player::attended(world, rider)
+/// Tells `rider` they arrive on foot in `area`, their `mount` left behind: the area bars its kind,
+/// or the spot is none it travels over.
+fn tell_on_foot(world: &mut World, rider: Entity, mount: MountId, area: AreaId) {
+    let content = world.resource::<Content>().clone();
+    let def = mount.get(&content);
+    let words = &world.resource::<GameSettings>().words;
+    let said = if welcome_in(&content, area, def.travels) {
+        words.mount_not_here.replace("{mount}", &def.name)
+    } else {
+        words.mount_barred_here.clone()
+    };
+    let told = Notification::feed(HistoryTopic::Notification, said);
+    notification::notify(world, rider, None, told);
 }
 
-/// Seats `rider` beside `driver` on the mount the driver drives: without a spot of their own,
-/// where their driver is.
-pub(crate) fn seat_beside(world: &mut World, rider: Entity, riding: Riding) {
-    movement::halt(world, rider);
-    world.entity_mut(rider).remove::<Spot>().insert(riding);
-    if let Some(at) = movement::position(world, riding.driver) {
-        movement::hop(world, rider, at);
-        world.entity_mut(rider).remove::<Spot>();
-    }
+fn standing(world: &World, actor: Entity) -> Option<Place> {
+    Some(Place {
+        area: world.get::<AreaTag>(actor)?.area,
+        at: movement::position(world, actor)?,
+    })
 }

@@ -30,6 +30,7 @@ use crate::systems::area::weather::ServerSky;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::class::{Class, ClassId};
 use crate::systems::combat::{self, VitalRegen};
+use crate::systems::command::CommandCooldowns;
 use crate::systems::crafting::RecipeMasteries;
 use crate::systems::dialogue::{self, Heard};
 use crate::systems::equipment::Equipment;
@@ -584,8 +585,19 @@ pub fn join(world: &mut World) {
                 region::hold_around(world, start.at);
                 let mut state = snapshot::materialize(&content, &snapshot, start, clock, taken);
                 state.kept_aside.told = told;
+                // Mounts are not saved, so a character saved where only their mount could be
+                // signs in where dying would send them, never on whatever ground is nearest.
+                let ground = area.mesh();
+                let at = if ground.walkable(start.at) {
+                    start.at
+                } else {
+                    state.spawn.0
+                };
+                if at != start.at {
+                    region::hold_around(world, at);
+                }
                 (
-                    movement::place_beside(world, zone, &area.mesh(), start.at),
+                    movement::place_beside(world, zone, &ground, at),
                     state,
                     stand_in,
                 )
@@ -685,6 +697,7 @@ pub struct CharacterState {
     pub quests: QuestLog,
     pub history: History,
     pub cooldowns: Cooldowns,
+    pub command_cooldowns: CommandCooldowns,
     pub statuses: Statuses,
     pub carried: CarriedStatuses,
     pub kept_aside: KeptAside,
@@ -718,6 +731,10 @@ impl CharacterState {
             quests: world.get::<QuestLog>(entity).cloned().unwrap_or_default(),
             history: world.get::<History>(entity).cloned().unwrap_or_default(),
             cooldowns: world.get::<Cooldowns>(entity).cloned().unwrap_or_default(),
+            command_cooldowns: world
+                .get::<CommandCooldowns>(entity)
+                .cloned()
+                .unwrap_or_default(),
             statuses: world.get::<Statuses>(entity).cloned().unwrap_or_default(),
             carried: status::aspect::carried(world, entity),
             kept_aside: world.get::<KeptAside>(entity).cloned().unwrap_or_default(),

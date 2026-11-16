@@ -8,6 +8,7 @@ use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::movement::{self, Aim, Approach, ApproachPlan, Berths, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::skill::SkillId;
+use crate::systems::skill::casting::CastWay;
 use crate::systems::{stat, visibility};
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -97,17 +98,10 @@ pub enum ReachTarget {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReachAct {
-    /// `repeat` keeps the intent after a cast, so a basic attack lands again and again until the
-    /// target falls or the actor turns away.
-    Cast {
-        skill: SkillId,
-        repeat: bool,
-    },
+    Cast { skill: SkillId, way: CastWay },
     Pickup,
     Interact,
     Gather,
-    /// Asking the driver of a mount for a seat on it.
-    Board,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,7 +146,7 @@ impl ReachIntent {
     pub fn cast(&self) -> Option<SkillId> {
         match self.act {
             ReachAct::Cast { skill, .. } => Some(skill),
-            ReachAct::Pickup | ReachAct::Interact | ReachAct::Gather | ReachAct::Board => None,
+            ReachAct::Pickup | ReachAct::Interact | ReachAct::Gather => None,
         }
     }
 }

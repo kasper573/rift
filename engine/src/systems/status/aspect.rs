@@ -306,7 +306,7 @@ fn desired(world: &World, actor: Entity) -> Vec<Wanted> {
             wanted.push(held(AspectSource::Skill(skill)));
         }
     }
-    if let Some(riding) = world.get::<Riding>(actor).filter(|riding| riding.drives()) {
+    if let Some(riding) = world.get::<Riding>(actor) {
         wanted.push(held(AspectSource::Mount(riding.mount)));
     }
     wanted.retain(|aspect| {

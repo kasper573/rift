@@ -17,7 +17,7 @@ use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, Area, AreaId, AreaTag, TimeOfDayName, object};
 use crate::systems::area_instance;
 use crate::systems::class::{self, ClassId};
-use crate::systems::combat::{Attackers, Attitude};
+use crate::systems::combat::{self, Attackers, Attitude};
 use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{DroppedItem, Inventory, ItemId};
@@ -268,8 +268,15 @@ pub enum RiftQuery {
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
     },
-    /// Whether the character sits on a mount, as its driver or a passenger.
+    /// Whether the character sits on a mount.
     Riding {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+    },
+    /// Whether the character struck someone or was struck within the time the game's claims
+    /// last.
+    InCombat {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
@@ -485,6 +492,7 @@ impl RiftQueryKind {
             | RiftQueryKind::MastersRecipe
             | RiftQueryKind::InParty
             | RiftQueryKind::Riding
+            | RiftQueryKind::InCombat
             | RiftQueryKind::InInstance
             | RiftQueryKind::SetWithin
             | RiftQueryKind::OnQuest
@@ -528,6 +536,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::MastersRecipe { of, .. }
             | RiftQuery::InParty { of }
             | RiftQuery::Riding { of }
+            | RiftQuery::InCombat { of }
             | RiftQuery::InInstance { of }
             | RiftQuery::InstanceHolds { of, .. }
             | RiftQuery::FreeSlots { of }
@@ -689,6 +698,14 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 Box::new(move |world, cx| {
                     Value::Bool(
                         character(world, cx, &of).is_some_and(|who| mount::rides(world, who)),
+                    )
+                })
+            }
+            RiftQuery::InCombat { of } => {
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    Value::Bool(
+                        actor(world, cx, &of).is_some_and(|who| combat::in_combat(world, who)),
                     )
                 })
             }

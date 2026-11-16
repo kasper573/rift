@@ -5,6 +5,7 @@ mod climate;
 mod clock;
 mod clouds;
 mod combat;
+mod command_cooldowns;
 mod commands;
 mod conversation;
 mod cover;

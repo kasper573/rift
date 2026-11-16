@@ -22,7 +22,6 @@ use crate::systems::area_instance::{self, AreaInstanceEntry, AreaInstances};
 use crate::systems::chat::ChatSaid;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
 use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
-use crate::systems::mount;
 use crate::systems::notification::{self, Notification};
 use crate::systems::party::{self, PartyRequest, PlayerParties, PlayerParty};
 use crate::systems::payout::Delivery;
@@ -475,7 +474,6 @@ pub fn settle(
             SocietyAsk::Block(ask) => {
                 if let Some(blocked) = social_request::block::settle(&mut settling, &by, ask) {
                     friend::part(&mut settling, &by, &blocked);
-                    mount::seat::part(&mut settling, &by, &blocked);
                 }
             }
             SocietyAsk::Friend(ask) => friend::settle(&mut settling, settings, &by, ask),

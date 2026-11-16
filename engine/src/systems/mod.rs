@@ -144,11 +144,7 @@ pub fn protocol(app: &mut App) {
 
 /// The kinds of request between players the engine's systems bring.
 pub fn request_sources() -> Vec<social_request::SocialRequestSource> {
-    vec![
-        friend::request_source(),
-        party::request_source(),
-        mount::seat::request_source(),
-    ]
+    vec![friend::request_source(), party::request_source()]
 }
 
 /// Wires each system's say into the registries other systems read, so neither names the other: what
@@ -383,6 +379,8 @@ pub struct GameWords {
     pub command_refuses: String,
     /// What a player is told typing more than a command takes: `{usage}` spells it out.
     pub command_takes: String,
+    /// What a player is told of `{command}`, cooling down after it ran, for `{left}` more.
+    pub command_cooling: String,
     /// The heading over what a player is told the game changing did to their character.
     pub game_changed: String,
     /// What a player is told of something they had that the game no longer has: the file `{name}` of the type `{kind}`.
@@ -491,11 +489,12 @@ pub struct GameWords {
     pub you_left_party: String,
     /// What a player is told saying more lines than the game lets them in a while.
     pub chat_too_fast: String,
-    /// What a player is told calling a mount where the area bars its kind.
+    /// What a player is told calling a mount where the area bars its kind, or arriving on foot
+    /// through a warp into one.
     pub mount_barred_here: String,
     /// What a player is told calling a mount that floats at a spot where nothing floats it.
     pub no_water_in_reach: String,
-    /// What a rider is told calling a mount, or asking for a seat on one.
+    /// What a rider is told calling a mount.
     pub step_off_first: String,
     /// What a rider is told stepping off where no ground lies within their mount's reach.
     pub no_ground_in_reach: String,
@@ -503,22 +502,8 @@ pub struct GameWords {
     pub spot_too_far: String,
     /// What a rider is told doing what their seat on `{mount}` does not let them.
     pub not_from_mount: String,
-    /// What a request for a seat on their `{about}` from `{name}` says to its driver.
-    pub seat_asks: String,
-    /// What a request for a seat says to the player who asked `{name}` for one.
-    pub seat_asked: String,
-    /// What a player is told as `{name}` denies them a seat.
-    pub seat_denied: String,
-    /// What a player is told as their request for a seat from `{name}` runs out unanswered.
-    pub seat_lapsed: String,
-    /// What a player is told asking for a seat on a mount that has none free.
-    pub seats_taken: String,
-    /// What both are told as a seat is granted to someone no longer beside the mount.
-    pub seat_out_of_reach: String,
-    /// What a passenger is told as their driver `{name}` sets them down.
-    pub set_down_by: String,
-    /// What the plate of a driver says under their name while their mount has a seat free.
-    pub seat_free: String,
+    /// What a rider of `{mount}` is told arriving through a warp at a spot it can't be at, on foot.
+    pub mount_not_here: String,
     /// What a player is told at the door of their party's instance of `{area}`, which holds
     /// `{holds}` and does already.
     pub instance_full: String,
@@ -718,7 +703,6 @@ pub fn server_app(
                 tick::run,
                 (
                     item::pickups,
-                    mount::seat::boarding,
                     (resource::gathering, resource::work).chain(),
                     interact::interactions,
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
@@ -782,7 +766,7 @@ fn tick_planners() -> Tick {
         movement::AdvanceWalks::default(),
     ));
     tick.add((
-        mount::CarryRiders::default(),
+        mount::UnseatFallen::default(),
         stat::SettleVitals::default(),
         actor::SettleActions::default(),
         attention::MarkAttention::default(),
@@ -1236,6 +1220,7 @@ fn check_settings(loading: &mut Loading) {
         ("command_needs", &settings.words.command_needs),
         ("command_refuses", &settings.words.command_refuses),
         ("command_takes", &settings.words.command_takes),
+        ("command_cooling", &settings.words.command_cooling),
         ("game_changed", &settings.words.game_changed),
         ("gone", &settings.words.gone),
         ("kept_aside", &settings.words.kept_aside),
@@ -1285,14 +1270,7 @@ fn check_settings(loading: &mut Loading) {
         ("no_ground_in_reach", &settings.words.no_ground_in_reach),
         ("spot_too_far", &settings.words.spot_too_far),
         ("not_from_mount", &settings.words.not_from_mount),
-        ("seat_asks", &settings.words.seat_asks),
-        ("seat_asked", &settings.words.seat_asked),
-        ("seat_denied", &settings.words.seat_denied),
-        ("seat_lapsed", &settings.words.seat_lapsed),
-        ("seats_taken", &settings.words.seats_taken),
-        ("seat_out_of_reach", &settings.words.seat_out_of_reach),
-        ("set_down_by", &settings.words.set_down_by),
-        ("seat_free", &settings.words.seat_free),
+        ("mount_not_here", &settings.words.mount_not_here),
         ("instance_full", &settings.words.instance_full),
         ("instances_busy", &settings.words.instances_busy),
         ("instance_timed_out", &settings.words.instance_timed_out),

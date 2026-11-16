@@ -16,6 +16,7 @@ use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
 use crate::systems::area::{self, AreaId, transition::Discovered};
 use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::class::{Class, ClassId, NodeKey};
+use crate::systems::command::{CommandCooldowns, TerminalCommandId};
 use crate::systems::crafting::{self, RecipeKey, RecipeMasteries};
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::{self, Equipment};
@@ -87,6 +88,9 @@ pub struct CharacterSnapshot {
     /// The skills still cooling down.
     #[serde(default, skip_serializing_if = "SavedList::is_empty")]
     pub cooldowns: SavedList<SnapshotCooldown>,
+    /// The commands still cooling down.
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub command_cooldowns: SavedList<SnapshotCommandCooldown>,
     /// The spot they rise on after a fall, in the area they start in. Without it, where they
     /// start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -126,6 +130,7 @@ impl ContentFile for CharacterSnapshot {
             history: Vec::new(),
             statuses: SavedList::default(),
             cooldowns: SavedList::default(),
+            command_cooldowns: SavedList::default(),
             rises_at: None,
             start: CharacterStart::InitialSpawn(AtInitialSpawn::InitialSpawn),
         })
@@ -157,6 +162,7 @@ impl CharacterSnapshot {
             history: Vec::new(),
             statuses: SavedList::default(),
             cooldowns: SavedList::default(),
+            command_cooldowns: SavedList::default(),
             rises_at: None,
             start: CharacterStart::InitialSpawn(AtInitialSpawn::InitialSpawn),
         }
@@ -336,6 +342,13 @@ pub struct SnapshotBeat {
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SnapshotCommandCooldown {
+    pub command: TerminalCommandId,
+    pub left: Seconds,
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SnapshotCooldown {
     pub skill: SkillId,
     pub left: Seconds,
@@ -413,6 +426,7 @@ macro_rules! saved_lists {
             ("shops", $snapshot.shops.$of()),
             ("statuses", $snapshot.statuses.$of()),
             ("cooldowns", $snapshot.cooldowns.$of()),
+            ("command_cooldowns", $snapshot.command_cooldowns.$of()),
         ]
     };
 }
@@ -628,6 +642,13 @@ pub fn materialize(
                 .map(|cooling| (cooling.skill, taken.after(cooling.left)))
                 .collect(),
         ),
+        command_cooldowns: CommandCooldowns(
+            snapshot
+                .command_cooldowns
+                .iter()
+                .map(|cooling| (cooling.command, taken.after(cooling.left)))
+                .collect(),
+        ),
         statuses,
         carried,
         kept_aside: snapshot.kept_aside(),
@@ -810,6 +831,16 @@ impl CharacterSnapshot {
                 .filter(|&(_, &ready)| ready > now)
                 .map(|(&skill, &ready)| SnapshotCooldown {
                     skill,
+                    left: ready.since(now),
+                })
+                .collect(),
+            command_cooldowns: state
+                .command_cooldowns
+                .0
+                .iter()
+                .filter(|&(_, &ready)| ready > now)
+                .map(|(&command, &ready)| SnapshotCommandCooldown {
+                    command,
                     left: ready.since(now),
                 })
                 .collect(),

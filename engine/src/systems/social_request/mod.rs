@@ -44,7 +44,6 @@ pub fn register(app: &mut App) {
 pub enum SocialRequestKind {
     Friendship,
     PartyInvitation,
-    Seat,
 }
 
 /// Who an account takes requests from. The server keeps it with the account and holds every

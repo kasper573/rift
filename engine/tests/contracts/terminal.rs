@@ -377,6 +377,7 @@ fn option(text: &str, detail: &str) -> bevy_terminal::TerminalOption {
     bevy_terminal::TerminalOption {
         text: text.to_owned(),
         detail: detail.to_owned(),
+        muted: false,
     }
 }
 

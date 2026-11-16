@@ -49,6 +49,7 @@ impl QueryGroup {
             | RiftQueryKind::MastersRecipe
             | RiftQueryKind::InParty
             | RiftQueryKind::Riding
+            | RiftQueryKind::InCombat
             | RiftQueryKind::InInstance
             | RiftQueryKind::InstanceHolds => QueryGroup::Character,
             RiftQueryKind::Holding

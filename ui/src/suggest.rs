@@ -8,10 +8,12 @@ use egui::{
 use crate::face::TextRole;
 use crate::{float, form, ink, sheet};
 
-/// One way to go on: what would be typed, and what it is besides.
+/// One way to go on: what would be typed, what it is besides, and whether it is dimmed for being
+/// refused for now.
 pub struct Suggestion<'a> {
     pub text: &'a str,
     pub detail: &'a str,
+    pub muted: bool,
 }
 
 const ROW: f32 = 22.0;
@@ -86,12 +88,17 @@ pub fn suggestions(
                     ui.painter()
                         .rect_filled(rect, 2.0, ink::wash(ink::HONEY2, 0.45));
                 }
+                let ink = if suggestion.muted {
+                    ink::INK3
+                } else {
+                    ink::INK
+                };
                 ui.painter().text(
                     rect.left_center() + Vec2::new(PAD, 0.0),
                     Align2::LEFT_CENTER,
                     suggestion.text,
                     TextRole::Mono.font_id(),
-                    ink::INK,
+                    ink,
                 );
                 ui.painter().text(
                     rect.right_center() - Vec2::new(PAD, 0.0),

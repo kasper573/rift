@@ -98,6 +98,57 @@ impl EffectDef<RiftScripting> for Warp {
     }
 }
 
+/// Moves an actor to their spawn point in the area they stand in: where they last arrived in it,
+/// and where they come back after a fall. It is a warp like any other.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = SchemaMark::System.with("area"))]
+pub struct ReturnToSpawn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = {"type": "subject"}))]
+    pub who: Option<Condition>,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+impl EffectDef<RiftScripting> for ReturnToSpawn {
+    fn needs_subject(&self) -> bool {
+        self.who.is_none()
+    }
+    crate::outputs!(NEXT => next);
+    fn compile<'c>(
+        &'c self,
+        cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<EffectCall, ScriptFault> {
+        let who = effects::aim_anywhere(cx, &self.who)?;
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: NEXT,
+                    refused: None,
+                    nobody: Some("Nobody to warp"),
+                },
+                |world, actor| {
+                    let spawn = world.get::<SpawnPoint>(actor).map(|spawn| spawn.0);
+                    let area = world.get::<AreaTag>(actor).map(|tag| tag.area);
+                    let (Some(at), Some(area)) = (spawn, area) else {
+                        return Err("Has no spawn point".into());
+                    };
+                    warp(world, actor, Place { area, at })
+                },
+            )
+        }))
+    }
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        Vec::new()
+    }
+}
+
 /// Moves an actor to where another stands, setting its spawn point.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -161,29 +212,27 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), LineText>
     }
     dialogue::close_for(world, actor);
     reach::forget(world, actor);
-    let along = mount::warping(world, actor, to);
-    for warped in along.into_iter().chain([actor]) {
-        world.entity_mut(warped).insert(SpawnPoint(to.at));
-        if here == Some(to.area) {
-            land(world, warped, to.at);
-        } else {
-            world.entity_mut(warped).insert(Crossing {
-                dest_area: to.area,
-                dest: to.at,
-                instance: None,
-            });
-        }
+    mount::warping(world, actor, to);
+    world.entity_mut(actor).insert(SpawnPoint(to.at));
+    if here == Some(to.area) {
+        land(world, actor, to.at);
+    } else {
+        world.entity_mut(actor).insert(Crossing {
+            dest_area: to.area,
+            dest: to.at,
+            instance: None,
+        });
     }
     Ok(())
 }
 
-/// Sends a player's character on foot to `to` in another world: the instance `instance` of the
-/// place's area, or the world everyone in that area shares. Whatever they rode stays behind,
-/// and nobody who rode with them is taken along.
+/// Sends a player's character to `to` in another world: the instance `instance` of the place's
+/// area, or the world everyone in that area shares. They keep riding where their mount may be at
+/// `to`, as through any warp.
 pub fn cross(world: &mut World, character: Entity, to: Place, instance: Option<AreaInstanceWorld>) {
     dialogue::close_for(world, character);
     reach::forget(world, character);
-    mount::set_down(world, character);
+    mount::warping(world, character, to);
     world.entity_mut(character).insert((
         SpawnPoint(to.at),
         Crossing {

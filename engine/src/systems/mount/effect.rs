@@ -11,7 +11,7 @@ use crate::systems::script::event::USED_POINT;
 use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting};
 use crate::systems::skill::casting::CastAim;
 
-/// Seats an actor as the driver of a mount of their own: where they stand, or for a mount that
+/// Seats an actor on a mount of their own: where they stand, or for a mount that
 /// floats, on the water at the spot the skill that runs this was aimed at.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("mount"))]
@@ -65,7 +65,7 @@ impl EffectDef<RiftScripting> for Mount {
     }
 }
 
-/// Takes an actor off what they ride, onto the nearest ground however far that is.
+/// Takes an actor off what they ride, as stepping off does: onto ground within the mount's reach.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("mount"))]
 pub struct Dismount {
@@ -74,18 +74,23 @@ pub struct Dismount {
     pub who: Option<Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
+    /// Taken where no ground is within the mount's reach: left unwired, the rider is told why.
+    #[schemars(transform = SchemaMark::Fails.with(true))]
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub refused: Arrow,
 }
 
 impl EffectDef<RiftScripting> for Dismount {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
-    crate::outputs!(NEXT => next);
+    crate::outputs!(NEXT => next, REFUSED => refused);
     fn compile<'c>(
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
+        let refused = self.refused.clone();
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
             effects::reach(
@@ -93,11 +98,12 @@ impl EffectDef<RiftScripting> for Dismount {
                 flow,
                 cx,
                 aimed,
-                Reaching::quietly(NEXT),
-                |world, rider| {
-                    super::set_down(world, rider);
-                    Ok(())
+                Reaching {
+                    done: NEXT,
+                    refused: Some(&refused),
+                    nobody: None,
                 },
+                |world, rider| super::step_off(world, rider, None),
             )
         }))
     }

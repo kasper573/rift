@@ -1258,6 +1258,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 .map(|found| Suggestion {
                     text: &found.name,
                     detail: "",
+                    muted: false,
                 })
                 .collect();
             (format!("Show {kind} in the message"), listed)
@@ -1265,7 +1266,11 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         (None, Some(_), _) => {
             let listed = kinds
                 .iter()
-                .map(|text| Suggestion { text, detail: "" })
+                .map(|text| Suggestion {
+                    text,
+                    detail: "",
+                    muted: false,
+                })
                 .collect();
             ("Show in the message".to_owned(), listed)
         }
@@ -1276,6 +1281,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 .map(|option| Suggestion {
                     text: &option.text,
                     detail: &option.detail,
+                    muted: option.muted,
                 })
                 .collect();
             (suggested.usage.clone(), listed)

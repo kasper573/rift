@@ -1974,7 +1974,6 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
         ClickClaim::Attack(entity)
         | ClickClaim::Interact(entity)
         | ClickClaim::Aim(entity)
-        | ClickClaim::Board(entity)
         | ClickClaim::Pickup(entity)
         | ClickClaim::Gather(entity) => Some(entity),
         ClickClaim::Interface

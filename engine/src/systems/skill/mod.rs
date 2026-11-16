@@ -9,7 +9,7 @@ pub mod prompt;
 pub mod reset;
 pub mod window;
 
-pub use casting::{CastAim, UseSkill, UseSkillRequest, cast};
+pub use casting::{CastAim, CastWay, UseSkill, UseSkillRequest, cast};
 pub use hotbar::{AssignBasicAttackRequest, AssignHotbarRequest, BasicAttackPick};
 pub use learn::LearnSkillsRequest;
 pub use reset::{ResetAnswerRequest, ResetPrompt, ResetSkills};
@@ -696,18 +696,21 @@ pub fn known_from(
 /// Why an actor could not use the skill at all, whatever its aim or readiness.
 pub fn unusable(world: &World, actor: Entity, skill: SkillId) -> Option<LineText> {
     let content = world.resource::<Content>();
-    let def = skill.get(content);
     if rank_of(world, actor, skill) == Rank::NONE {
         Some(LineText::plain("You don't know ").then(Mention::Skill(skill).span(content)))
-    } else if def.kind == SkillKind::Passive {
-        Some(
-            Mention::Skill(skill)
-                .line(content)
-                .then(" is passive: it holds on its own"),
-        )
     } else {
-        None
+        passive(world, skill)
     }
+}
+
+/// Why `skill` is never cast: it is passive, and holds on its own.
+pub fn passive(world: &World, skill: SkillId) -> Option<LineText> {
+    let content = world.resource::<Content>();
+    (skill.get(content).kind == SkillKind::Passive).then(|| {
+        Mention::Skill(skill)
+            .line(content)
+            .then(" is passive: it holds on its own")
+    })
 }
 
 /// Why a passive skill takes no bar slot.

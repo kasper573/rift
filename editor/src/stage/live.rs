@@ -206,7 +206,13 @@ impl LiveWorld {
                 if let Some(mut cooldowns) = self.world.get_mut::<skill::Cooldowns>(*caster) {
                     cooldowns.0.remove(skill);
                 }
-                match casting::cast(&mut self.world, *caster, *skill, *aim, false) {
+                match casting::cast(
+                    &mut self.world,
+                    *caster,
+                    *skill,
+                    *aim,
+                    casting::CastWay::Once,
+                ) {
                     Ok(()) => {
                         *casts += 1;
                         *phase = Phase::Playing {

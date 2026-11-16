@@ -390,7 +390,14 @@ fn step(world: &mut World, npc: Entity, running: Running) -> Option<Outcome> {
                 intent.target.actor() == Some(target) && intent.cast() == Some(skill)
             });
             if !casting
-                && skill::cast(world, npc, skill, skill::CastAim::Actor(target), true).is_err()
+                && skill::cast(
+                    world,
+                    npc,
+                    skill,
+                    skill::CastAim::Actor(target),
+                    skill::CastWay::Repeated,
+                )
+                .is_err()
             {
                 return Some(Outcome::Lost);
             }

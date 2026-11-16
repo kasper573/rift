@@ -13,6 +13,7 @@ use engine::systems::actor::{Appearance, Name};
 use engine::systems::area::AreaDef;
 use engine::systems::area::transition::Discovered;
 use engine::systems::class::{Class, ClassDef, NodeKey};
+use engine::systems::command::{CommandCooldowns, TerminalCommandDef};
 use engine::systems::equipment::{Equipment, EquipmentPlace};
 use engine::systems::history::{History, HistoryEntry, HistoryTopic};
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
@@ -20,8 +21,9 @@ use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::Position;
 use engine::systems::player::snapshot::{
     AtInitialSpawn, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, JoinOrigin, MemoryValue,
-    QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCooldown, SnapshotMemory,
-    SnapshotQuest, SnapshotRecord, SnapshotShop, SnapshotSkill, SnapshotSlot, SnapshotStatus,
+    QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCommandCooldown, SnapshotCooldown,
+    SnapshotMemory, SnapshotQuest, SnapshotRecord, SnapshotShop, SnapshotSkill, SnapshotSlot,
+    SnapshotStatus,
 };
 use engine::systems::player::{CharacterState, SpawnPoint, SpawnPolicy, SpawnRules, Xp};
 use engine::systems::quest::{QuestDef, QuestLog, QuestResult};
@@ -330,10 +332,14 @@ fn what_runs_on_the_clock_ran_while_a_saved_character_was_away_and_its_effects_w
         .get::<Cooldowns>(back)
         .and_then(|cooldowns| cooldowns.ready_at(guard))
         .expect("a cooldown");
+    let wave = forest.id::<TerminalCommandDef>("wave");
+    let command_left = world
+        .get::<CommandCooldowns>(back)
+        .and_then(|cooldowns| cooldowns.left(wave, now));
     assert_eq!(
-        ready,
-        now.after(Seconds(50.0)),
-        "250 of its 300 seconds are served"
+        (ready, command_left),
+        (now.after(Seconds(50.0)), Some(Seconds(50.0))),
+        "250 of its 300 seconds are served, a skill's and a command's alike"
     );
     let log = world.get::<QuestLog>(back).expect("quest log");
     let errand = log
@@ -467,6 +473,19 @@ fn returning_to(area: &str) -> Sim {
                 "used": { "type": "on", "event": "used", "next": "mend" },
                 "mend": { "type": "heal", "who": { "type": "skill_targets" }, "by": 1.0 },
             }),
+        )
+        .script(
+            "waves",
+            "command",
+            json!({
+                "sent": { "type": "on", "event": "invoked", "next": "wave" },
+                "wave": { "type": "heal", "by": 1.0 },
+            }),
+        )
+        .row(
+            "command",
+            "wave",
+            json!({ "script": "waves.script.json", "cooldown": 600.0 }),
         )
         .row(
             "skill",
@@ -610,6 +629,11 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         statuses: SavedList::default(),
         cooldowns: vec![SnapshotCooldown {
             skill: id(content, "guard"),
+            left: Seconds(300.0),
+        }]
+        .into(),
+        command_cooldowns: vec![SnapshotCommandCooldown {
+            command: id(content, "wave"),
             left: Seconds(300.0),
         }]
         .into(),
