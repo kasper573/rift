@@ -31,6 +31,7 @@ use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Motion, Playing, Pose};
 use engine::systems::area::{self, AreaDef, AreaTag};
+use engine::systems::identity::{self, GlobalId, Names};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
 use serde_json::json;
@@ -1036,6 +1037,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         .area("field", &Map::open(5, 5), json!([]))
         .sfx("whoosh")
         .sfx("thud")
+        .sfx("crash")
         .skeleton_of(
             BODY,
             &testkit::rig_clips(),
@@ -1044,6 +1046,10 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
                 {
                     "clip": testkit::clip("attack"),
                     "cues": [{ "at": APEX.0, "apex": true, "sound": path("sfx", "whoosh") }],
+                },
+                {
+                    "clip": testkit::clip("death"),
+                    "cues": [{ "at": 0.0, "sound": path("sfx", "crash") }],
                 },
             ] }),
         )
@@ -1063,6 +1069,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     let hurrier = Pos::new(1.5, 3.5);
     let striker = Pos::new(3.5, 3.5);
     let worker = Pos::new(3.5, 1.5);
+    let fallen = Pos::new(2.5, 2.5);
     let thud = content
         .by_path::<SfxDef>(&path("sfx", "thud"))
         .expect("the thud sound");
@@ -1071,6 +1078,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         (hurrier, Action::Walk, WALK_PACE * 2.0),
         (striker, Action::Attack, MetersPerSec::default()),
         (worker, Action::Attack, MetersPerSec::default()),
+        (fallen, Action::Dead, MetersPerSec::default()),
     ] {
         let stroke = (at == worker).then_some(Playing {
             motion: Motion::Action(Action::Attack),
@@ -1099,26 +1107,41 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         if let Some(stroke) = stroke {
             body.insert(stroke);
         }
+        if at == fallen {
+            body.insert(Names::for_world(0).give());
+        }
     }
 
     let mut heard: Vec<(Pos<Meters>, SfxId)> = Vec::new();
-    for _ in 0..12 {
-        app.update();
-        app.world_mut()
-            .run_system_cached(render::pose)
-            .expect("posed");
-        heard.extend(
+    let mut listen = |app: &mut App| {
+        for _ in 0..12 {
+            app.update();
             app.world_mut()
-                .resource_mut::<Messages<PlaySfx>>()
-                .drain()
-                .map(|sound| match sound.place {
-                    SfxPlace::World(at) => (at, sound.id),
-                    SfxPlace::Afar { .. } | SfxPlace::Interface => {
-                        panic!("a body sounds where it stands")
-                    }
-                }),
-        );
+                .run_system_cached(render::pose)
+                .expect("posed");
+            heard.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<PlaySfx>>()
+                    .drain()
+                    .map(|sound| match sound.place {
+                        SfxPlace::World(at) => (at, sound.id),
+                        SfxPlace::Afar { .. } | SfxPlace::Interface => {
+                            panic!("a body sounds where it stands")
+                        }
+                    }),
+            );
+        }
+    };
+    listen(&mut app);
+    let world = app.world_mut();
+    let taken_away: Vec<Entity> = world
+        .query_filtered::<Entity, With<GlobalId>>()
+        .iter(world)
+        .collect();
+    for body in taken_away {
+        identity::vanish(world.entity_mut(body));
     }
+    listen(&mut app);
     let sfx = |name: &str| {
         content
             .by_path::<SfxDef>(&path("sfx", name))
@@ -1153,6 +1176,11 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         of(worker),
         vec![thud],
         "a stroke that lands with a sound of its own sounds that in place of its clip's"
+    );
+    assert_eq!(
+        of(fallen),
+        vec![sfx("crash")],
+        "a body falls once: what stands in for it once the server took it away lies on as it fell"
     );
 }
 

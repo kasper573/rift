@@ -179,6 +179,22 @@ fn a_slider_keeps_a_value_outside_its_range_until_slid_then_takes_a_plain_one() 
     assert!(frame(vec![Event::PointerMoved(at), press(true)], &mut value).0);
     frame(vec![press(false)], &mut value);
     assert_eq!(value, 0.5);
+
+    let click = |at: Pos2| {
+        [true, false].map(|pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        })
+    };
+    let end = slider.right_center();
+    let [down, up] = click(end);
+    frame(vec![Event::PointerMoved(end), down, up], &mut value);
+    assert_eq!(
+        value, 1.0,
+        "a click over within one frame slides it as well"
+    );
 }
 
 #[test]

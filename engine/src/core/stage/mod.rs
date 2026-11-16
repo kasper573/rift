@@ -132,8 +132,8 @@ struct PictureLook {
 /// How a picture's camera looks at the stage.
 #[derive(Clone, Copy)]
 enum Lens {
-    /// From the stage's eye over the window's middle, so a thing away from the middle is seen a
-    /// little from its side, as it would be on a table.
+    /// From the stage's eye right in front of the middle of what it shows, with perspective: a
+    /// thing turned as far one way as another is seen turned alike, wherever in the window it is.
     FromTheEye,
     /// Straight on from right in front of what it shows, with no perspective: what lies level
     /// there is seen exactly edge-on.
@@ -190,37 +190,28 @@ impl Picture {
             return;
         };
         let (near, far) = (scene.eye * DEPTH.0, scene.eye * DEPTH.1);
-        let (lens, stands, part) = match look.lens {
-            Lens::FromTheEye => (
-                Projection::Perspective(PerspectiveProjection {
-                    fov: 2.0 * (0.5 * scene.height / scene.eye).atan(),
-                    near,
-                    far,
-                    ..default()
-                }),
-                Transform::from_xyz(0.0, 0.0, scene.eye),
-                Some(*view),
-            ),
-            Lens::StraightOn => {
-                let pixels = view.full_size.y as f32 / scene.height;
-                let middle = (view.offset + view.size.as_vec2() / 2.0
-                    - view.full_size.as_vec2() / 2.0)
-                    / pixels;
-                let span = view.size.as_vec2() / pixels;
-                (
-                    Projection::Orthographic(OrthographicProjection {
-                        near,
-                        far,
-                        scaling_mode: ScalingMode::Fixed {
-                            width: span.x,
-                            height: span.y,
-                        },
-                        ..OrthographicProjection::default_3d()
-                    }),
-                    Transform::from_xyz(middle.x, -middle.y, scene.eye),
-                    None,
-                )
-            }
+        let pixels = view.full_size.y as f32 / scene.height;
+        let middle =
+            (view.offset + view.size.as_vec2() / 2.0 - view.full_size.as_vec2() / 2.0) / pixels;
+        let span = view.size.as_vec2() / pixels;
+        let stands = Transform::from_xyz(middle.x, -middle.y, scene.eye);
+        let lens = match look.lens {
+            Lens::FromTheEye => Projection::Perspective(PerspectiveProjection {
+                fov: 2.0 * (0.5 * span.y / scene.eye).atan(),
+                aspect_ratio: span.x / span.y,
+                near,
+                far,
+                ..default()
+            }),
+            Lens::StraightOn => Projection::Orthographic(OrthographicProjection {
+                near,
+                far,
+                scaling_mode: ScalingMode::Fixed {
+                    width: span.x,
+                    height: span.y,
+                },
+                ..OrthographicProjection::default_3d()
+            }),
         };
         let camera = *self.camera.get_or_insert_with(|| {
             world
@@ -252,11 +243,6 @@ impl Picture {
                 ..default()
             },
         ));
-        if let Some(mut drawn) = camera.get_mut::<Camera>()
-            && drawn.sub_camera_view != part
-        {
-            drawn.sub_camera_view = part;
-        }
         let hangs = Transform::from_translation(lamp.at);
         let light = PointLight {
             color: lamp.color,

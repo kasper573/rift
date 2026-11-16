@@ -332,7 +332,7 @@ fn apply(world: &mut World, caster: Entity, intent: ReachIntent, step: CastStep)
 
 /// Everyone reaching for a cast gives chase, at the game's chase pace.
 pub fn chase(world: &World, entity: Entity, into: &mut dyn FnMut(stat::Stat)) {
-    if reach::current(world, entity).is_some_and(|intent| intent.cast().is_some()) {
+    if reach::chasing(world, entity) {
         let base = stat::base(world, entity, stat::StatKind::MovementSpeed);
         let pace = world.resource::<GameSettings>().chase_pace;
         into(stat::StatKind::MovementSpeed.of(base * (pace - 1.0)));

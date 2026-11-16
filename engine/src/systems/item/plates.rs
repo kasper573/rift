@@ -102,6 +102,11 @@ pub struct PointedItem {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Landed(pub Seconds);
 
+/// When the pointer last rested on the names of the pile an item lies in, by the world's clock:
+/// a name does not run out under the pointer, where the pile's column would shift beneath it.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+struct Rested(Seconds);
+
 /// The items named now and why, the highest ranks first and then the nearest, and those left
 /// unnamed for want of room.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -167,9 +172,10 @@ pub fn named(world: &mut World) -> NamedItems {
             &Position,
             Option<&Reservation>,
             Option<&Landed>,
+            Option<&Rested>,
         ), Without<DropAnim>>()
         .iter(world)
-        .filter_map(|(entity, dropped, at, reservation, landed)| {
+        .filter_map(|(entity, dropped, at, reservation, landed, rested)| {
             let rarity = dropped.item.get(&content).rarity.get(&content);
             let away = eye.distance(at.pos);
             let near = away <= drops.names_reach;
@@ -180,7 +186,8 @@ pub fn named(world: &mut World) -> NamedItems {
                 Named::ByPointer
             } else if !mine {
                 return None;
-            } else if naming.as_dropped && names_itself(rarity, landed, near, now) {
+            } else if naming.as_dropped && names_itself(rarity, landed, rested, near, now).is_some()
+            {
                 Named::Unprompted
             } else {
                 return None;
@@ -431,15 +438,50 @@ const OVER_PILE: Meters = Meters(0.7);
 /// player's feet.
 const FAR_SCALE: f32 = 0.82;
 const FAR_OPACITY: f32 = 0.7;
+/// How long a name that has run out takes to fade away.
+const NAME_FADES: Seconds = Seconds(0.6);
 const MUTED: Color32 = Color32::from_rgb(150, 150, 156);
 const TIE: Color32 = Color32::from_rgba_premultiplied(70, 70, 70, 70);
 
-fn names_itself(rarity: &ItemRarityDef, landed: Option<&Landed>, near: bool, now: Seconds) -> bool {
+/// How strongly an item's rarity names it by itself, of 1, if it does: wholly for as long as the
+/// name lasts, counted from when the item landed or the pointer last rested on its pile, and
+/// ever fainter while it then fades away.
+fn names_itself(
+    rarity: &ItemRarityDef,
+    landed: Option<&Landed>,
+    rested: Option<&Rested>,
+    near: bool,
+    now: Seconds,
+) -> Option<f32> {
     match rarity.dropped.named {
-        DropNaming::OnKey => false,
-        DropNaming::Always => near,
-        DropNaming::For { seconds } => landed.is_some_and(|landed| now - landed.0 < seconds),
+        DropNaming::OnKey => None,
+        DropNaming::Always => near.then_some(1.0),
+        DropNaming::For { seconds } => {
+            let lasts = landed.map(|landed| landed.0 + seconds);
+            let until = match (lasts, rested.map(|rested| rested.0)) {
+                (Some(lasts), Some(rested)) if rested > lasts => rested,
+                (lasts, rested) => lasts.or(rested)?,
+            };
+            let faded = (now - until).ratio(NAME_FADES).clamp(0.0, 1.0);
+            (faded < 1.0).then_some(1.0 - faded)
+        }
     }
+}
+
+/// How strongly the plate of `item` shows, of 1: a name its rarity gave it fades as it runs out.
+fn strength(world: &World, content: &Content, item: Entity, near: bool, now: Seconds) -> f32 {
+    world
+        .get::<DroppedItem>(item)
+        .and_then(|dropped| {
+            names_itself(
+                dropped.item.get(content).rarity.get(content),
+                world.get::<Landed>(item),
+                world.get::<Rested>(item),
+                near,
+                now,
+            )
+        })
+        .unwrap_or(0.0)
 }
 
 fn read_naming_key(world: &mut World) {
@@ -482,6 +524,7 @@ fn draw_plates(world: &mut World) {
     let pointed = *world.resource::<PointedItem>();
     let full = bag_refuses(world, &content, pointed.item);
     let now = time::server_now(world);
+    let uptime = time::uptime(world);
     let fades_for = content.built::<GameSettings>().drops.fades_for;
     let screen = gui.content_rect();
     let mut drawn = DrawnPlates::default();
@@ -498,6 +541,7 @@ fn draw_plates(world: &mut World) {
         });
         let scale = 1.0 + (FAR_SCALE - 1.0) * far;
         let opacity = 1.0 + (FAR_OPACITY - 1.0) * far;
+        let near = far < 1.0;
         let mut lines: Vec<PlateLook> = column
             .lines
             .iter()
@@ -525,6 +569,14 @@ fn draw_plates(world: &mut World) {
                     mine: line.mine,
                     hovered,
                     leaving,
+                    strength: match line.why {
+                        Named::Unprompted => line
+                            .items
+                            .iter()
+                            .map(|item| strength(world, &content, *item, near, uptime))
+                            .fold(0.0, f32::max),
+                        Named::ByKey | Named::ByPointer => 1.0,
+                    },
                     note: (hovered && full)
                         .then(|| content.built::<GameSettings>().words.needs_a_slot.clone())
                         .or_else(|| line.whose.clone()),
@@ -601,23 +653,24 @@ fn draw_plates(world: &mut World) {
         .show(&gui, |ui| {
             for column in &laid {
                 ui.set_opacity(column.opacity);
-                let painter = ui.painter();
-                painter.line_segment(
+                ui.painter().line_segment(
                     [
                         Pos2::new(column.rect.center().x, column.rect.bottom()),
                         column.foot,
                     ],
                     Stroke::new(1.0, TIE),
                 );
-                for (at, line) in &column.lines {
-                    line.paint(painter, *at);
-                }
                 if let Some((at, kinds)) = column.chip {
-                    paint_chip(painter, at, kinds, column.scale);
+                    paint_chip(ui.painter(), at, kinds, column.scale);
+                }
+                for (at, line) in &column.lines {
+                    ui.set_opacity(column.opacity * line.strength);
+                    line.paint(ui.painter(), *at);
                 }
             }
         });
     open_pile(world, &drawn, pointer);
+    rest_on_pile(world, &drawn, pointer, uptime);
     world.insert_resource(drawn);
     outline(world, &named);
 }
@@ -669,6 +722,29 @@ fn open_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>) {
         on_chip.map(|column| column.folded.clone()).or_else(kept)
     });
     world.insert_resource(OpenedPile(opened.unwrap_or_default()));
+}
+
+/// Notes the pointer resting on the names of a pile, on every item named there.
+fn rest_on_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>, now: Seconds) {
+    let Some(column) = pointer.and_then(|pointer| {
+        drawn
+            .columns
+            .iter()
+            .find(|column| column.rect.contains(pointer))
+    }) else {
+        return;
+    };
+    let named: Vec<Entity> = drawn
+        .plates
+        .iter()
+        .filter(|plate| column.rect.contains(plate.rect.center()))
+        .flat_map(|plate| plate.items.iter().copied())
+        .collect();
+    for item in named {
+        if let Ok(mut item) = world.get_entity_mut(item) {
+            item.insert(Rested(now));
+        }
+    }
 }
 
 /// Whether the player's bag has no room for `item`, as taking it would find out.
@@ -724,6 +800,8 @@ struct PlateLook {
     mine: bool,
     hovered: bool,
     leaving: bool,
+    /// How strongly it shows, of 1.
+    strength: f32,
     note: Option<String>,
     scale: f32,
 }

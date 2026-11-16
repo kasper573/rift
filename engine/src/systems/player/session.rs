@@ -8,7 +8,8 @@ use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::clouds::CloudDrift;
 use crate::core::time::{self, DayClock, ServerClock, WeatherClock};
-use crate::systems::{identity, stat};
+use crate::systems::identity::{self, Lingering};
+use crate::systems::stat;
 
 pub struct ClientSessionPlugin;
 
@@ -88,14 +89,17 @@ fn record_welcome(
 
 fn track_character(
     me: Res<MyClient>,
-    characters: Query<(Entity, &PlayedBy)>,
+    characters: Query<(Entity, &PlayedBy, Has<Lingering>)>,
     mut mine: ResMut<MyCharacter>,
 ) {
+    // The stand-in of the character a world despawned is the client's only until the next
+    // world's has come, and may linger on beside it as it fades.
     let my_character = me.0.and_then(|client| {
         characters
             .iter()
-            .find(|(_, owner)| owner.client == client)
-            .map(|(character, _)| character)
+            .filter(|(_, owner, _)| owner.client == client)
+            .min_by_key(|(_, _, lingering)| *lingering)
+            .map(|(character, ..)| character)
     });
     if mine.0 != my_character {
         mine.0 = my_character;

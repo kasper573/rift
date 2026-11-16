@@ -40,7 +40,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::audio::Hearing;
 use crate::core::audio::mix::AudioCategory;
-use crate::core::audio::playback::Listener;
+use crate::core::audio::playback::{self, Listener};
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
@@ -761,6 +761,10 @@ pub struct ProbeShop {
     pub shop: ShopId,
     pub offers: Vec<ProbeOffer>,
     pub buyback: Vec<ProbeStack>,
+    /// What the player has set out to sell, stack by stack.
+    pub offered: Vec<ProbeStack>,
+    /// What the shop pays for all that is offered.
+    pub pays: Vec<ProbeStack>,
 }
 
 /// The prompt before the player and what they have placed in its tray.
@@ -995,6 +999,8 @@ pub struct ProbeWeather {
 pub struct ProbeSoundscape {
     pub zones: Vec<ProbeSoundZone>,
     pub voices: Vec<ProbeVoice>,
+    /// Every sound effect that sounds right now, by its file, once for each time it plays.
+    pub effects: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -1199,6 +1205,7 @@ fn publish(world: &mut World) {
 fn snapshot(world: &mut World) -> ProbeSnapshot {
     let content = world.resource::<Content>().clone();
     let me = session::me(world);
+    let offered_sale = shop::counter::offered(world);
     let area = me
         .and_then(|seen| world.get::<AreaTag>(seen))
         .map(|tag| tag.area);
@@ -1352,32 +1359,36 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 progress: crafting::panel::progress(world),
             }
         }),
-        shop: shop::counter::view(world).map(|shown| ProbeShop {
-            shop: shown.shop,
-            offers: shown
-                .shop
-                .get(&content)
-                .sells()
-                .zip(&shown.offers)
-                .map(|(offer, view)| ProbeOffer {
-                    item: offer.item,
-                    count: offer.count,
-                    left: view.left,
-                    refusal: view
-                        .refusal
-                        .as_ref()
-                        .map(|refusal| refusal.describe(&content)),
-                })
-                .collect(),
-            buyback: shown
-                .buyback
-                .iter()
-                .map(|buyback| ProbeStack {
-                    item: buyback.sale.item,
-                    count: buyback.sale.count,
-                })
-                .collect(),
-        }),
+        shop: shop::counter::view(world)
+            .zip(offered_sale)
+            .map(|(shown, sale)| ProbeShop {
+                offered: sale.stacks.iter().map(probe_stack).collect(),
+                pays: sale.pays.iter().map(probe_stack).collect(),
+                shop: shown.shop,
+                offers: shown
+                    .shop
+                    .get(&content)
+                    .sells()
+                    .zip(&shown.offers)
+                    .map(|(offer, view)| ProbeOffer {
+                        item: offer.item,
+                        count: offer.count,
+                        left: view.left,
+                        refusal: view
+                            .refusal
+                            .as_ref()
+                            .map(|refusal| refusal.describe(&content)),
+                    })
+                    .collect(),
+                buyback: shown
+                    .buyback
+                    .iter()
+                    .map(|buyback| ProbeStack {
+                        item: buyback.sale.item,
+                        count: buyback.sale.count,
+                    })
+                    .collect(),
+            }),
         bag: me
             .and_then(|seen| world.get::<Inventory>(seen))
             .map(|inventory| {
@@ -1499,6 +1510,7 @@ fn weather(world: &World, area: AreaId, me: Option<Entity>) -> Option<ProbeWeath
 }
 
 fn soundscape(world: &World) -> ProbeSoundscape {
+    let content = world.resource::<Content>();
     let listener = world.resource::<Listener>().0;
     let hearing = world.get_resource::<Hearing>();
     ProbeSoundscape {
@@ -1523,6 +1535,10 @@ fn soundscape(world: &World) -> ProbeSoundscape {
                     })
                     .collect(),
             })
+            .collect(),
+        effects: playback::sounding(world)
+            .into_iter()
+            .map(|sfx| sfx.path(content).to_owned())
             .collect(),
         voices: world
             .resource::<SoundscapeMixer>()
@@ -2275,4 +2291,11 @@ fn vfx_seen(world: &mut World) -> Vec<ProbeVfx> {
             over: now.zip(seen.over()).is_some_and(|(now, over)| over <= now),
         })
         .collect()
+}
+
+fn probe_stack(stack: &ItemStack) -> ProbeStack {
+    ProbeStack {
+        item: stack.item,
+        count: stack.count,
+    }
 }

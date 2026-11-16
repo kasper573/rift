@@ -11,6 +11,7 @@ use engine::core::units::MeterPos;
 use engine::systems::account::{AccountIdentity, RoleDef};
 use engine::systems::chat::{ChatChannel, ChatEmbed, ChatEmbedKind, ChatSpeaker};
 use engine::systems::input::map::InputMap;
+use engine::systems::player::{self, AreaDrawn};
 use engine::systems::terminal::draft::ChatDraft;
 use engine::systems::{chat, command, movement, region, script};
 use serde_json::{Value, json};
@@ -70,6 +71,8 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
         at.distance(theirs).0 < 1.5,
         "an actor is warped to where another stands: {at:?} by {theirs:?}"
     );
+    let conn = sim.conn(1);
+    sim.send(conn, AreaDrawn);
 
     send(&mut sim, 2, "/commands");
     sim.tick();
@@ -612,6 +615,7 @@ fn serving(content: Content, area: &str) -> Sim {
     sim.serve(area)
         .accept::<TerminalInput>()
         .accept::<TerminalCompletionRequest>()
+        .accept::<AreaDrawn>()
         .message::<bevy_terminal::TerminalSaid>()
         .message::<bevy_terminal::TerminalCommanded>()
         .message::<ToClient<TerminalLine>>()
@@ -624,6 +628,7 @@ fn serving(content: Content, area: &str) -> Sim {
             command::run,
             command::retire,
             command::complete::answer,
+            player::arrival_holds,
         ))
         .plan(script::RunFlows::default());
     chat::route_lines(&mut sim.world);

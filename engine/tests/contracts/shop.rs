@@ -5,7 +5,7 @@ use engine::core::time::WallClock;
 use engine::core::units::Seconds;
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
-use engine::systems::item::{ItemDef, ItemStack};
+use engine::systems::item::{ItemDef, ItemStack, SlotStack};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::NpcDef;
 use engine::systems::region;
@@ -112,27 +112,20 @@ fn a_collector_pays_in_his_own_currency_for_all_or_part_of_a_stack_and_buyback_c
     let conn = sim.conn(1);
     let tusk = sim.slot_of(player, "tusk");
     let one_tusk = ItemStack::new(sim.id::<ItemDef>("tusk"), 1);
-    sim.send(
-        conn,
-        ShopRequest::Sell {
-            slot: tusk,
-            stack: one_tusk,
-        },
-    );
+    sim.send(conn, selling(&[(tusk, one_tusk)]));
     sim.tick();
     assert_eq!(sim.count(player, "tusk"), 1);
 
     let bones = sim.slot_of(player, "bone");
     let bone = sim.id::<ItemDef>("bone");
     let before = shown(&sim, player).expect("open");
-    for refused in [ItemStack::new(bone, 8), one_tusk] {
-        sim.send(
-            conn,
-            ShopRequest::Sell {
-                slot: bones,
-                stack: refused,
-            },
-        );
+    let refused: [&[(u32, ItemStack)]; 3] = [
+        &[(bones, ItemStack::new(bone, 8))],
+        &[(bones, one_tusk)],
+        &[(bones, ItemStack::new(bone, 2)), (tusk, one_tusk)],
+    ];
+    for refused in refused {
+        sim.send(conn, selling(refused));
     }
     sim.tick();
     assert_eq!(sim.count(player, "bone"), 7);
@@ -140,17 +133,11 @@ fn a_collector_pays_in_his_own_currency_for_all_or_part_of_a_stack_and_buyback_c
     let refused = shown(&sim, player).expect("open");
     assert_eq!(
         refused.answered,
-        before.answered + 2,
+        before.answered + 3,
         "a request that changes nothing is answered all the same"
     );
 
-    sim.send(
-        conn,
-        ShopRequest::Sell {
-            slot: bones,
-            stack: ItemStack::new(bone, 3),
-        },
-    );
+    sim.send(conn, selling(&[(bones, ItemStack::new(bone, 3))]));
     sim.tick();
     assert_eq!(sim.count(player, "bone"), 4);
     assert_eq!(sim.count(player, "token"), 3);
@@ -159,25 +146,29 @@ fn a_collector_pays_in_his_own_currency_for_all_or_part_of_a_stack_and_buyback_c
     assert_eq!(part.buyback[0].sale.count, 3);
 
     let bones = sim.slot_of(player, "bone");
+    let rest = [
+        (bones, ItemStack::new(bone, 1)),
+        (bones, ItemStack::new(bone, 3)),
+    ];
     for _ in 0..2 {
-        sim.send(
-            conn,
-            ShopRequest::Sell {
-                slot: bones,
-                stack: ItemStack::new(bone, 4),
-            },
-        );
+        sim.send(conn, selling(&rest));
     }
     sim.tick();
     assert_eq!(sim.count(player, "bone"), 0);
     assert_eq!(sim.count(player, "token"), 7);
-    assert_eq!(shown(&sim, player).expect("open").buyback.len(), 2);
+    let sold = shown(&sim, player).expect("open");
+    assert_eq!(
+        sold.buyback.len(),
+        3,
+        "every stack sold is its own to buy back"
+    );
+    assert_eq!(sold.buyback[0].sale.count, 3);
 
     sim.send(conn, ShopRequest::Buyback { sale: 0 });
     sim.tick();
-    assert_eq!(sim.count(player, "bone"), 4);
-    assert_eq!(sim.count(player, "token"), 3);
-    assert_eq!(shown(&sim, player).expect("open").buyback.len(), 1);
+    assert_eq!(sim.count(player, "bone"), 3);
+    assert_eq!(sim.count(player, "token"), 4);
+    assert_eq!(shown(&sim, player).expect("open").buyback.len(), 2);
 }
 
 #[test]
@@ -248,6 +239,16 @@ fn a_map_object_can_keep_a_shop() {
     sim.tick();
     assert_eq!(sim.count(player, "steak"), 1);
     assert_eq!(sim.count(player, "gold"), 0);
+}
+
+/// A sale of every one of `stacks`, each out of the slot of the bag it is paired with.
+fn selling(stacks: &[(u32, ItemStack)]) -> ShopRequest {
+    ShopRequest::Sell {
+        stacks: stacks
+            .iter()
+            .map(|&(slot, stack)| SlotStack { slot, stack })
+            .collect(),
+    }
 }
 
 fn market() -> Sim {

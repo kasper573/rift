@@ -6,6 +6,7 @@ use crate::core::math::Pos;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::movement::{self, Aim, Approach, ApproachPlan, Berths, position};
+use crate::systems::player::PlayedBy;
 use crate::systems::skill::SkillId;
 use crate::systems::{stat, visibility};
 
@@ -20,17 +21,53 @@ pub struct ReachIntent {
 #[derive(Component, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
 pub struct Engaged(#[entities] pub Entity);
 
+/// A player's character reaching for a cast, told to its own client alone: the walk a client
+/// shows of its own character runs ahead of the server's, and keeps the chase's pace only when it
+/// knows of the chase.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Chasing;
+
 pub fn register(app: &mut bevy_app::App) {
     use bevy_replication::AppReplicationExt;
-    app.replicate::<Engaged>();
+    app.replicate::<Engaged>().replicate_private::<Chasing>();
 }
 
-/// Keeps every character's `Engaged` in step with the actor its cast intent aims at.
+/// Whether the actor is reaching for a cast: by its intent where the world holds one, or as the
+/// server told the client that plays it.
+pub fn chasing(world: &World, actor: Entity) -> bool {
+    current(world, actor).is_some_and(|intent| intent.cast().is_some())
+        || world.get::<Chasing>(actor).is_some()
+}
+
+/// Keeps every character's `Engaged` in step with the actor its cast intent aims at, and every
+/// player's `Chasing` with whether it reaches for a cast at all.
 pub fn mirror_engaged(
     world: &mut World,
     intents: &mut Intents,
     engaged: &mut QueryState<(Entity, &Engaged)>,
+    chasing: &mut QueryState<Entity, With<Chasing>>,
 ) {
+    let casting: std::collections::HashSet<Entity> = intents
+        .iter(world)
+        .filter(|(actor, intent)| {
+            intent.cast().is_some() && world.get::<PlayedBy>(*actor).is_some()
+        })
+        .map(|(actor, _)| actor)
+        .collect();
+    let rested: Vec<Entity> = chasing
+        .iter(world)
+        .filter(|actor| !casting.contains(actor))
+        .collect();
+    for actor in rested {
+        world.entity_mut(actor).remove::<Chasing>();
+    }
+    let set_off: Vec<Entity> = casting
+        .into_iter()
+        .filter(|actor| world.get::<Chasing>(*actor).is_none())
+        .collect();
+    for actor in set_off {
+        world.entity_mut(actor).insert(Chasing);
+    }
     let mut wanted: std::collections::HashMap<Entity, Entity> = intents
         .iter(world)
         .filter(|(_, intent)| intent.cast().is_some())

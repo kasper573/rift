@@ -19,7 +19,7 @@ use crate::systems::area::TimeOfDayName;
 use crate::systems::attention::AttentionId;
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::item::{
-    ExchangeRefusal, Inventory, ItemCategory, ItemId, ItemModuleKind, ItemStack,
+    ExchangeRefusal, Inventory, ItemCategory, ItemId, ItemModuleKind, ItemStack, SlotStack,
 };
 use crate::systems::player::conn_player;
 use crate::systems::script::condition::Wording;
@@ -390,11 +390,18 @@ impl ShopLedger {
     }
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ShopRequest {
-    Buy { offer: u32 },
-    Sell { slot: u32, stack: ItemStack },
-    Buyback { sale: u32 },
+    Buy {
+        offer: u32,
+    },
+    /// Sells every one of `stacks` or none of them, each out of the slot of the bag it names.
+    Sell {
+        stacks: Vec<SlotStack>,
+    },
+    Buyback {
+        sale: u32,
+    },
 }
 
 #[derive(Component)]
@@ -455,7 +462,7 @@ pub fn requests(world: &mut World) {
         }
         match request.message {
             ShopRequest::Buy { offer } => buy(world, player, offer),
-            ShopRequest::Sell { slot, stack } => sell(world, player, slot, stack),
+            ShopRequest::Sell { stacks } => sell(world, player, &stacks),
             ShopRequest::Buyback { sale } => buy_back(world, player, sale),
         }
         if let Some(mut visit) = world.get_mut::<ShopVisit>(player) {
@@ -681,47 +688,57 @@ fn buy(world: &mut World, player: Entity, index: u32) {
     );
 }
 
-fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
+fn sell(world: &mut World, player: Entity, stacks: &[SlotStack]) {
     let content = world.resource::<Content>().clone();
     let Some(shop) = visiting(world, player) else {
         return;
     };
-    let held = world
-        .get::<Inventory>(player)
-        .and_then(|inventory| inventory.slots.get(slot as usize).copied());
-    if !held.is_some_and(|held| held.item == stack.item && (1..=held.count).contains(&stack.count))
-    {
+    let Some(mut inventory) = world.get::<Inventory>(player).cloned() else {
+        return;
+    };
+    if stacks.is_empty() || !inventory.take_out(stacks) {
         return;
     }
     let declined = declined(world, player, shop);
-    let paid: Vec<ItemStack> = match shop.get(&content).pays_for(&content, stack.item, &declined) {
-        Ok(pays) => pays
-            .iter()
-            .map(|pay| ItemStack::new(pay.item, pay.count.saturating_mul(stack.count)))
-            .collect(),
-        Err(refusal) => {
-            notification::error(world, player, refusal);
-            return;
+    let mut sales = Vec::new();
+    for SlotStack { stack, .. } in stacks {
+        match shop.get(&content).pays_for(&content, stack.item, &declined) {
+            Ok(pays) => sales.push(Sale {
+                item: stack.item,
+                count: stack.count,
+                paid: pays
+                    .iter()
+                    .map(|pay| ItemStack::new(pay.item, pay.count.saturating_mul(stack.count)))
+                    .collect(),
+            }),
+            Err(refusal) => {
+                notification::error(world, player, refusal);
+                return;
+            }
         }
-    };
-    if let Err(refusal) = trade(world, player, &[stack], &paid) {
-        notification::error(world, player, refusal);
+    }
+    let paid: Vec<ItemStack> = sales
+        .iter()
+        .flat_map(|sale| sale.paid.iter().copied())
+        .collect();
+    if let Err(refusal) = inventory.exchange(&content, &[], &paid) {
+        notification::error(world, player, refusal.describe(&content));
         return;
     }
-    let kept = shop.get(world.resource::<Content>()).buys_back;
+    if let Some(mut held) = world.get_mut::<Inventory>(player) {
+        *held = inventory;
+    }
+    let kept = shop.get(&content).buys_back;
     let mut ledger = world.entity_mut(player);
     let mut ledger = ledger.entry::<ShopLedger>().or_default().into_mut();
-    ledger.record_sale(
-        shop,
-        Sale {
-            item: stack.item,
-            count: stack.count,
-            paid,
-        },
-        kept,
-    );
+    for sale in &sales {
+        ledger.record_sale(shop, sale.clone(), kept);
+    }
     react(world, player, |reactions| &reactions.sold);
-    traded(world, player, shop, EventKind::Sold, stack);
+    for sale in sales {
+        let sold = ItemStack::new(sale.item, sale.count);
+        traded(world, player, shop, EventKind::Sold, sold);
+    }
 }
 
 fn buy_back(world: &mut World, player: Entity, index: u32) {

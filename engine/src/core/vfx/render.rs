@@ -51,6 +51,7 @@ use crate::core::render::world::decal::LIFT;
 use crate::core::render::world::lights;
 use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::opacity::Opacity;
+use crate::core::render::world::outline::Unoutlined;
 use crate::core::render::world::terrain;
 use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
 use crate::core::time::server_now;
@@ -1086,7 +1087,9 @@ fn attach(world: &mut World, entity: Entity, def: &VfxDef, content: &Content) ->
 
 fn attach_pieces(world: &mut World, entity: Entity, pieces: Vec<Entity>) {
     for piece in &pieces {
-        world.entity_mut(*piece).insert(ChildOf(entity));
+        world
+            .entity_mut(*piece)
+            .insert((ChildOf(entity), Unoutlined));
     }
     world.entity_mut(entity).insert((
         VfxView { pieces },

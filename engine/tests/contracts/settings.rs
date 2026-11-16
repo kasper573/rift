@@ -27,7 +27,7 @@ const SAVED_BY_THE_OLD_INTERFACE: &str = r#"{
   },
   "text": { "letters_per_second": 42.0 },
   "sound": { "master": 0.25, "music": 0.5, "ambience": 0.5, "effects": 0.5, "voice": 0.75 },
-  "screen": { "transition": "Crumble", "frame_rate": true },
+  "screen": { "transition": "Mosaic", "frame_rate": true },
   "skills": { "quick_cast": true },
   "camera": { "turn_ease": null }
 }"#;
@@ -58,6 +58,7 @@ fn settings_saved_by_an_older_interface_keep_what_still_applies_and_lose_what_is
         "\"character\"",
         "\"compass\"",
         "\"quests\"",
+        "\"Mosaic\"",
         "KeyQ",
     ] {
         assert!(!saved.contains(gone), "{gone} is gone from:\n{saved}");

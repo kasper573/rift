@@ -342,22 +342,24 @@ pub fn hold_arrival(world: &mut World, actor: Entity) {
 }
 
 pub fn arrival_holds(world: &mut World) {
-    for request in drain_requests::<AreaDrawn>(world) {
-        if let Some(player) = conn_player(world, request.client)
-            && let Ok(mut player) = world.get_entity_mut(player)
-        {
-            player.remove::<ArrivalHold>();
-        }
-    }
-    let now = time::uptime(world);
-    let expired: Vec<Entity> = world
-        .query::<(Entity, &ArrivalHold)>()
-        .iter(world)
-        .filter(|(_, hold)| hold.until <= now)
-        .map(|(entity, _)| entity)
+    let mut arrived: Vec<Entity> = drain_requests::<AreaDrawn>(world)
+        .into_iter()
+        .filter_map(|request| conn_player(world, request.client))
         .collect();
-    for entity in expired {
-        world.entity_mut(entity).remove::<ArrivalHold>();
+    let now = time::uptime(world);
+    arrived.extend(
+        world
+            .query::<(Entity, &ArrivalHold)>()
+            .iter(world)
+            .filter(|(_, hold)| hold.until <= now)
+            .map(|(entity, _)| entity),
+    );
+    for player in arrived {
+        if let Ok(mut held) = world.get_entity_mut(player)
+            && held.take::<ArrivalHold>().is_some()
+        {
+            notification::tell_withheld(world, player);
+        }
     }
 }
 

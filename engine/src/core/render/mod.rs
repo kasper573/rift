@@ -15,8 +15,6 @@ pub use camera::{
 };
 pub use pick::{Pointed, capsule_hit, pointed};
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
 use bevy::render::view::NoIndirectDrawing;
 use bevy::sprite_render::Material2dPlugin;
@@ -122,25 +120,26 @@ fn take_look(world: &mut World) {
     present::take_look(world, &look);
 }
 
-/// Where each entity's animation stands: the state it is in, and the turn of the state's clips it
-/// is on, each turn picked at random by its own hand, since which clip shows is for the eye alone.
+/// Picks each turn of a state's clips at random by its own hand, since which clip shows is for
+/// the eye alone.
 #[derive(Resource)]
 pub struct Animator {
-    anchors: HashMap<Entity, Anchor>,
     rng: Rng,
 }
 
 impl FromWorld for Animator {
     fn from_world(world: &mut World) -> Animator {
         Animator {
-            anchors: HashMap::new(),
             rng: Rng::fork_of(world),
         }
     }
 }
 
-#[derive(Clone, Copy)]
-struct Anchor {
+/// Where an entity's animation stands: the state it is in, and the turn of the state's clips it
+/// is on. It lies on the entity, so whatever takes over the entity's depiction plays on from
+/// where it stood.
+#[derive(Component, Clone, Copy)]
+pub struct AnimationAnchor {
     state: u64,
     turn: ClipTurn,
     since: Seconds,
@@ -186,20 +185,20 @@ impl Animator {
     /// loops: a state that begins anywhere begins a random way into its first turn, so no two
     /// entities move in step.
     pub fn advance(
-        &mut self,
+        world: &mut World,
         entity: Entity,
         state: u64,
         time: Seconds,
         loops: Option<Loops>,
     ) -> Playhead {
-        let (mut previous, mut anchor) = match self.anchors.get(&entity).copied() {
+        let (mut previous, mut anchor) = match world.get::<AnimationAnchor>(entity).copied() {
             Some(anchor) if anchor.state == state => (Previous::Continued(anchor.played), anchor),
             seen => (
                 match seen {
                     Some(_) => Previous::Restarted,
                     None => Previous::Unseen,
                 },
-                Anchor {
+                AnimationAnchor {
                     state,
                     turn: ClipTurn { pick: 0, plays: 1 },
                     since: time,
@@ -213,13 +212,14 @@ impl Animator {
             mut turns,
         }) = loops
         {
+            let rng = &mut world.resource_mut::<Animator>().rng;
             let lasts = |turn: ClipTurn| length(turn.pick) * turn.plays as f32;
             if previous != Previous::Continued(anchor.played) {
                 if let Some(next) = turns.as_mut() {
-                    anchor.turn = next(None, &mut self.rng);
+                    anchor.turn = next(None, rng);
                 }
                 if anywhere(anchor.turn.pick) {
-                    anchor.since = time - lasts(anchor.turn) * self.rng.rand_float();
+                    anchor.since = time - lasts(anchor.turn) * rng.rand_float();
                 }
             }
             if let Some(next) = turns {
@@ -229,22 +229,23 @@ impl Animator {
                         break;
                     }
                     anchor.since += lasts;
-                    anchor.turn = next(Some(anchor.turn.pick), &mut self.rng);
+                    anchor.turn = next(Some(anchor.turn.pick), rng);
                     previous = Previous::Restarted;
                 }
             }
         }
         let elapsed = time - anchor.since;
         anchor.played = elapsed;
-        self.anchors.insert(entity, anchor);
+        match world.get_mut::<AnimationAnchor>(entity) {
+            Some(mut standing) => *standing = anchor,
+            None => {
+                world.entity_mut(entity).insert(anchor);
+            }
+        }
         Playhead {
             elapsed,
             previous,
             turn: anchor.turn.pick,
         }
-    }
-
-    pub fn retain(&mut self, mut alive: impl FnMut(Entity) -> bool) {
-        self.anchors.retain(|entity, _| alive(*entity));
     }
 }

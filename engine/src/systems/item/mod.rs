@@ -64,6 +64,8 @@ pub fn register(app: &mut App) {
         .replicate::<Reservation>()
         .add_client_message::<UseItemRequest>()
         .add_client_message::<DropItemRequest>()
+        .add_client_message::<SplitStackRequest>()
+        .add_client_message::<JoinStacksRequest>()
         .add_mapped_client_message::<PickupRequest>()
         .add_server_message::<ItemShown>()
         .add_mapped_server_message::<ItemConsumed>()
@@ -186,6 +188,62 @@ impl Inventory {
 
     pub fn free_slots(&self) -> u32 {
         self.max.saturating_sub(self.slots.len() as u32)
+    }
+
+    /// Splits `count` off the stack in `slot` into a stack of its own, right after it. A split
+    /// that would leave either stack empty changes nothing; one the bag has no slot for is
+    /// refused.
+    pub fn split(&mut self, slot: usize, count: u32) -> Result<(), ExchangeRefusal> {
+        let whole = match self.slots.get(slot) {
+            Some(stack) if (1..stack.count).contains(&count) => *stack,
+            _ => return Ok(()),
+        };
+        if self.free_slots() == 0 {
+            return Err(ExchangeRefusal::NoRoom { slots: 1 });
+        }
+        self.slots[slot].count = whole.count - count;
+        self.slots
+            .insert(slot + 1, ItemStack::new(whole.item, count));
+        Ok(())
+    }
+
+    /// Takes each of `taken` out of the slot it names. Unless every slot holds what is taken
+    /// from it, nothing is taken.
+    pub fn take_out(&mut self, taken: &[SlotStack]) -> bool {
+        let mut slots = self.slots.clone();
+        for SlotStack { slot, stack } in taken {
+            match slots.get_mut(*slot as usize) {
+                Some(held)
+                    if held.item == stack.item && (1..=held.count).contains(&stack.count) =>
+                {
+                    held.count -= stack.count;
+                }
+                _ => return false,
+            }
+        }
+        slots.retain(|slot| slot.count > 0);
+        self.slots = slots;
+        true
+    }
+
+    /// Joins the stack in `from` onto the stack of the same item in `onto`, as far as a stack
+    /// of that item holds: what does not fit stays where it was.
+    pub fn join(&mut self, content: &Content, from: usize, onto: usize) {
+        let (Some(&moved), Some(&kept)) = (self.slots.get(from), self.slots.get(onto)) else {
+            return;
+        };
+        if from == onto || moved.item != kept.item {
+            return;
+        }
+        let room = moved
+            .item
+            .get(content)
+            .stack_max()
+            .saturating_sub(kept.count);
+        let joined = moved.count.min(room);
+        self.slots[onto].count += joined;
+        self.slots[from].count -= joined;
+        self.slots.retain(|slot| slot.count > 0);
     }
 
     pub fn set_count(&mut self, item: ItemId, count: u32) {
@@ -359,6 +417,28 @@ pub struct ItemShown {
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DropItemRequest {
     pub slot: u32,
+}
+
+/// Some of what a slot of the bag holds: `stack.count` of the stack in `slot`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SlotStack {
+    pub slot: u32,
+    pub stack: ItemStack,
+}
+
+/// Splits `count` off the stack in the bag's slot `slot`, into a stack of its own beside it.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SplitStackRequest {
+    pub slot: u32,
+    pub count: u32,
+}
+
+/// Joins the stack in the bag's slot `from` onto the stack of the same item in `onto`, as far
+/// as a stack of that item holds.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct JoinStacksRequest {
+    pub from: u32,
+    pub onto: u32,
 }
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
@@ -1022,6 +1102,26 @@ pub fn drop_item(world: &mut World) {
     });
 }
 
+/// Splits and joins the stacks of their bag as each player asks. A bag is its player's to
+/// arrange whatever else they are doing, so nothing holds these back.
+pub fn arrange_stacks(world: &mut World) {
+    let content = world.resource::<Content>().clone();
+    player_requests::<SplitStackRequest>(world, RequestNeeds::Nothing, |world, player, request| {
+        match world.get_mut::<Inventory>(player) {
+            Some(mut inventory) => inventory
+                .split(request.slot as usize, request.count)
+                .map_err(|refusal| refusal.describe(&content)),
+            None => Ok(()),
+        }
+    });
+    player_requests::<JoinStacksRequest>(world, RequestNeeds::Nothing, |world, player, request| {
+        if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
+            inventory.join(&content, request.from as usize, request.onto as usize);
+        }
+        Ok(())
+    });
+}
+
 pub fn pickup_request(world: &mut World) {
     player_requests::<PickupRequest>(
         world,
@@ -1165,9 +1265,10 @@ pub fn scatter_at(
         .now
         .after(life.unwrap_or(settings.last));
     let count = drops.len();
+    let turn = Rng::fork_of(world).rand_float() * std::f32::consts::TAU;
     let mut items = Vec::with_capacity(count);
     for (index, &(item, stack)) in drops.iter().enumerate() {
-        let pos = scatter_pos(from, scatter, index, count, area);
+        let pos = scatter_pos(from, scatter, turn, index, count, area);
         let entity = world
             .spawn((
                 Replicated,
@@ -1229,17 +1330,17 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     }
 }
 
+/// Where the drop `index` of `count` lands: each as far from `from` as drops scatter, evenly
+/// around it from the angle `turn`, on the ground nearest that.
 fn scatter_pos(
     from: Pos<Meters>,
     scatter: Meters,
+    turn: f32,
     index: usize,
     count: usize,
     area: &area::Area,
 ) -> Pos<Meters> {
-    if count == 1 {
-        return area.mesh().nearest(from).unwrap_or(from);
-    }
-    let angle = std::f32::consts::TAU * index as f32 / count as f32;
+    let angle = turn + std::f32::consts::TAU * index as f32 / count as f32;
     let spread = from + Offset::new(angle.cos() * scatter.0, angle.sin() * scatter.0);
     area.mesh().nearest(spread).unwrap_or(from)
 }

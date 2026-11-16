@@ -679,7 +679,7 @@ pub fn server_app(
                     combat::request,
                     skill::requests,
                     item::use_item,
-                    item::drop_item,
+                    (item::drop_item, item::arrange_stacks).chain(),
                     (item::pickup_request, resource::gather_request).chain(),
                     interact::interact_request,
                     dialogue::requests,

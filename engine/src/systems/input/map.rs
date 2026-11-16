@@ -39,7 +39,8 @@ pub enum InputAction {
     InspectItem,
     UseItem,
     DropItem,
-    SellItem,
+    /// Asks how many to split off a stack of items into a stack of its own.
+    SplitStack,
     PlaceItem,
     PlaceStack,
     CarryItem,
@@ -173,7 +174,7 @@ impl InputAction {
             | InputAction::InspectItem
             | InputAction::UseItem
             | InputAction::DropItem
-            | InputAction::SellItem
+            | InputAction::SplitStack
             | InputAction::PlaceItem
             | InputAction::PlaceStack
             | InputAction::PinToBar

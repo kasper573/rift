@@ -10,6 +10,7 @@ pub(crate) use card::{
 pub(crate) use panel::{SizedPiece, grab_sized, grab_spot, sheet_pose, sized_rect, widget};
 
 use std::collections::HashSet;
+use std::ops::RangeInclusive;
 use ui::dialog;
 use ui::drag;
 use ui::egui;
@@ -92,6 +93,21 @@ pub(crate) struct Confirm {
 
 pub(crate) type Answer = Box<dyn FnOnce(&mut World, bool) + Send + Sync>;
 
+/// A question of how many, put to the player with a slider over `amounts`: answered with the
+/// amount chosen for the confirming button, and with none for the cancelling one or a dismissal.
+pub(crate) struct AmountQuestion {
+    pub title: String,
+    pub amounts: RangeInclusive<u32>,
+    /// The amount the slider starts on.
+    pub suggested: u32,
+    /// What choosing an amount comes to, said beside the slider as it moves.
+    pub says: AmountWording,
+    pub answer: AmountAnswer,
+}
+
+pub(crate) type AmountWording = Box<dyn Fn(u32) -> String + Send + Sync>;
+pub(crate) type AmountAnswer = Box<dyn FnOnce(&mut World, Option<u32>) + Send + Sync>;
+
 /// What the player drags across the interface, drawn under the pointer until it is dropped.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Carried {
@@ -115,7 +131,17 @@ pub fn icon(
 
 pub(crate) fn confirm(world: &mut World, confirm: Confirm) {
     world.resource_mut::<Confirming>().0 = Some(Pending {
-        confirm,
+        asked: Asked::Confirm(confirm),
+        focused: false,
+    });
+}
+
+pub(crate) fn ask_amount(world: &mut World, question: AmountQuestion) {
+    let chosen = question
+        .suggested
+        .clamp(*question.amounts.start(), *question.amounts.end());
+    world.resource_mut::<Confirming>().0 = Some(Pending {
+        asked: Asked::Amount { question, chosen },
         focused: false,
     });
 }
@@ -127,7 +153,7 @@ pub(crate) fn confirming(world: &World) -> bool {
 pub(crate) fn dismiss_confirm(world: &mut World) -> bool {
     match world.resource_mut::<Confirming>().0.take() {
         Some(pending) => {
-            (pending.confirm.answer)(world, false);
+            pending.asked.answer(world, false);
             true
         }
         None => false,
@@ -255,22 +281,61 @@ struct NoteText {
     body: Vec<String>,
     confirm: String,
     cancel: String,
+    amount: Option<NoteAmount>,
+}
+
+#[derive(Clone)]
+struct NoteAmount {
+    chosen: u32,
+    amounts: RangeInclusive<u32>,
 }
 
 impl NoteText {
-    fn of(confirm: &Confirm) -> NoteText {
-        NoteText {
-            title: confirm.title.clone(),
-            body: confirm.body.clone(),
-            confirm: confirm.confirm.clone(),
-            cancel: confirm.cancel.clone(),
+    fn of(asked: &Asked) -> NoteText {
+        match asked {
+            Asked::Confirm(confirm) => NoteText {
+                title: confirm.title.clone(),
+                body: confirm.body.clone(),
+                confirm: confirm.confirm.clone(),
+                cancel: confirm.cancel.clone(),
+                amount: None,
+            },
+            Asked::Amount { question, chosen } => NoteText {
+                title: question.title.clone(),
+                body: vec![(question.says)(*chosen)],
+                confirm: "Confirm".to_owned(),
+                cancel: "Cancel".to_owned(),
+                amount: Some(NoteAmount {
+                    chosen: *chosen,
+                    amounts: question.amounts.clone(),
+                }),
+            },
         }
     }
 }
 
 struct Pending {
-    confirm: Confirm,
+    asked: Asked,
     focused: bool,
+}
+
+enum Asked {
+    Confirm(Confirm),
+    Amount {
+        question: AmountQuestion,
+        chosen: u32,
+    },
+}
+
+impl Asked {
+    fn answer(self, world: &mut World, confirmed: bool) {
+        match self {
+            Asked::Confirm(confirm) => (confirm.answer)(world, confirmed),
+            Asked::Amount { question, chosen } => {
+                (question.answer)(world, confirmed.then_some(chosen));
+            }
+        }
+    }
 }
 
 /// The menu and the cards that are up, as they are stacked, the one in front first.
@@ -308,9 +373,7 @@ fn draw_confirm(world: &mut World) {
         return;
     };
     let pending = world.resource_mut::<Confirming>().0.take();
-    let shown_text = pending
-        .as_ref()
-        .map(|pending| NoteText::of(&pending.confirm));
+    let shown_text = pending.as_ref().map(|pending| NoteText::of(&pending.asked));
     if let Some(text) = &shown_text {
         world.resource_mut::<Lifting>().0 = Some(text.clone());
     }
@@ -321,7 +384,7 @@ fn draw_confirm(world: &mut World) {
     let Some(text) = shown_text.or_else(|| world.resource::<Lifting>().0.clone()) else {
         return;
     };
-    let keep_key = world
+    let default_key = world
         .resource::<InputMap>()
         .shortcut(InputAction::TakeDefault);
     let mut pending = pending;
@@ -341,26 +404,63 @@ fn draw_confirm(world: &mut World) {
             sheet::note_shadowed(ui, padding, pose.shadow, |ui| {
                 let padding = 2.0 * f32::from(dialog::PADDING);
                 ui.set_width(NOTE.x - padding);
-                ui.set_min_height(NOTE.y - padding);
                 dialog::title(ui, &text.title);
-                for line in &text.body {
-                    ui.add(egui::Label::new(face::body(line)).wrap());
-                }
-                ui.add_space(12.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                    let keep = controls::primary(ui, text.cancel.as_str());
+                let said = text
+                    .body
+                    .iter()
+                    .map(|line| ui.add(egui::Label::new(face::body(line)).wrap()))
+                    .last();
+                let slid = text.amount.as_ref().map(|amount| {
+                    ui.add_space(8.0);
+                    ui.spacing_mut().slider_width = ui.available_width();
+                    let mut chosen = amount.chosen;
+                    let slider = controls::count_slider(ui, &mut chosen, amount.amounts.clone());
+                    let slider = match &said {
+                        Some(said) => slider.labelled_by(said.id),
+                        None => slider,
+                    };
+                    (slider, chosen)
+                });
+                let answers = ui.min_rect().top() + NOTE.y - padding - controls::CONTROL_HEIGHT;
+                ui.add_space((answers - ui.cursor().top()).max(12.0));
+                let row = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
+                let across = egui::Layout::right_to_left(egui::Align::Center);
+                ui.allocate_ui_with_layout(row, across, |ui| {
+                    let default_pressed =
+                        default_key.is_some_and(|key| ui.input_mut(|i| i.consume_shortcut(&key)));
+                    let (confirm, cancel, first) = match slid {
+                        Some((slider, chosen)) => {
+                            if let Some(Asked::Amount { chosen: held, .. }) =
+                                pending.as_mut().map(|pending| &mut pending.asked)
+                            {
+                                *held = chosen;
+                            }
+                            let confirm = controls::primary(ui, text.confirm.as_str());
+                            let cancel = controls::button(ui, text.cancel.as_str());
+                            if default_pressed {
+                                decided = Some(true);
+                            }
+                            (confirm, cancel, slider)
+                        }
+                        None => {
+                            let keep = controls::primary(ui, text.cancel.as_str());
+                            let confirm = controls::danger(ui, text.confirm.as_str());
+                            if default_pressed {
+                                decided = Some(false);
+                            }
+                            (confirm, keep.clone(), keep)
+                        }
+                    };
                     if let Some(pending) = pending.as_mut()
                         && !pending.focused
                     {
-                        keep.request_focus();
+                        first.request_focus();
                         pending.focused = true;
                     }
-                    if controls::danger(ui, text.confirm.as_str()).clicked() {
+                    if confirm.clicked() {
                         decided = Some(true);
                     }
-                    let keep_pressed =
-                        keep_key.is_some_and(|key| ui.input_mut(|i| i.consume_shortcut(&key)));
-                    if keep.clicked() || keep_pressed {
+                    if cancel.clicked() {
                         decided = Some(false);
                     }
                 });
@@ -373,7 +473,7 @@ fn draw_confirm(world: &mut World) {
         decided = Some(false);
     }
     match decided {
-        Some(decided) => (pending.confirm.answer)(world, decided),
+        Some(decided) => pending.asked.answer(world, decided),
         None => world.resource_mut::<Confirming>().0 = Some(pending),
     }
 }

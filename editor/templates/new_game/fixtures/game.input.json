@@ -50,13 +50,14 @@
         }
       ]
     },
-    "sell_item": {
-      "label": "Sell an item to the open shop",
+    "split_stack": {
+      "label": "Split a stack of items in two",
       "bindings": [
         {
           "type": "click",
-          "button": "Right",
-          "times": 1
+          "button": "Left",
+          "times": 1,
+          "alt": true
         }
       ]
     },

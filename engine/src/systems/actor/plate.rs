@@ -242,7 +242,8 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
     column.spacing_mut().item_spacing = egui::Vec2::ZERO;
     column.set_opacity(plate.shown);
     if !plate.icons.is_empty() {
-        column.horizontal(|ui| {
+        let row = Layout::left_to_right(Align::Center);
+        column.allocate_ui_with_layout(icons_size(plate.icons.len()), row, |ui| {
             ui.spacing_mut().item_spacing.x = ICON_GAP;
             for icon in &plate.icons {
                 match icon {
@@ -292,12 +293,8 @@ fn plate_rect(gui: &egui::Context, top: egui::Pos2, size: egui::Vec2) -> egui::R
 
 fn plate_size(gui: &egui::Context, label: &PlateLabel, icons: &[Option<GuiImage>]) -> egui::Vec2 {
     let text = |text: String, font: FontId| paint::text_size(gui, &text, font);
-    let icons = match icons.len() {
-        0 => egui::Vec2::ZERO,
-        count => egui::vec2(count as f32 * ICON + (count - 1) as f32 * ICON_GAP, ICON),
-    };
     [
-        Some(icons),
+        Some(icons_size(icons.len())),
         label.name.clone().map(|name| text(name, name_font())),
         label
             .role
@@ -310,6 +307,13 @@ fn plate_size(gui: &egui::Context, label: &PlateLabel, icons: &[Option<GuiImage>
     .fold(egui::Vec2::ZERO, |size, part| {
         egui::vec2(size.x.max(part.x), size.y + part.y)
     })
+}
+
+fn icons_size(count: usize) -> egui::Vec2 {
+    match count {
+        0 => egui::Vec2::ZERO,
+        count => egui::vec2(count as f32 * ICON + (count - 1) as f32 * ICON_GAP, ICON),
+    }
 }
 
 fn label(

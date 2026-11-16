@@ -757,9 +757,7 @@ pub fn pose(world: &mut World) {
             anywhere: &anywhere,
             turns: looping_turns.then_some(&mut next as &mut NextTurn),
         });
-        let playhead = world
-            .resource_mut::<Animator>()
-            .advance(entity, state, now, loops);
+        let playhead = Animator::advance(world, entity, state, now, loops);
         play.pick = match (given, &gesture) {
             _ if flinching => flinch_pick,
             (Some(playing), _) => playing.pick,
@@ -947,9 +945,6 @@ pub fn pose(world: &mut World) {
     for sound in sounds {
         world.write_message(sound);
     }
-    world.resource_scope(|world, mut animator: Mut<Animator>| {
-        animator.retain(|entity| world.get_entity(entity).is_ok());
-    });
 }
 
 /// What each body says: whether a line it says still types, and the newest line it said with a

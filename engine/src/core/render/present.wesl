@@ -39,8 +39,7 @@ const CRUMBLE: u32 = 0u;
 const TILE_WAVE: u32 = 1u;
 const SWEEP: u32 = 2u;
 const IRIS: u32 = 3u;
-const MOSAIC: u32 = 4u;
-const DITHER: u32 = 5u;
+const DITHER: u32 = 4u;
 
 const VOID: vec3<f32> = vec3<f32>(0.0030, 0.0034, 0.0052);
 
@@ -84,7 +83,6 @@ fn transition(p: vec2<f32>) -> vec3<f32> {
         case TILE_WAVE: { return tile_wave(p); }
         case SWEEP: { return sweep(p); }
         case IRIS: { return iris(p); }
-        case MOSAIC: { return mosaic(p); }
         case DITHER: { return dither(p); }
         default: { return fade(p); }
     }
@@ -133,19 +131,14 @@ fn fade(p: vec2<f32>) -> vec3<f32> {
 }
 
 fn iris(p: vec2<f32>) -> vec3<f32> {
-    let spotlight = 1.5 * cut.tile;
-    if cut.in_progress < 0.2 {
-        var r = mix(cut.from_radius, spotlight, ease(cut.out_progress));
-        if cut.in_progress > 0.0 {
-            r = mix(spotlight, 0.0, ease(cut.in_progress / 0.2));
-        }
+    if cut.in_progress <= 0.0 {
+        let r = mix(cut.from_radius, 0.0, ease(cut.out_progress));
         if distance(world_pixel(p, cut.from_grid), cut.from_anchor) < r {
             return held(p);
         }
         return VOID;
     }
-    let k = (cut.in_progress - 0.2) / 0.8;
-    let r = cut.to_radius * (1.0 - pow(1.0 - k, 3.0));
+    let r = cut.to_radius * (1.0 - pow(1.0 - cut.in_progress, 3.0));
     if distance(world_pixel(p, cut.to_grid), cut.to_anchor) < r {
         return live(p);
     }
@@ -159,24 +152,21 @@ fn diamond(p: vec2<f32>, grid: vec2<f32>) -> f32 {
     return abs(l.x) + abs(l.y);
 }
 
-// The character's own tiles stay through the hold, so a late arrival still has something to show.
-fn leaving(cell: vec2<f32>, spread: f32, kept: f32) -> f32 {
+// The character's own tile and the four beside it go last, together.
+fn leaving(cell: vec2<f32>, spread: f32) -> f32 {
     let d = tile_distance(cell, cut.from_anchor, cut.from_grid);
-    if d <= 1.0 {
-        return clamp(cut.in_progress / kept, 0.0, 1.0);
-    }
-    let outer = (d - 1.0) / max(cut.from_reach - 1.0, 1.0);
+    let outer = max(d - 1.0, 0.0) / max(cut.from_reach - 1.0, 1.0);
     return clamp((cut.out_progress - (1.0 - outer) * spread) / (1.0 - spread), 0.0, 1.0);
 }
 
-fn arriving(cell: vec2<f32>, start: f32, spread: f32, span: f32) -> f32 {
+fn arriving(cell: vec2<f32>, spread: f32) -> f32 {
     let d = tile_distance(cell, cut.to_anchor, cut.to_grid) / max(cut.to_reach, 1.0);
-    return clamp((cut.in_progress - (start + d * spread)) / span, 0.0, 1.0);
+    return clamp((cut.in_progress - d * spread) / (1.0 - spread), 0.0, 1.0);
 }
 
 fn tile_wave(p: vec2<f32>) -> vec3<f32> {
-    let gone = leaving(cell_of(p, cut.from_grid), 0.6, 0.18);
-    let come = arriving(cell_of(p, cut.to_grid), 0.18, 0.5, 0.32);
+    let gone = leaving(cell_of(p, cut.from_grid), 0.6);
+    let come = arriving(cell_of(p, cut.to_grid), 0.61);
     if diamond(p, cut.to_grid) < come {
         return live(p);
     }
@@ -230,10 +220,10 @@ fn crumble(p: vec2<f32>) -> vec3<f32> {
     let above = vec2<f32>(0.0, -1.0);
     let held_cell = cell_of(p, cut.from_grid);
     let live_cell = cell_of(p, cut.to_grid);
-    let fall_here = leaving(held_cell, 0.55, 0.22);
-    let fall_above = leaving(held_cell + above, 0.55, 0.22);
-    let rise_here = arriving(live_cell, 0.22, 0.48, 0.3);
-    let rise_above = arriving(live_cell + above, 0.22, 0.48, 0.3);
+    let fall_here = leaving(held_cell, 0.55);
+    let fall_above = leaving(held_cell + above, 0.55);
+    let rise_here = arriving(live_cell, 0.615);
+    let rise_above = arriving(live_cell + above, 0.615);
     if fall_here <= 0.0 {
         return held(p);
     }
@@ -283,32 +273,6 @@ fn sweep(p: vec2<f32>) -> vec3<f32> {
         return VOID + lines * 0.008;
     }
     return held(p);
-}
-
-fn block(p: vec2<f32>, grid: vec2<f32>, width: f32) -> vec2<f32> {
-    return grid + (floor((p - grid) / width) + 0.5) * width;
-}
-
-fn mosaic(p: vec2<f32>) -> vec3<f32> {
-    if cut.in_progress <= 0.0 {
-        let blocks = floor(cut.out_progress * 15.0 + 0.5) + 1.0;
-        var color = held(p);
-        if blocks > 1.0 {
-            color = held(block(p, cut.from_grid, blocks));
-        }
-        return color * mix(1.0, 0.8, cut.out_progress);
-    }
-    if cut.in_progress < 0.3 {
-        let k = floor(cut.in_progress / 0.3 * 4.0) / 4.0;
-        return mix(held(block(p, cut.from_grid, cut.tile)), live(block(p, cut.to_grid, cut.tile)), k) * 0.8;
-    }
-    let k = (cut.in_progress - 0.3) / 0.7;
-    let blocks = floor((1.0 - k) * 15.0 + 0.5) + 1.0;
-    var color = live(p);
-    if blocks > 1.0 {
-        color = live(block(p, cut.to_grid, blocks));
-    }
-    return color * mix(0.8, 1.0, k);
 }
 
 fn bayer2(a: vec2<f32>) -> f32 {

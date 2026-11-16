@@ -35,6 +35,7 @@ use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, Rec
 use crate::systems::interface::InterfaceSound;
 use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcId};
+use crate::systems::player::ArrivalHold;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::effect::{self as effects, Aimed, Audience, Reaching};
 use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, condition};
@@ -216,10 +217,36 @@ pub fn notify(
         NotificationKind::Feed(_) | NotificationKind::Error { .. } => true,
         _ => budget::admit(world, player, &sent, at),
     };
-    if live {
+    if !live {
+        return;
+    }
+    if world.get::<ArrivalHold>(player).is_none() {
+        visibility::send_private(world, player, sent);
+        return;
+    }
+    match world.get_mut::<Withheld>(player) {
+        Some(mut withheld) => withheld.0.push(sent),
+        None => {
+            world.entity_mut(player).insert(Withheld(vec![sent]));
+        }
+    }
+}
+
+/// Tells `player` what they were told while their arrival was held, in the order it was said: an
+/// arrival is held until the player's view of where they arrived is drawn, and what is told
+/// before then would land on the view they left.
+pub fn tell_withheld(world: &mut World, player: Entity) {
+    let Some(withheld) = world.entity_mut(player).take::<Withheld>() else {
+        return;
+    };
+    for sent in withheld.0 {
         visibility::send_private(world, player, sent);
     }
 }
+
+/// What a player was told while their arrival was held.
+#[derive(Component)]
+struct Withheld(Vec<NotificationSent>);
 
 fn record(world: &mut World, player: Entity, notification: &Notification) {
     if let Some(entry) = notification.history_entry(world.resource::<Content>()) {

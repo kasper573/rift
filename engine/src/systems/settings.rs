@@ -961,7 +961,7 @@ fn within_smoothings(chose: Seconds) -> Seconds {
 
 #[derive(Serialize, Deserialize, Default)]
 struct ScreenSettings {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "still_offered")]
     transition: ScreenTransition,
     #[serde(default)]
     frame_rate: bool,
@@ -969,6 +969,26 @@ struct ScreenSettings {
     day_clock_hidden: bool,
     #[serde(default)]
     globe_amounts: bool,
+}
+
+/// A saved choice among what the interface offers, which is the default again once the
+/// interface no longer offers it.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedChoice<T> {
+    Offered(T),
+    Gone(serde::de::IgnoredAny),
+}
+
+fn still_offered<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Deserialize<'de> + Default,
+    D: serde::Deserializer<'de>,
+{
+    Ok(match SavedChoice::deserialize(deserializer)? {
+        SavedChoice::Offered(choice) => choice,
+        SavedChoice::Gone(_) => T::default(),
+    })
 }
 
 /// Saved on change rather than at each place that changes a setting. The initial load counts as a

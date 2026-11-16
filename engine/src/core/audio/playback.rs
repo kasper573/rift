@@ -219,6 +219,22 @@ pub fn is_sounding(world: &mut World, id: SfxId) -> bool {
     sounding.0.contains_key(&id)
 }
 
+/// Every sfx that still sounds, one for each of its instances.
+pub fn sounding(world: &World) -> Vec<SfxId> {
+    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    world
+        .resource::<Sounding>()
+        .0
+        .iter()
+        .flat_map(|(id, voices)| {
+            voices
+                .iter()
+                .filter(move |voice| voice.sounds(now))
+                .map(|_| *id)
+        })
+        .collect()
+}
+
 /// Stops every instance of an sfx still sounding.
 pub fn stop(world: &mut World, id: SfxId) {
     let voices = world
@@ -242,6 +258,15 @@ struct Voice {
     asked: Seconds,
 }
 
+impl Voice {
+    fn sounds(&self, now: Seconds) -> bool {
+        match &self.playing {
+            Some(playing) => playing.state() != PlaybackState::Stopped,
+            None => now - self.asked < STARTS_WITHIN,
+        }
+    }
+}
+
 /// How long an instance may stay unheard of after it was asked for, while its clip loads, before
 /// it counts as never having played.
 const STARTS_WITHIN: Seconds = Seconds(2.0);
@@ -249,10 +274,7 @@ const STARTS_WITHIN: Seconds = Seconds(2.0);
 impl Sounding {
     fn settle(&mut self, now: Seconds) {
         for voices in self.0.values_mut() {
-            voices.retain(|voice| match &voice.playing {
-                Some(playing) => playing.state() != PlaybackState::Stopped,
-                None => now - voice.asked < STARTS_WITHIN,
-            });
+            voices.retain(|voice| voice.sounds(now));
         }
         self.0.retain(|_, voices| !voices.is_empty());
     }

@@ -177,7 +177,6 @@ pub fn inventory(ui: &mut Ui, world: &mut World, locked: bool) {
                 let pane = InventoryPane {
                     width: ui.available_width(),
                     heading: Some("Your inventory"),
-                    selected: None,
                 };
                 inventory_pane(ui, world, pane);
             },

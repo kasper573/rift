@@ -410,10 +410,11 @@ impl<'a> Card<'a> {
             egui::Frame::new()
                 .inner_margin(PLATE_PADDING)
                 .show(ui, |ui| {
-                    ui.set_width(frame_width - PLATE_PADDING.sum().x);
+                    ui.set_width(ui.available_width());
                     plate(ui, Plate { name_cut, rule });
                 });
         };
+        sheet::bars(&mut inner);
         sheet::scroll(
             &mut inner,
             egui::ScrollArea::vertical()

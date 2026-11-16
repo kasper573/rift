@@ -64,7 +64,6 @@ impl MenuTab for CharacterMenuTab {
             let pane = InventoryPane {
                 width: ui.available_width(),
                 heading: Some("Inventory"),
-                selected: None,
             };
             inventory_pane(ui, world, pane);
         });

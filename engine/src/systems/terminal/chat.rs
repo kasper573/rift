@@ -102,8 +102,8 @@ pub(crate) struct ChatView {
 }
 
 impl ChatView {
-    /// What is suggested for the draft as it stands: an answer to an older draft suggests
-    /// nothing, as taking one of its options would undo what was typed since.
+    /// What may be taken for the draft as it stands: an answer to an older draft is listed but
+    /// offers nothing to take, as taking one of its options would undo what was typed since.
     fn current(&self) -> Option<&TerminalCompletions> {
         self.suggested
             .as_ref()
@@ -199,7 +199,9 @@ pub(super) fn suggested(
 ) {
     for answer in answers.read() {
         view.waiting = false;
-        if answer.text == view.draft.text() {
+        // An answer to a draft typed on since is listed until the answer to what was typed
+        // since arrives, so the list stays up as the player types.
+        if view.draft.text().trim_start().starts_with(COMMAND_PREFIX) {
             view.selected = 0;
             view.suggested = Some(answer.clone());
         }
@@ -1220,7 +1222,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         .flat_map(|asked| &asked.kinds)
         .map(|kind| format!("{EMBED_ASK}{}", kind.name()))
         .collect();
-    let (heading, listed): (String, Vec<Suggestion>) = match (&found, &asked, view.current()) {
+    let (heading, listed): (String, Vec<Suggestion>) = match (&found, &asked, &view.suggested) {
         (Some(found), ..) => {
             let kind = view
                 .seeking

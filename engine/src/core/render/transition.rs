@@ -29,7 +29,6 @@ pub enum ScreenTransition {
     TileWave,
     Sweep,
     Iris,
-    Mosaic,
     #[strum(serialize = "Dither dissolve")]
     Dither,
     Fade,
@@ -38,10 +37,10 @@ pub enum ScreenTransition {
 impl ScreenTransition {
     fn pace(self) -> Pace {
         let (cover, uncover) = match self {
-            ScreenTransition::Crumble => (0.55, 0.65),
-            ScreenTransition::TileWave | ScreenTransition::Iris => (0.45, 0.6),
+            ScreenTransition::Crumble => (0.55, 0.507),
+            ScreenTransition::TileWave => (0.45, 0.492),
+            ScreenTransition::Iris => (0.45, 0.48),
             ScreenTransition::Sweep => (0.4, 0.45),
-            ScreenTransition::Mosaic => (0.4, 0.55),
             ScreenTransition::Dither => (0.4, 0.5),
             ScreenTransition::Fade => (0.3, 0.4),
         };

@@ -90,7 +90,7 @@ impl InputAction {
             | InputAction::InspectItem
             | InputAction::UseItem
             | InputAction::DropItem
-            | InputAction::SellItem
+            | InputAction::SplitStack
             | InputAction::PlaceItem
             | InputAction::PlaceStack
             | InputAction::CarryItem

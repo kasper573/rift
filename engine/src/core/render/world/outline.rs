@@ -13,6 +13,13 @@ pub struct Outline {
     pub width: WindowPx,
 }
 
+/// Left out of the line round the thing it hangs on, with all it is made of: what plays on a
+/// thing is no part of its shape. It is a source of lines of its own that draws none, which is
+/// where the line of what it hangs on stops.
+#[derive(Component, Clone, Copy, Debug, Default)]
+#[require(PropagateOutline)]
+pub struct Unoutlined;
+
 pub struct OutlineScenePlugin;
 
 impl Plugin for OutlineScenePlugin {

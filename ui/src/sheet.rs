@@ -192,7 +192,7 @@ pub fn columns<const N: usize>(ui: &Ui, room: Rect, widths: [f32; N]) -> ([Pane;
     )
 }
 
-fn bars(ui: &mut Ui) {
+pub(crate) fn bars(ui: &mut Ui) {
     let scroll = &mut ui.spacing_mut().scroll;
     scroll.bar_width = BAR;
     scroll.bar_inner_margin = 0.0;
