@@ -86,7 +86,7 @@ fn bindings(
     let mut remove = None;
     ui.horizontal_wrapped(|ui| {
         for (index, binding) in bound.bindings.iter().enumerate() {
-            let name = binding.name();
+            let cap = binding.cap();
             let shared_with: Vec<&str> = others
                 .iter()
                 .filter(|(_, bindings)| bindings.contains(binding))
@@ -98,14 +98,14 @@ fn bindings(
                 theme::WARN
             };
             chip::holding(ui, theme::RAISED, border, |ui| {
-                controls::key_hint(ui, &name);
+                controls::key_hint(ui, &cap);
                 if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove").clicked() {
                     remove = Some(index);
                 }
             })
             .response
             .on_hover_text(if shared_with.is_empty() {
-                format!("Only this action uses {name}.")
+                format!("Only this action uses {}.", cap.name)
             } else {
                 format!("Also bound to {}.", shared_with.join(", "))
             });

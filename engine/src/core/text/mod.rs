@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 use ui::egui::Color32;
 use ui::ink::Prose;
+use ui::keys::KeyCap;
 
 use crate::core::content::SchemaMark;
 use crate::core::units::{Radians, RadiansPerSec};
@@ -25,23 +26,24 @@ pub struct StyledLine {
 pub enum TextPiece {
     Span(StyledSpan),
     Pause(Duration),
-    Key(KeyCap),
+    Key(TextKey),
     /// A picture of the game's set in the line as tall as its letters, named by its file.
     Image(Cow<'static, str>),
 }
 
-/// A key drawn as a cap: an input named by its current binding, or a key named outright.
+/// A key drawn as a cap in a line: an input as it is bound now, or a cap given outright.
 #[derive(Clone, Debug, PartialEq)]
-pub enum KeyCap {
+pub enum TextKey {
     Input(InputRef),
-    Named(Cow<'static, str>),
+    Cap(KeyCap),
 }
 
-impl KeyCap {
-    pub fn name<'a>(&'a self, keys: &'a KeyNames) -> &'a str {
+impl TextKey {
+    /// The cap to draw, none for an input that isn't bound.
+    pub fn cap<'a>(&'a self, keys: &'a KeyNames) -> Option<&'a KeyCap> {
         match self {
-            KeyCap::Input(input) => keys.name(*input),
-            KeyCap::Named(name) => name,
+            TextKey::Input(input) => keys.0.get(input),
+            TextKey::Cap(cap) => Some(cap),
         }
     }
 }
@@ -106,14 +108,9 @@ pub enum TextMotion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct InputRef(pub u16);
 
+/// The cap every bound input is drawn as.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct KeyNames(pub HashMap<InputRef, String>);
-
-impl KeyNames {
-    pub fn name(&self, input: InputRef) -> &str {
-        self.0.get(&input).map_or("", String::as_str)
-    }
-}
+pub struct KeyNames(pub HashMap<InputRef, KeyCap>);
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[schemars(transform = SchemaMark::Unit.with("characters/s"))]
@@ -246,7 +243,7 @@ impl StyledLine {
             .filter_map(|piece| match piece {
                 TextPiece::Span(span) => Some(span.text.as_ref()),
                 TextPiece::Pause(_) | TextPiece::Image(_) => None,
-                TextPiece::Key(cap) => Some(cap.name(keys)),
+                TextPiece::Key(key) => key.cap(keys).map(|cap| cap.name.as_str()),
             })
             .collect()
     }
@@ -257,8 +254,8 @@ impl TextPiece {
         TextPiece::Span(StyledSpan::plain(text))
     }
 
-    pub fn key(name: impl Into<Cow<'static, str>>) -> TextPiece {
-        TextPiece::Key(KeyCap::Named(name.into()))
+    pub fn key(cap: KeyCap) -> TextPiece {
+        TextPiece::Key(TextKey::Cap(cap))
     }
 }
 

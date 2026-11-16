@@ -494,7 +494,7 @@ fn run_by_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
 
 fn action_buttons(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
     ui.add_space(8.0);
-    if controls::keyed(ui, "Run", Some(&EditorKey::RunScript.name()), true).clicked() {
+    if controls::keyed(ui, "Run", Some(&EditorKey::RunScript.cap()), true).clicked() {
         editor.bottom_tab = BottomTab::Run;
         editor.views.script.fire(&doc.at);
     }

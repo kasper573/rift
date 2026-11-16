@@ -291,7 +291,9 @@ impl LineText {
             .iter()
             .map(|span| match span {
                 SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => text.clone(),
-                SpanText::Input(action) => inputs.name(*action).unwrap_or_default(),
+                SpanText::Input(action) => {
+                    inputs.cap(*action).map(|cap| cap.name).unwrap_or_default()
+                }
             })
             .collect()
     }

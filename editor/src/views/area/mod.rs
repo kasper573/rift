@@ -668,7 +668,7 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
             if controls::primary(ui, "Done").clicked() {
                 done = true;
             }
-            controls::key_hint(ui, &EditorKey::Cancel.name());
+            controls::key_hint(ui, &EditorKey::Cancel.cap());
         });
     }
     let view = editor.views.area.view(view_key);
@@ -688,7 +688,7 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
             if ui.button("Show the rest").clicked() {
                 back = true;
             }
-            controls::key_hint(ui, &EditorKey::Cancel.name());
+            controls::key_hint(ui, &EditorKey::Cancel.cap());
         });
         if back {
             editor.views.area.view_mut(view_key).show_only = None;

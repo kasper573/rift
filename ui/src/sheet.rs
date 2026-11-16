@@ -9,6 +9,7 @@ use egui::{
 };
 
 use crate::face::TextRole;
+use crate::keys::KeyCap;
 use crate::{controls, float, ink};
 
 const RULE_INSET: f32 = 7.0;
@@ -454,7 +455,7 @@ pub struct Tab<T> {
     /// A shut tab keeps its place in the strip, so the tabs beside it never move.
     pub shut_because: Option<String>,
     pub icon: Option<TextureId>,
-    pub keys: Option<String>,
+    pub keys: Option<KeyCap>,
     /// How much waits on the tab, counted on its face however little room it has.
     pub badge: Option<String>,
 }
@@ -551,7 +552,7 @@ enum TabFit {
 struct TabFace {
     icon: Option<TextureId>,
     label: Option<Arc<Galley>>,
-    cap: Option<Arc<Galley>>,
+    cap: Option<controls::LaidCap>,
     badge: Option<Arc<Galley>>,
 }
 
@@ -559,11 +560,11 @@ impl TabFace {
     fn of<T>(ui: &Ui, size: TabSize, tab: &Tab<T>, color: Color32, fit: TabFit) -> TabFace {
         let lettered = fit != TabFit::IconsAlone || tab.icon.is_none();
         let label = lettered.then(|| ui.painter().layout_job(size.role().job(&tab.label, color)));
-        let keys = tab.keys.as_deref().filter(|_| fit == TabFit::Whole);
+        let keys = tab.keys.as_ref().filter(|_| fit == TabFit::Whole);
         TabFace {
             icon: tab.icon,
             label,
-            cap: keys.map(|keys| controls::key_galley(ui, keys, ink::INK3)),
+            cap: keys.map(|keys| controls::LaidCap::new(ui, keys, ink::INK3)),
             badge: tab.badge.as_ref().map(|count| {
                 let face = TextRole::Small.font_id();
                 ui.painter().layout_no_wrap(count.clone(), face, ink::LIGHT)
@@ -574,7 +575,7 @@ impl TabFace {
     fn parts(&self) -> impl Iterator<Item = Vec2> {
         let icon = self.icon.map(|_| Vec2::splat(TAB_ICON));
         let label = self.label.as_ref().map(|label| label.size());
-        let cap = self.cap.as_ref().map(controls::key_cap_size);
+        let cap = self.cap.as_ref().map(controls::LaidCap::size);
         let badge = self.badge.as_ref().map(badge_size);
         [icon, label, cap, badge].into_iter().flatten()
     }
@@ -583,10 +584,7 @@ impl TabFace {
         let across: f32 = self.parts().map(|part| part.x).sum();
         let gaps = TAB_GAP * self.parts().count().saturating_sub(1) as f32;
         let tall = self.label.as_ref().map_or(TAB_ICON, |label| label.size().y);
-        let tall = self
-            .cap
-            .as_ref()
-            .map_or(tall, |cap| tall.max(controls::key_cap_size(cap).y));
+        let tall = self.cap.as_ref().map_or(tall, |cap| tall.max(cap.size().y));
         Vec2::new(across + gaps, tall) + 2.0 * size.padding()
     }
 }
@@ -676,9 +674,9 @@ fn tab_button<T>(
         left += across + TAB_GAP;
     }
     if let Some(cap) = face.cap {
-        let cap_size = controls::key_cap_size(&cap);
+        let cap_size = cap.size();
         let at = Pos2::new(left, middle - cap_size.y / 2.0);
-        controls::paint_key_cap(painter, Rect::from_min_size(at, cap_size), cap, ink::INK3);
+        cap.paint(painter, Rect::from_min_size(at, cap_size), ink::INK3);
         left += cap_size.x + TAB_GAP;
     }
     if let Some(badge) = face.badge {

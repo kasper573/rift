@@ -513,7 +513,7 @@ fn filters(editor: &mut Editor, ui: &mut Ui, folder_key: &str) -> bool {
                 ui,
                 search,
                 "Search files and paths",
-                Some(&EditorKey::Search.name()),
+                Some(&EditorKey::Search.cap()),
             );
             if std::mem::take(focus_search) {
                 response.request_focus();

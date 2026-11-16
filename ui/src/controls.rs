@@ -11,6 +11,7 @@ use egui::{
 
 use crate::face::{Face, TextRole};
 use crate::glyph::{self, Mark};
+use crate::keys::{CapFace, KeyCap};
 use crate::{drag, ink, paint, sheet};
 
 /// Every control stands this tall, so an icon-only button lines up with the text buttons beside it.
@@ -276,15 +277,16 @@ pub fn notice(ui: &mut Ui, text: &str) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-pub fn key_hint(ui: &mut Ui, keys: &str) -> Response {
-    let galley = key_galley(ui, keys, ink::INK3);
-    let (rect, response) = ui.allocate_exact_size(key_cap_size(&galley), Sense::hover());
-    paint_key_cap(ui.painter(), rect, galley, ink::INK3);
-    response
+pub fn key_hint(ui: &mut Ui, cap: &KeyCap) -> Response {
+    let laid = LaidCap::new(ui, cap, ink::INK3);
+    let (rect, response) = ui.allocate_exact_size(laid.size(), Sense::hover());
+    laid.paint(ui.painter(), rect, ink::INK3);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &cap.name));
+    response.on_hover_text(&cap.name)
 }
 
 /// `text` after the `keys` that do it.
-pub fn key_hint_text(ui: &mut Ui, keys: &str, text: &str) {
+pub fn key_hint_text(ui: &mut Ui, keys: &KeyCap, text: &str) {
     ui.horizontal(|ui| {
         key_hint(ui, keys);
         ui.label(TextRole::Body.rich(text).color(ink::INK2));
@@ -293,7 +295,7 @@ pub fn key_hint_text(ui: &mut Ui, keys: &str, text: &str) {
 
 #[derive(Clone, Copy)]
 pub struct KeyHint<'a> {
-    pub keys: &'a str,
+    pub keys: &'a KeyCap,
     pub does: &'a str,
 }
 
@@ -339,7 +341,7 @@ fn key_hint_small(ui: &mut Ui, hint: KeyHint) {
 }
 
 fn hint_width(ui: &Ui, hint: &KeyHint) -> f32 {
-    let cap = key_cap_size(&key_galley(ui, hint.keys, ink::INK3)).x;
+    let cap = LaidCap::new(ui, hint.keys, ink::INK3).size().x;
     let does = ui
         .painter()
         .layout_no_wrap(hint.does.to_owned(), TextRole::Small.font_id(), ink::INK2)
@@ -349,13 +351,13 @@ fn hint_width(ui: &Ui, hint: &KeyHint) -> f32 {
 }
 
 /// A button reading `label`, the `keys` that press it too on a cap beside it.
-pub fn keyed(ui: &mut Ui, label: &str, keys: Option<&str>, enabled: bool) -> Response {
+pub fn keyed(ui: &mut Ui, label: &str, keys: Option<&KeyCap>, enabled: bool) -> Response {
     let ink = if enabled { ink::INK } else { ink::INK3 };
     let text = ui
         .painter()
         .layout_no_wrap(label.to_owned(), Face::BookMedium.id(14.0), ink);
-    let cap = keys.map(|keys| key_galley(ui, keys, if enabled { ink::INK2 } else { ink::INK3 }));
-    let cap_size = cap.as_ref().map(key_cap_size);
+    let cap = keys.map(|keys| LaidCap::new(ui, keys, if enabled { ink::INK2 } else { ink::INK3 }));
+    let cap_size = cap.as_ref().map(LaidCap::size);
     let width =
         text.size().x + cap_size.map_or(0.0, |size| size.x + KEYED_GAP) + 2.0 * BUTTON_PADDING.x;
     let sense = if enabled {
@@ -391,7 +393,7 @@ pub fn keyed(ui: &mut Ui, label: &str, keys: Option<&str>, enabled: bool) -> Res
             rect.center().y - size.y / 2.0,
         );
         let color = if enabled { ink::INK2 } else { ink::INK3 };
-        paint_key_cap(painter, Rect::from_min_size(at, size), cap, color);
+        cap.paint(painter, Rect::from_min_size(at, size), color);
     }
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -849,10 +851,6 @@ fn perimeter(rect: Rect, steps: usize) -> Vec<Pos2> {
 
 const KEYED_GAP: f32 = 8.0;
 
-pub(crate) fn key_galley(ui: &Ui, keys: &str, color: Color32) -> Arc<egui::Galley> {
-    ui.painter().layout_job(TextRole::KeyHint.job(keys, color))
-}
-
 fn stepped_slider(ui: &mut Ui, value: &mut f32, range: RangeInclusive<f32>, step: f32) -> Response {
     let width = ui.spacing().slider_width;
     let (rect, mut response) =
@@ -914,21 +912,90 @@ fn rounded_to(value: f32, step: f32) -> f32 {
     (value * scale).round() / scale
 }
 
-pub(crate) fn key_cap_size(galley: &Arc<egui::Galley>) -> Vec2 {
-    galley.size() + Vec2::new(5.0, 1.0) * 2.0 + Vec2::splat(2.0)
+/// A key cap laid out to paint: a cap for each modifier held, joined by "+", then its face.
+pub(crate) struct LaidCap {
+    parts: Vec<CapPart>,
 }
 
-pub(crate) fn paint_key_cap(
-    painter: &Painter,
-    rect: Rect,
-    galley: Arc<egui::Galley>,
-    color: Color32,
-) {
-    painter.rect_stroke(
-        rect,
-        3.0,
-        Stroke::new(1.0, ink::ink_wash(0.5)),
-        StrokeKind::Inside,
-    );
-    painter.galley(rect.center() - galley.size() / 2.0, galley, color);
+enum CapPart {
+    Cap(Arc<egui::Galley>),
+    Join(Arc<egui::Galley>),
+}
+
+impl LaidCap {
+    pub(crate) fn new(ui: &Ui, cap: &KeyCap, color: Color32) -> LaidCap {
+        let painter = ui.painter();
+        let mut parts = Vec::new();
+        for face in cap.faces() {
+            if !parts.is_empty() {
+                let join = painter.layout_job(TextRole::KeyHint.job("+", color));
+                parts.push(CapPart::Join(join));
+            }
+            parts.push(CapPart::Cap(painter.layout_job(face_job(&face, color))));
+        }
+        LaidCap { parts }
+    }
+
+    pub(crate) fn size(&self) -> Vec2 {
+        let sizes = self.parts.iter().map(CapPart::size);
+        let gaps = CAP_JOIN_GAP * self.parts.len().saturating_sub(1) as f32;
+        sizes.fold(Vec2::new(gaps, 0.0), |sum, size| {
+            Vec2::new(sum.x + size.x, sum.y.max(size.y))
+        })
+    }
+
+    pub(crate) fn paint(self, painter: &Painter, rect: Rect, color: Color32) {
+        let mut left = rect.min.x;
+        for part in self.parts {
+            let size = part.size();
+            let at = Rect::from_min_size(Pos2::new(left, rect.center().y - size.y / 2.0), size);
+            match part {
+                CapPart::Cap(galley) => {
+                    painter.rect_stroke(
+                        at,
+                        3.0,
+                        Stroke::new(1.0, ink::ink_wash(0.5)),
+                        StrokeKind::Inside,
+                    );
+                    painter.galley(at.center() - galley.size() / 2.0, galley, color);
+                }
+                CapPart::Join(galley) => {
+                    painter.galley(at.min, galley, color);
+                }
+            }
+            left += size.x + CAP_JOIN_GAP;
+        }
+    }
+}
+
+impl CapPart {
+    fn size(&self) -> Vec2 {
+        match self {
+            CapPart::Cap(galley) => galley.size() + Vec2::new(5.0, 1.0) * 2.0 + Vec2::splat(2.0),
+            CapPart::Join(galley) => galley.size(),
+        }
+    }
+}
+
+const CAP_JOIN_GAP: f32 = 3.0;
+
+fn face_job(face: &CapFace, color: Color32) -> egui::text::LayoutJob {
+    let letters = TextRole::KeyHint.format(color);
+    let mut job = egui::text::LayoutJob::default();
+    for run in face.runs() {
+        let glyph = run.scale != 1.0;
+        let format = egui::TextFormat {
+            font_id: egui::FontId::new(letters.font_id.size * run.scale, run.family),
+            valign: Align::Center,
+            line_height: if glyph { None } else { letters.line_height },
+            extra_letter_spacing: if glyph {
+                0.0
+            } else {
+                letters.extra_letter_spacing
+            },
+            ..letters.clone()
+        };
+        job.append(&run.text, 0.0, format);
+    }
+    job
 }

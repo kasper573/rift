@@ -112,7 +112,7 @@ fn brush_fields(ui: &mut Ui, brush: &mut Brush) {
         if controls::slider(ui, &mut radius, SMALLEST_RADIUS.0..=LARGEST_RADIUS.0).changed() {
             brush.radius = Meters(radius);
         }
-        controls::key_hint_text(ui, &EditorKey::BrushLarger.name(), "grows");
+        controls::key_hint_text(ui, &EditorKey::BrushLarger.cap(), "grows");
     });
     form::kv(ui, "strength", |ui| {
         controls::slider(ui, &mut brush.strength, 0.0..=1.0);
@@ -212,7 +212,7 @@ fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super
             if controls::slider(ui, &mut radius, SMALLEST_RADIUS.0..=LARGEST_RADIUS.0).changed() {
                 view.brush.radius = Meters(radius);
             }
-            controls::key_hint_text(ui, &EditorKey::BrushLarger.name(), "grows");
+            controls::key_hint_text(ui, &EditorKey::BrushLarger.cap(), "grows");
         });
         form::kv(ui, "fray", |ui| {
             controls::slider(ui, &mut view.brush.falloff, 0.0..=1.0)
@@ -246,11 +246,11 @@ fn prop_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, prop: &str) {
         }
         form::kv(ui, "turned", |ui| {
             ui.label(face::mono(format!("{}°", view.place_yaw.0.round())));
-            controls::key_hint_text(ui, &EditorKey::TurnClockwise.name(), "turns");
+            controls::key_hint_text(ui, &EditorKey::TurnClockwise.cap(), "turns");
         });
         form::kv(ui, "snap", |ui| {
             ui.label(theme::muted("half metres").size(12.5));
-            controls::key_hint_text(ui, &EditorKey::Unsnapped.name(), "for 1/16");
+            controls::key_hint_text(ui, &EditorKey::Unsnapped.cap(), "for 1/16");
         });
         form::hint(
             ui,
@@ -438,7 +438,7 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                     save = true;
                 }
             }
-            controls::key_hint_text(ui, &EditorKey::TurnClockwise.name(), "turns");
+            controls::key_hint_text(ui, &EditorKey::TurnClockwise.cap(), "turns");
         });
         form::kv(ui, "spacing", |ui| {
             let label = match settings.spacing {
@@ -475,7 +475,7 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
         });
         form::kv(ui, "snap", |ui| {
             ui.label(theme::muted("half metres").size(12.5));
-            controls::key_hint_text(ui, &EditorKey::Unsnapped.name(), "for 1/16");
+            controls::key_hint_text(ui, &EditorKey::Unsnapped.cap(), "for 1/16");
         });
         if variables.is_empty() {
             form::kv_text(ui, "values", "none: no variables");
@@ -643,7 +643,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
             });
             controls::key_hint_text(
                 ui,
-                &EditorKey::MakeBlueprint.name(),
+                &EditorKey::MakeBlueprint.cap(),
                 "makes a blueprint of the selection",
             );
         }

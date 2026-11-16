@@ -5,6 +5,7 @@ use std::str::FromStr;
 use egui::{Id, KeyboardShortcut, Response, TextEdit, Ui};
 
 use crate::draft::{Typed, typed};
+use crate::keys::KeyCap;
 use crate::{controls, keys, theme};
 
 /// The text field: a line, or `rows` of them, typed in the input box.
@@ -258,7 +259,7 @@ impl<N: Copy + PartialOrd + Display + FromStr, const K: usize> NumberField<'_, N
 }
 
 /// A search: the field the narrowing of a list is typed in, `key` the shortcut that reaches it.
-pub fn search(ui: &mut Ui, text: &mut String, hint: &str, key: Option<&str>) -> Response {
+pub fn search(ui: &mut Ui, text: &mut String, hint: &str, key: Option<&KeyCap>) -> Response {
     boxed(ui, None, |ui| {
         crate::glyph::show(ui, crate::glyph::Mark::Search, 13.0, theme::MUTED);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

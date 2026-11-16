@@ -158,12 +158,12 @@ fn front_card(ui: &mut Ui, world: &World, card: &RequestCard, now: UnixMillis) -
         });
     });
     ui.horizontal(|ui| {
-        let accept = keys.name(InputAction::AcceptRequest);
-        if controls::keyed(ui, "Accept", accept.as_deref(), true).clicked() {
+        let accept = keys.cap(InputAction::AcceptRequest);
+        if controls::keyed(ui, "Accept", accept.as_ref(), true).clicked() {
             done = Some(Done::Answer(RequestAnswer::Accept));
         }
-        let deny = keys.name(InputAction::DenyRequest);
-        if controls::keyed(ui, "Deny", deny.as_deref(), true).clicked() {
+        let deny = keys.cap(InputAction::DenyRequest);
+        if controls::keyed(ui, "Deny", deny.as_ref(), true).clicked() {
             done = Some(Done::Answer(RequestAnswer::Deny));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

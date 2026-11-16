@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use engine::core::text::{
-    CharactersPerSecond, InputRef, KeyCap, StyledSpan, TextPiece, TypingPace, reveal_duration,
+    CharactersPerSecond, InputRef, StyledSpan, TextKey, TextPiece, TypingPace, reveal_duration,
     revealed,
 };
 
@@ -17,7 +17,7 @@ fn characters_appear_at_the_typing_speed_a_key_as_one_and_slow_spans_slower() {
     assert_eq!(revealed(&line, TEN_PER_SECOND, ms(250)), 2);
     assert_eq!(reveal_duration(&line, TEN_PER_SECOND), ms(400));
 
-    let keyed = [span("ab"), TextPiece::Key(KeyCap::Input(InputRef(0)))];
+    let keyed = [span("ab"), TextPiece::Key(TextKey::Input(InputRef(0)))];
     assert_eq!(revealed(&keyed, TEN_PER_SECOND, ms(300)), 3);
 
     let slow = [StyledSpan::plain("abcd").slow().into()];

@@ -147,8 +147,8 @@ impl HudWidget for TradeWindowWidget {
                         asked = Some(request);
                     }
                     let keys = world.resource::<InputMap>();
-                    let esc = keys.name(InputAction::Dismiss);
-                    if controls::keyed(ui, "Cancel", esc.as_deref(), true).clicked() {
+                    let esc = keys.cap(InputAction::Dismiss);
+                    if controls::keyed(ui, "Cancel", esc.as_ref(), true).clicked() {
                         asked = Some(TradeRequest::Cancel);
                     }
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {

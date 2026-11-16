@@ -696,8 +696,8 @@ fn foot(ui: &mut Ui, world: &mut World, prompt: &PromptView, several: bool) {
     let room = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
     ui.allocate_ui_with_layout(room, Layout::right_to_left(Align::Center), |ui| {
         if making {
-            let key = world.resource::<InputMap>().name(InputAction::Dismiss);
-            if controls::keyed(ui, &words.cancel_craft, key.as_deref(), true).clicked() {
+            let key = world.resource::<InputMap>().cap(InputAction::Dismiss);
+            if controls::keyed(ui, &words.cancel_craft, key.as_ref(), true).clicked() {
                 cancel(world);
             }
             return;

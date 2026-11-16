@@ -134,8 +134,8 @@ impl HudWidget for CallCardWidget {
             .map_or(Seconds(1.0), |party| party.call_lasts);
         let keys = world.resource::<InputMap>();
         let (join_key, decline_key) = (
-            keys.name(InputAction::AcceptRequest),
-            keys.name(InputAction::DenyRequest),
+            keys.cap(InputAction::AcceptRequest),
+            keys.cap(InputAction::DenyRequest),
         );
         let leader = call.leader.name.clone();
         let area = Mention::Area(call.area).span(&content);
@@ -178,12 +178,12 @@ impl HudWidget for CallCardWidget {
                             CallAnswer::Deciding => "Not this time",
                             _ => "Withdraw",
                         };
-                        if controls::keyed(ui, label, decline_key.as_deref(), true).clicked() {
+                        if controls::keyed(ui, label, decline_key.as_ref(), true).clicked() {
                             replied = Some(CallReply::Decline);
                         }
                     }
                     if !matches!(row.answer, CallAnswer::Joined { .. })
-                        && controls::keyed(ui, "Join", join_key.as_deref(), true).clicked()
+                        && controls::keyed(ui, "Join", join_key.as_ref(), true).clicked()
                     {
                         replied = Some(CallReply::Join);
                     }

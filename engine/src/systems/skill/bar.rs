@@ -7,9 +7,10 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
-use ui::egui::{Align2, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use ui::egui::{Align2, FontId, Id, Order, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use ui::face::TextRole;
 use ui::glyph::{self, Halo, Mark};
+use ui::keys::{CapRun, KeyCap};
 use ui::{controls, ink, sheet, slip};
 
 use super::{
@@ -332,7 +333,7 @@ pub fn report(world: &World) -> Vec<SlotReport> {
             let state = world.resource::<BarState>();
             SlotReport {
                 entry,
-                key: key_name(world, slot),
+                key: key_cap(world, slot).map(|cap| cap.name),
                 cooling: matches!(view.fill, SlotFill::Cooling { .. }),
                 blocked: matches!(view.fill, SlotFill::Blocked(_)),
                 dimmed: view.dimmed,
@@ -532,7 +533,7 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     if carried.is_some() && response.contains_pointer() {
         drop_wash(ui, response.rect);
     }
-    if let Some(key) = key_name(world, index) {
+    if let Some(key) = key_cap(world, index) {
         slot_key_mark(ui, response.rect, &key);
     }
     response.widget_info(|| {
@@ -614,7 +615,7 @@ fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
             "{} · ",
             entry_name(&content, entry)
         ))];
-        said.extend(key_cap(world, index).map_or_else(
+        said.extend(key_piece(world, index).map_or_else(
             || vec![TextPiece::text("no key")],
             |key| vec![TextPiece::text("key "), key],
         ));
@@ -807,7 +808,7 @@ fn slot_tooltip(
     index: HotbarSlot,
     entry: HotbarEntry,
 ) {
-    let key = key_cap(world, index);
+    let key = key_piece(world, index);
     let options = match &key {
         Some(_) => vec![
             input(InputAction::SlotOptions),
@@ -940,16 +941,29 @@ fn drop_wash(ui: &Ui, rect: Rect) {
     );
 }
 
-fn slot_key_mark(ui: &Ui, rect: Rect, key: &str) {
-    glyph::haloed(
-        ui.painter(),
-        rect.left_top() + Vec2::new(3.0, 1.0),
-        Align2::LEFT_TOP,
-        key,
-        TextRole::SlotKey.font_id(),
-        ink::INK2,
-        CREAM_HALO,
-    );
+fn slot_key_mark(ui: &Ui, rect: Rect, key: &KeyCap) {
+    let letters = TextRole::SlotKey.font_id();
+    let mut at = rect.left_top() + Vec2::new(3.0, 1.0);
+    for (index, face) in key.faces().enumerate() {
+        let joined = (index > 0).then(|| CapRun {
+            text: "+".to_owned(),
+            family: letters.family.clone(),
+            scale: 1.0,
+        });
+        for run in joined.into_iter().chain(face.runs()) {
+            let font = FontId::new(letters.size * run.scale, run.family);
+            let drawn = glyph::haloed(
+                ui.painter(),
+                at,
+                Align2::LEFT_TOP,
+                &run.text,
+                font,
+                ink::INK2,
+                CREAM_HALO,
+            );
+            at.x = drawn.max.x;
+        }
+    }
 }
 
 const CREAM_HALO: Halo = Halo {
@@ -1107,17 +1121,17 @@ fn slot_key(settings: &UserSettings, slot: HotbarSlot) -> Option<SlotKey> {
     }
 }
 
-fn key_cap(world: &World, slot: HotbarSlot) -> Option<TextPiece> {
+fn key_piece(world: &World, slot: HotbarSlot) -> Option<TextPiece> {
     match slot_key(world.resource::<UserSettings>(), slot)? {
         SlotKey::Action(action) => Some(input(action)),
-        SlotKey::Gesture(gesture) => Some(TextPiece::key(InputBinding::Key(gesture).name())),
+        SlotKey::Gesture(gesture) => Some(TextPiece::key(InputBinding::Key(gesture).cap())),
     }
 }
 
-fn key_name(world: &World, slot: HotbarSlot) -> Option<String> {
+fn key_cap(world: &World, slot: HotbarSlot) -> Option<KeyCap> {
     match slot_key(world.resource::<UserSettings>(), slot)? {
-        SlotKey::Action(action) => world.resource::<InputMap>().name(action),
-        SlotKey::Gesture(gesture) => Some(InputBinding::Key(gesture).name()),
+        SlotKey::Action(action) => world.resource::<InputMap>().cap(action),
+        SlotKey::Gesture(gesture) => Some(InputBinding::Key(gesture).cap()),
     }
 }
 

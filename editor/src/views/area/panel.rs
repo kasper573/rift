@@ -408,7 +408,7 @@ fn filter_row(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
                 ui,
                 &mut panel.filter,
                 "Filter the scene",
-                Some(&EditorKey::FilterScene.name()),
+                Some(&EditorKey::FilterScene.cap()),
             );
             if std::mem::take(&mut panel.focus_filter) {
                 response.request_focus();

@@ -659,7 +659,7 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                                         .spacing([14.0, 4.0])
                                         .show(ui, |ui| {
                                             for key in scope.keys() {
-                                                controls::key_hint(ui, &key.name());
+                                                controls::key_hint(ui, &key.cap());
                                                 ui.label(RichText::new(key.about()).size(13.0));
                                                 ui.end_row();
                                             }

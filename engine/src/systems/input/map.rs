@@ -14,7 +14,8 @@ use super::scope;
 use crate::core::content::SchemaMark;
 use crate::core::content::fixture::FixtureLock;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby, RowCheck, serial};
-use crate::core::text::{InputRef, KeyCap, KeyNames, TextPiece};
+use crate::core::text::{InputRef, KeyNames, TextKey, TextPiece};
+use ui::keys::{CapFace, KeyCap, MouseGlyph};
 
 #[derive(
     JsonSchema,
@@ -393,20 +394,46 @@ impl InputBinding {
         }
     }
 
-    pub fn name(&self) -> String {
-        let (modifiers, name) = match *self {
-            InputBinding::Key(gesture) => (gesture.modifiers, key_name(gesture.key)),
-            InputBinding::AnyKey => (KeyModifiers::NONE, "any key".to_owned()),
-            InputBinding::Mouse { button, modifiers } => {
-                (modifiers, click_name(button, Clicks::Single))
+    /// What a player reads for the binding: its name, and the key cap or mouse glyph it is drawn as.
+    pub fn cap(&self) -> KeyCap {
+        let modifiers = self.modifiers();
+        let (face, name) = match *self {
+            InputBinding::Key(gesture) => {
+                let name = key_name(gesture.key);
+                (CapFace::Text(name.clone()), name)
             }
-            InputBinding::Click(gesture) => {
-                (gesture.modifiers, click_name(gesture.button, gesture.times))
+            InputBinding::AnyKey => (CapFace::Text("Any key".to_owned()), "any key".to_owned()),
+            InputBinding::Mouse { button, .. } => mouse_cap(button, Clicks::Single, false),
+            InputBinding::Click(gesture) => mouse_cap(gesture.button, gesture.times, false),
+            InputBinding::Drag(gesture) => mouse_cap(gesture.button, Clicks::Single, true),
+            InputBinding::Wheel(gesture) => {
+                let (glyph, name) = match gesture.turn {
+                    WheelTurn::Up => (MouseGlyph::WheelUp, "wheel up"),
+                    WheelTurn::Down => (MouseGlyph::WheelDown, "wheel down"),
+                };
+                let face = CapFace::Mouse {
+                    glyph,
+                    presses: 1,
+                    drag: false,
+                };
+                (face, name.to_owned())
             }
-            InputBinding::Drag(gesture) => (gesture.modifiers, drag_name(gesture.button)),
-            InputBinding::Wheel(gesture) => (gesture.modifiers, wheel_name(gesture.turn)),
         };
-        capitalized(format!("{}{name}", held_prefix(modifiers)))
+        let held = held_names(modifiers);
+        let name = held
+            .iter()
+            .map(|held| format!("{held}+"))
+            .chain([name])
+            .collect();
+        KeyCap {
+            held,
+            face,
+            name: capitalized(name),
+        }
+    }
+
+    pub fn name(&self) -> String {
+        self.cap().name
     }
 }
 
@@ -464,8 +491,8 @@ impl InputMap {
         KeyModifiers::held(keys).without(self.own_keys.without(meant)) == wanted
     }
 
-    pub fn name(&self, action: InputAction) -> Option<String> {
-        self.bindings(action).first().map(InputBinding::name)
+    pub fn cap(&self, action: InputAction) -> Option<KeyCap> {
+        self.bindings(action).first().map(InputBinding::cap)
     }
 
     pub fn shortcut(&self, action: InputAction) -> Option<egui::KeyboardShortcut> {
@@ -484,7 +511,7 @@ impl InputMap {
         KeyNames(
             InputAction::VARIANTS
                 .iter()
-                .map(|&action| (action.into(), self.name(action).unwrap_or_default()))
+                .filter_map(|&action| Some((action.into(), self.cap(action)?)))
                 .collect(),
         )
     }
@@ -573,7 +600,7 @@ pub fn takes_wheel(world: &World, action: InputAction) -> bool {
 }
 
 pub fn input(action: InputAction) -> TextPiece {
-    TextPiece::Key(KeyCap::Input(action.into()))
+    TextPiece::Key(TextKey::Input(action.into()))
 }
 
 /// A line of hints, each an input followed by what it does, with a dot between one and the next.
@@ -853,15 +880,16 @@ fn pointer_button(button: MouseButton) -> Option<egui::PointerButton> {
     }
 }
 
-fn held_prefix(modifiers: KeyModifiers) -> String {
+fn held_names(modifiers: KeyModifiers) -> Vec<String> {
     [
-        (modifiers.ctrl, "Ctrl+"),
-        (modifiers.shift, "Shift+"),
-        (modifiers.alt, "Alt+"),
-        (modifiers.super_key, "Super+"),
+        (modifiers.ctrl, "Ctrl"),
+        (modifiers.alt, "Alt"),
+        (modifiers.shift, "Shift"),
+        (modifiers.super_key, "Super"),
     ]
     .into_iter()
-    .filter_map(|(held, prefix)| held.then_some(prefix))
+    .filter(|(held, _)| *held)
+    .map(|(_, name)| name.to_owned())
     .collect()
 }
 
@@ -888,31 +916,39 @@ fn key_name(key: KeyCode) -> String {
     named.to_owned()
 }
 
-fn click_name(button: MouseButton, times: Clicks) -> String {
-    let press = match times {
-        Clicks::Single => "",
-        Clicks::Double => "double-",
-        Clicks::Triple => "triple-",
+fn mouse_cap(button: MouseButton, times: Clicks, drag: bool) -> (CapFace, String) {
+    let (presses, repeated) = match times {
+        Clicks::Single => (1, ""),
+        Clicks::Double => (2, "double-"),
+        Clicks::Triple => (3, "triple-"),
     };
-    format!("{press}{}click", button_prefix(button))
-}
-
-fn drag_name(button: MouseButton) -> String {
-    format!("{}drag", button_prefix(button))
-}
-
-fn wheel_name(turn: WheelTurn) -> String {
-    match turn {
-        WheelTurn::Up => "wheel up",
-        WheelTurn::Down => "wheel down",
-    }
-    .to_owned()
-}
-
-fn button_prefix(button: MouseButton) -> String {
+    let verb = if drag { "drag" } else { "click" };
+    let glyph = |glyph| CapFace::Mouse {
+        glyph,
+        presses,
+        drag,
+    };
+    let pointer = |shown, side: &str| (glyph(shown), format!("{repeated}{side}{verb}"));
+    let thumb = |button: String| {
+        if presses == 1 && !drag {
+            button
+        } else {
+            format!("{button} {repeated}{verb}")
+        }
+    };
     match button {
-        MouseButton::Left => String::new(),
-        other => format!("{other:?}-").to_lowercase(),
+        MouseButton::Left => pointer(MouseGlyph::Left, ""),
+        MouseButton::Right => pointer(MouseGlyph::Right, "right-"),
+        MouseButton::Middle => pointer(MouseGlyph::Middle, "middle-"),
+        MouseButton::Back => (glyph(MouseGlyph::Back), thumb("mouse back".to_owned())),
+        MouseButton::Forward => (
+            glyph(MouseGlyph::Forward),
+            thumb("mouse forward".to_owned()),
+        ),
+        MouseButton::Other(number) => {
+            let name = thumb(format!("mouse {number}"));
+            (CapFace::Text(capitalized(name.clone())), name)
+        }
     }
 }
 

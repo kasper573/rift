@@ -608,7 +608,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
     ] {
         ui.horizontal(|ui| {
             for key in keys {
-                controls::key_hint(ui, &key.name());
+                controls::key_hint(ui, &key.cap());
             }
             ui.label(theme::muted(text));
         });

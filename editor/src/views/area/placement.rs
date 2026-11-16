@@ -739,7 +739,7 @@ pub(super) fn placement_extras(
     });
     controls::key_hint_text(
         ui,
-        &EditorKey::Confirm.name(),
+        &EditorKey::Confirm.cap(),
         "edits the blueprint in place",
     );
 }

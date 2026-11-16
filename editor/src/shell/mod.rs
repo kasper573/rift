@@ -392,7 +392,7 @@ fn empty_centre(ui: &mut egui::Ui) {
             "Pick a row or a file on the left, or search them all",
         ));
         ui.add_space(8.0);
-        controls::key_hint(ui, &EditorKey::Search.name());
+        controls::key_hint(ui, &EditorKey::Search.cap());
     });
 }
 

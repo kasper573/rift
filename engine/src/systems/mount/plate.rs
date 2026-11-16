@@ -65,12 +65,12 @@ impl HudWidget for MountPlateWidget {
         let content = world.resource::<Content>().clone();
         let title = riding.mount.get(&content).name.clone();
         let shut = shut(world, me);
-        let key = world.resource::<InputMap>().name(InputAction::StepOff);
+        let key = world.resource::<InputMap>().cap(InputAction::StepOff);
         let mut leaves = false;
         sheet::note(ui, Margin::same(dialog::PADDING), |ui| {
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new(face::bold(title.as_str())).extend());
-                let leave = controls::keyed(ui, "Step off", key.as_deref(), shut.is_none());
+                let leave = controls::keyed(ui, "Step off", key.as_ref(), shut.is_none());
                 let leave = match &shut {
                     Some(why) => leave.on_hover_text(why.as_str()),
                     None => leave,

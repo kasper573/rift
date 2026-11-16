@@ -1032,7 +1032,7 @@ fn choice_row(
     let keys = world.resource::<InputMap>();
     let shortcut = CHOICE_SHORTCUTS
         .get(index)
-        .and_then(|&action| keys.name(action));
+        .and_then(|&action| keys.cap(action));
     let label = choice.label.words(keys);
     let color = ui.visuals().override_text_color.unwrap_or(ink::INK);
     let mut chip_item = None;

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 use ui::controls::{self, KeyHint};
 use ui::egui::{self, Pos2, Rect, Sense, Ui, UiBuilder, Vec2};
+use ui::keys::KeyCap;
 use ui::sheet::{self, Tab, TabSize};
 
 use super::panel::{self, WindowFrame};
@@ -301,7 +302,7 @@ fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {
             let image = tab.icon().get(world.resource::<Content>()).image.clone();
             Tab {
                 icon: gui::image(world, &image).map(|image| image.texture),
-                keys: world.resource::<InputMap>().name(tab.opens()),
+                keys: world.resource::<InputMap>().cap(tab.opens()),
                 badge: tab.badge(world).map(badge_text),
                 ..Tab::new(tab.name(), tab.name().title())
             }
@@ -328,17 +329,17 @@ const MOST_COUNTED: u32 = 99;
 
 fn hints(ui: &mut Ui, world: &World, tab: &dyn MenuTab) {
     let keys = world.resource::<InputMap>();
-    let named: Vec<(String, &str)> = tab
+    let named: Vec<(KeyCap, &str)> = tab
         .hints(world)
         .into_iter()
-        .filter_map(|(action, does)| Some((keys.name(action)?, does)))
+        .filter_map(|(action, does)| Some((keys.cap(action)?, does)))
         .collect();
     let hints: Vec<KeyHint> = named
         .iter()
         .map(|(keys, does)| KeyHint { keys, does })
         .collect();
-    let leaves = keys.name(InputAction::Dismiss);
-    let leaves = leaves.as_deref().map(|keys| KeyHint {
+    let leaves = keys.cap(InputAction::Dismiss);
+    let leaves = leaves.as_ref().map(|keys| KeyHint {
         keys,
         does: "close",
     });

@@ -7,8 +7,8 @@ use ui::egui::emath::TSTransform;
 use ui::egui::epaint::TextShape;
 use ui::egui::text::{LayoutJob, TextFormat};
 use ui::egui::{
-    Color32, Galley, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo,
-    WidgetType,
+    Align, Color32, FontFamily, FontId, Galley, Pos2, Rect, Response, Sense, Shape, Stroke,
+    StrokeKind, Ui, Vec2, WidgetInfo, WidgetType,
 };
 use ui::face::{Face, TextRole};
 use ui::ink::{self, Ground};
@@ -226,35 +226,53 @@ impl Plan {
                     open = false;
                     letter += 1;
                 }
-                TextPiece::Key(cap) => {
-                    let format = TextFormat {
-                        line_height: look.line_height,
-                        ..TextFormat::simple(
-                            Face::Mono.id(look.size * lettering.caps.size),
-                            look.color,
-                        )
+                TextPiece::Key(key) => {
+                    let Some(cap) = key.cap(keys) else {
+                        continue;
                     };
-                    let start = plan.letters.len();
-                    for (at, ch) in cap.name(keys).chars().enumerate() {
-                        let leading = if at == 0 { owed + pad } else { 0.0 };
-                        plan.letters.push(Letter {
-                            ch,
-                            format: format.clone(),
-                            leading,
-                            letter,
+                    let size = look.size * lettering.caps.size;
+                    let format = |scale: f32, family: FontFamily| TextFormat {
+                        line_height: look.line_height,
+                        valign: Align::Center,
+                        ..TextFormat::simple(FontId::new(size * scale, family), look.color)
+                    };
+                    for (index, face) in cap.faces().enumerate() {
+                        if index > 0 {
+                            plan.letters.push(Letter {
+                                ch: '+',
+                                format: format(1.0, Face::Mono.family()),
+                                leading: std::mem::take(&mut owed),
+                                letter,
+                            });
+                        }
+                        let start = plan.letters.len();
+                        for run in face.runs() {
+                            for ch in run.text.chars() {
+                                let leading = if plan.letters.len() == start {
+                                    std::mem::take(&mut owed) + pad
+                                } else {
+                                    0.0
+                                };
+                                plan.letters.push(Letter {
+                                    ch,
+                                    format: format(run.scale, run.family.clone()),
+                                    leading,
+                                    letter,
+                                });
+                            }
+                        }
+                        let letters = start..plan.letters.len();
+                        plan.words.push(Word {
+                            letters: letters.clone(),
+                            motion: None,
                         });
+                        plan.caps.push(Cap {
+                            letters,
+                            letter,
+                            color: look.color,
+                        });
+                        owed = pad;
                     }
-                    let letters = start..plan.letters.len();
-                    plan.words.push(Word {
-                        letters: letters.clone(),
-                        motion: None,
-                    });
-                    plan.caps.push(Cap {
-                        letters,
-                        letter,
-                        color: look.color,
-                    });
-                    owed = pad;
                     open = false;
                     letter += 1;
                 }
