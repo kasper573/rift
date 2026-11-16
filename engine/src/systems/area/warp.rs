@@ -17,7 +17,7 @@ use crate::systems::script::{
     Condition, EffectCall, EffectReach, Fill, OwnerRow, Place, RiftScripting, RiftScripts,
 };
 use crate::systems::text::LineText;
-use crate::systems::{dialogue, mount, movement, reach, region};
+use crate::systems::{area_instance, dialogue, mount, movement, reach, region};
 
 pub struct WarpObject {
     pub name: String,
@@ -211,6 +211,7 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), LineText>
         return Err("Nobody is followed into an instance".into());
     }
     dialogue::close_for(world, actor);
+    area_instance::entrance::close(world, actor);
     reach::forget(world, actor);
     mount::warping(world, actor, to);
     world.entity_mut(actor).insert(SpawnPoint(to.at));
@@ -231,6 +232,7 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), LineText>
 /// `to`, as through any warp.
 pub fn cross(world: &mut World, character: Entity, to: Place, instance: Option<AreaInstanceWorld>) {
     dialogue::close_for(world, character);
+    area_instance::entrance::close(world, character);
     reach::forget(world, character);
     mount::warping(world, character, to);
     world.entity_mut(character).insert((

@@ -50,8 +50,7 @@ impl QueryGroup {
             | RiftQueryKind::InParty
             | RiftQueryKind::Riding
             | RiftQueryKind::InCombat
-            | RiftQueryKind::InInstance
-            | RiftQueryKind::InstanceHolds => QueryGroup::Character,
+            | RiftQueryKind::InInstance => QueryGroup::Character,
             RiftQueryKind::Holding
             | RiftQueryKind::FreeSlots
             | RiftQueryKind::Offered

@@ -28,6 +28,7 @@ use engine::core::store::{Record, RecordId, RecordStore, RecordStoreProblem};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::area::{self, AreaDef, AreaId, transition};
+use engine::systems::area_instance::AreaInstanceWorld;
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, ReadyLine, SERVER_ENV_PREFIX,
     ServerConfig, ServerDaylight, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC,
@@ -266,11 +267,13 @@ struct Lobby {
     next_dealt: usize,
 }
 
-/// A connection let in: the client it plays as, the world it joins, the character it joins as
-/// unless it makes or shares one, and what the game changing did to that character.
+/// A connection let in: the client it plays as, the world it joins, the instance that world is
+/// when it joins one, the character it joins as unless it makes or shares one, and what the game
+/// changing did to that character.
 struct Admitted {
     client: ClientId,
     world: WorldName,
+    instance: Option<AreaInstanceWorld>,
     join_as: Option<JoinAs>,
     changes: Vec<GameChange>,
 }
@@ -295,6 +298,7 @@ impl Lobby {
             return Some(Admitted {
                 client,
                 world: self.places.get(&client).copied().unwrap_or(self.spawn),
+                instance: None,
                 join_as: None,
                 changes: Vec::new(),
             });
@@ -304,7 +308,8 @@ impl Lobby {
             .as_ref()
             .and_then(|characters| characters.take(&identity.id));
         let departed = above.checkpoints.departed(&identity.id);
-        let (join_as, changes) = match (staged, departed, found) {
+        let restores = staged.is_none();
+        let (mut join_as, changes) = match (staged, departed, found) {
             (Some(join_as), ..) => (Some(join_as), Vec::new()),
             (None, Some(saved), _) => saved_character(load::unchanged(&self.content, &saved)),
             (None, None, SessionCharacter::Read(Some(loaded))) => saved_character(*loaded),
@@ -317,8 +322,18 @@ impl Lobby {
         above
             .society
             .signed_in(identity, now, &mut above.checkpoints.unwritten);
+        // A character whose player was away from a copy that still lives comes back into it,
+        // where they last stood. A staged character starts where it was staged.
+        let rejoined = join_as.as_mut().filter(|_| restores).and_then(|join_as| {
+            let (run, place) = above.society.read().instances().rejoin(&identity.id)?;
+            join_as.start = place;
+            Some(run)
+        });
         let world = match (&join_as, self.policy) {
-            (Some(join_as), _) => WorldName::shared(join_as.start.area),
+            (Some(join_as), _) => WorldName {
+                area: join_as.start.area,
+                instance: rejoined.map(|run| run.id),
+            },
             (None, SpawnPolicy::Dist) => {
                 let area = self.dealt[self.next_dealt % self.dealt.len()];
                 self.next_dealt += 1;
@@ -330,6 +345,7 @@ impl Lobby {
         Some(Admitted {
             client,
             world,
+            instance: rejoined,
             join_as,
             changes,
         })
@@ -391,6 +407,9 @@ fn simulate(
                         continue;
                     };
                     let world = admitted.world;
+                    if let Some(run) = admitted.instance {
+                        worlds.app(world).insert_resource(run);
+                    }
                     let entity = spawn_conn(
                         worlds.app(world),
                         admitted.client,

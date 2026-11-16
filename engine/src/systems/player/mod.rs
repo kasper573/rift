@@ -28,6 +28,7 @@ use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name,
 use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::weather::ServerSky;
 use crate::systems::area::{self, AreaId, AreaTag};
+use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::class::{Class, ClassId};
 use crate::systems::combat::{self, VitalRegen};
 use crate::systems::command::CommandCooldowns;
@@ -48,7 +49,8 @@ use crate::systems::status::{self, CarriedStatuses, Statuses};
 use crate::systems::text::LineText;
 use crate::systems::visibility;
 use crate::systems::{
-    GameSettings, WorldArea, belongings, drain_requests, notification, reach, region, resource,
+    GameSettings, WorldArea, area_instance, belongings, drain_requests, notification, reach,
+    region, resource,
 };
 
 pub fn register(app: &mut App) {
@@ -488,6 +490,7 @@ pub fn depart(world: &mut World, character: Entity) {
     let Some(client) = world.get::<PlayedBy>(character).map(|played| played.client) else {
         return;
     };
+    area_instance::entrance::close(world, character);
     let left = SavedCharacter::of_live(world, character);
     world.resource_mut::<Players>().0.remove(&client);
     world.despawn(character);
@@ -524,6 +527,7 @@ fn leave_behind(world: &mut World, character: Entity) {
     }
     movement::halt(world, character);
     dialogue::close_for(world, character);
+    area_instance::entrance::close(world, character);
     reach::forget(world, character);
     resource::stop(world, character);
     let until = world.resource::<WallClock>().now.after(lingers_for);
@@ -585,6 +589,9 @@ pub fn join(world: &mut World) {
                 region::hold_around(world, start.at);
                 let mut state = snapshot::materialize(&content, &snapshot, start, clock, taken);
                 state.kept_aside.told = told;
+                if let Some(run) = world.get_resource::<AreaInstanceWorld>() {
+                    state.spawn = SpawnPoint(run.entrance.at);
+                }
                 // Mounts are not saved, so a character saved where only their mount could be
                 // signs in where dying would send them, never on whatever ground is nearest.
                 let ground = area.mesh();

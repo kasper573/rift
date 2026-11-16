@@ -7,16 +7,15 @@ use serde::{Deserialize, Serialize};
 use super::{AreaInstanceEntry, AreaInstanceRewards};
 use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault};
-use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::{self as effects, Reaching};
 use crate::systems::script::{Condition, EffectCall, EffectReach, Fill, Place, RiftScripting};
-use crate::systems::society::{self, SocietyAsk};
+use crate::systems::worlds::WorldName;
 
-/// Lets a player into their party's instance of an area, opening one when the party has none
-/// there: with these rewards for clearing it, and this place to come back to. A player in no
-/// party gets one of their own. Whoever opens an instance decides both for everyone let into it
-/// after them. Rewards with items are for a game that has messages, where what a bag has no
-/// room for is sent.
+/// Lets a player into a copy of an instanced area: with these rewards for clearing it, and this
+/// place to come back to. A player in no party, at an area that may be done alone, goes in at
+/// once; anyone else chooses at the entrance panel to go alone, or, leading a party, to gather
+/// it. Rewards with items are for a game that has messages, where what a bag has no room for is
+/// sent.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = SchemaMark::System.with("instance"))]
@@ -31,8 +30,8 @@ pub struct EnterInstance {
     pub return_to: Fill<Place>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
-    /// Taken when they are not let in: the instance holds as many as it may, or the server runs
-    /// as many as it is set to. Left unwired, they are told why.
+    /// Taken when they are not let in: they leave the entrance panel, the call they made ends
+    /// without them, or the server runs as many as it is set to. Left unwired, they are told why.
     #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
@@ -68,20 +67,21 @@ impl EffectDef<RiftScripting> for EnterInstance {
         let rewards = self.rewards.clone();
         let told = self.refused.is_none();
         Ok(Box::new(move |world, flow, cx| {
-            let client = effects::aimed_character(world, cx, &who)
-                .and_then(|character| world.get::<PlayedBy>(character))
-                .map(|by| by.client);
-            let Some(client) = client else {
+            let Some(character) = effects::aimed_character(world, cx, &who) else {
+                return EffectStep::Output(REFUSED);
+            };
+            let Some(asked_in) = WorldName::of(world) else {
                 return EffectStep::Output(REFUSED);
             };
             let entry = AreaInstanceEntry {
                 to,
                 rewards: rewards.clone(),
                 return_to,
+                asked_in,
                 flow,
                 told,
             };
-            society::ask(world, client, SocietyAsk::EnterInstance(entry));
+            super::entrance::enter(world, character, cx.owner, entry);
             EffectStep::Pause
         }))
     }
@@ -95,8 +95,8 @@ impl EffectDef<RiftScripting> for EnterInstance {
     }
 }
 
-/// Sends a player out of the instance they are in, to where leaving it leads. Nothing happens
-/// to one who is in none.
+/// Sends a player out of the instance they are in, to where leaving it leads, for good. Nothing
+/// happens to one who is in none.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = SchemaMark::System.with("instance"))]

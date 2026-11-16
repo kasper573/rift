@@ -12,6 +12,7 @@ use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::area_instance::AreaInstanceShown;
+use crate::systems::area_instance::roster::InstanceCallShown;
 use crate::systems::inbox;
 use crate::systems::party::PartyShown;
 use crate::systems::player::CharacterAccount;
@@ -43,6 +44,8 @@ pub struct SocietyView {
     pub party: Option<PartyShown>,
     /// The instance the account's character is inside.
     pub instance: Option<AreaInstanceShown>,
+    /// The call to an instance the account leads, or was called to by its party's leader.
+    pub call: Option<InstanceCallShown>,
 }
 
 /// A friend, as the player whose friend they are sees them.
@@ -108,7 +111,9 @@ pub(crate) fn show(world: &mut World, character: Entity, society: &Society) {
         return;
     };
     view.party = PartyShown::of(society, &account.0, settings, client_of);
-    view.instance = AreaInstanceShown::of(society, &account.0, world.resource::<Content>());
+    let content = world.resource::<Content>();
+    view.instance = AreaInstanceShown::of(society, &account.0, content);
+    view.call = InstanceCallShown::of(society, &account.0, content);
     if world.get::<SocietyView>(character) != Some(&view) {
         world.entity_mut(character).insert(view);
     }
@@ -179,6 +184,7 @@ impl SocietyView {
             friends,
             party: None,
             instance: None,
+            call: None,
         })
     }
 }

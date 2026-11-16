@@ -6,8 +6,9 @@ use rayon::prelude::*;
 
 use crate::core::content::Content;
 use crate::core::time::{UnixMillis, WallClock};
+use crate::systems::WorldArea;
 use crate::systems::area::{AreaDef, AreaId};
-use crate::systems::area_instance::AreaInstanceId;
+use crate::systems::area_instance::{AreaInstanceId, AreaInstanceWorld};
 use crate::systems::player::errand::{self, Errand, ErrandOutcome};
 use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Departure, Players};
@@ -24,6 +25,14 @@ pub struct WorldName {
 }
 
 impl WorldName {
+    /// Which world `world` is, once it serves an area.
+    pub fn of(world: &World) -> Option<WorldName> {
+        Some(WorldName {
+            area: world.get_resource::<WorldArea>()?.0,
+            instance: world.get_resource::<AreaInstanceWorld>().map(|run| run.id),
+        })
+    }
+
     /// The world everyone in `area` shares.
     pub fn shared(area: AreaId) -> WorldName {
         WorldName {

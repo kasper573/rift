@@ -1088,10 +1088,33 @@ fn words() -> GameWords {
         spot_too_far: "That spot is too far away".to_owned(),
         not_from_mount: "Not from the {mount}".to_owned(),
         mount_not_here: "The {mount} can't go where you arrived. You're on foot.".to_owned(),
-        instance_full: "{area} holds no more than {holds}".to_owned(),
         instances_busy: "There is no room right now".to_owned(),
         instance_timed_out: "Time ran out in {area}".to_owned(),
-        instance_not_yours: "You are no longer of this party".to_owned(),
+        instance_go_alone: "Go alone".to_owned(),
+        instance_gather: "Gather the party".to_owned(),
+        instance_leader_only: "Only {leader} can take the party in.".to_owned(),
+        instance_needs_players: "{area} needs at least {least} players.".to_owned(),
+        instance_form_party: "Form a party of {least} or more, and its leader can take it in."
+            .to_owned(),
+        instance_already_inside:
+            "Your party is inside {area}. A copy can't be joined once it opens.".to_owned(),
+        instance_call: "{leader} is taking the party into {area}.".to_owned(),
+        instance_benched: "{leader} picks who goes. You're on the bench.".to_owned(),
+        instance_out_of_sight: "Go back to {leader} to be counted.".to_owned(),
+        instance_went_without: "The party went into {area} without you.".to_owned(),
+        instance_went_too_far:
+            "The party went into {area} without you. You were too far from {leader}.".to_owned(),
+        instance_called_off: "{leader} called off {area}.".to_owned(),
+        instance_call_ran_out: "The call to {area} ran out of time.".to_owned(),
+        instance_call_lost_lead: "{leader} no longer leads the party. The call to {area} ended."
+            .to_owned(),
+        instance_call_left_door: "{leader} walked away from the entrance. The call ended."
+            .to_owned(),
+        instance_leave_warning:
+            "You can't come back, and get no reward if this copy is cleared after you leave."
+                .to_owned(),
+        instance_member_left: "{name} left {area}.".to_owned(),
+        instance_ended_away: "{area} ended while you were away. You're back in {place}.".to_owned(),
         instance_rewards_title: "Your rewards from {area}".to_owned(),
         instance_rewards_text: "Your bag had no room for these.".to_owned(),
         payout_overflow: "No room in your bag for {items}: sent to your messages.".to_owned(),

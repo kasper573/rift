@@ -11,6 +11,7 @@ use ui::{controls, dialog, face, ink};
 use super::{AnswerSocialRequest, BlockPlayer, RequestAnswer};
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::Seconds;
+use crate::systems::area_instance;
 use crate::systems::hud::{self, Confirm, HudWidget};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::player::session;
@@ -181,8 +182,12 @@ fn answer_card(world: &mut World, card: &RequestCard, answer: RequestAnswer) {
     });
 }
 
-/// The keys answer the card in front.
+/// The keys answer the card in front, unless a call to an instance is up, which they answer
+/// first.
 fn answer_keys(world: &mut World) {
+    if area_instance::gather::card_up(world) {
+        return;
+    }
     let answer = if map::just_pressed(world, InputAction::AcceptRequest) {
         RequestAnswer::Accept
     } else if map::just_pressed(world, InputAction::DenyRequest) {

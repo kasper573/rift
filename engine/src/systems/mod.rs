@@ -185,6 +185,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<society::ServerSociety>();
     world.init_resource::<society::SocietyAsks>();
     world.init_resource::<area_instance::AreaInstanceTally>();
+    world.init_resource::<area_instance::entrance::EntranceSteps>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
@@ -504,16 +505,51 @@ pub struct GameWords {
     pub not_from_mount: String,
     /// What a rider of `{mount}` is told arriving through a warp at a spot it can't be at, on foot.
     pub mount_not_here: String,
-    /// What a player is told at the door of their party's instance of `{area}`, which holds
-    /// `{holds}` and does already.
-    pub instance_full: String,
     /// What a player is told at a door that would open an instance, while the server runs as
     /// many as it is set to.
     pub instances_busy: String,
     /// What everyone inside an instance of `{area}` is told as its time runs out uncleared.
     pub instance_timed_out: String,
-    /// What a player inside an instance reads once it is no longer theirs to be in.
-    pub instance_not_yours: String,
+    /// The entrance panel's choice to open a copy of one's own.
+    pub instance_go_alone: String,
+    /// The entrance panel's choice, for a party's leader, to call the party in.
+    pub instance_gather: String,
+    /// What a member of a party is told at an entrance: only `{leader}` takes the party in.
+    pub instance_leader_only: String,
+    /// What an entrance or a roster says while fewer than `{least}` players would go into `{area}`.
+    pub instance_needs_players: String,
+    /// What a player in no party is told at an entrance that needs `{least}` players or more.
+    pub instance_form_party: String,
+    /// What an entrance tells a member of a party that already holds a copy of `{area}`.
+    pub instance_already_inside: String,
+    /// What a member's call card says: `{leader}` takes the party into `{area}`.
+    pub instance_call: String,
+    /// What a member's call card says once they joined and `{leader}` did not pick them.
+    pub instance_benched: String,
+    /// What a member's call card says while they stand out of `{leader}`'s sight.
+    pub instance_out_of_sight: String,
+    /// What a member who joined and was not taken is told as the party goes into `{area}`.
+    pub instance_went_without: String,
+    /// What a member who joined and stood out of `{leader}`'s sight is told as the party goes
+    /// into `{area}`.
+    pub instance_went_too_far: String,
+    /// What the members are told as `{leader}` calls off their call to `{area}`.
+    pub instance_called_off: String,
+    /// What the members are told as the call to `{area}` runs out of time.
+    pub instance_call_ran_out: String,
+    /// What the members are told as `{leader}` stops leading the party, ending the call to
+    /// `{area}`.
+    pub instance_call_lost_lead: String,
+    /// What the members are told as `{leader}` walks away from the entrance, ending the call to
+    /// `{area}`.
+    pub instance_call_left_door: String,
+    /// What a player reads before they leave a copy, which is for good.
+    pub instance_leave_warning: String,
+    /// What everyone inside is told as `{name}` leaves the copy of `{area}`.
+    pub instance_member_left: String,
+    /// What a player is told coming back after the copy of `{area}` they were away from ended,
+    /// now in `{place}`.
+    pub instance_ended_away: String,
     /// The title of the message the game sends a player whose bag had no room for what clearing
     /// an instance of `{area}` gave them.
     pub instance_rewards_title: String,
@@ -708,6 +744,7 @@ pub fn server_app(
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
                     (prompt::hold, crafting::hold, crafting::work).chain(),
+                    area_instance::entrance::hold,
                     item::expire_drops,
                     player::join,
                     (
@@ -720,7 +757,11 @@ pub fn server_app(
                         inbox::overflow,
                         party::requests,
                         mount::seat::requests,
-                        area_instance::requests,
+                        (
+                            area_instance::requests,
+                            area_instance::entrance::requests,
+                            area_instance::roster::requests,
+                        ),
                         chat::channel::list,
                     ),
                     player::linger,
@@ -899,6 +940,8 @@ pub fn client_app(
             mount::render::MountRenderPlugin,
             mount::plate::plugin,
             area_instance::plate::plugin,
+            area_instance::entrance::plugin,
+            area_instance::gather::plugin,
         ));
     app
 }
@@ -1180,6 +1223,7 @@ fn check_settings(loading: &mut Loading) {
     if let Some(party) = &settings.party {
         check.at_least("/party/size", party.size, 2, "members");
         check.at_least("/party/invite_lasts", party.invite_lasts.0, 0.0, "seconds");
+        check.at_least("/party/call_lasts", party.call_lasts.0, 1.0, "seconds");
         check.at_least("/party/absent_for", party.absent_for.0, 0.0, "seconds");
         check.at_least(
             "/party/experience/range",
@@ -1271,10 +1315,53 @@ fn check_settings(loading: &mut Loading) {
         ("spot_too_far", &settings.words.spot_too_far),
         ("not_from_mount", &settings.words.not_from_mount),
         ("mount_not_here", &settings.words.mount_not_here),
-        ("instance_full", &settings.words.instance_full),
         ("instances_busy", &settings.words.instances_busy),
         ("instance_timed_out", &settings.words.instance_timed_out),
-        ("instance_not_yours", &settings.words.instance_not_yours),
+        ("instance_go_alone", &settings.words.instance_go_alone),
+        ("instance_gather", &settings.words.instance_gather),
+        ("instance_leader_only", &settings.words.instance_leader_only),
+        (
+            "instance_needs_players",
+            &settings.words.instance_needs_players,
+        ),
+        ("instance_form_party", &settings.words.instance_form_party),
+        (
+            "instance_already_inside",
+            &settings.words.instance_already_inside,
+        ),
+        ("instance_call", &settings.words.instance_call),
+        ("instance_benched", &settings.words.instance_benched),
+        (
+            "instance_out_of_sight",
+            &settings.words.instance_out_of_sight,
+        ),
+        (
+            "instance_went_without",
+            &settings.words.instance_went_without,
+        ),
+        (
+            "instance_went_too_far",
+            &settings.words.instance_went_too_far,
+        ),
+        ("instance_called_off", &settings.words.instance_called_off),
+        (
+            "instance_call_ran_out",
+            &settings.words.instance_call_ran_out,
+        ),
+        (
+            "instance_call_lost_lead",
+            &settings.words.instance_call_lost_lead,
+        ),
+        (
+            "instance_call_left_door",
+            &settings.words.instance_call_left_door,
+        ),
+        (
+            "instance_leave_warning",
+            &settings.words.instance_leave_warning,
+        ),
+        ("instance_member_left", &settings.words.instance_member_left),
+        ("instance_ended_away", &settings.words.instance_ended_away),
         (
             "instance_rewards_title",
             &settings.words.instance_rewards_title,

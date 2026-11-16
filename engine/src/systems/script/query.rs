@@ -287,14 +287,6 @@ pub enum RiftQuery {
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
     },
-    /// How many are inside the instance of `area` a door would let the character into: their
-    /// party's, or their own while they are in no party. None while there is no such instance.
-    InstanceHolds {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[schemars(extend("default" = {"type": "subject"}))]
-        of: Option<Box<Condition>>,
-        area: AreaId,
-    },
     FreeSlots {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
@@ -465,7 +457,6 @@ impl RiftQueryKind {
             | RiftQueryKind::FreeSlots
             | RiftQueryKind::Offered
             | RiftQueryKind::Count
-            | RiftQueryKind::InstanceHolds
             | RiftQueryKind::StatusCount
             | RiftQueryKind::GroundItems => ValueType::Integer,
             RiftQueryKind::Stat
@@ -538,7 +529,6 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::Riding { of }
             | RiftQuery::InCombat { of }
             | RiftQuery::InInstance { of }
-            | RiftQuery::InstanceHolds { of, .. }
             | RiftQuery::FreeSlots { of }
             | RiftQuery::Offered { of, .. }
             | RiftQuery::Equipped { of, .. }
@@ -713,15 +703,6 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 let of = cx.actor(of.as_deref())?;
                 Box::new(move |world, cx| {
                     Value::Bool(character(world, cx, &of).is_some() && area_instance::inside(world))
-                })
-            }
-            RiftQuery::InstanceHolds { of, area } => {
-                let of = cx.actor(of.as_deref())?;
-                let area = *area;
-                Box::new(move |world, cx| {
-                    Value::Int(character(world, cx, &of).map_or(0, |who| {
-                        i64::from(area_instance::headcount(world, who, area))
-                    }))
                 })
             }
             RiftQuery::FreeSlots { of } => {

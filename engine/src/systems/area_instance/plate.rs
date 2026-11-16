@@ -1,6 +1,7 @@
 //! The instance plate: a piece of the HUD there only inside an instance, naming the area and
-//! listing its goals, with how many are inside, the time it has left and the way out. Once the
-//! instance is cleared it says so, and a card tells the player what that gave them.
+//! listing its goals and its roster, with the time it has left and the way out. Leaving is for
+//! good, so the plate asks first. Once the instance is cleared it says so, and a card tells the
+//! player what that gave them.
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
@@ -9,7 +10,10 @@ use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, Vec2};
 use ui::face::TextRole;
 use ui::{controls, dialog, face, ink};
 
-use super::{AreaInstanceGiven, AreaInstanceGoalShown, AreaInstanceShown, LeaveInstance};
+use super::{
+    AreaInstanceGiven, AreaInstanceGoalShown, AreaInstanceShown, LeaveInstance, RosterPlace,
+    RosterRowInside,
+};
 use crate::core::content::Content;
 use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
@@ -48,37 +52,37 @@ impl HudWidget for InstancePlateWidget {
         let name = instance.area.get(&content).name.clone();
         let returns = LineText::plain("You return to ")
             .then(Mention::Area(instance.returns_to).span(&content));
-        let not_theirs = world
-            .resource::<GameSettings>()
-            .words
-            .instance_not_yours
-            .clone();
-        let mut leaves = false;
+        let mut leaves = None;
         dialog::note(ui, WIDTH, |ui| {
             ui.add(egui::Label::new(face::bold(name)).truncate());
-            match (instance.sent_out, &instance.cleared) {
-                (Some(out_at), _) => {
-                    ui.label(face::body(not_theirs).color(ink::VERMILION));
-                    leaves = way_out(ui, world, &returns, Some(out_at), now, "Leave now");
-                }
-                (None, Some(cleared)) => {
+            match &instance.cleared {
+                Some(cleared) => {
                     ui.label(face::body("Cleared").color(ink::VERDIGRIS));
-                    leaves = way_out(ui, world, &returns, Some(cleared.closes), now, "Leave now");
+                    roster(ui, &instance.roster);
+                    if way_out(ui, world, &returns, Some(cleared.closes), now, "Leave now") {
+                        leaves = Some(false);
+                    }
                 }
-                (None, None) => {
+                None => {
                     for goal in &instance.goals {
                         goal_row(ui, goal);
                     }
-                    let inside = LineText::plain(format!(
-                        "{} of {} inside",
-                        instance.inside, instance.holds
-                    ));
-                    leaves = way_out(ui, world, &inside, instance.ends, now, "Leave");
+                    roster(ui, &instance.roster);
+                    let left = instance.ends.map_or_else(LineText::default, |ends| {
+                        LineText::plain(format!("{} left", time_left(ends, now)))
+                    });
+                    if way_out(ui, world, &left, None, now, "Leave") {
+                        leaves = Some(true);
+                    }
                 }
             }
         });
-        if leaves {
-            world.write_message(LeaveInstance);
+        match leaves {
+            Some(true) => confirm_leave(world, &instance),
+            Some(false) => {
+                world.write_message(LeaveInstance);
+            }
+            None => {}
         }
         None
     }
@@ -89,16 +93,22 @@ impl HudWidget for InstancePlateWidget {
 pub struct ShownAreaInstance {
     pub area: String,
     pub goals: Vec<AreaInstanceGoalShown>,
-    pub inside: u32,
-    pub holds: u32,
+    /// Its roster, in the order they were taken.
+    pub roster: Vec<ShownRosterMember>,
     /// How long it has left uncleared, in an area whose instances only last so long.
     pub left: Option<Seconds>,
     /// Once it is cleared: what that gave the player.
     pub cleared: Option<AreaInstanceGiven>,
-    /// How long until the player is returned: one cleared closing, or one no longer theirs.
+    /// How long until a cleared one closes and everyone is returned.
     pub returned_in: Option<Seconds>,
-    /// Whether the player is being sent out of one that is no longer theirs to be in.
-    pub sent_out: bool,
+}
+
+/// A member of the roster, as the plate lists them.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownRosterMember {
+    pub name: String,
+    pub place: RosterPlace,
+    pub me: bool,
 }
 
 pub fn shown(world: &World) -> Option<ShownAreaInstance> {
@@ -108,12 +118,18 @@ pub fn shown(world: &World) -> Option<ShownAreaInstance> {
     Some(ShownAreaInstance {
         area: instance.area.get(world.resource::<Content>()).name.clone(),
         goals: instance.goals.clone(),
-        inside: instance.inside,
-        holds: instance.holds,
+        roster: instance
+            .roster
+            .iter()
+            .map(|row| ShownRosterMember {
+                name: row.player.name.clone(),
+                place: row.place,
+                me: row.me,
+            })
+            .collect(),
         left: instance.ends.map(|ends| ends.since(now)),
         cleared: instance.cleared.map(|cleared| cleared.given),
-        returned_in: instance.sent_out.or(closes).map(|at| at.since(now)),
-        sent_out: instance.sent_out.is_some(),
+        returned_in: closes.map(|at| at.since(now)),
     })
 }
 
@@ -143,6 +159,69 @@ fn goal_row(ui: &mut Ui, goal: &AreaInstanceGoalShown) {
             });
         });
     });
+}
+
+/// The roster under a heading, each member's place beside their name in words.
+fn roster(ui: &mut Ui, rows: &[RosterRowInside]) {
+    ui.add_space(4.0);
+    ui.separator();
+    ui.label(face::small("ROSTER").color(ink::INK3));
+    for row in rows {
+        let name = if row.me {
+            format!("{} (you)", row.player.name)
+        } else {
+            row.player.name.clone()
+        };
+        let (says, color) = match row.place {
+            RosterPlace::Inside => ("Inside", ink::VERDIGRIS),
+            RosterPlace::Away => ("Away · place kept", ink::OCHRE),
+            RosterPlace::Left => ("Left", ink::INK3),
+        };
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(face::small(says).color(color));
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let name = face::small(name);
+                    let name = match row.place {
+                        RosterPlace::Left => name.color(ink::INK3).strikethrough(),
+                        _ => name.color(ink::INK),
+                    };
+                    ui.add(egui::Label::new(name).truncate());
+                });
+            });
+        });
+    }
+}
+
+/// Asks the player whether to leave for good before they do.
+fn confirm_leave(world: &mut World, instance: &AreaInstanceShown) {
+    let content = world.resource::<Content>().clone();
+    let warning = world
+        .resource::<GameSettings>()
+        .words
+        .instance_leave_warning
+        .clone();
+    hud::confirm(
+        world,
+        Confirm {
+            title: LineText::plain("Leave ")
+                .then(Mention::Area(instance.area).span(&content))
+                .then("?"),
+            body: vec![
+                LineText::plain(warning)
+                    .then(" You return to ")
+                    .then(Mention::Area(instance.returns_to).span(&content))
+                    .then("."),
+            ],
+            confirm: "Leave for good".to_owned(),
+            cancel: "Stay".to_owned(),
+            answer: Box::new(|world, leaves| {
+                if leaves {
+                    world.write_message(LeaveInstance);
+                }
+            }),
+        },
+    );
 }
 
 /// The plate's last line: what it says, the time left until `until` beside it, and the button

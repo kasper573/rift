@@ -305,9 +305,6 @@ fn describe_query(content: &impl ConditionNames, query: &RiftQuery) -> Wording {
             skill: asked, stat, ..
         } => return skill(asked).then(format!(" {}", stat.label())),
         RiftQuery::Holding { item: asked, .. } => return item(asked),
-        RiftQuery::InstanceHolds { area: asked, .. } => {
-            return Wording::words("inside their ").then(area(asked));
-        }
         RiftQuery::Offered {
             item: Some(asked), ..
         } => return item(asked).then(" offered"),

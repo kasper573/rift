@@ -517,6 +517,7 @@ fn game() -> Game {
             settings["party"] = json!({
                 "size": 3,
                 "invite_lasts": 60.0,
+                "call_lasts": 120.0,
                 "absent_for": 300.0,
                 "experience": { "split": "even", "range": 40.0, "bonus": 20.0 },
             });

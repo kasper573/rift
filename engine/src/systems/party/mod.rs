@@ -45,6 +45,8 @@ pub struct PartySettings {
     pub size: u32,
     /// How long an invitation waits for its answer.
     pub invite_lasts: Seconds,
+    /// How long a leader's call to gather the party for an instance stays open.
+    pub call_lasts: Seconds,
     /// How long a member whose player is gone stays in the party.
     pub absent_for: Seconds,
     pub experience: SharedExperience,

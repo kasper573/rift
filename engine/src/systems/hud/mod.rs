@@ -94,6 +94,33 @@ pub(crate) struct Confirm {
 
 pub(crate) type Answer = Box<dyn FnOnce(&mut World, bool) + Send + Sync>;
 
+/// A choice put to the player among a few ways on, each open or shut with a note under it:
+/// answered with the one picked, and with none for the cancelling button or a dismissal.
+pub(crate) struct Choose {
+    pub title: LineText,
+    /// Short facts shown as chips under the title.
+    pub chips: Vec<String>,
+    pub body: Vec<LineText>,
+    pub options: Vec<ChoiceOption>,
+    /// What is said under the options.
+    pub after: Vec<LineText>,
+    pub cancel: String,
+    /// The option that has the focus first, and that the default key picks: none for the
+    /// cancelling button.
+    pub focus: Option<usize>,
+    pub answer: ChooseAnswer,
+}
+
+#[derive(Clone)]
+pub(crate) struct ChoiceOption {
+    pub label: String,
+    /// What it does, or why it is shut.
+    pub note: Option<LineText>,
+    pub open: bool,
+}
+
+pub(crate) type ChooseAnswer = Box<dyn FnOnce(&mut World, Option<usize>) + Send + Sync>;
+
 /// A question of how many, put to the player with a slider over `amounts`: answered with the
 /// amount chosen for the confirming button, and with none for the cancelling one or a dismissal.
 pub(crate) struct AmountQuestion {
@@ -133,6 +160,13 @@ pub fn icon(
 pub(crate) fn confirm(world: &mut World, confirm: Confirm) {
     world.resource_mut::<Confirming>().0 = Some(Pending {
         asked: Asked::Confirm(confirm),
+        focused: false,
+    });
+}
+
+pub(crate) fn choose(world: &mut World, choose: Choose) {
+    world.resource_mut::<Confirming>().0 = Some(Pending {
+        asked: Asked::Choose(choose),
         focused: false,
     });
 }
@@ -258,6 +292,14 @@ static WIDGETS: &[(&str, &dyn HudWidget)] = &[
         area_instance::plate::INSTANCE_PLATE,
         &area_instance::plate::InstancePlateWidget,
     ),
+    (
+        area_instance::gather::INSTANCE_ROSTER,
+        &area_instance::gather::RosterWindowWidget,
+    ),
+    (
+        area_instance::gather::INSTANCE_CALL,
+        &area_instance::gather::CallCardWidget,
+    ),
 ];
 
 #[derive(Resource, Default)]
@@ -280,6 +322,15 @@ struct NoteText {
     confirm: String,
     cancel: String,
     amount: Option<NoteAmount>,
+    choices: Option<NoteChoices>,
+}
+
+#[derive(Clone)]
+struct NoteChoices {
+    chips: Vec<String>,
+    options: Vec<ChoiceOption>,
+    after: Vec<LineText>,
+    focus: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -297,6 +348,7 @@ impl NoteText {
                 confirm: confirm.confirm.clone(),
                 cancel: confirm.cancel.clone(),
                 amount: None,
+                choices: None,
             },
             Asked::Amount { question, chosen } => NoteText {
                 title: question.title.clone(),
@@ -306,6 +358,20 @@ impl NoteText {
                 amount: Some(NoteAmount {
                     chosen: *chosen,
                     amounts: question.amounts.clone(),
+                }),
+                choices: None,
+            },
+            Asked::Choose(choose) => NoteText {
+                title: choose.title.clone(),
+                body: choose.body.clone(),
+                confirm: String::new(),
+                cancel: choose.cancel.clone(),
+                amount: None,
+                choices: Some(NoteChoices {
+                    chips: choose.chips.clone(),
+                    options: choose.options.clone(),
+                    after: choose.after.clone(),
+                    focus: choose.focus,
                 }),
             },
         }
@@ -323,6 +389,7 @@ enum Asked {
         question: AmountQuestion,
         chosen: u32,
     },
+    Choose(Choose),
 }
 
 impl Asked {
@@ -332,6 +399,14 @@ impl Asked {
             Asked::Amount { question, chosen } => {
                 (question.answer)(world, confirmed.then_some(chosen));
             }
+            Asked::Choose(choose) => (choose.answer)(world, None),
+        }
+    }
+
+    fn chose(self, world: &mut World, chosen: Option<usize>) {
+        match self {
+            Asked::Choose(choose) => (choose.answer)(world, chosen),
+            other => other.answer(world, false),
         }
     }
 }
@@ -387,6 +462,7 @@ fn draw_confirm(world: &mut World) {
         .shortcut(InputAction::TakeDefault);
     let mut pending = pending;
     let mut decided = None;
+    let mut chosen: Option<Option<usize>> = None;
     let screen = gui.content_rect();
     let rest = Rect::from_center_size(screen.center(), NOTE);
     gui.set_transform_layer(confirm_layer(), pose.transform(&gui, rest, rest.min));
@@ -406,6 +482,16 @@ fn draw_confirm(world: &mut World) {
                 let title = TextLook::role(TextRole::NoteTitle, ink::INK);
                 text::show(ui, world, &text.title.styled(), title, None);
                 ui.add_space(dialog::TITLE_GAP);
+                if let Some(choices) = &text.choices
+                    && !choices.chips.is_empty()
+                {
+                    ui.horizontal_wrapped(|ui| {
+                        for chip in &choices.chips {
+                            controls::pill(ui, chip, controls::Pill::Ink);
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
                 let said = text
                     .body
                     .iter()
@@ -425,6 +511,66 @@ fn draw_confirm(world: &mut World) {
                     };
                     (slider, chosen)
                 });
+                if let Some(choices) = &text.choices {
+                    let default_pressed =
+                        default_key.is_some_and(|key| ui.input_mut(|i| i.consume_shortcut(&key)));
+                    if default_pressed {
+                        chosen = Some(choices.focus);
+                    }
+                    for (index, option) in choices.options.iter().enumerate() {
+                        ui.add_space(8.0);
+                        let focused = choices.focus == Some(index);
+                        let picked = ui
+                            .add_enabled_ui(option.open, |ui| {
+                                if focused {
+                                    controls::primary(ui, option.label.as_str())
+                                } else {
+                                    controls::button(ui, option.label.as_str())
+                                }
+                            })
+                            .inner;
+                        if let Some(note) = &option.note {
+                            let color = if option.open {
+                                ink::INK3
+                            } else {
+                                ink::VERMILION
+                            };
+                            let look = TextLook::role(TextRole::Small, color);
+                            text::show(ui, world, &note.styled(), look, None);
+                        }
+                        if focused
+                            && let Some(pending) = pending.as_mut()
+                            && !pending.focused
+                        {
+                            picked.request_focus();
+                            pending.focused = true;
+                        }
+                        if picked.clicked() {
+                            chosen = Some(Some(index));
+                        }
+                    }
+                    for line in &choices.after {
+                        ui.add_space(6.0);
+                        let look = TextLook::role(TextRole::Body, ink::INK2);
+                        text::show(ui, world, &line.styled(), look, None);
+                    }
+                    ui.add_space(12.0);
+                    let row = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
+                    let across = egui::Layout::right_to_left(egui::Align::Center);
+                    ui.allocate_ui_with_layout(row, across, |ui| {
+                        let cancel = controls::button(ui, text.cancel.as_str());
+                        if let Some(pending) = pending.as_mut()
+                            && !pending.focused
+                        {
+                            cancel.request_focus();
+                            pending.focused = true;
+                        }
+                        if cancel.clicked() {
+                            chosen = Some(None);
+                        }
+                    });
+                    return;
+                }
                 let answers = ui.min_rect().top() + NOTE.y - padding - controls::CONTROL_HEIGHT;
                 ui.add_space((answers - ui.cursor().top()).max(12.0));
                 let row = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
@@ -473,6 +619,10 @@ fn draw_confirm(world: &mut World) {
     let Some(pending) = pending else {
         return;
     };
+    if let Some(chosen) = chosen {
+        pending.asked.chose(world, chosen);
+        return;
+    }
     if modal.should_close() && decided.is_none() {
         decided = Some(false);
     }

@@ -79,6 +79,8 @@ use crate::systems::actor::{
 };
 use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayName};
+use crate::systems::area_instance::entrance::ShownInstanceEntrance;
+use crate::systems::area_instance::gather::ShownInstanceCall;
 use crate::systems::area_instance::{self, plate::ShownAreaInstance};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
@@ -371,6 +373,10 @@ pub struct ProbeSnapshot {
     pub mount: Option<ShownMount>,
     /// The instance the player's character is inside, as the plate shows it.
     pub instance: Option<ShownAreaInstance>,
+    /// The entrance panel, while the player chooses how to go into an instance.
+    pub instance_entrance: Option<ShownInstanceEntrance>,
+    /// The call to an instance the player leads or was called to: the roster window or the card.
+    pub instance_call: Option<ShownInstanceCall>,
     /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
     /// spot has against it.
     pub spot_aim: Option<SpotAim>,
@@ -1274,6 +1280,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         chat: terminal::chat::shown(world),
         mount: mount::plate::shown(world),
         instance: area_instance::plate::shown(world),
+        instance_entrance: area_instance::entrance::shown(world),
+        instance_call: area_instance::gather::shown(world),
         spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
         history: ProbeHistory {

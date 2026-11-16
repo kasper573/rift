@@ -18,7 +18,7 @@ use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::area::AreaId;
-use crate::systems::area_instance::{self, AreaInstanceEntry, AreaInstances};
+use crate::systems::area_instance::{self, AreaInstances, InstanceAsk};
 use crate::systems::chat::ChatSaid;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
 use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
@@ -33,7 +33,7 @@ use crate::systems::social_request::{
     SocialRequestAsk, SocialRequestKind, SocialRequestSource, SocialRequests,
 };
 use crate::systems::visibility;
-use crate::systems::worlds::AboveWorlds;
+use crate::systems::worlds::{AboveWorlds, WorldName};
 
 /// Where an account's character stands, and whether its player is away from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,8 +317,8 @@ pub enum SocietyAsk {
     Party(PartyRequest),
     /// A line said to the party the player is in.
     PartyLine(ChatSaid),
-    /// To be let into their instance of an area.
-    EnterInstance(AreaInstanceEntry),
+    /// Of instances: a copy of their own, a call to their party, or an answer to one.
+    Instance(InstanceAsk),
 }
 
 /// What a world asked of society since the server's worlds last conferred: what its players
@@ -397,6 +397,15 @@ impl Settling<'_, '_> {
         reach(self.views, self.roster, account)
     }
 
+    /// The world `name`, while the server runs it.
+    pub fn world(&mut self, name: WorldName) -> Option<&mut World> {
+        self.views
+            .iter_mut()
+            .flatten()
+            .find(|world| WorldName::of(world) == Some(name))
+            .map(|world| &mut **world)
+    }
+
     /// What `account` is called.
     pub fn name(&self, account: &AccountId) -> String {
         self.society
@@ -460,7 +469,9 @@ pub fn settle(
     for delivery in asked.delivered {
         delivery.settle(&mut settling);
     }
-    area_instance::look(&mut settling);
+    if let Some(content) = &game {
+        area_instance::look(&mut settling, content);
+    }
     for (by, ask) in asked.asked {
         let Some(content) = &game else {
             break;
@@ -480,8 +491,8 @@ pub fn settle(
             SocietyAsk::Inbox(ask) => inbox::settle(&mut settling, settings, &by, ask),
             SocietyAsk::Party(ask) => party::settle(&mut settling, settings, &by, ask),
             SocietyAsk::PartyLine(said) => party::say(&mut settling, &by, &said),
-            SocietyAsk::EnterInstance(entry) => {
-                area_instance::enter(&mut settling, content, &by, entry);
+            SocietyAsk::Instance(ask) => {
+                area_instance::roster::settle(&mut settling, content, &by, ask);
             }
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {
@@ -501,6 +512,7 @@ pub fn settle(
         for source in settling.society.sources.clone() {
             social_request::end_unless(&mut settling, source.kind, source.stands);
         }
+        area_instance::roster::keep(&mut settling, &content);
         area_instance::keep(&mut settling, &content);
     }
     for account in std::mem::take(&mut settling.society.changed) {
