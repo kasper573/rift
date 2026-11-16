@@ -118,6 +118,7 @@ use crate::systems::social_request::{self, card::ShownRequestCard};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
 use crate::systems::terminal::{self, chat::ShownChat};
+use crate::systems::trade::window::ShownTrade;
 
 /// The probe's question about the game `line`, read against the game it names places of.
 pub fn read_question(content: &Content, line: &str) -> Result<ProbeGameQuestion, String> {
@@ -377,6 +378,10 @@ pub struct ProbeSnapshot {
     pub instance_entrance: Option<ShownInstanceEntrance>,
     /// The call to an instance the player leads or was called to: the roster window or the card.
     pub instance_call: Option<ShownInstanceCall>,
+    /// The trade the player is in, as its window shows it.
+    pub trade: Option<ShownTrade>,
+    /// The options open for another player: what the player can do with them.
+    pub actor_options: Option<crate::systems::actor::options::ShownActorOptions>,
     /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
     /// spot has against it.
     pub spot_aim: Option<SpotAim>,
@@ -1282,6 +1287,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         instance: area_instance::plate::shown(world),
         instance_entrance: area_instance::entrance::shown(world),
         instance_call: area_instance::gather::shown(world),
+        trade: crate::systems::trade::window::shown(world),
+        actor_options: crate::systems::actor::options::shown(world),
         spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
         history: ProbeHistory {

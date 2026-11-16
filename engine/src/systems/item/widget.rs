@@ -123,10 +123,11 @@ pub struct StackPane<'a> {
     pub slots: u32,
     /// How a slot is named to whoever reads the interface.
     pub named: &'a str,
-    /// What picking a stack does, as its hint says it.
-    pub pick: &'static str,
-    /// Splits this many off the stack at this index, into a stack of its own beside it.
-    pub split: fn(&mut World, usize, u32),
+    /// What picking a stack does, as its hint says it: none where the pane is only to read.
+    pub pick: Option<&'static str>,
+    /// Splits this many off the stack at this index, into a stack of its own beside it, where the
+    /// pane's stacks split.
+    pub split: Option<fn(&mut World, usize, u32)>,
 }
 
 /// What the player did to the slots of a stack pane.
@@ -516,20 +517,22 @@ fn apart_slot(ui: &mut Ui, world: &mut World, pane: &StackPane, index: usize) ->
             format!("{}: {} {}", pane.named, stack.count, def.name),
         )
     });
-    let split = pane.split;
-    if map::clicked(world, InputAction::SplitStack, &response) {
+    let split = pane.split.filter(|_| stack.count > 1);
+    if let Some(split) = split
+        && map::clicked(world, InputAction::SplitStack, &response)
+    {
         ask_split(world, stack, move |world, count| split(world, index, count));
     } else if map::clicked(world, InputAction::InspectItem, &response) {
         card::open(world, stack.item, Some(response.rect));
     }
-    let splits = (stack.count > 1).then(|| (InputAction::SplitStack, SPLITS.to_owned()));
-    let hints = [(InputAction::Select, format!(" to {}", pane.pick))]
-        .into_iter()
-        .chain(splits)
-        .chain([
-            (InputAction::InspectItem, INSPECTS.to_owned()),
-            (InputAction::AddToChat, CHATS.to_owned()),
-        ]);
+    let picks = pane
+        .pick
+        .map(|pick| (InputAction::Select, format!(" to {pick}")));
+    let splits = split.map(|_| (InputAction::SplitStack, SPLITS.to_owned()));
+    let hints = picks.into_iter().chain(splits).chain([
+        (InputAction::InspectItem, INSPECTS.to_owned()),
+        (InputAction::AddToChat, CHATS.to_owned()),
+    ]);
     let hint = StyledLine::new(map::hints(hints));
     card::chat_shortcut(world, &response, &[stack.item]);
     card::tooltip_noted(
@@ -539,7 +542,7 @@ fn apart_slot(ui: &mut Ui, world: &mut World, pane: &StackPane, index: usize) ->
         slot_notes(world, stack).into_iter().map(LineText::from),
         Some(&hint),
     );
-    map::clicked(world, InputAction::Select, &response)
+    pane.pick.is_some() && map::clicked(world, InputAction::Select, &response)
 }
 
 /// Asks how many of `stack` to split off, and hands `split` the answer.

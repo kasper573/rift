@@ -3,7 +3,7 @@
 
 use bevy_ecs::prelude::*;
 
-use crate::core::content::{Content, ContentProblem, Loading};
+use crate::core::content::{Content, ContentProblem, Loading, SETTINGS_FILE};
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::item::{Inventory, ItemStack};
@@ -15,10 +15,14 @@ use crate::systems::text::LineText;
 use crate::systems::{GameSettings, WorldArea, inbox};
 
 /// What paid a player, which words the message of what had no room uses.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PayoutReason {
     InstanceCleared(AreaId),
     QuestCompleted(QuestId),
+    /// A trade with the player called `with`.
+    Traded {
+        with: String,
+    },
     /// A script's `items` effect, named by the file it runs in, where it runs in one.
     Given(Option<OwnerRow>),
 }
@@ -155,6 +159,13 @@ pub fn check(loading: &mut Loading, content: &Content, settings: &GameSettings) 
             "messages in the game's settings, to send what a bag has no room for",
         )
     };
+    if settings.trade.is_some() {
+        loading.json_error(
+            SETTINGS_FILE,
+            "/trade",
+            unsent("trading, which pays what a trade gives"),
+        );
+    }
     let scripts = content.built::<RiftScripts>();
     let paying: Vec<OwnerRow> = scripts
         .owners()
@@ -205,6 +216,12 @@ impl PayoutReason {
                 &words.quest_rewards_text,
                 "{quest}",
                 &quest.get(content).title,
+            ),
+            PayoutReason::Traded { with } => filled(
+                &words.trade_overflow_title,
+                &words.trade_overflow_text,
+                "{name}",
+                &with,
             ),
             PayoutReason::Given(row) => {
                 let source = row

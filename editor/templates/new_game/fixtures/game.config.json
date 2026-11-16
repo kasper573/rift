@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "6ce0f6e1",
+  "content_version": "629589aa",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -211,7 +211,25 @@
     "quest_rewards_title": "Your rewards for {quest}",
     "quest_rewards_text": "Your inventory had no room for these.",
     "given_items_title": "Items from {source}",
-    "given_items_text": "Your inventory had no room for these."
+    "given_items_text": "Your inventory had no room for these.",
+    "trade_asks": "{name} wants to trade with you.",
+    "trade_asked": "You asked {name} to trade.",
+    "trade_denied": "{name} doesn't want to trade.",
+    "trade_busy": "{name} is busy trading.",
+    "trade_too_far": "You stand too far apart to trade.",
+    "trade_cancelled_by": "{name} cancelled the trade.",
+    "trade_ended": "The trade with {name} ended: {why}.",
+    "trade_why_apart": "you moved too far apart",
+    "trade_why_fell": "{who} fell",
+    "trade_why_left": "{who} left",
+    "trade_why_mounted": "{who} got on a mount",
+    "trade_why_offer_gone": "an offered item left {who}'s inventory",
+    "trade_offer_changed": "{name} changed their offer.",
+    "trade_done": "You traded with {name}. You got {got} and gave {gave}.",
+    "trade_gave": "You gave {name} {gave}.",
+    "trade_got": "{name} gave you {got}.",
+    "trade_overflow_title": "Items from your trade with {name}",
+    "trade_overflow_text": "Your inventory had no room for these."
   },
   "typing": {
     "pace": 45.0,
@@ -496,5 +514,10 @@
       "range": 40.0,
       "bonus": 0.0
     }
+  },
+  "trade": {
+    "reach": 6.0,
+    "slots": 8,
+    "accept_waits": 3.0
   }
 }

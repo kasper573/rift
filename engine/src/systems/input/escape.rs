@@ -5,7 +5,9 @@ use super::scope::InputScope;
 use crate::core::gui;
 use crate::systems::dialogue::stage;
 use crate::systems::hud::menu;
-use crate::systems::{area_instance, crafting, hud, item, quest, resource, skill, terminal};
+use crate::systems::{
+    actor, area_instance, crafting, hud, item, quest, resource, skill, terminal, trade,
+};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, step_out.run_if(resource_exists::<InputMap>));
@@ -27,9 +29,11 @@ fn step_out(world: &mut World) {
         }
         InputScope::Menu => stop_using_the_bar(world) || close_front(world),
         InputScope::World => {
-            stop_using_the_bar(world)
+            actor::options::close(world)
+                || stop_using_the_bar(world)
                 || close_front(world)
                 || area_instance::gather::call_off(world)
+                || trade::window::cancel(world)
                 || resource::render::stop(world)
         }
     };

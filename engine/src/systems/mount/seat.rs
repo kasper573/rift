@@ -62,7 +62,7 @@ pub fn barred(world: &World, rider: Entity, act: RiderAct) -> Option<String> {
 
 /// Whether `rider` may do `act` where they are with no more ado: on foot, or from a seat that
 /// lets them.
-fn lets(world: &World, rider: Entity, act: RiderAct) -> bool {
+pub fn lets(world: &World, rider: Entity, act: RiderAct) -> bool {
     world.get::<Riding>(rider).is_none_or(|riding| {
         let def = riding.mount.get(world.resource::<Content>());
         def.rider.may.contains(&act)

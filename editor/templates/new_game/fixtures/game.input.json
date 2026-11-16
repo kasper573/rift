@@ -657,6 +657,15 @@
           "key": "KeyX"
         }
       ]
+    },
+    "actor_options": {
+      "label": "See what you can do with another player",
+      "bindings": [
+        {
+          "type": "mouse",
+          "button": "Right"
+        }
+      ]
     }
   }
 }

@@ -305,7 +305,7 @@ impl EffectDef<RiftScripting> for Items {
         let reason = PayoutReason::Given(cx.owner_row());
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
-            let (take, give) = (take.clone(), give.clone());
+            let (take, give, reason) = (take.clone(), give.clone(), reason.clone());
             effects::reach(
                 world,
                 flow,

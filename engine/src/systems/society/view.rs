@@ -23,8 +23,14 @@ use crate::systems::social_request::{
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
-    app.replicate_private::<SocietyView>();
+    app.replicate_private::<SocietyView>()
+        .replicate::<PlayerAccount>();
 }
+
+/// The account that plays a character, as every player knows it: what a player names another
+/// by as they ask them for something.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlayerAccount(pub AccountNumber);
 
 /// What society holds of a character's account, as its player sees it.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -93,6 +99,9 @@ pub fn greet(world: &mut World, arrived: &mut QueryState<Entity, Added<Character
     let society = society.read();
     for character in arrived {
         show(world, character, &society);
+        if let Some(account) = world.get::<SocietyView>(character).map(|view| view.account) {
+            world.entity_mut(character).insert(PlayerAccount(account));
+        }
         if let Some(account) = world.get::<CharacterAccount>(character).cloned() {
             inbox::show(world, character, &account.0, &society);
         }

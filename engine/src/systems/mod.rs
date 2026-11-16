@@ -55,6 +55,7 @@ pub mod stat;
 pub mod status;
 pub mod terminal;
 pub mod text;
+pub mod trade;
 pub mod vfx;
 pub mod view;
 pub mod visibility;
@@ -123,6 +124,7 @@ pub fn protocol(app: &mut App) {
     party::register(app);
     mount::register(app);
     area_instance::register(app);
+    trade::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -144,7 +146,11 @@ pub fn protocol(app: &mut App) {
 
 /// The kinds of request between players the engine's systems bring.
 pub fn request_sources() -> Vec<social_request::SocialRequestSource> {
-    vec![friend::request_source(), party::request_source()]
+    vec![
+        friend::request_source(),
+        party::request_source(),
+        trade::request_source(),
+    ]
 }
 
 /// Wires each system's say into the registries other systems read, so neither names the other: what
@@ -186,6 +192,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<society::SocietyAsks>();
     world.init_resource::<area_instance::AreaInstanceTally>();
     world.init_resource::<area_instance::entrance::EntranceSteps>();
+    world.init_resource::<trade::Trades>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
@@ -294,6 +301,9 @@ pub struct GameSettings {
     /// How parties work. A game without it has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub party: Option<party::PartySettings>,
+    /// How players trade. A game without it has no trading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trade: Option<trade::TradeSettings>,
 }
 
 /// How much a player keeps.
@@ -571,6 +581,44 @@ pub struct GameWords {
     /// The text of the message the game sends a player whose bag had no room for what `{source}`
     /// gave them.
     pub given_items_text: String,
+    /// What a player asked to trade reads on the card, `{name}` asking.
+    pub trade_asks: String,
+    /// What a player reads while their request to trade with `{name}` waits.
+    pub trade_asked: String,
+    /// What a player is told as `{name}` denies their request to trade.
+    pub trade_denied: String,
+    /// What a player is told asking `{name}` to trade while they trade with someone else.
+    pub trade_busy: String,
+    /// What both are told as a trade is accepted while they stand too far apart.
+    pub trade_too_far: String,
+    /// What a player is told as `{name}` cancels their trade.
+    pub trade_cancelled_by: String,
+    /// What a player is told as their trade with `{name}` ends for the reason `{why}`.
+    pub trade_ended: String,
+    /// The reason a trade ends as its players move out of reach of each other.
+    pub trade_why_apart: String,
+    /// The reason a trade ends as `{who}` falls.
+    pub trade_why_fell: String,
+    /// The reason a trade ends as `{who}` leaves.
+    pub trade_why_left: String,
+    /// The reason a trade ends as `{who}` gets on a mount they can't trade from.
+    pub trade_why_mounted: String,
+    /// The reason a trade ends as something `{who}` offered leaves their bag.
+    pub trade_why_offer_gone: String,
+    /// What a player who accepted is told as `{name}` changes their offer.
+    pub trade_offer_changed: String,
+    /// What a player is told as their trade with `{name}` goes through: they got `{got}` and
+    /// gave `{gave}`.
+    pub trade_done: String,
+    /// What a player is told as they gave `{name}` `{gave}` in a trade, getting nothing.
+    pub trade_gave: String,
+    /// What a player is told as `{name}` gave them `{got}` in a trade, for nothing.
+    pub trade_got: String,
+    /// The title of the message the game sends a player whose bag had no room for what their
+    /// trade with `{name}` gave them.
+    pub trade_overflow_title: String,
+    /// The text of that message.
+    pub trade_overflow_text: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -717,7 +765,7 @@ pub fn server_app(
                     item::use_item,
                     (item::drop_item, item::arrange_stacks).chain(),
                     (item::pickup_request, resource::gather_request).chain(),
-                    interact::interact_request,
+                    (interact::interact_request, trade::requests),
                     dialogue::requests,
                     (shop::requests, prompt::requests, crafting::requests).chain(),
                     quest::requests,
@@ -740,11 +788,11 @@ pub fn server_app(
                 (
                     item::pickups,
                     (resource::gathering, resource::work).chain(),
-                    interact::interactions,
+                    (interact::interactions, trade::approach).chain(),
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
                     (prompt::hold, crafting::hold, crafting::work).chain(),
-                    area_instance::entrance::hold,
+                    (area_instance::entrance::hold, trade::hold),
                     item::expire_drops,
                     player::join,
                     (
@@ -942,6 +990,8 @@ pub fn client_app(
             area_instance::plate::plugin,
             area_instance::entrance::plugin,
             area_instance::gather::plugin,
+            trade::window::plugin,
+            actor::options::plugin,
         ));
     app
 }
@@ -1238,6 +1288,11 @@ fn check_settings(loading: &mut Loading) {
             "percent",
         );
     }
+    if let Some(trade) = &settings.trade {
+        check.at_least("/trade/reach", trade.reach.0, 0.0, "meters");
+        check.at_least("/trade/slots", trade.slots, 1, "items");
+        check.at_least("/trade/accept_waits", trade.accept_waits.0, 0.0, "seconds");
+    }
     settings.cards.check("/cards", &mut check);
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
@@ -1378,6 +1433,7 @@ fn check_settings(loading: &mut Loading) {
     ]
     .into_iter()
     .chain(inbox::words(&settings.words))
+    .chain(trade::words(&settings.words))
     {
         check.text(format!("/words/{field}"), said, 1, 80);
     }

@@ -66,6 +66,7 @@ mod store;
 mod summon;
 mod switching;
 mod terminal;
+mod trades;
 mod travel;
 mod typewriter;
 mod vfx;

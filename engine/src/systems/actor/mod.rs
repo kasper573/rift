@@ -5,6 +5,7 @@ pub mod held;
 pub mod layering;
 pub mod material;
 pub mod model;
+pub mod options;
 pub mod part;
 pub mod plate;
 pub mod playing;

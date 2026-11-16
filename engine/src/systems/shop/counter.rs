@@ -322,8 +322,8 @@ fn offer_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
                 stacks: &stacks,
                 slots: inventory_room(world).slots,
                 named: OFFER,
-                pick: "take it back",
-                split: split_offered,
+                pick: Some("take it back"),
+                split: Some(split_offered),
             };
             stack_pane(ui, world, pane)
         },

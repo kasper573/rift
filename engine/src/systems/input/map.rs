@@ -113,6 +113,8 @@ pub enum InputAction {
     FocusChat,
     /// Leaves the seat of what the player's character rides.
     StepOff,
+    /// Opens what the player can do with the other player the pointer is on.
+    ActorOptions,
 }
 
 /// The one file that binds every action, a fixture every game provides.

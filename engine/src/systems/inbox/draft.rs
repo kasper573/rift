@@ -128,7 +128,7 @@ struct Draft {
 }
 
 /// Whether the player `view` is of can write to `player`.
-pub(super) fn may_write_to(view: &SocietyView, player: AccountNumber) -> bool {
+pub(crate) fn may_write_to(view: &SocietyView, player: AccountNumber) -> bool {
     receivers(view).iter().any(|other| other.account == player)
 }
 
