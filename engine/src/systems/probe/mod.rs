@@ -555,7 +555,6 @@ pub struct ProbeBody {
     pub mana: f32,
     pub max_mana: f32,
     pub npc: Option<NpcId>,
-    pub role: Option<String>,
     pub friendly: bool,
     pub locked: bool,
     pub marks: Vec<AttentionId>,
@@ -1807,9 +1806,6 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         mana: stat(StatKind::Mana),
         max_mana: stat(StatKind::MaxMana),
         npc,
-        role: npc
-            .and_then(|npc| npc.get(world.resource::<Content>()).nameplate())
-            .map(str::to_owned),
         friendly: entity.get::<Attitude>() == Some(&Attitude::Friendly),
         locked,
         marks,

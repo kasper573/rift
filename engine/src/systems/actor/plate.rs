@@ -68,21 +68,19 @@ pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
 #[derive(Resource, Default)]
 struct Plates(HashMap<Entity, egui::Rect>);
 
-/// What a plate says: a name in the colour of its wearer's standing, an npc's role under it, and
-/// under a resource's who works it.
+/// What a plate says: a name in the colour of its wearer's standing, and under a resource's who
+/// works it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlateLabel {
     pub name: Option<String>,
-    pub role: Option<String>,
     pub state: Option<String>,
     pub color: Color32,
 }
 
 impl PlateLabel {
-    pub fn npc(name: &str, role: &str, hostile: bool) -> PlateLabel {
+    pub fn npc(name: &str, hostile: bool) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            role: Some(role.to_owned()),
             state: None,
             color: if hostile { HOSTILE } else { Color32::WHITE },
         }
@@ -91,7 +89,6 @@ impl PlateLabel {
     pub fn resource(name: &str, working: u32, room: u32) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            role: None,
             state: resource::render::plate_line(working, room),
             color: Color32::WHITE,
         }
@@ -101,7 +98,6 @@ impl PlateLabel {
     pub fn player(name: &str, said: Option<&str>) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            role: None,
             state: said.map(str::to_owned),
             color: dusk::PLAYER,
         }
@@ -202,11 +198,7 @@ pub fn draw_plates(world: &mut World) {
                 .into_iter()
                 .map(|mark| gui::image(world, &mark.get(&content).icon))
                 .collect();
-            if label.name.is_none()
-                && label.role.is_none()
-                && label.state.is_none()
-                && icons.is_empty()
-            {
+            if label.name.is_none() && label.state.is_none() && icons.is_empty() {
                 return None;
             }
             let size = plate_size(&gui, &label, &icons);
@@ -267,15 +259,11 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
             TSTransform::IDENTITY,
         );
     }
-    let under = [
-        plate.label.role.as_deref().map(role_text),
-        plate.label.state.clone(),
-    ];
-    for line in under.into_iter().flatten() {
+    if let Some(state) = &plate.label.state {
         dusk::label(
             &mut column,
-            &line,
-            role_font(),
+            state,
+            state_font(),
             Color32::WHITE.gamma_multiply(0.7),
             dusk::EDGED,
             TSTransform::IDENTITY,
@@ -296,11 +284,7 @@ fn plate_size(gui: &egui::Context, label: &PlateLabel, icons: &[Option<GuiImage>
     [
         Some(icons_size(icons.len())),
         label.name.clone().map(|name| text(name, name_font())),
-        label
-            .role
-            .as_deref()
-            .map(|role| text(role_text(role), role_font())),
-        label.state.clone().map(|state| text(state, role_font())),
+        label.state.clone().map(|state| text(state, state_font())),
     ]
     .into_iter()
     .flatten()
@@ -328,7 +312,6 @@ fn label(
     if object {
         return Some(PlateLabel {
             name: None,
-            role: None,
             state: None,
             color: Color32::WHITE,
         });
@@ -336,9 +319,8 @@ fn label(
     match (npc, owner) {
         (Some(npc), _) => {
             let def = npc.def.get(content);
-            def.nameplate().map(|role| {
-                PlateLabel::npc(&def.name, role, matches!(attitude, Some(Attitude::Hostile)))
-            })
+            def.wears_nameplate()
+                .then(|| PlateLabel::npc(&def.name, matches!(attitude, Some(Attitude::Hostile))))
         }
         (None, Some(_)) => {
             let words = &content.built::<GameSettings>().words;
@@ -351,14 +333,10 @@ fn label(
     }
 }
 
-fn role_text(role: &str) -> String {
-    format!("<{role}>")
-}
-
 fn name_font() -> FontId {
     Face::BookBold.id(TEXT_SIZE)
 }
 
-fn role_font() -> FontId {
+fn state_font() -> FontId {
     Face::Book.id(TEXT_SIZE)
 }

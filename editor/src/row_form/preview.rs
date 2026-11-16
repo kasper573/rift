@@ -573,7 +573,7 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
 }
 
 /// How the row's actor stands on the stage: its appearance, what it wears in each slot and shows
-/// in each hand, and the plate it wears in game, an npc's name and role once it has a nameplate,
+/// in each hand, and the plate it wears in game, an npc's name once it has a nameplate,
 /// a test character's name as a player.
 struct Dressed {
     appearance: Appearance,
@@ -605,8 +605,8 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
                 worn: BTreeMap::new(),
                 hands: held::listed(content, model.hands().len(), &npc.held).hands,
                 plate: npc
-                    .nameplate()
-                    .map(|role| PlateLabel::npc(&npc.name, role, hostile)),
+                    .wears_nameplate()
+                    .then(|| PlateLabel::npc(&npc.name, hostile)),
             })
         }
         CharacterSnapshot::TABLE => {
