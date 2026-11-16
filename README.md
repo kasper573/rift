@@ -304,11 +304,11 @@ required unless it says otherwise, and a binary refuses to start without one.
   `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN` and `PROBE`.
 - **`web-server`** reads `RIFT_WEB_SERVER_*`: `BIND`, `PORT`, `REDIRECT_URI`, the game server as
   game clients reach it (`GAME_SERVER_URL`) and as it reaches it itself
-  (`GAME_SERVER_INTERNAL_URL`), and the release whose game client its downloads offer
-  (`DOWNLOADS_URL`, `RELEASE`). The `rift.env` it serves to game clients points them at its game
-  server and at the sign-in pages in `RIFT_WEB_SERVER_DESKTOP_AUTH_*` (`CLIENT_ID`,
-  `AUTHORIZATION_URI`, `SIGN_UP_URI`, `TOKEN_URI`). The site is named after the game its game server
-  serves.
+  (`GAME_SERVER_INTERNAL_URL`), the release whose game client its downloads offer
+  (`DOWNLOADS_URL`, `RELEASE`), and the video file its landing page plays (`PREVIEW_VIDEO`). The
+  `rift.env` it serves to game clients points them at its game server and at the sign-in pages in
+  `RIFT_WEB_SERVER_DESKTOP_AUTH_*` (`CLIENT_ID`, `AUTHORIZATION_URI`, `SIGN_UP_URI`, `TOKEN_URI`).
+  The site is named after the game its game server serves.
 
 ### Protocols
 

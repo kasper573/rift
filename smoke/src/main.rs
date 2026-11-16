@@ -422,6 +422,7 @@ fn web_server(
         game_server_internal_url: game_server_url,
         downloads_url: format!("{site}/no-downloads"),
         release: "smoke".to_owned(),
+        preview_video: PathBuf::from("no-preview-video"),
     };
     let sign_in = SignInSettings {
         issuer: IssuerUrl::new(provider.issuer().to_owned()).expect("a url"),

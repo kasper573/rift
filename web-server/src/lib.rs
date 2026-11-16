@@ -4,6 +4,7 @@ mod pages;
 pub use auth::SignInSettings;
 
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use axum::routing::get;
 use openidconnect::RedirectUrl;
 use serde::{Deserialize, Serialize};
 use service::GameInfo;
+use tower_http::services::ServeFile;
 
 pub const ENV_PREFIX: &str = "RIFT_WEB_SERVER_";
 
@@ -31,6 +33,7 @@ pub struct WebServerConfig {
     pub downloads_url: String,
     /// The engine release the site serves, whose game client it offers.
     pub release: String,
+    pub preview_video: PathBuf,
 }
 
 /// Everything the site is made from.
@@ -54,6 +57,7 @@ pub async fn router(site: Site) -> Router {
         .host_str()
         .expect("a redirect uri with a host")
         .to_owned();
+    let preview_video = ServeFile::new(&config.preview_video);
     let app = Arc::new(App {
         auth: auth::Auth::new(sign_in, config.redirect_uri.clone()).await,
         domain,
@@ -68,6 +72,7 @@ pub async fn router(site: Site) -> Router {
         .route("/auth/sign-in", get(auth::sign_in))
         .route("/auth/sign-out", get(auth::sign_out))
         .route("/auth-callback", get(auth::callback))
+        .route_service("/preview-video", preview_video)
         .route("/site.css", get(pages::css))
         .route("/favicon.png", get(pages::favicon))
         .with_state(app)

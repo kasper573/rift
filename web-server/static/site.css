@@ -95,16 +95,37 @@ button.subtle:hover {
 }
 
 .hero {
-  position: absolute;
-  top: 128px;
-  left: 0;
-  right: 0;
+  flex: 1;
+  min-height: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  padding: 48px 24px;
   text-align: center;
 }
 
 .hero h1 {
   font-size: 64px;
-  margin: 0 0 24px;
+  margin: 0;
+}
+
+.hero p {
+  max-width: 640px;
+  margin: 0;
+  color: var(--text-subtle);
+  font-size: 18px;
+  line-height: 1.5;
+}
+
+/* Sized by the page alone, so the picture loading never moves what is around it. */
+.hero video {
+  flex: 1;
+  min-height: 0;
+  width: min(100%, 1280px);
+  border-radius: 8px;
+  background: #000;
 }
 
 .centered {

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use axum::Router;
 use axum::body::Body;
@@ -12,12 +13,13 @@ use service::GameInfo;
 use tower::ServiceExt;
 use web_server::{SignInSettings, Site, WebServerConfig};
 
-const ACCOUNT: &str = "ada";
+const ACCOUNT: &str = "ada-the-visitor";
 const SITE: &str = "https://site.test";
 const END_SESSION: &str = "https://provider.test/logout";
 const ACCOUNT_PAGE: &str = "https://provider.test/account";
 const GAME: &str = "Lantern Isle";
 const RELEASE: &str = "2026.10.29-abcdef12";
+const PREVIEW_VIDEO: &str = "a moving picture";
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_visitor_signs_in_as_their_account_and_signs_out() {
@@ -99,6 +101,27 @@ async fn the_downloads_offer_the_game_client_of_the_release_with_a_rift_env_for_
             env.body
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_landing_page_plays_the_preview_video_the_site_is_given() {
+    std::fs::write(preview_video(), PREVIEW_VIDEO).expect("a preview video");
+    let provider = start_provider().await;
+    let site = site(&provider, None).await;
+    let mut visitor = Visitor::default();
+
+    let landing = visitor.get(&site, "/").await;
+    let (_, player) = landing.body.split_once("<video").expect("a video player");
+    let (_, source) = player.split_once("src=\"").expect("a source");
+    let (source, _) = source.split_once('"').expect("a source");
+
+    let video = visitor.get(&site, source).await;
+    assert_eq!(video.status, StatusCode::OK);
+    assert_eq!(video.body, PREVIEW_VIDEO);
+}
+
+fn preview_video() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join("preview.mp4")
 }
 
 #[derive(Default)]
@@ -193,6 +216,7 @@ async fn site(provider: &OAuthTestServer, account_page: Option<&str>) -> Router 
             game_server_internal_url: "http://game-server:9998".to_owned(),
             downloads_url: "https://releases.test/download".to_owned(),
             release: RELEASE.to_owned(),
+            preview_video: preview_video(),
         },
         sign_in: SignInSettings {
             issuer: IssuerUrl::new(provider.issuer().to_owned()).expect("a url"),
