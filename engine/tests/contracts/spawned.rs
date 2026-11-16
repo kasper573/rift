@@ -314,6 +314,7 @@ fn moor() -> Sim {
         )
         .shader("status_pop")
         .sfx("ui_refuse")
+        .default_card_style()
         .load();
     let mut sim = Sim::new(content);
     sim.serve("moor")

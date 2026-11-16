@@ -22,6 +22,7 @@ use crate::systems::social_request::{
     SocialRequestWords,
 };
 use crate::systems::society::{self, Settling, SocietyAsk, SocietyView};
+use crate::systems::text::LineText;
 use crate::systems::{GameSettings, area, visibility};
 
 /// What a player asks of the mount they ride, or of one they would ride.
@@ -56,9 +57,9 @@ pub fn requests(world: &mut World) {
 /// Lets `rider` do `act` from where they sit: at once from a seat that lets them or on foot, and
 /// from one that does not as their mount has it, stepping off first where they can stand or
 /// refused in the game's words.
-pub fn act(world: &mut World, rider: Entity, act: RiderAct) -> Result<(), String> {
+pub fn act(world: &mut World, rider: Entity, act: RiderAct) -> Result<(), LineText> {
     if let Some(refusal) = barred(world, rider, act) {
-        return Err(refusal);
+        return Err(refusal.into());
     }
     if lets(world, rider, act) {
         return Ok(());
@@ -188,17 +189,17 @@ pub(crate) fn part(settling: &mut Settling, one: &AccountId, other: &AccountId) 
     }
 }
 
-fn ask(world: &mut World, asker: Entity, driver: Entity) -> Result<(), String> {
+fn ask(world: &mut World, asker: Entity, driver: Entity) -> Result<(), LineText> {
     if !player::may_command(world, asker) || !visibility::in_sight(world, asker, driver) {
         return Ok(());
     }
     let words = &world.resource::<GameSettings>().words;
     let (riding, taken) = (words.step_off_first.clone(), words.seats_taken.clone());
     if world.get::<Riding>(asker).is_some() {
-        return Err(riding);
+        return Err(riding.into());
     }
     if free_seat(world, driver).is_none() {
-        return Err(taken);
+        return Err(taken.into());
     }
     reach::intend(world, asker, ReachTarget::Actor(driver), ReachAct::Board);
     Ok(())

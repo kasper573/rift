@@ -34,16 +34,17 @@ use crate::core::math::Rgb;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::GameSettings;
 use crate::systems::actor::portrait::ActorPortraits;
-use crate::systems::chat::{ChatChannel, ChatChannels, ChatEmbed, ChatEmbedKind, EMBED_ASK};
+use crate::systems::area_map::{self, MapPin, MapSight};
+use crate::systems::chat::{
+    ChatChannel, ChatChannels, ChatEmbed, ChatEmbedKind, ChatLocation, EMBED_ASK,
+};
 use crate::systems::command::input::{InputKind, SlotPart, options as input_options};
 use crate::systems::hud::{self, SizedPiece};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::input::scope;
-use crate::systems::item;
+use crate::systems::mention::Mention;
 use crate::systems::player::{ClientId, session};
-use crate::systems::quest;
 use crate::systems::settings::{Placed, UserSettings};
-use crate::systems::skill;
 
 pub const CHAT: &str = "chat";
 
@@ -362,8 +363,8 @@ pub(super) fn draw(world: &mut World) {
             if typing {
                 tabs(ui, world, &mut view, strip, &look);
             }
-            if let Some((embed, from)) = lines(ui, world, &mut view, log, &look) {
-                inspect(world, embed, from);
+            if let Some(asked) = lines(ui, world, &mut view, log, &look) {
+                inspect(world, asked);
             }
             field_row(ui, world, &mut view, row, &look);
             handles
@@ -661,14 +662,14 @@ fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
 }
 
 /// The lines of the tab shown while chat is typed in, and of every channel together at rest.
-/// Answers the thing of a line whose card the player asked for, and where they clicked it.
+/// Answers the thing of a line the player asked to see.
 fn lines(
     ui: &mut Ui,
     world: &World,
     view: &mut ChatView,
     room: Rect,
     look: &ChatLook,
-) -> Option<(ChatEmbed, Rect)> {
+) -> Option<AskedEmbed> {
     let log = world.resource::<TerminalLog>();
     let speakers = world.resource::<ChatSpeakers>();
     let portraits = world.resource::<ActorPortraits>();
@@ -810,7 +811,11 @@ fn lines(
                             for (shown, names) in links {
                                 let key = ui.id().with(("shown", line.id, shown.letters.start));
                                 if let Some(from) = embed_link(ui, rect.min, key, &names, shown) {
-                                    asked_for = Some((shown.embed, from));
+                                    asked_for = Some(AskedEmbed {
+                                        embed: shown.embed,
+                                        from,
+                                        speaker: shown.speaker.clone(),
+                                    });
                                 }
                             }
                         }
@@ -856,13 +861,30 @@ fn lines(
     asked_for
 }
 
-/// Shows the card of a thing a line holds, dealt from where the player clicked it.
-fn inspect(world: &mut World, embed: ChatEmbed, from: Rect) {
-    let from = Some(from);
-    match embed {
-        ChatEmbed::Item(item) => item::card::open(world, item, from),
-        ChatEmbed::Quest(quest) => quest::card::open(world, quest, from),
-        ChatEmbed::Skill(skill) => skill::card::open(world, skill, from),
+/// A thing of a line the player asked to see: where they clicked it, and who said the line.
+struct AskedEmbed {
+    embed: ChatEmbed,
+    from: Rect,
+    speaker: String,
+}
+
+/// Shows what a line holds as the interface shows such a thing anywhere: the card of a thing,
+/// dealt from where the player clicked it, and a location on the map, pinned under the name of
+/// whoever said it.
+fn inspect(world: &mut World, asked: AskedEmbed) {
+    let from = Some(asked.from);
+    match asked.embed {
+        ChatEmbed::Item(item) => Mention::Item(item).open(world, from),
+        ChatEmbed::Quest(quest) => Mention::Quest(quest).open(world, from),
+        ChatEmbed::Skill(skill) => Mention::Skill(skill).open(world, from),
+        ChatEmbed::Location(location) => {
+            let pin = MapPin {
+                area: location.area,
+                at: location.at(),
+                name: asked.speaker,
+            };
+            area_map::open_on(world, MapSight::Pin(pin));
+        }
     }
 }
 
@@ -968,6 +990,7 @@ fn line_job(
                                 embed,
                                 name: shown.name.clone(),
                                 letters: starts..job.text.chars().count(),
+                                speaker: speaker.name.clone(),
                             });
                         }
                         None => job.append("?", 0.0, format(dusk::TEXT)),
@@ -1005,6 +1028,8 @@ struct ShownEmbed {
     embed: ChatEmbed,
     name: String,
     letters: Range<usize>,
+    /// Who said the line.
+    speaker: String,
 }
 
 /// A thing a line holds that chat covers: which of the line's things it is, and the letters
@@ -1278,12 +1303,24 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         (Some(place), None, Some(asked)) => {
             if let Some(&kind) = asked.kinds.get(place) {
                 view.draft.cut(asked.letters.clone());
-                input::caret_to(ui.ctx(), field_id, asked.letters.start);
-                view.seeking = Some(EmbedSearch {
-                    kind,
-                    at: asked.letters.start,
-                    name: String::new(),
-                });
+                let at = asked.letters.start;
+                input::caret_to(ui.ctx(), field_id, at);
+                match kind.table() {
+                    Some(_) => {
+                        view.seeking = Some(EmbedSearch {
+                            kind,
+                            at,
+                            name: String::new(),
+                        });
+                    }
+                    None => {
+                        if let Some(here) = here(world) {
+                            let name = here.shown(world.resource::<Content>()).name;
+                            let caret = view.draft.embed(at, here, &name);
+                            input::caret_to(ui.ctx(), field_id, caret);
+                        }
+                    }
+                }
             }
         }
         (Some(place), None, None) => {
@@ -1561,6 +1598,11 @@ impl EmbedKindsAsked {
     }
 }
 
+/// Where the player stands, as a line holds it.
+fn here(world: &World) -> Option<ChatEmbed> {
+    ChatLocation::of(world, session::me(world)?).map(ChatEmbed::Location)
+}
+
 /// A thing a search found: what it is, and how the list of what was found names it.
 struct FoundEmbed {
     embed: ChatEmbed,
@@ -1573,8 +1615,10 @@ fn found(world: &World, seeking: &EmbedSearch) -> Vec<FoundEmbed> {
     let content = world.resource::<Content>();
     let most = content.built::<GameSettings>().suggestions as usize;
     let caller = session::me(world).unwrap_or(Entity::PLACEHOLDER);
-    let kind = InputKind::Row(seeking.kind.table());
-    let options = input_options(world, caller, kind, SlotPart::Whole);
+    let Some(table) = seeking.kind.table() else {
+        return Vec::new();
+    };
+    let options = input_options(world, caller, InputKind::Row(table), SlotPart::Whole);
     let names = options.iter().map(|option| option.text.as_str());
     best_matches(&seeking.name, names, most)
         .into_iter()

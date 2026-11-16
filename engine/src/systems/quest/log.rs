@@ -13,6 +13,7 @@ use super::card::{
 use super::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestRequest, QuestResult};
 use crate::core::content::Content;
 use crate::core::gui;
+use crate::core::text::{self, TextLook};
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::dialogue::ChoiceReveal;
@@ -20,11 +21,14 @@ use crate::systems::hud::menu::{MenuTab, MenuTabName, SubTabs};
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceIcon;
+use crate::systems::item::card::detail_line;
 use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{Inventory, ItemModuleKind, ItemStack};
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::quest::{Objective, QuestDef};
 use crate::systems::screen::ClientScreen;
+use crate::systems::text::LineText;
 use ui::paint;
 
 const LIST_WIDTH: f32 = 250.0;
@@ -493,10 +497,10 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
     }
     if def.time_limit().is_some() {
         sheet::section(ui, "If time runs out");
-        card::fact(
-            ui,
-            &format!("The quest fails. {}.", def.retry_hint(&page.parties, quest)),
-        );
+        let fails = LineText::plain("The quest fails. ")
+            .then(def.retry_hint(&content, &page.parties, quest))
+            .then(".");
+        detail_line(ui, world, None, &fails);
     }
     if let Some(finished) = finished {
         let (outcome, color) = match finished.result {
@@ -507,20 +511,16 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
                 ink::VERDIGRIS,
             ),
             QuestResult::Completed => ("Completed".to_owned(), ink::VERDIGRIS),
-            QuestResult::Failed if finished.offered_again => (
-                format!("Failed · {}", def.retry_hint(&page.parties, quest)),
-                ink::RUBRIC,
-            ),
             QuestResult::Failed => ("Failed".to_owned(), ink::RUBRIC),
         };
-        ui.add(
-            Label::new(
-                face::bold(&outcome)
-                    .size(TextRole::CardBody.size())
-                    .color(color),
-            )
-            .wrap(),
-        );
+        let outcome = match finished.result {
+            QuestResult::Failed if finished.offered_again => LineText::plain(outcome)
+                .then(" · ")
+                .then(def.retry_hint(&content, &page.parties, quest)),
+            _ => LineText::plain(outcome),
+        };
+        let look = TextLook::role(TextRole::CardBody, color).bold();
+        text::show(ui, world, &outcome.styled(), look, None);
     }
 }
 
@@ -564,10 +564,9 @@ fn confirm_abandon(world: &mut World, quest: QuestId) {
     let content = world.resource::<Content>().clone();
     let def = quest.get(&content);
     let taken = def.grants().iter().map(|stack| {
-        format!(
-            "{} is taken from your inventory.",
-            stack.item.get(&content).name
-        )
+        Mention::Item(stack.item)
+            .line(&content)
+            .then(" is taken from your inventory.")
     });
     let again = match world.resource::<Parties>().giver(quest) {
         Some(party) if party.item.is_some() => {
@@ -577,12 +576,14 @@ fn confirm_abandon(world: &mut World, quest: QuestId) {
         None => "Nobody offers it again.".to_owned(),
     };
     let body = taken
-        .chain(["Your progress is lost.".to_owned(), again])
+        .chain(["Your progress is lost.".into(), again.into()])
         .collect();
     hud::confirm(
         world,
         Confirm {
-            title: format!("Abandon {}?", def.title),
+            title: LineText::plain("Abandon ")
+                .then(Mention::Quest(quest).span(&content))
+                .then("?"),
             body,
             confirm: "Abandon quest".to_owned(),
             cancel: "Keep quest".to_owned(),

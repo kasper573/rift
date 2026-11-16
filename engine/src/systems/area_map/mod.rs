@@ -19,19 +19,23 @@ use crate::core::gui::{self, GuiImage};
 use crate::core::math::{Pos, Rect};
 use crate::core::render::CameraRig;
 use crate::core::render::world::opacity::Opacity;
+use crate::core::text::{self, TextLook};
 use crate::core::units::{MeterSize, Meters, Radians};
 use crate::systems::actor::{Action, Actor, Name};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::attention::{self, AttentionId};
 use crate::systems::combat::Attitude;
+use crate::systems::hud::menu::{self, MenuTabName};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::{self, DroppedItem, Reservation};
+use crate::systems::mention::Mention;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::party;
 use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::RiftScripts;
+use crate::systems::text::LineText;
 use crate::systems::{GameSettings, visibility};
 
 pub struct AreaMapPlugin;
@@ -47,6 +51,45 @@ impl Plugin for AreaMapPlugin {
                     .run_if(in_state(ClientScreen::Area)),
             );
     }
+}
+
+/// What the map is opened to show in place of where its viewer stands.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MapSight {
+    /// An area, from its middle.
+    Area(AreaId),
+    Pin(MapPin),
+}
+
+/// A spot someone pointed out, marked on the map under their name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapPin {
+    pub area: AreaId,
+    pub at: Pos<Meters>,
+    pub name: String,
+}
+
+impl MapSight {
+    fn spot(&self, content: &Content) -> Option<(AreaId, Pos<Meters>)> {
+        match self {
+            MapSight::Area(area) => Some((*area, area::loaded(content, *area)?.center())),
+            MapSight::Pin(pin) => Some((pin.area, pin.at)),
+        }
+    }
+
+    fn pin(&self) -> Option<&MapPin> {
+        match self {
+            MapSight::Area(_) => None,
+            MapSight::Pin(pin) => Some(pin),
+        }
+    }
+}
+
+/// Opens the map on `sight`, which it shows for as long as it stays open: closing the map or
+/// leaving it for another tab lets go of the sight.
+pub fn open_on(world: &mut World, sight: MapSight) {
+    world.resource_mut::<tab::MapTabLook>().sight = Some(sight);
+    menu::open_on(world, MenuTabName::Map);
 }
 
 /// How far a map reaches at each step, closest first.
@@ -115,6 +158,8 @@ pub enum MapMarkKind {
 pub struct MapMark {
     pub kind: MapMarkKind,
     pub name: String,
+    /// The thing the mark's name is, for a mark that is named after one the interface mentions.
+    pub mention: Option<Mention>,
     pub at: Pos<Meters>,
     pub attention: Vec<AttentionId>,
     pub opacity: f32,
@@ -166,6 +211,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
             let mark = MapMark {
                 kind,
                 name,
+                mention: None,
                 at,
                 attention: Vec::new(),
                 opacity: opacity.map_or(1.0, |opacity| opacity.0),
@@ -188,6 +234,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
         .map(|object| MapMark {
             kind: MapMarkKind::WayOut,
             name: object.to.area.get(&content).name.clone(),
+            mention: Some(Mention::Area(object.to.area)),
             at: object.shape.center(),
             attention: Vec::new(),
             opacity: 1.0,
@@ -215,6 +262,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
             rarity.dropped.on_minimap.then(|| MapMark {
                 kind: MapMarkKind::Loot,
                 name: def.name.clone(),
+                mention: Some(Mention::Item(dropped.item)),
                 at: at.pos,
                 attention: Vec::new(),
                 opacity: opacity.map_or(1.0, |opacity| opacity.0),
@@ -236,6 +284,8 @@ struct MapView {
     sight: Meters,
     yaw: f32,
     window: MapWindow,
+    /// Whether the map shows an area its viewer is not in.
+    away: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -272,6 +322,7 @@ impl MapView {
             sight: settings.sight,
             yaw: world.get_resource::<CameraRig>()?.yaw().0,
             window: window(at),
+            away: false,
         })
     }
 
@@ -369,15 +420,53 @@ impl MapView {
     }
 }
 
-fn chart(ui: &mut Ui, world: &mut World, view: &MapView) {
+fn chart(ui: &mut Ui, world: &mut World, view: &MapView, pin: Option<&MapPin>) {
     ground_under(ui, world, view);
-    if !view.turns() {
-        wedge(ui, view);
+    if !view.away {
+        if !view.turns() {
+            wedge(ui, view);
+        }
+        sight_ring(ui, view);
+        let marks = marks(world, view.me);
+        marked(ui, world, view, &marks);
+        myself(ui, view);
     }
-    sight_ring(ui, view);
-    let marks = marks(world, view.me);
-    marked(ui, world, view, &marks);
-    myself(ui, view);
+    if let Some(pin) = pin {
+        pinned(ui, view, pin);
+    }
+}
+
+fn pinned(ui: &mut Ui, view: &MapView, pin: &MapPin) {
+    let tip = view.point(pin.at);
+    if !view.holds(tip) {
+        return;
+    }
+    let head = tip - Vec2::new(0.0, PIN_TALL);
+    let edge = Stroke::new(1.5, EDGE);
+    let shank = vec![
+        tip,
+        head + Vec2::new(-PIN_HEAD * 0.8, PIN_HEAD * 0.5),
+        head + Vec2::new(PIN_HEAD * 0.8, PIN_HEAD * 0.5),
+    ];
+    ui.painter().add(Shape::convex_polygon(shank, PIN, edge));
+    ui.painter().circle(head, PIN_HEAD, PIN, edge);
+    ui.painter().circle_filled(head, PIN_HEAD * 0.35, EDGE);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(pin.name.clone(), TextRole::Name.font_id(), Color32::WHITE);
+    let name =
+        Align2::LEFT_CENTER.anchor_size(head + Vec2::new(PIN_HEAD + 5.0, 0.0), galley.size());
+    dusk::lettering(
+        ui.painter(),
+        name.min,
+        galley,
+        dusk::TEXT_SHADOW,
+        TSTransform::IDENTITY,
+    );
+    let spot = egui::Rect::from_center_size(head, Vec2::splat(2.0 * HOVER_REACH)).union(name);
+    let said = format!("On the {}: pinned by {}", view.named(), pin.name);
+    ui.interact(spot, ui.id().with("pin"), Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
 }
 
 const ROUND: usize = 72;
@@ -393,12 +482,15 @@ const DIAMOND: f32 = 5.5;
 const DOOR: Vec2 = Vec2::new(9.0, 10.0);
 const ATTENTION: f32 = 14.0;
 const HOVER_REACH: f32 = 9.0;
+const PIN_HEAD: f32 = 6.0;
+const PIN_TALL: f32 = 15.0;
 
 const BLANK: Color32 = Color32::from_rgb(0xD9, 0xCB, 0xA3);
 const NO_GROUND: Color32 = Color32::from_rgb(0x4B, 0x43, 0x3A);
 const TOWNSPERSON: Color32 = Color32::from_rgb(0x6F, 0xB8, 0x74);
 const PLAYER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
 const PARTY_MEMBER: Color32 = Color32::from_rgb(0xE6, 0xC2, 0x5B);
+const PIN: Color32 = Color32::from_rgb(0xD9, 0x4F, 0x4F);
 const EDGE: Color32 = ink::FRAME;
 
 fn picture_the_ground(world: &mut World) {
@@ -414,8 +506,10 @@ fn picture_the_ground(world: &mut World) {
     let widest = world.resource::<GameSettings>().map_reaches.widest().0;
     let about_me = Rect::new(at, default()).inflate(widest, widest);
     let on_the_tab = world.resource::<tab::MapTabLook>().shows();
-    let shown: Vec<Rect<Meters>> = std::iter::once(about_me).chain(on_the_tab).collect();
-    ground::keep(world, area, &shown);
+    let shown: Vec<(AreaId, Rect<Meters>)> = std::iter::once((area, about_me))
+        .chain(on_the_tab)
+        .collect();
+    ground::keep(world, &shown);
 }
 
 fn stands_at(world: &World, entity: Entity) -> Option<Pos<Meters>> {
@@ -613,6 +707,13 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                     format!("{} · {said}", mark.name)
                 }
             };
+            let told = match (kind, mark.mention) {
+                (MapMarkKind::WayOut, Some(place)) => {
+                    LineText::plain("Way to ").then(place.span(&content))
+                }
+                (MapMarkKind::Loot, Some(item)) => item.line(&content),
+                _ => LineText::plain(said.clone()),
+            };
             let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * HOVER_REACH));
             let node = ui.interact(spot, ui.id().with(("mark", index)), Sense::hover());
             let label = format!("On the {}: {said}", view.named());
@@ -620,7 +721,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                 egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label.clone())
             });
             if pointer.is_some_and(|pointer| spot.contains(pointer)) {
-                under.push(said);
+                under.push(told);
                 topmost = Some(node);
             }
         }
@@ -643,8 +744,9 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
     under.reverse();
     if let Some(topmost) = topmost {
         float::tooltip(&topmost, |ui| {
-            for name in &under {
-                ui.label(TextRole::Tooltip.rich(name.as_str()));
+            let look = TextLook::role(TextRole::Tooltip, ui.visuals().text_color());
+            for line in &under {
+                text::show(ui, world, &line.styled(), look, None);
             }
         });
     }

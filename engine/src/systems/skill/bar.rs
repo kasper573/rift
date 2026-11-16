@@ -33,6 +33,7 @@ use crate::systems::interface::InterfaceSound;
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::widget::{SLOT, SlotLook, SlotRarity, slot};
 use crate::systems::item::{Inventory, ItemId, ItemKind, UseItemRequest, card as item_card};
+use crate::systems::mention::Mention;
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::player::session;
 use crate::systems::reach::Engaged;
@@ -41,6 +42,7 @@ use crate::systems::settings::{BarKey, BarShape, UserSettings};
 use crate::systems::skill::{CastAim, aim};
 use crate::systems::stat::{self, Vital};
 use crate::systems::terminal::chat;
+use crate::systems::text::LineText;
 use crate::systems::{GameSettings, notification};
 use ui::paint;
 use ui::panel::{self, GripCorner};
@@ -287,14 +289,18 @@ pub fn drop_off_bar(world: &mut World) {
         return;
     }
     let content = world.resource::<Content>().clone();
-    let name = entry_name(&content, entry);
+    let named = match entry {
+        HotbarEntry::Empty => return,
+        HotbarEntry::Skill(skill) => Mention::Skill(skill),
+        HotbarEntry::Item(item) => Mention::Item(item),
+    };
     hud::confirm(
         world,
         Confirm {
-            title: format!("Take {name} off the bar?"),
-            body: vec![
-                "It stays in your tree or your inventory; only the slot empties.".to_owned(),
-            ],
+            title: LineText::plain("Take ")
+                .then(named.span(&content))
+                .then(" off the bar?"),
+            body: vec!["It stays in your tree or your inventory; only the slot empties.".into()],
             confirm: "Take off".to_owned(),
             cancel: "Keep".to_owned(),
             answer: Box::new(move |world, taken| {
@@ -731,16 +737,24 @@ fn carried_pick(world: &World, carried: Carried) -> Option<BasicAttackPick> {
 
 /// Why the basic attack slot turns a pick away, judged from the content alone; whether the player
 /// knows the skill or holds the weapon is the server's to say.
-fn refusal(content: &Content, pick: BasicAttackPick) -> Option<String> {
+fn refusal(content: &Content, pick: BasicAttackPick) -> Option<LineText> {
     match pick {
         BasicAttackPick::Empty => None,
         BasicAttackPick::Skill(skill) => {
             let def = skill.get(content);
-            (!def.basic_attack).then(|| format!("{} can't be a basic attack", def.name))
+            (!def.basic_attack).then(|| {
+                Mention::Skill(skill)
+                    .line(content)
+                    .then(" can't be a basic attack")
+            })
         }
         BasicAttackPick::Weapon(item) => super::first_flagged_grant(content, std::iter::once(item))
             .is_none()
-            .then(|| format!("{} has no basic attack", item.get(content).name)),
+            .then(|| {
+                Mention::Item(item)
+                    .line(content)
+                    .then(" has no basic attack")
+            }),
     }
 }
 
@@ -982,7 +996,8 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
     let Some(me) = session::me(world) else {
         return false;
     };
-    let refusal = super::unusable(world, me, skill).or_else(|| mount::shut(world, me, skill));
+    let refusal = super::unusable(world, me, skill)
+        .or_else(|| mount::shut(world, me, skill).map(LineText::from));
     if let Some(refusal) = refusal {
         notification::local_error(world, refusal);
         return false;
@@ -1064,7 +1079,12 @@ fn use_item(world: &mut World, item: ItemId) -> bool {
                 true
             }
             None => {
-                notification::local_error(world, format!("No {} left", def.name));
+                notification::local_error(
+                    world,
+                    LineText::plain("No ")
+                        .then(Mention::Item(item).span(&content))
+                        .then(" left"),
+                );
                 false
             }
         },

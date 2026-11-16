@@ -6,19 +6,23 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, Vec2};
+use ui::face::TextRole;
 use ui::{controls, dialog, face, ink};
 
 use super::{AreaInstanceGiven, AreaInstanceGoalShown, AreaInstanceShown, LeaveInstance};
 use crate::core::content::Content;
+use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Confirm, HudWidget};
 use crate::systems::item::ItemStack;
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card::time_left;
 use crate::systems::society::SocietyView;
+use crate::systems::text::LineText;
 
 pub const INSTANCE_PLATE: &str = "instance";
 
@@ -42,7 +46,8 @@ impl HudWidget for InstancePlateWidget {
         let now = time::server_now(world)?;
         let content = world.resource::<Content>().clone();
         let name = instance.area.get(&content).name.clone();
-        let returns = format!("You return to {}", instance.returns_to.get(&content).name);
+        let returns = LineText::plain("You return to ")
+            .then(Mention::Area(instance.returns_to).span(&content));
         let not_theirs = world
             .resource::<GameSettings>()
             .words
@@ -54,18 +59,21 @@ impl HudWidget for InstancePlateWidget {
             match (instance.sent_out, &instance.cleared) {
                 (Some(out_at), _) => {
                     ui.label(face::body(not_theirs).color(ink::VERMILION));
-                    leaves = way_out(ui, &returns, Some(out_at), now, "Leave now");
+                    leaves = way_out(ui, world, &returns, Some(out_at), now, "Leave now");
                 }
                 (None, Some(cleared)) => {
                     ui.label(face::body("Cleared").color(ink::VERDIGRIS));
-                    leaves = way_out(ui, &returns, Some(cleared.closes), now, "Leave now");
+                    leaves = way_out(ui, world, &returns, Some(cleared.closes), now, "Leave now");
                 }
                 (None, None) => {
                     for goal in &instance.goals {
                         goal_row(ui, goal);
                     }
-                    let inside = format!("{} of {} inside", instance.inside, instance.holds);
-                    leaves = way_out(ui, &inside, instance.ends, now, "Leave");
+                    let inside = LineText::plain(format!(
+                        "{} of {} inside",
+                        instance.inside, instance.holds
+                    ));
+                    leaves = way_out(ui, world, &inside, instance.ends, now, "Leave");
                 }
             }
         });
@@ -141,7 +149,8 @@ fn goal_row(ui: &mut Ui, goal: &AreaInstanceGoalShown) {
 /// that leaves. Whether the button was pressed.
 fn way_out(
     ui: &mut Ui,
-    says: &str,
+    world: &World,
+    says: &LineText,
     until: Option<UnixMillis>,
     now: UnixMillis,
     leave: &str,
@@ -152,10 +161,11 @@ fn way_out(
             leaves = controls::button(ui, leave).clicked();
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let said = match until {
-                    Some(until) => format!("{says} · {}", time_left(until, now)),
-                    None => says.to_owned(),
+                    Some(until) => says.clone().then(format!(" · {}", time_left(until, now))),
+                    None => says.clone(),
                 };
-                ui.add(egui::Label::new(face::small_faint(said)).truncate());
+                let look = TextLook::role(TextRole::Small, ink::INK3);
+                text::show(ui, world, &said.styled(), look, None);
             });
         });
     });
@@ -174,40 +184,40 @@ fn announce(world: &mut World, mut told: Local<Option<UnixMillis>>) {
     }
     *told = Some(cleared.closes);
     let content = world.resource::<Content>().clone();
-    let listed = |stacks: &[ItemStack]| {
-        let named: Vec<String> = stacks
-            .iter()
-            .map(|stack| stack.describe(&content))
-            .collect();
-        ui::words::join_and(&named)
+    let named = |stacks: &[ItemStack]| -> Vec<LineText> {
+        stacks.iter().map(|stack| stack.named(&content)).collect()
     };
     let given = &cleared.given;
-    let mut kept: Vec<String> = given
-        .kept
-        .iter()
-        .map(|stack| stack.describe(&content))
-        .collect();
+    let mut kept = named(&given.kept);
     if given.xp > 0 {
-        kept.push(format!("{} experience", given.xp));
+        kept.push(format!("{} experience", given.xp).into());
     }
     let mut body = Vec::new();
     if !kept.is_empty() {
-        body.push(format!("Yours: {}.", ui::words::join_and(&kept)));
+        body.push(
+            LineText::plain("Yours: ")
+                .then(LineText::listed(kept))
+                .then("."),
+        );
     }
     if !given.sent.is_empty() {
-        body.push(format!(
-            "No room for {}: sent to your Messages.",
-            listed(&given.sent)
-        ));
+        body.push(
+            LineText::plain("No room for ")
+                .then(LineText::listed(named(&given.sent)))
+                .then(": sent to your Messages."),
+        );
     }
-    body.push(format!(
-        "You return to {} when the time on the plate is up.",
-        instance.returns_to.get(&content).name
-    ));
+    body.push(
+        LineText::plain("You return to ")
+            .then(Mention::Area(instance.returns_to).span(&content))
+            .then(" when the time on the plate is up."),
+    );
     hud::confirm(
         world,
         Confirm {
-            title: format!("{} is cleared", instance.area.get(&content).name),
+            title: Mention::Area(instance.area)
+                .line(&content)
+                .then(" is cleared"),
             body,
             confirm: "Leave now".to_owned(),
             cancel: "Stay till then".to_owned(),

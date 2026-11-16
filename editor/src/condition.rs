@@ -1,6 +1,6 @@
-use engine::core::content::ContentNames;
 use engine::core::script::{Expr, ExprKind, ValueType};
 use engine::systems::GameSettings;
+use engine::systems::script::condition::ConditionNames;
 use engine::systems::script::{
     Condition, RiftQuery, RiftQueryKind, SkyCondition, condition as script_condition,
 };
@@ -815,8 +815,8 @@ fn entry(ui: &mut Ui, query: RiftQueryKind) -> bool {
 }
 
 /// A condition at a glance, as a writer reads it among the blocks of a node.
-pub fn summary(names: &impl ContentNames, condition: &Condition) -> String {
-    fn go(names: &impl ContentNames, condition: &Condition, out: &mut String, depth: usize) {
+pub fn summary(names: &impl ConditionNames, condition: &Condition) -> String {
+    fn go(names: &impl ConditionNames, condition: &Condition, out: &mut String, depth: usize) {
         if depth > 4 {
             out.push('…');
             return;

@@ -40,6 +40,7 @@ use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
 use crate::systems::interface::CursorId;
 use crate::systems::item::rarity::ItemRarityId;
+use crate::systems::mention::Mention;
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
@@ -51,7 +52,7 @@ use crate::systems::script::{
     Condition, EventKind, Owner, RiftInstances, RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::systems::skill::{self, CastAim, SkillId};
-use crate::systems::text::{NameMark, SpanText};
+use crate::systems::text::LineText;
 use crate::systems::visibility::{self, Presence, seen_by};
 
 pub fn register(app: &mut App) {
@@ -142,6 +143,11 @@ impl ItemStack {
     pub fn describe(self, content: &Content) -> String {
         format!("{} {}", self.count, self.item.get(content).name)
     }
+
+    /// The stack as a line names it: how many, and the item as the interface mentions one.
+    pub fn named(self, content: &Content) -> LineText {
+        LineText::plain(format!("{} ", self.count)).then(Mention::Item(self.item).span(content))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,6 +168,19 @@ impl ExchangeRefusal {
             ExchangeRefusal::NoRoom { slots } => {
                 words.needs_slots.replace("{slots}", &slots.to_string())
             }
+        }
+    }
+
+    /// The refusal as a line tells it: the item it is short of as the interface mentions one.
+    pub fn line(self, content: &Content) -> LineText {
+        match self {
+            ExchangeRefusal::Missing(stack) => {
+                let words = &content.built::<GameSettings>().words;
+                LineText::plain(words.needs_more.as_str())
+                    .filling("{count}", stack.count.to_string())
+                    .filling("{item}", Mention::Item(stack.item).span(content))
+            }
+            ExchangeRefusal::NoRoom { .. } => self.describe(content).into(),
         }
     }
 }
@@ -603,19 +622,6 @@ impl NamedContent for ItemDef {
     }
 }
 
-/// An item's name as a line writes it, marked with its rarity.
-pub fn named(content: &Content, item: ItemId) -> SpanText {
-    let def = item.get(content);
-    let rarity = def.rarity.get(content);
-    SpanText::Named {
-        name: def.name.clone(),
-        mark: NameMark {
-            icon: rarity.icon.as_ref().map(ImageRef::path),
-            color: rarity.gradient.from,
-        },
-    }
-}
-
 impl ModuleSet for ItemDef {
     type Module = ItemModule;
 
@@ -1033,24 +1039,22 @@ pub fn use_item(world: &mut World) {
     });
 }
 
-pub fn use_held(world: &mut World, actor: Entity, item: ItemId) -> Result<(), String> {
+pub fn use_held(world: &mut World, actor: Entity, item: ItemId) -> Result<(), LineText> {
     let slot = bag_slot(world, actor, item)?;
     use_slot(world, actor, slot)
 }
 
-pub fn bag_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, String> {
+pub fn bag_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, LineText> {
     world
         .get::<Inventory>(actor)
         .and_then(|inventory| inventory.slot_of(item))
         .ok_or_else(|| {
-            format!(
-                "{} is not in your inventory",
-                item.get(world.resource::<Content>()).name
-            )
+            LineText::from(Mention::Item(item).span(world.resource::<Content>()))
+                .then(" is not in your inventory")
         })
 }
 
-fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), String> {
+fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let item = world
         .get::<Inventory>(actor)
@@ -1110,7 +1114,7 @@ pub fn arrange_stacks(world: &mut World) {
         match world.get_mut::<Inventory>(player) {
             Some(mut inventory) => inventory
                 .split(request.slot as usize, request.count)
-                .map_err(|refusal| refusal.describe(&content)),
+                .map_err(|refusal| refusal.describe(&content).into()),
             None => Ok(()),
         }
     });

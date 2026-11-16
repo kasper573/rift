@@ -23,6 +23,7 @@ use crate::systems::account::AccountId;
 use crate::systems::history::HistoryTopic;
 use crate::systems::input::map::InputAction;
 use crate::systems::item::{self, ExchangeRefusal, Inventory, ItemStack};
+use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::snapshot::KeptAside;
@@ -573,9 +574,8 @@ fn send(
         .iter()
         .find(|stack| stack.item.get(&content).bound());
     let taken = match stays {
-        Some(bound) => Err(words
-            .stays_with_you
-            .replace("{item}", &bound.item.get(&content).name)),
+        Some(bound) => Err(LineText::plain(words.stays_with_you.as_str())
+            .filling("{item}", Mention::Item(bound.item).span(&content))),
         None => item::effects::exchange(world, character, &message.attached, &[]),
     };
     if let Err(why) = taken {
@@ -646,13 +646,14 @@ fn take(settling: &mut Settling, settings: &GameSettings, by: &AccountId, take: 
     }
     if !left.is_empty() {
         let why = if taken == 0 {
-            ExchangeRefusal::NoRoom { slots: 1 }.describe(&content)
+            ExchangeRefusal::NoRoom { slots: 1 }.line(&content)
         } else {
             settings
                 .words
                 .took_some
                 .replace("{taken}", &taken.to_string())
                 .replace("{attached}", &wanted.len().to_string())
+                .into()
         };
         notification::error(world, character, why);
     }

@@ -186,16 +186,16 @@ impl NotificationSent {
 }
 
 /// An error the client raises for itself, shown like one the server sent.
-pub fn local_error(world: &mut World, text: impl Into<String>) {
+pub fn local_error(world: &mut World, text: impl Into<LineText>) {
     let kind = NotificationKind::error(world.resource::<Content>());
-    let notification = Notification::new(kind, LineText::plain(text.into()));
+    let notification = Notification::new(kind, text.into());
     let sent = NotificationSent::new(world, notification, None);
     show(world, sent);
 }
 
-pub fn error(world: &mut World, player: Entity, text: impl Into<String>) {
+pub fn error(world: &mut World, player: Entity, text: impl Into<LineText>) {
     let kind = NotificationKind::error(world.resource::<Content>());
-    let notification = Notification::new(kind, LineText::plain(text.into()));
+    let notification = Notification::new(kind, text.into());
     notify(world, player, None, notification);
 }
 

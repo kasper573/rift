@@ -36,6 +36,7 @@ use crate::systems::script::{
     EventKind, Owner, RiftEvent, RiftInstances, RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::systems::stat::{self, StatKind};
+use crate::systems::text::LineText;
 use crate::systems::{GameSettings, area, visibility};
 
 pub type ResourceId = ContentId<ResourceDef>;
@@ -375,7 +376,7 @@ pub fn workable(
     world: &mut World,
     worker: Entity,
     resource: Entity,
-) -> Result<Option<ItemId>, String> {
+) -> Result<Option<ItemId>, LineText> {
     let content = world.resource::<Content>().clone();
     let words = &content.built::<GameSettings>().words;
     let standing = world
@@ -384,7 +385,7 @@ pub fn workable(
         .filter(|(_, left)| left.0 > 0)
         .map(|(resource, _)| resource.def);
     let Some(def) = standing else {
-        return Err(words.ran_out.clone());
+        return Err(words.ran_out.clone().into());
     };
     let row = def.get(&content);
     let kind = row.tool.get(&content);
@@ -395,7 +396,7 @@ pub fn workable(
             worn.get(&content).wear().and_then(|wear| wear.tool_type()) == Some(row.tool)
         });
         let Some(worn) = worn else {
-            return Err(words.needs_tool.replace("{tool}", &kind.name));
+            return Err(words.needs_tool.replace("{tool}", &kind.name).into());
         };
         Some(worn)
     };
@@ -410,7 +411,7 @@ pub fn workable(
         .get::<Working>(worker)
         .is_some_and(|working| working.resource == resource);
     if !working_it && workers(world, resource) >= row.max_occupants {
-        return Err(words.no_room.clone());
+        return Err(words.no_room.clone().into());
     }
     let efficiency = Percent(stat::effective(
         world,
@@ -435,7 +436,10 @@ pub fn gather_request(world: &mut World) {
             {
                 return Ok(());
             }
-            workable(world, player, target)?;
+            if let Err(why) = workable(world, player, target) {
+                notification::error(world, player, why);
+                return Ok(());
+            }
             stop(world, player);
             reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Gather);
             Ok(())
@@ -547,10 +551,15 @@ fn work_reach(world: &World, resource: Entity) -> Option<Meters> {
 }
 
 /// Why an extraction cannot be paid for out of a bag, as the game words it.
-fn unpaid(content: &Content, refusal: ExchangeRefusal) -> String {
+fn unpaid(content: &Content, refusal: ExchangeRefusal) -> LineText {
     match refusal {
-        ExchangeRefusal::Missing(_) => refusal.describe(content),
-        ExchangeRefusal::NoRoom { .. } => content.built::<GameSettings>().words.bag_room.clone(),
+        ExchangeRefusal::Missing(_) => refusal.line(content),
+        ExchangeRefusal::NoRoom { .. } => content
+            .built::<GameSettings>()
+            .words
+            .bag_room
+            .clone()
+            .into(),
     }
 }
 

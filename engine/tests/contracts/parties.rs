@@ -269,17 +269,6 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
         [wren, hale],
         "and the kill counts for the quests of each"
     );
-    assert_eq!(
-        (
-            server.told(1).last().cloned(),
-            server.told(2).last().cloned()
-        ),
-        (
-            Some("Shared with Hale".to_owned()),
-            Some("Shared with Wren".to_owned())
-        )
-    );
-
     let claim = Reservation {
         by: Some(ClientId(1)),
         at: Seconds(0.0),

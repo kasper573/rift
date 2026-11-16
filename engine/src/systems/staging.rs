@@ -91,7 +91,9 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
             .ok_or("nobody to talk to in the character's area")?;
             from_client(world, conn, InteractRequest { target: npc });
         }
-        Staging::Place { place } => area::warp::warp(world, player, place)?,
+        Staging::Place { place } => {
+            area::warp::warp(world, player, place).map_err(|refusal| refusal.plain_words())?
+        }
         Staging::Weather { spell } => {
             let area = world.resource::<WorldArea>().0;
             let climate = &area::load(world.resource::<Content>(), area).climate;

@@ -5,18 +5,21 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Rect, Sense, Ui, Vec2};
+use ui::face::TextRole;
 use ui::glyph::{self, Mark};
 use ui::{controls, face, form, ink, input, sheet};
 
 use super::frames::{self, Standing};
 use super::{PartyMemberRow, PartyRequest, PartyShown};
 use crate::core::content::Content;
+use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
 use crate::systems::class;
 use crate::systems::friend::search::{self, FindPlayers, PlayersFound};
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card::time_left;
@@ -25,6 +28,7 @@ use crate::systems::social_request::{
 };
 use crate::systems::society::tab::{PlayerAction, SocialPage};
 use crate::systems::society::{AccountNumber, RequestCard, SocietyMember, SocietyView};
+use crate::systems::text::LineText;
 
 pub struct PartyPage;
 
@@ -349,16 +353,15 @@ fn member_row(
     let content = world.resource::<Content>().clone();
     let class = seen.and_then(|seen| {
         let class = class::of(world, seen)?.get(&content).name.clone();
-        Some(format!("{class} {}", class::level(world, seen)))
+        Some(LineText::plain(format!(
+            "{class} {}",
+            class::level(world, seen)
+        )))
     });
-    let place = member.area.map(|area| area.get(&content).name.clone());
+    let place = member.area.map(|area| Mention::Area(area).line(&content));
     let state = match &standing {
-        Standing::Away(_) => frames::said(&standing, now),
-        _ => [class, place]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" · "),
+        Standing::Away(_) => LineText::plain(frames::said(&standing, now)),
+        _ => joined([class, place].into_iter().flatten()),
     };
     let name = named(party, member);
     let look = controls::RowLook {
@@ -374,9 +377,8 @@ fn member_row(
                 }
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
                     self::name(ui, party, member, face::bold(member.player.name.as_str()));
-                    ui.add(
-                        egui::Label::new(face::small(state.as_str()).color(ink::INK3)).truncate(),
-                    );
+                    let look = TextLook::role(TextRole::Small, ink::INK3);
+                    text::show(ui, world, &state.styled(), look, None);
                 });
             });
         });
@@ -385,7 +387,7 @@ fn member_row(
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| {
-        let said = format!("{name}, {state}");
+        let said = format!("{name}, {}", state.plain_words());
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, said)
     });
     map::clicked(world, InputAction::Select, &response)
@@ -423,7 +425,7 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
                     ui.push_id(("found", player.account.0), |ui| {
                         done = done
                             .take()
-                            .or(invite_row(ui, view, player, None, server_now));
+                            .or(invite_row(ui, world, view, player, None, server_now));
                     });
                 }
             }
@@ -442,19 +444,22 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
     }
     let content = world.resource::<Content>().clone();
     for friend in online {
-        let area = friend.online_in.map(|area| area.get(&content).name.clone());
         let note = if friend.in_a_party {
-            Some("in another party".to_owned())
+            Some(LineText::plain("in another party"))
         } else {
-            area
+            friend
+                .online_in
+                .map(|area| Mention::Area(area).line(&content))
         };
         ui.push_id(("friend", friend.player.account.0), |ui| {
             let offered = (!friend.in_a_party).then_some(&friend.player);
             done = done.take().or(match offered {
-                Some(player) => invite_row(ui, view, player, note.as_deref(), server_now),
+                Some(player) => invite_row(ui, world, view, player, note.as_ref(), server_now),
                 None => {
                     line(ui, &friend.player.name, true, |ui| {
-                        ui.label(face::small_faint(note.as_deref().unwrap_or_default()));
+                        if let Some(note) = &note {
+                            note_label(ui, world, note);
+                        }
                     });
                     None
                 }
@@ -468,9 +473,10 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
 /// waits, or that they are in it.
 fn invite_row(
     ui: &mut Ui,
+    world: &World,
     view: &SocietyView,
     player: &SocietyMember,
-    note: Option<&str>,
+    note: Option<&LineText>,
     now: Option<UnixMillis>,
 ) -> Option<Done> {
     let name = &player.name;
@@ -497,11 +503,16 @@ fn invite_row(
                 done = Some(Done::Ask(PartyRequest::Invite(player.account)));
             }
             if let Some(note) = note {
-                ui.label(face::small_faint(note));
+                note_label(ui, world, note);
             }
         }
     });
     done
+}
+
+fn note_label(ui: &mut Ui, world: &World, note: &LineText) {
+    let look = TextLook::role(TextRole::Small, ink::INK3);
+    text::show(ui, world, &note.styled(), look, None);
 }
 
 /// Asks the leader whether to end the party, and ends it once they confirm.
@@ -509,8 +520,8 @@ fn disband(world: &mut World) {
     hud::confirm(
         world,
         Confirm {
-            title: "Disband the party?".to_owned(),
-            body: vec!["It ends for everyone in it.".to_owned()],
+            title: "Disband the party?".into(),
+            body: vec!["It ends for everyone in it.".into()],
             confirm: "Disband".to_owned(),
             cancel: "Keep".to_owned(),
             answer: Box::new(|world, disbanded| {
@@ -536,6 +547,13 @@ fn line(ui: &mut Ui, name: &str, faint: bool, ends: impl FnOnce(&mut Ui)) {
             });
         });
     });
+}
+
+fn joined(lines: impl IntoIterator<Item = LineText>) -> LineText {
+    lines
+        .into_iter()
+        .reduce(|all, next| all.then(" · ").then(next))
+        .unwrap_or_default()
 }
 
 /// Names a button for what it does and to whom, so two alike in one list are told apart.

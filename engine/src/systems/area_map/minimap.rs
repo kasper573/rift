@@ -60,7 +60,7 @@ impl HudWidget for MinimapWidget {
             let said = format!("Minimap of {area_name}, reaching {reach} m");
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, said)
         });
-        super::chart(ui, world, &view);
+        super::chart(ui, world, &view, None);
         rim(ui, center);
         super::north_bead(ui, world, center + view.north() * (GROUND + RIM / 2.0));
         let buttons =

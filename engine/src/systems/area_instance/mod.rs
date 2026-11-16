@@ -26,6 +26,7 @@ use crate::systems::area::{self, AreaDef, AreaId};
 use crate::systems::combat::Died;
 use crate::systems::history::HistoryTopic;
 use crate::systems::item::{DropRow, Inventory, ItemStack};
+use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification};
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::party::{PartyId, PlayerParties};
@@ -33,6 +34,7 @@ use crate::systems::player::snapshot::{self, CharacterSnapshot};
 use crate::systems::player::{self, CharacterAccount, RequestNeeds};
 use crate::systems::script::{EffectReach, FlowKey, OwnerRow, Place, RiftInstances, RiftScripts};
 use crate::systems::society::{ServerSociety, Settling, Society};
+use crate::systems::text::LineText;
 use crate::systems::{GameSettings, SETTINGS_FILE, class, identity, inbox};
 
 pub fn register(app: &mut App) {
@@ -634,12 +636,12 @@ fn admit(
     content: &Content,
     by: &AccountId,
     entry: &AreaInstanceEntry,
-) -> Result<AreaInstanceId, String> {
+) -> Result<AreaInstanceId, LineText> {
     let words = &content.built::<GameSettings>().words;
     let area = entry.to.area;
     let def = area.get(content);
     let Some(rules) = &def.instance else {
-        return Err(words.instances_busy.clone());
+        return Err(words.instances_busy.as_str().into());
     };
     let society = &mut *settling.society;
     let holder = AreaInstanceHolder::of(&society.parties, by);
@@ -648,10 +650,12 @@ fn admit(
         let instance = instances.live.get_mut(&id).expect("a live instance");
         if !instance.inside.contains(by) && !instance.entering.contains(by) {
             if instance.headcount() >= rules.holds as usize {
-                return Err(words
-                    .instance_full
-                    .replace("{area}", &def.name)
-                    .replace("{holds}", &rules.holds.to_string()));
+                return Err(LineText::plain(
+                    words
+                        .instance_full
+                        .replace("{holds}", &rules.holds.to_string()),
+                )
+                .filling("{area}", Mention::Area(area).span(content)));
             }
             instance.entering.insert(by.clone());
         }
@@ -659,7 +663,7 @@ fn admit(
     }
     let worlds = content.ids::<AreaDef>().count() as u64 + u64::from(instances.opened);
     if instances.live.len() as u32 >= instances.most || worlds >= identity::MOST_WORLDS {
-        return Err(words.instances_busy.clone());
+        return Err(words.instances_busy.as_str().into());
     }
     let id = AreaInstanceId(instances.opened);
     instances.opened += 1;
@@ -863,7 +867,7 @@ fn time(settling: &mut Settling, content: &Content, id: AreaInstanceId) {
     let Some(rules) = &def.instance else {
         return;
     };
-    let mut told: Vec<(AccountId, String)> = Vec::new();
+    let mut told: Vec<(AccountId, LineText)> = Vec::new();
     if !instance.over {
         let closed = instance
             .cleared
@@ -874,7 +878,8 @@ fn time(settling: &mut Settling, content: &Content, id: AreaInstanceId) {
                 .lasts
                 .is_some_and(|lasts| now >= instance.opened.after(lasts));
         if ran_out {
-            let said = words.instance_timed_out.replace("{area}", &def.name);
+            let said = LineText::plain(words.instance_timed_out.as_str())
+                .filling("{area}", Mention::Area(instance.area).span(content));
             told.extend(
                 instance
                     .inside
@@ -900,7 +905,7 @@ fn time(settling: &mut Settling, content: &Content, id: AreaInstanceId) {
                 instance
                     .sent_out
                     .insert(account.clone(), now.after(rules.closes_after));
-                told.push((account.clone(), words.instance_not_yours.clone()));
+                told.push((account.clone(), words.instance_not_yours.as_str().into()));
                 changed.push(account.clone());
             }
             _ => {}

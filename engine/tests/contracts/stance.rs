@@ -487,32 +487,33 @@ fn skill(game: Game, name: &str, motion: Value) -> Game {
     for (field, value) in motion.as_object().expect("a motion") {
         swing[field] = value.clone();
     }
-    game.row(
-        "skill",
-        name,
-        json!({
-            "name": name,
-            "icon": format!("icons/{name}.png"),
-            "target": "single_enemy",
-            "basic_attack": true,
-            "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
-            "modules": [{ "type": "script", "script": path("script", name) }],
-        }),
-    )
-    .script(
-        name,
-        "skill",
-        json!({
-            "used": { "type": "on", "event": "used", "next": "swing" },
-            "swing": swing,
-            "hit": {
-                "type": "damage",
-                "who": { "type": "skill_targets" },
-                "by": { "type": "stat", "stat": "damage" },
-            },
-        }),
-    )
-    .asset(&format!("icons/{name}.png"), testkit::png(1, 1))
+    game.default_card_style()
+        .row(
+            "skill",
+            name,
+            json!({
+                "name": name,
+                "icon": format!("icons/{name}.png"),
+                "target": "single_enemy",
+                "basic_attack": true,
+                "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
+                "modules": [{ "type": "script", "script": path("script", name) }],
+            }),
+        )
+        .script(
+            name,
+            "skill",
+            json!({
+                "used": { "type": "on", "event": "used", "next": "swing" },
+                "swing": swing,
+                "hit": {
+                    "type": "damage",
+                    "who": { "type": "skill_targets" },
+                    "by": { "type": "stat", "stat": "damage" },
+                },
+            }),
+        )
+        .asset(&format!("icons/{name}.png"), testkit::png(1, 1))
 }
 
 fn armed(game: Game) -> (Sim, Entity) {

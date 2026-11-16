@@ -364,7 +364,7 @@ fn node_input(
         }
     } else if map::clicked(world, InputAction::PinToBar, response) {
         if passive {
-            let refusal = super::unslotted(skill.get(world.resource::<Content>()));
+            let refusal = super::unslotted(skill, world.resource::<Content>());
             notification::local_error(world, refusal);
         } else if held > Rank::NONE {
             bar::pin(world, super::HotbarEntry::Skill(skill));

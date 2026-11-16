@@ -5,15 +5,18 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Sense, Ui};
+use ui::face::TextRole;
 use ui::{controls, face, form, ink, input, sheet, words};
 
 use super::search::{self, FindPlayers, PlayersFound};
 use super::{AskFriendship, RemoveFriend};
 use crate::core::content::Content;
+use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::InputAction;
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card as request_card;
@@ -22,6 +25,7 @@ use crate::systems::social_request::{
 };
 use crate::systems::society::tab::{self, SocialPage};
 use crate::systems::society::{AccountNumber, FriendRow, RequestCard, SocietyMember, SocietyView};
+use crate::systems::text::LineText;
 
 pub struct FriendsPage;
 
@@ -478,14 +482,14 @@ fn friend_row(
     selected: bool,
     now: Option<UnixMillis>,
 ) -> bool {
-    let online = friend.online_in.map(|area| area.get(content).name.as_str());
+    let online = friend.online_in;
     let state = match (online, now) {
-        (Some(area), _) => format!("Online · {area}"),
+        (Some(area), _) => LineText::plain("Online · ").then(Mention::Area(area).span(content)),
         (None, Some(now)) => {
             let seen = words::ago(now.since(friend.last_seen).0);
-            format!("Offline · seen {seen}")
+            LineText::plain(format!("Offline · seen {seen}"))
         }
-        (None, None) => "Offline".to_owned(),
+        (None, None) => LineText::plain("Offline"),
     };
     let look = controls::RowLook {
         selected,
@@ -496,7 +500,8 @@ fn friend_row(
     let shown = controls::row(ui, look, |ui| {
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(face::small(state.as_str()).color(ink::INK3));
+                let look = TextLook::role(TextRole::Small, ink::INK3);
+                text::show(ui, world, &state.styled(), look, None);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.add(egui::Label::new(face::bold(name.as_str())).truncate());
                 });
@@ -507,7 +512,7 @@ fn friend_row(
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| {
-        let said = format!("{name}, {state}");
+        let said = format!("{name}, {}", state.plain_words());
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, said)
     });
     crate::systems::input::map::clicked(world, InputAction::Select, &response)
@@ -519,10 +524,8 @@ fn remove(world: &mut World, player: SocietyMember) {
     hud::confirm(
         world,
         Confirm {
-            title: format!("Remove {name} from your friends?"),
-            body: vec![format!(
-                "You come off {name}'s list too. {name} is not told."
-            )],
+            title: format!("Remove {name} from your friends?").into(),
+            body: vec![format!("You come off {name}'s list too. {name} is not told.").into()],
             confirm: "Remove".to_owned(),
             cancel: "Keep".to_owned(),
             answer: Box::new(move |world, removed| {

@@ -37,6 +37,7 @@ use crate::systems::skill::casting::CastAim;
 use crate::systems::skill::{self, SkillDef, SkillId, Targeting};
 use crate::systems::stat;
 use crate::systems::status::aspect;
+use crate::systems::text::LineText;
 
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
@@ -424,9 +425,14 @@ fn unwelcome(world: &World, caster: Entity, mount: MountId) -> Option<String> {
 
 /// Seats `caster` as the driver of a `mount` of their own: where they stand, or for a mount that
 /// floats on the water at the spot `aim` picks.
-pub fn call(world: &mut World, caster: Entity, mount: MountId, aim: CastAim) -> Result<(), String> {
+pub fn call(
+    world: &mut World,
+    caster: Entity,
+    mount: MountId,
+    aim: CastAim,
+) -> Result<(), LineText> {
     if let Some(refusal) = uncallable(world, caster, mount, aim) {
-        return Err(refusal);
+        return Err(refusal.into());
     }
     let riding = Riding {
         mount,
@@ -445,7 +451,7 @@ pub fn call(world: &mut World, caster: Entity, mount: MountId, aim: CastAim) -> 
 /// The rider leaves their seat by choice: for the spot `at` when they picked one, else for the
 /// free ground nearest them. Refused when that lies farther from the mount than its reach. A
 /// driver who leaves takes the mount with them, and everyone on it is set down beside them.
-pub fn step_off(world: &mut World, rider: Entity, at: Option<Pos<Meters>>) -> Result<(), String> {
+pub fn step_off(world: &mut World, rider: Entity, at: Option<Pos<Meters>>) -> Result<(), LineText> {
     let Some(riding) = world.get::<Riding>(rider).copied() else {
         return Ok(());
     };

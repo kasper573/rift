@@ -19,14 +19,16 @@ use crate::systems::class::{self, ClassId, NodeKey};
 use crate::systems::crafting;
 use crate::systems::equipment::Equipment;
 use crate::systems::hud;
-use crate::systems::item::card::CardLook;
+use crate::systems::item::card::{self as item_card, CardLook};
 use crate::systems::item::{Inventory, ItemId};
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::condition;
 use crate::systems::skill::Learned;
 use crate::systems::stat::{self, Vital};
 use crate::systems::terminal::chat;
+use crate::systems::text::LineText;
 use ui::words;
 use ui::words::counted;
 
@@ -148,7 +150,13 @@ pub fn tooltip(
         ui.set_max_width(hud::TOOLTIP_WIDTH);
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.label(face::bold(def.name.as_str()).size(TextRole::Tooltip.size()));
-        ui.label(TextRole::Tooltip.rich(line).color(ink::INK2));
+        text::show(
+            ui,
+            world,
+            &line.styled(),
+            TextLook::role(TextRole::Tooltip, ink::INK2),
+            None,
+        );
         if let Some(hint) = hint {
             let look = TextLook::new(TextRole::Small.size(), ink::INK3);
             text::show(ui, world, hint, look, None);
@@ -180,7 +188,13 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
         if plate.name_cut {
             card::full_name(ui, &def.name);
         }
-        card::overview(ui, &card_overview(&content, def, card));
+        text::show(
+            ui,
+            world,
+            &card_overview(&content, def, card).styled(),
+            TextLook::role(TextRole::CardBody, ink::INK2),
+            None,
+        );
         card::heading(ui, plate, "ranks");
         for (index, level) in def.levels.iter().enumerate() {
             let rank = Rank(index as u8 + 1);
@@ -198,7 +212,8 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
         if !def.masteries.is_empty() {
             card::heading(ui, plate, "masters");
             for recipe in def.masteries.iter().filter_map(|key| key.get(&content)) {
-                card::fact(ui, &crafting::stacks_named(&content, &recipe.makes));
+                let makes = crafting::stacks_mentioned(&content, &recipe.makes, 0);
+                item_card::detail_line(ui, world, None, &makes);
             }
         }
         if let Some(access) = &card.node {
@@ -206,7 +221,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
             if !lines.is_empty() {
                 card::heading(ui, plate, if learned { "unlocked by" } else { "costs" });
                 for (line, met) in lines {
-                    card::requirement(ui, met, &line);
+                    item_card::detail_line(ui, world, Some(met), &line);
                 }
             }
         }
@@ -216,7 +231,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
             card::fact(ui, "Nothing needed");
         }
         for (line, met) in needs {
-            card::requirement(ui, met, &line);
+            item_card::detail_line(ui, world, Some(met), &line);
         }
     });
     chat::offered(world, &response, ChatEmbed::Skill(card.skill));
@@ -225,15 +240,15 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
 
 /// What a skill's card says under its name. Its band already says its kind and its rank, and
 /// its sections what it still needs.
-fn card_overview(content: &Content, def: &SkillDef, card: &SkillCard) -> String {
+fn card_overview(content: &Content, def: &SkillDef, card: &SkillCard) -> LineText {
     match card.granted_by {
         Some(item) => lent_line(content, item),
-        None => use_line(def, card.rank),
+        None => LineText::plain(use_line(def, card.rank)),
     }
 }
 
 /// What a skill's tooltip says under its name, which has no band to say any of it.
-fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) -> String {
+fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) -> LineText {
     if let Some(item) = card.granted_by {
         return lent_line(content, item);
     }
@@ -244,27 +259,29 @@ fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) 
                 .find(|(_, met)| !met)
         });
         return match wanting {
-            Some((line, _)) => format!("Not learned · needs {line}"),
-            None => "Not learned".to_owned(),
+            Some((line, _)) => LineText::plain("Not learned · needs ").then(line),
+            None => LineText::plain("Not learned"),
         };
     }
     let kind = match def.kind {
         SkillKind::Active => "",
         SkillKind::Passive => "Passive · ",
     };
-    format!(
+    LineText::plain(format!(
         "{} · {kind}{}",
         rank_tally(def, card.rank),
         use_line(def, card.rank)
-    )
+    ))
 }
 
 fn rank_tally(def: &SkillDef, rank: Rank) -> String {
     format!("Rank {} of {}", rank.0, def.rank_count())
 }
 
-fn lent_line(content: &Content, item: ItemId) -> String {
-    format!("Known while your {} is worn", item.get(content).name)
+fn lent_line(content: &Content, item: ItemId) -> LineText {
+    LineText::plain("Known while your ")
+        .then(Mention::Item(item).span(content))
+        .then(" is worn")
 }
 
 fn draw_card(world: &mut World) {
@@ -325,7 +342,7 @@ fn rank_line(def: &SkillDef, rank: Rank, cost: u32) -> String {
     line
 }
 
-fn access_lines(world: &World, content: &Content, access: &NodeAccess) -> Vec<(String, bool)> {
+fn access_lines(world: &World, content: &Content, access: &NodeAccess) -> Vec<(LineText, bool)> {
     let class = access.class.get(content);
     let Some(node) = class.tree.node(&access.node) else {
         return Vec::new();
@@ -339,36 +356,39 @@ fn access_lines(world: &World, content: &Content, access: &NodeAccess) -> Vec<(S
         .iter()
         .map(|requirement| {
             let met = me.is_some_and(|me| requirement.met(world, me, class, &held.0));
-            (requirement.describe(content, &class.tree), met)
+            (requirement.line(content, &class.tree), met)
         })
         .collect()
 }
 
-fn use_lines(world: &World, content: &Content, def: &SkillDef, rank: Rank) -> Vec<(String, bool)> {
+fn use_lines(
+    world: &World,
+    content: &Content,
+    def: &SkillDef,
+    rank: Rank,
+) -> Vec<(LineText, bool)> {
     let me = session::me(world);
-    let mut lines: Vec<(String, bool)> = def
+    let mut lines: Vec<(LineText, bool)> = def
         .requires
         .iter()
         .flat_map(condition::parts)
         .map(|part| {
             let met = me.is_some_and(|me| condition::holds(world, me, part));
-            (condition::describe(content, part).to_string(), met)
+            (LineText::from(&condition::describe(content, part)), met)
         })
         .collect();
     let mana = def.mana_at(rank.max(Rank::FIRST));
     if mana > 0.0 {
         let held = me.map_or(0.0, |me| stat::current(world, me, Vital::Mana));
-        lines.push((format!("Spends {mana} mana"), held >= mana));
+        lines.push((LineText::plain(format!("Spends {mana} mana")), held >= mana));
     }
     let bag = me.and_then(|me| world.get::<Inventory>(me));
     for stack in &def.cost {
         let held = bag.map_or(0, |bag| bag.count(stack.item));
         lines.push((
-            format!(
-                "Spends {} {} ({held} held)",
-                stack.count,
-                stack.item.get(content).name
-            ),
+            LineText::plain(format!("Spends {} ", stack.count))
+                .then(Mention::Item(stack.item).span(content))
+                .then(format!(" ({held} held)")),
             held >= stack.count,
         ));
     }

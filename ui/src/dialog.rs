@@ -11,8 +11,11 @@ pub const PADDING: i8 = 22;
 
 pub fn title(ui: &mut Ui, text: &str) {
     ui.add(egui::Label::new(TextRole::NoteTitle.rich(text).color(ink::INK)).wrap());
-    ui.add_space(6.0);
+    ui.add_space(TITLE_GAP);
 }
+
+/// The room under a note's title.
+pub const TITLE_GAP: f32 = 6.0;
 
 /// A dialog's note `width` wide, laid where the caller has room for it.
 pub fn note<R>(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {

@@ -41,6 +41,7 @@ use crate::systems::shop::OpenShop;
 use crate::systems::skill::{ResetSkills, UseSkill};
 use crate::systems::stat;
 use crate::systems::status::{ApplyStatus, Boost, RemoveStatus};
+use crate::systems::text::LineText;
 use crate::systems::vfx::PlayVfx;
 
 macro_rules! effects {
@@ -284,7 +285,7 @@ pub fn reach(
     cx: &FlowCx,
     aimed: Aimed,
     reaching: Reaching,
-    deed: impl FnOnce(&mut World, Entity) -> Result<(), String> + Send + Sync + 'static,
+    deed: impl FnOnce(&mut World, Entity) -> Result<(), LineText> + Send + Sync + 'static,
 ) -> EffectStep {
     let outcome = match aimed {
         Aimed::Here(actor) => match deed(world, actor) {
@@ -309,7 +310,7 @@ pub fn carry(
     cx: &FlowCx,
     client: ClientId,
     reaching: Reaching,
-    deed: impl FnOnce(&mut World, Entity) -> Result<(), String> + Send + Sync + 'static,
+    deed: impl FnOnce(&mut World, Entity) -> Result<(), LineText> + Send + Sync + 'static,
 ) -> EffectStep {
     let went = Went::of(reaching, cx.subject);
     errand::send(
@@ -332,7 +333,7 @@ pub fn settle(
     world: &mut World,
     cx: &FlowCx,
     refused: &Arrow,
-    outcome: Result<(), String>,
+    outcome: Result<(), LineText>,
 ) -> EffectStep {
     match outcome {
         Ok(()) => EffectStep::Done,
@@ -345,7 +346,7 @@ pub fn refuse(
     world: &mut World,
     cx: &FlowCx,
     refused: &Arrow,
-    reason: impl Into<String>,
+    reason: impl Into<LineText>,
 ) -> EffectStep {
     if refused.is_none() {
         show_error(world, cx, reason);
@@ -353,7 +354,7 @@ pub fn refuse(
     EffectStep::Output(REFUSED)
 }
 
-pub fn show_error(world: &mut World, cx: &FlowCx, reason: impl Into<String>) {
+pub fn show_error(world: &mut World, cx: &FlowCx, reason: impl Into<LineText>) {
     tell_error(world, cx.subject, reason);
 }
 
@@ -407,7 +408,7 @@ pub fn number<'c>(
     cx.expr(expr, ValueType::Number)
 }
 
-fn tell_error(world: &mut World, subject: Option<Entity>, reason: impl Into<String>) {
+fn tell_error(world: &mut World, subject: Option<Entity>, reason: impl Into<LineText>) {
     if let Some(subject) = subject
         && super::query::is_character(world, subject)
     {
@@ -453,7 +454,7 @@ impl Went {
         let reason = match outcome {
             ErrandOutcome::Done => None,
             ErrandOutcome::Refused(reason) => Some(reason),
-            ErrandOutcome::Unreached => self.nobody,
+            ErrandOutcome::Unreached => self.nobody.map(LineText::from),
         };
         let Some(reason) = reason else {
             return self.done;

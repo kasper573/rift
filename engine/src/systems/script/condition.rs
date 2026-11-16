@@ -7,8 +7,12 @@ use serde::{Deserialize, Serialize};
 use super::{Condition, RiftQuery, RiftScripting, sky};
 use crate::core::content::{Content, ContentNames};
 use crate::core::script::{Compiler, Eval, Expr, FlowCx, QueryDef, ScriptFault, Value, ValueType};
-use crate::systems::area::TimeOfDayName;
-use crate::systems::text::{self, LineText, Span};
+use crate::systems::area::{AreaId, TimeOfDayName};
+use crate::systems::item::ItemId;
+use crate::systems::mention::Mention;
+use crate::systems::quest::QuestId;
+use crate::systems::skill::SkillId;
+use crate::systems::text::{self, LineText, NameMark, Span, SpanText};
 
 #[derive(Clone)]
 pub struct CompiledCondition {
@@ -18,8 +22,8 @@ pub struct CompiledCondition {
 }
 
 /// What a condition asks for, as a player reads it: words, with the times of day among them kept
-/// as times, so they can be shown as the game shows its times. Written out it is plain words, a
-/// time of day by its name.
+/// as times and the things of the game as mentions, so each can be shown as the game shows it
+/// anywhere. Written out it is plain words, a time of day and a thing by their names.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Wording(pub Vec<WordingPart>);
 
@@ -27,6 +31,34 @@ pub struct Wording(pub Vec<WordingPart>);
 pub enum WordingPart {
     Words { words: String },
     Time { time: TimeOfDayName },
+    Named { name: String, mark: NameMark },
+}
+
+/// Where a condition's wording finds how what it asks about is named.
+pub trait ConditionNames: ContentNames {
+    /// How a thing the interface mentions is named in a wording: by its name alone, where no
+    /// more of it is known.
+    fn mentioned(&self, mention: Mention) -> Wording {
+        Wording::words(match mention {
+            Mention::Item(item) => self.name_of(item),
+            Mention::Quest(quest) => self.name_of(quest),
+            Mention::Skill(skill) => self.name_of(skill),
+            Mention::Area(area) => self.name_of(area),
+        })
+    }
+}
+
+impl ConditionNames for Content {
+    fn mentioned(&self, mention: Mention) -> Wording {
+        let shown = mention.shown(self);
+        Wording(vec![WordingPart::Named {
+            name: shown.name,
+            mark: NameMark {
+                icon: Some(shown.icon.path()),
+                color: shown.color,
+            },
+        }])
+    }
 }
 
 impl Wording {
@@ -78,7 +110,33 @@ impl fmt::Display for Wording {
         self.0.iter().try_for_each(|part| match part {
             WordingPart::Words { words } => f.write_str(words),
             WordingPart::Time { time } => f.write_str(&time.0),
+            WordingPart::Named { name, .. } => f.write_str(name),
         })
+    }
+}
+
+impl From<&Wording> for LineText {
+    fn from(wording: &Wording) -> LineText {
+        LineText(
+            wording
+                .0
+                .iter()
+                .map(|part| match part {
+                    WordingPart::Words { words } => SpanText::Text {
+                        text: words.clone(),
+                        fx: Vec::new(),
+                    },
+                    WordingPart::Time { time } => SpanText::Text {
+                        text: time.0.clone(),
+                        fx: Vec::new(),
+                    },
+                    WordingPart::Named { name, mark } => SpanText::Named {
+                        name: name.clone(),
+                        mark: mark.clone(),
+                    },
+                })
+                .collect(),
+        )
     }
 }
 
@@ -185,7 +243,7 @@ pub fn parts(condition: &Condition) -> Vec<&Condition> {
     }
 }
 
-pub fn describe(content: &impl ContentNames, condition: &Condition) -> Wording {
+pub fn describe(content: &impl ConditionNames, condition: &Condition) -> Wording {
     let between = |a: &Condition, sign: &str, b: &Condition| {
         describe(content, a).then(sign).then(describe(content, b))
     };
@@ -202,7 +260,7 @@ pub fn describe(content: &impl ContentNames, condition: &Condition) -> Wording {
                 format!("Level {level}").into()
             }
             (Expr::Query(RiftQuery::Holding { item, .. }), Expr::Int(count)) => {
-                format!("{count} {}", content.name_of(*item)).into()
+                Wording::words(format!("{count} ")).then(content.mentioned(Mention::Item(*item)))
             }
             (Expr::Query(RiftQuery::Stat { stat, .. }), Expr::Num(min)) => {
                 format!("{min} {}", stat.label()).into()
@@ -232,18 +290,44 @@ pub fn describe(content: &impl ContentNames, condition: &Condition) -> Wording {
     }
 }
 
-fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> Wording {
+fn describe_query(content: &impl ConditionNames, query: &RiftQuery) -> Wording {
+    let item = |item: &ItemId| content.mentioned(Mention::Item(*item));
+    let skill = |skill: &SkillId| content.mentioned(Mention::Skill(*skill));
+    let quest = |quest: &QuestId| content.mentioned(Mention::Quest(*quest));
+    let area = |area: &AreaId| content.mentioned(Mention::Area(*area));
     let words = match query {
         RiftQuery::During { time } => return Wording::time(time.clone()),
+        RiftQuery::SkillRank { skill: asked, .. } => return skill(asked).then(" rank"),
+        RiftQuery::SkillStat {
+            skill: asked, stat, ..
+        } => return skill(asked).then(format!(" {}", stat.label())),
+        RiftQuery::Holding { item: asked, .. } => return item(asked),
+        RiftQuery::InstanceHolds { area: asked, .. } => {
+            return Wording::words("inside their ").then(area(asked));
+        }
+        RiftQuery::Offered {
+            item: Some(asked), ..
+        } => return item(asked).then(" offered"),
+        RiftQuery::Equipped { item: asked, .. } => return item(asked).then(" worn"),
+        RiftQuery::OnQuest { quest: asked, .. } => return Wording::words("On ").then(quest(asked)),
+        RiftQuery::QuestDone { quest: asked, .. } => return quest(asked),
+        RiftQuery::QuestCooling { quest: asked, .. } => {
+            return quest(asked).then(" done for today");
+        }
+        RiftQuery::TaskDone {
+            quest: asked, task, ..
+        } => return quest(asked).then(format!(" · {task}")),
+        RiftQuery::QuestResetsIn { quest: asked, .. } => return quest(asked).then(" resets"),
+        RiftQuery::InArea { area: asked, .. } => return Wording::words("In ").then(area(asked)),
+        RiftQuery::KnowsArea { area: asked, .. } => {
+            return Wording::words("Knows ").then(area(asked));
+        }
+        RiftQuery::GroundItems { item: asked, .. } => return item(asked).then(" on the ground"),
         RiftQuery::TimeShare { time } => {
             return Wording::words("share of ").then(Wording::time(time.clone()));
         }
         RiftQuery::Level { .. } => "Level".to_owned(),
         RiftQuery::IsClass { class, .. } => format!("a {}", content.name_of(*class)),
-        RiftQuery::SkillRank { skill, .. } => format!("{} rank", content.name_of(*skill)),
-        RiftQuery::SkillStat { skill, stat, .. } => {
-            format!("{} {}", content.name_of(*skill), stat.label())
-        }
         RiftQuery::SpentSkillPoints { .. } => "skill points spent".to_owned(),
         RiftQuery::Stat { stat, .. } => stat.label().to_owned(),
         RiftQuery::HasStatus { effect, .. } => content.name_of(*effect),
@@ -252,32 +336,15 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> Wording {
             None => "statuses".to_owned(),
         },
         RiftQuery::StatusPower => "status power".to_owned(),
-        RiftQuery::Holding { item, .. } => content.name_of(*item),
         RiftQuery::MastersRecipe { recipe, .. } => format!("{} mastery", recipe.recipe.0),
         RiftQuery::InParty { .. } => "in a party".to_owned(),
         RiftQuery::Riding { .. } => "riding".to_owned(),
         RiftQuery::InInstance { .. } => "in an instance".to_owned(),
-        RiftQuery::InstanceHolds { area, .. } => {
-            format!("inside their {}", content.name_of(*area))
-        }
         RiftQuery::FreeSlots { .. } => "free slots".to_owned(),
-        RiftQuery::Offered { item, .. } => match item {
-            Some(item) => format!("{} offered", content.name_of(*item)),
-            None => "items offered".to_owned(),
-        },
-        RiftQuery::Equipped { item, .. } => format!("{} worn", content.name_of(*item)),
+        RiftQuery::Offered { .. } => "items offered".to_owned(),
         RiftQuery::Memory { memory, .. } => content.name_of(*memory),
         RiftQuery::SetWithin { memory, .. } => format!("{} lately", content.name_of(*memory)),
-        RiftQuery::OnQuest { quest, .. } => format!("On {}", content.name_of(*quest)),
-        RiftQuery::QuestDone { quest, .. } => content.name_of(*quest),
-        RiftQuery::QuestCooling { quest, .. } => {
-            format!("{} done for today", content.name_of(*quest))
-        }
-        RiftQuery::TaskDone { quest, task, .. } => format!("{} · {task}", content.name_of(*quest)),
-        RiftQuery::QuestResetsIn { quest, .. } => format!("{} resets", content.name_of(*quest)),
         RiftQuery::Inside { object, .. } => format!("Standing on {object}"),
-        RiftQuery::InArea { area, .. } => format!("In {}", content.name_of(*area)),
-        RiftQuery::KnowsArea { area, .. } => format!("Knows {}", content.name_of(*area)),
         RiftQuery::Nearest { .. } => "nearest".to_owned(),
         RiftQuery::Count { .. } => "count".to_owned(),
         RiftQuery::Present { .. } => "present".to_owned(),
@@ -289,7 +356,6 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> Wording {
         RiftQuery::Target => "target".to_owned(),
         RiftQuery::Walking { .. } => "walking".to_owned(),
         RiftQuery::Hostile { .. } => "hostile".to_owned(),
-        RiftQuery::GroundItems { item, .. } => format!("{} on the ground", content.name_of(*item)),
         RiftQuery::SkillTargets => "the skill's targets".to_owned(),
         RiftQuery::SkillArea => "the skill's area".to_owned(),
         RiftQuery::AimedPoint => "the aimed point".to_owned(),

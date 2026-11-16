@@ -9,11 +9,11 @@ use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_replication::{AppMessageExt, AppReplicationExt, ToClient};
 use bevy_terminal::{
-    LineKind, LineSpeaker, TerminalCompletionRequest, TerminalCompletions, TerminalInput,
-    TerminalLine, TerminalSaid,
+    LineKind, LineSpeaker, TerminalCompletionRequest, TerminalCompletions, TerminalEmbed,
+    TerminalInput, TerminalLine, TerminalSaid,
 };
 pub use channel::{ChatChannel, ChatChannelDef, ChatChannelSource, ChatChannels, Sources, source};
-pub use embed::{ChatEmbed, ChatEmbedKind, ChatSaid, EMBED_ASK, ShownChatEmbed};
+pub use embed::{ChatEmbed, ChatEmbedKind, ChatLocation, ChatSaid, EMBED_ASK};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -144,10 +144,17 @@ pub fn speak(world: &mut World) {
             continue;
         };
         let content = world.resource::<Content>();
-        let held = |embed| ChatEmbed::read(content, embed).is_some();
-        if !said.embeds.iter().all(held) {
+        let held: Option<Vec<TerminalEmbed>> = said
+            .embeds
+            .iter()
+            .map(|sent| {
+                let embed = ChatEmbed::read(content, sent)?.said_by(world, speaker)?;
+                Some(embed.sent(content))
+            })
+            .collect();
+        let Some(embeds) = held else {
             continue;
-        }
+        };
         if !paced(world, said.conn) {
             let refusal = world.resource::<GameSettings>().words.chat_too_fast.clone();
             bevy_terminal::reply_failure(world, said.conn, refusal);
@@ -155,7 +162,7 @@ pub fn speak(world: &mut World) {
         }
         let said = ChatSaid {
             text: said.text,
-            embeds: said.embeds,
+            embeds,
         };
         (source.send)(world, speaker, said);
     }

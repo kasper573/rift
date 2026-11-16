@@ -1,18 +1,14 @@
 //! What a party shares of a kill: its experience, and the credit quests count.
 
 use bevy_ecs::prelude::*;
-use ui::words;
 
 use super::{ExperienceSplit, SharedExperience, companions};
 use crate::core::math::Pos;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::GameSettings;
-use crate::systems::actor::Name;
 use crate::systems::class;
-use crate::systems::history::HistoryTopic;
 use crate::systems::movement::position;
-use crate::systems::notification::{self, Notification};
-use crate::systems::player::{Away, PlayedBy, Players};
+use crate::systems::player::{Away, Players};
 use crate::systems::stat;
 
 /// The characters that share in a kill credited to `credited`, of a foe that fell at `at`:
@@ -44,8 +40,7 @@ pub fn sharers(world: &World, credited: Entity, at: Option<Pos<Meters>>) -> Vec<
         .collect()
 }
 
-/// Grants `sharers` what each gets of a kill worth `worth`, as the game's parties share it, and
-/// tells each who they shared it with.
+/// Grants `sharers` what each gets of a kill worth `worth`, as the game's parties share it.
 pub fn grant_xp(world: &mut World, sharers: &[Entity], worth: u32) {
     let rules = world.resource::<GameSettings>().party;
     let levels: Vec<u32> = sharers
@@ -58,27 +53,6 @@ pub fn grant_xp(world: &mut World, sharers: &[Entity], worth: u32) {
     };
     for (&sharer, share) in sharers.iter().zip(shares) {
         class::grant_xp(world, sharer, share);
-    }
-    if sharers.len() < 2 {
-        return;
-    }
-    let said = world.resource::<GameSettings>().words.xp_shared.clone();
-    let names: Vec<(Entity, String)> = sharers
-        .iter()
-        .filter_map(|&sharer| Some((sharer, world.get::<Name>(sharer)?.name.clone())))
-        .collect();
-    for &sharer in sharers {
-        if world.get::<PlayedBy>(sharer).is_none() {
-            continue;
-        }
-        let others: Vec<String> = names
-            .iter()
-            .filter(|(other, _)| *other != sharer)
-            .map(|(_, name)| name.clone())
-            .collect();
-        let text = said.replace("{names}", &words::join_and(&others));
-        let told: Notification = Notification::feed(HistoryTopic::Notification, text).into();
-        notification::notify(world, sharer, None, told);
     }
 }
 

@@ -1,14 +1,18 @@
-//! What a chat line holds in its text beside words: one of the things the game is made of, shown
-//! by its icon and by its name in its colour.
+//! What a chat line holds in its text beside words: one of the things the game is made of, or
+//! where its speaker stood, shown as the interface mentions such a thing anywhere.
 
+use bevy_ecs::prelude::*;
 use bevy_terminal::TerminalEmbed;
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr, VariantArray};
 
-use crate::core::card::CardStyleDef;
-use crate::core::content::{Content, ContentFile, ImageRef};
-use crate::core::math::Rgb;
+use crate::core::content::{Content, ContentFile};
+use crate::core::math::Pos;
+use crate::core::units::Meters;
+use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::item::{ItemDef, ItemId};
+use crate::systems::mention::{Mention, ShownMention};
+use crate::systems::movement::position;
 use crate::systems::quest::{QuestDef, QuestId};
 use crate::systems::skill::{SkillDef, SkillId};
 
@@ -38,6 +42,7 @@ pub enum ChatEmbedKind {
     Item,
     Quest,
     Skill,
+    Location,
 }
 
 impl ChatEmbedKind {
@@ -51,6 +56,7 @@ impl ChatEmbedKind {
             ChatEmbedKind::Item => "items",
             ChatEmbedKind::Quest => "quests",
             ChatEmbedKind::Skill => "skills",
+            ChatEmbedKind::Location => "locations",
         }
     }
 
@@ -60,15 +66,18 @@ impl ChatEmbedKind {
             ChatEmbedKind::Item => "an item",
             ChatEmbedKind::Quest => "a quest",
             ChatEmbedKind::Skill => "a skill",
+            ChatEmbedKind::Location => "where you stand",
         }
     }
 
-    /// The table whose files are the things of the kind: what a search for one of them lists.
-    pub fn table(self) -> &'static str {
+    /// The table whose files are the things of the kind, which a search for one of them lists.
+    /// A kind with no table has nothing to pick: asking for it sets it in the line at once.
+    pub fn table(self) -> Option<&'static str> {
         match self {
-            ChatEmbedKind::Item => ItemDef::TABLE,
-            ChatEmbedKind::Quest => QuestDef::TABLE,
-            ChatEmbedKind::Skill => SkillDef::TABLE,
+            ChatEmbedKind::Item => Some(ItemDef::TABLE),
+            ChatEmbedKind::Quest => Some(QuestDef::TABLE),
+            ChatEmbedKind::Skill => Some(SkillDef::TABLE),
+            ChatEmbedKind::Location => None,
         }
     }
 }
@@ -79,6 +88,39 @@ pub enum ChatEmbed {
     Item(ItemId),
     Quest(QuestId),
     Skill(SkillId),
+    Location(ChatLocation),
+}
+
+/// Where a speaker stood as they said a line: the area, and the spot in it to the metre.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChatLocation {
+    pub area: AreaId,
+    pub x: i32,
+    pub y: i32,
+}
+
+impl ChatLocation {
+    /// Where `speaker` stands, when they stand in an area.
+    pub fn of(world: &World, speaker: Entity) -> Option<ChatLocation> {
+        let at = position(world, speaker)?;
+        Some(ChatLocation {
+            area: world.get::<AreaTag>(speaker)?.area,
+            x: at.x.round() as i32,
+            y: at.y.round() as i32,
+        })
+    }
+
+    pub fn at(self) -> Pos<Meters> {
+        Pos::new(self.x as f32, self.y as f32)
+    }
+}
+
+/// A location as a line sent over a terminal keys it.
+#[derive(Serialize, Deserialize)]
+struct SentChatLocation {
+    area: String,
+    x: i32,
+    y: i32,
 }
 
 impl ChatEmbed {
@@ -87,74 +129,82 @@ impl ChatEmbed {
             ChatEmbed::Item(_) => ChatEmbedKind::Item,
             ChatEmbed::Quest(_) => ChatEmbedKind::Quest,
             ChatEmbed::Skill(_) => ChatEmbedKind::Skill,
+            ChatEmbed::Location(_) => ChatEmbedKind::Location,
         }
     }
 
     /// The thing of `kind` whose file is at `path`, when the game has one.
     pub fn of(content: &Content, kind: ChatEmbedKind, path: &str) -> Option<ChatEmbed> {
-        Some(match kind {
-            ChatEmbedKind::Item => ChatEmbed::Item(content.by_path(path)?),
-            ChatEmbedKind::Quest => ChatEmbed::Quest(content.by_path(path)?),
-            ChatEmbedKind::Skill => ChatEmbed::Skill(content.by_path(path)?),
-        })
+        match kind {
+            ChatEmbedKind::Item => Some(ChatEmbed::Item(content.by_path(path)?)),
+            ChatEmbedKind::Quest => Some(ChatEmbed::Quest(content.by_path(path)?)),
+            ChatEmbedKind::Skill => Some(ChatEmbed::Skill(content.by_path(path)?)),
+            ChatEmbedKind::Location => None,
+        }
     }
 
-    /// What a line sent over a terminal holds, when it is a thing of the game.
+    /// What a line sent over a terminal holds, when it is a thing of the game or a spot in one
+    /// of its areas.
     pub fn read(content: &Content, sent: &TerminalEmbed) -> Option<ChatEmbed> {
-        ChatEmbed::of(content, sent.kind.parse().ok()?, &sent.key)
+        match sent.kind.parse().ok()? {
+            ChatEmbedKind::Location => {
+                let sent: SentChatLocation = serde_json::from_str(&sent.key).ok()?;
+                Some(ChatEmbed::Location(ChatLocation {
+                    area: content.by_path(&sent.area)?,
+                    x: sent.x,
+                    y: sent.y,
+                }))
+            }
+            kind => ChatEmbed::of(content, kind, &sent.key),
+        }
     }
 
     /// The thing as a line sent over a terminal holds it.
     pub fn sent(self, content: &Content) -> TerminalEmbed {
-        let path = match self {
-            ChatEmbed::Item(item) => item.path(content),
-            ChatEmbed::Quest(quest) => quest.path(content),
-            ChatEmbed::Skill(skill) => skill.path(content),
+        let key = match self {
+            ChatEmbed::Item(item) => item.path(content).to_owned(),
+            ChatEmbed::Quest(quest) => quest.path(content).to_owned(),
+            ChatEmbed::Skill(skill) => skill.path(content).to_owned(),
+            ChatEmbed::Location(location) => {
+                let sent = SentChatLocation {
+                    area: location.area.path(content).to_owned(),
+                    x: location.x,
+                    y: location.y,
+                };
+                serde_json::to_string(&sent).expect("a location writes as json")
+            }
         };
         TerminalEmbed {
             kind: self.kind().name().to_owned(),
-            key: path.to_owned(),
+            key,
         }
     }
 
-    /// How the thing shows in a line. An item's colour is its rarity's, and a quest's or a
-    /// skill's that of the card it is shown on.
-    pub fn shown(self, content: &Content) -> ShownChatEmbed {
+    /// What a line `speaker` says holds in place of this: a location is where the speaker
+    /// stands as the server knows it, whatever their client sent, and anything else is itself.
+    pub fn said_by(self, world: &World, speaker: Entity) -> Option<ChatEmbed> {
         match self {
-            ChatEmbed::Item(item) => {
-                let def = item.get(content);
-                ShownChatEmbed {
-                    name: def.name.clone(),
-                    icon: def.icon.clone(),
-                    color: def.rarity.get(content).gradient.from,
-                }
-            }
-            ChatEmbed::Quest(quest) => {
-                let def = quest.get(content);
-                ShownChatEmbed {
-                    name: def.title.clone(),
-                    icon: def.icon(content).clone(),
-                    color: CardStyleDef::of(content, def.card_style).ground.from,
-                }
-            }
-            ChatEmbed::Skill(skill) => {
-                let def = skill.get(content);
-                ShownChatEmbed {
-                    name: def.name.clone(),
-                    icon: def.icon.clone(),
-                    color: CardStyleDef::of(content, def.card_style).ground.from,
+            ChatEmbed::Location(_) => ChatLocation::of(world, speaker).map(ChatEmbed::Location),
+            thing => Some(thing),
+        }
+    }
+
+    /// How it shows in a line: a thing as the interface mentions it anywhere, and a location
+    /// as its area is mentioned, with the spot after the area's name.
+    pub fn shown(self, content: &Content) -> ShownMention {
+        match self {
+            ChatEmbed::Item(item) => Mention::Item(item).shown(content),
+            ChatEmbed::Quest(quest) => Mention::Quest(quest).shown(content),
+            ChatEmbed::Skill(skill) => Mention::Skill(skill).shown(content),
+            ChatEmbed::Location(location) => {
+                let area = Mention::Area(location.area).shown(content);
+                ShownMention {
+                    name: format!("{} ({},{})", area.name, location.x, location.y),
+                    ..area
                 }
             }
         }
     }
-}
-
-/// A thing a line holds as the line shows it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ShownChatEmbed {
-    pub name: String,
-    pub icon: ImageRef,
-    pub color: Rgb,
 }
 
 /// What a player said on a channel: the words, and what they hold at each of the places the

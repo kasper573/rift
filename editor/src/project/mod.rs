@@ -31,6 +31,7 @@ use engine::core::content::{
     FolderReader, LoadError, LoadPurpose, LoadReport, MISSING_FILE, NamedContent, ReadRow,
     SETTINGS_FILE, Unreadable, parent_of, table_of,
 };
+use engine::systems::script::condition::ConditionNames;
 use engine::systems::{self, GameSettings};
 
 use self::files::{Vouched, content_holding};
@@ -1227,6 +1228,8 @@ impl Project {
 }
 
 /// Names files as they stand now; a file that doesn't read is named by its path.
+impl ConditionNames for Project {}
+
 impl ContentNames for Project {
     fn name_of<Row: NamedContent>(&self, id: ContentId<Row>) -> String {
         let reader = self.reader();

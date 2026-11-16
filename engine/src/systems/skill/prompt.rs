@@ -34,10 +34,10 @@ pub fn ask(world: &mut World) {
     hud::confirm(
         world,
         Confirm {
-            title: "Reset your skills?".to_owned(),
+            title: "Reset your skills?".into(),
             body: vec![
-                asked.describe(),
-                "Bar slots that held them stay, dimmed, until they are learned again.".to_owned(),
+                asked.describe().into(),
+                "Bar slots that held them stay, dimmed, until they are learned again.".into(),
             ],
             confirm: "Reset".to_owned(),
             cancel: "Keep".to_owned(),

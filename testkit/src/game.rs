@@ -302,9 +302,9 @@ impl Game {
 
     /// A sword that, held, lets its wearer strike: a basic attack on one enemy, landing the wearer's
     /// damage at the height of its swing; it puts its wearer in the sword stance and takes the main
-    /// hand.
+    /// hand. The strike is named to its wearer in the colour of the default card style.
     pub fn sword(self) -> Game {
-        self.row(
+        self.default_card_style().row(
             "skill",
             "strike",
             json!({
@@ -476,14 +476,37 @@ impl Game {
         self.row("card_style", name, row)
     }
 
-    /// A quest of `fields`, named after its file, with a picture for its art.
+    /// A quest of `fields`, named after its file, with a picture for its art. It is named to its
+    /// players in the colour of the default card style.
     pub fn quest(self, name: &str, fields: Value) -> Game {
         let art = format!("quests/{name}.png");
         let mut row = json!({ "art": art });
         for (field, value) in fields.as_object().expect("a quest's fields") {
             row[field] = value.clone();
         }
-        self.row("quest", name, row).asset(&art, png(1, 1))
+        self.default_card_style()
+            .row("quest", name, row)
+            .asset(&art, png(1, 1))
+    }
+
+    /// The card style a quest or a skill with none of its own is drawn in, and named in the
+    /// colour of: a plain one, unless the test declared its own.
+    pub fn default_card_style(self) -> Game {
+        if self
+            .files
+            .contains_key(&fields_path("card_style", "default"))
+        {
+            self
+        } else {
+            self.card_style("default", json!({}))
+        }
+    }
+
+    /// An icon of the interface, named after its file: a blank picture.
+    pub fn interface_icon(self, name: &str) -> Game {
+        let image = format!("icons/interface/{name}.png");
+        self.row("interface_icon", name, json!({ "image": image }))
+            .asset(&image, png(1, 1))
     }
 
     /// Changes the fields of a file declared before.
@@ -1051,7 +1074,6 @@ fn words() -> GameWords {
         you_were_removed: "You were removed from the party".to_owned(),
         party_disbanded: "{name} disbanded the party".to_owned(),
         party_leads: "{name} leads the party now".to_owned(),
-        xp_shared: "Shared with {names}".to_owned(),
         you_joined_party: "You joined {name}'s party".to_owned(),
         you_left_party: "You left the party".to_owned(),
         chat_too_fast: "You are writing too fast".to_owned(),

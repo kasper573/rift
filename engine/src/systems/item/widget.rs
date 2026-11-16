@@ -16,17 +16,19 @@ use crate::systems::item::{
     DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, JoinStacksRequest,
     SplitStackRequest, card,
 };
+use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::skill::bar;
+use crate::systems::text::LineText;
 
 pub(crate) const SLOT: f32 = controls::SLOT;
 const SLOT_GAP: f32 = 4.0;
 const GHOST: f32 = 0.35;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum SlotVerdict {
-    Wanted(String),
-    Refused(String),
+    Wanted(LineText),
+    Refused(LineText),
 }
 
 pub type SlotVerdictSource = fn(&World, ItemStack) -> Option<SlotVerdict>;
@@ -482,7 +484,12 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
             onto: cell.slot,
         });
     }
-    let notes = filled.notes.iter().cloned().chain(verdict);
+    let notes = filled
+        .notes
+        .iter()
+        .cloned()
+        .map(LineText::from)
+        .chain(verdict);
     let hint = StyledLine::new(map::hints(filled.hints.iter().cloned()));
     card::chat_shortcut(world, &response, &[filled.stack.item]);
     card::tooltip_noted(world, &response, filled.stack.item, notes, Some(&hint));
@@ -530,7 +537,7 @@ fn apart_slot(ui: &mut Ui, world: &mut World, pane: &StackPane, index: usize) ->
         world,
         &response,
         stack.item,
-        slot_notes(world, stack),
+        slot_notes(world, stack).into_iter().map(LineText::from),
         Some(&hint),
     );
     map::clicked(world, InputAction::Select, &response)
@@ -545,11 +552,11 @@ fn ask_split(
     if stack.count < 2 {
         return;
     }
-    let name = stack.item.get(world.resource::<Content>()).name.clone();
+    let named = Mention::Item(stack.item).span(world.resource::<Content>());
     hud::ask_amount(
         world,
         AmountQuestion {
-            title: format!("Split stack of {name}"),
+            title: LineText::plain("Split stack of ").then(named),
             amounts: 1..=stack.count - 1,
             suggested: stack.count / 2,
             says: Box::new(move |count| {

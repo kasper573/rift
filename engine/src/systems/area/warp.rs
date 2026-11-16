@@ -16,6 +16,7 @@ use crate::systems::script::effect::{self as effects, Aimed, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, Fill, OwnerRow, Place, RiftScripting, RiftScripts,
 };
+use crate::systems::text::LineText;
 use crate::systems::{dialogue, mount, movement, reach, region};
 
 pub struct WarpObject {
@@ -149,14 +150,14 @@ impl EffectDef<RiftScripting> for WarpToActor {
     }
 }
 
-pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
+pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), LineText> {
     let here = world.get::<AreaTag>(actor).map(|tag| tag.area);
     if here != Some(to.area) && world.get::<Npc>(actor).is_some() {
-        return Err("Npcs stay in their area".to_owned());
+        return Err("Npcs stay in their area".into());
     }
     let instanced = to.area.get(world.resource::<Content>()).instance.is_some();
     if here != Some(to.area) && instanced {
-        return Err("Nobody is followed into an instance".to_owned());
+        return Err("Nobody is followed into an instance".into());
     }
     dialogue::close_for(world, actor);
     reach::forget(world, actor);

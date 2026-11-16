@@ -20,6 +20,7 @@ use crate::systems::item::widget::{SLOT, SlotLook, slot, slot_pip};
 use crate::systems::item::{ItemId, card};
 use crate::systems::player::session;
 use crate::systems::skill::bar;
+use crate::systems::text::LineText;
 
 const SLOT_GAP: f32 = 5.0;
 const NAMED_SLOT: f32 = 46.0;
@@ -246,6 +247,7 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
         lines.push("Its stance has no set here: you fight as unarmed".to_owned());
     }
     card::chat_shortcut(world, &response, &[item]);
+    let lines = lines.into_iter().map(LineText::from);
     card::tooltip_noted(world, &response, item, lines, Some(&hint));
 }
 

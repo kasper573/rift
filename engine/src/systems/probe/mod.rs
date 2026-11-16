@@ -1377,7 +1377,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                         refusal: view
                             .refusal
                             .as_ref()
-                            .map(|refusal| refusal.describe(&content)),
+                            .map(|refusal| refusal.line(&content).plain_words()),
                     })
                     .collect(),
                 buyback: shown

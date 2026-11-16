@@ -41,6 +41,7 @@ use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
 use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind, ItemStack};
+use crate::systems::mention::Mention;
 use crate::systems::movement;
 use crate::systems::npc::{Npc, NpcDef};
 use crate::systems::script::event::{USED_POINT, USED_RANK, USED_TARGET};
@@ -49,6 +50,7 @@ use crate::systems::script::{
     Condition, EventKind, OwnerRow, RiftScripts, RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::systems::stat::{self, StatKind};
+use crate::systems::text::LineText;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -692,20 +694,27 @@ pub fn known_from(
 }
 
 /// Why an actor could not use the skill at all, whatever its aim or readiness.
-pub fn unusable(world: &World, actor: Entity, skill: SkillId) -> Option<String> {
-    let def = skill.get(world.resource::<Content>());
+pub fn unusable(world: &World, actor: Entity, skill: SkillId) -> Option<LineText> {
+    let content = world.resource::<Content>();
+    let def = skill.get(content);
     if rank_of(world, actor, skill) == Rank::NONE {
-        Some(format!("You don't know {}", def.name))
+        Some(LineText::plain("You don't know ").then(Mention::Skill(skill).span(content)))
     } else if def.kind == SkillKind::Passive {
-        Some(format!("{} is passive: it holds on its own", def.name))
+        Some(
+            Mention::Skill(skill)
+                .line(content)
+                .then(" is passive: it holds on its own"),
+        )
     } else {
         None
     }
 }
 
 /// Why a passive skill takes no bar slot.
-pub fn unslotted(def: &SkillDef) -> String {
-    format!("{} is passive: it holds without a slot", def.name)
+pub fn unslotted(skill: SkillId, content: &Content) -> LineText {
+    Mention::Skill(skill)
+        .line(content)
+        .then(" is passive: it holds without a slot")
 }
 
 pub fn rank_of(world: &World, actor: Entity, skill: SkillId) -> Rank {

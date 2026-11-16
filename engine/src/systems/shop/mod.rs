@@ -21,12 +21,14 @@ use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::item::{
     ExchangeRefusal, Inventory, ItemCategory, ItemId, ItemModuleKind, ItemStack, SlotStack,
 };
+use crate::systems::mention::Mention;
 use crate::systems::player::conn_player;
 use crate::systems::script::condition::Wording;
 use crate::systems::script::{
     self, Condition, EffectCall, EffectReach, EventKind, FlowKey, Owner, RiftEvent, RiftInstances,
     RiftScripting, RunnerKind, ScriptLine, ScriptModule, ScriptedRow, condition, effect as effects,
 };
+use crate::systems::text::LineText;
 use crate::systems::{dialogue, drain_requests, notification};
 
 pub type ShopId = ContentId<ShopDef>;
@@ -138,13 +140,13 @@ impl ShopDef {
         content: &Content,
         item: ItemId,
         declined: &[u32],
-    ) -> Result<&[ItemStack], String> {
+    ) -> Result<&[ItemStack], SaleRefusal> {
         let def = item.get(content);
         if def.has(ItemModuleKind::QuestItem) {
-            return Err("Quest items never sell".to_owned());
+            return Err(SaleRefusal::QuestItem);
         }
         if def.bound() {
-            return Err("Bound items never sell".to_owned());
+            return Err(SaleRefusal::Bound);
         }
         let (index, rule) = self
             .buys()
@@ -153,9 +155,9 @@ impl ShopDef {
                 Buys::Item { item: wanted } => wanted == item,
                 Buys::Category { category } => def.category() == category,
             })
-            .ok_or_else(|| format!("{} won't buy {}", self.title, def.name))?;
+            .ok_or(SaleRefusal::NoBuyer)?;
         if declined.contains(&(index as u32)) {
-            return Err(format!("{} won't buy {} from you", self.title, def.name));
+            return Err(SaleRefusal::Declined);
         }
         Ok(&rule.pays)
     }
@@ -172,11 +174,11 @@ impl ShopDef {
         currencies
     }
 
-    pub fn wants(&self, content: &Content) -> Vec<String> {
+    pub fn wants(&self, content: &Content) -> Vec<LineText> {
         self.buys()
             .map(|rule| match rule.what {
-                Buys::Item { item } => item.get(content).name.to_owned(),
-                Buys::Category { category } => category.plural().to_owned(),
+                Buys::Item { item } => LineText::from(Mention::Item(item).span(content)),
+                Buys::Category { category } => LineText::from(category.plural()),
             })
             .collect()
     }
@@ -291,7 +293,30 @@ pub struct SaleQuote {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Hash)]
 pub enum SaleVerdict {
     Pays(Vec<ItemStack>),
-    Refused(String),
+    Refused(SaleRefusal),
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SaleRefusal {
+    QuestItem,
+    Bound,
+    NoBuyer,
+    Declined,
+}
+
+impl SaleRefusal {
+    pub fn line(self, content: &Content, shop: &ShopDef, item: ItemId) -> LineText {
+        let wont_buy = || {
+            LineText::plain(format!("{} won't buy ", shop.title))
+                .then(Mention::Item(item).span(content))
+        };
+        match self {
+            SaleRefusal::QuestItem => "Quest items never sell".into(),
+            SaleRefusal::Bound => "Bound items never sell".into(),
+            SaleRefusal::NoBuyer => wont_buy(),
+            SaleRefusal::Declined => wont_buy().then(" from you"),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Hash)]
@@ -320,14 +345,14 @@ pub enum WareRefusal {
 }
 
 impl WareRefusal {
-    pub fn describe(&self, content: &Content) -> String {
+    pub fn line(&self, content: &Content) -> LineText {
         match self {
-            WareRefusal::Unaffordable(short) => ExchangeRefusal::Missing(*short).describe(content),
+            WareRefusal::Unaffordable(short) => ExchangeRefusal::Missing(*short).line(content),
             WareRefusal::NoRoom { slots } => {
-                ExchangeRefusal::NoRoom { slots: *slots }.describe(content)
+                ExchangeRefusal::NoRoom { slots: *slots }.line(content)
             }
-            WareRefusal::SoldOut => "Sold out for now".to_owned(),
-            WareRefusal::Unavailable(reason) => reason.to_string(),
+            WareRefusal::SoldOut => "Sold out for now".into(),
+            WareRefusal::Unavailable(reason) => LineText::from(reason),
         }
     }
 
@@ -650,7 +675,7 @@ fn buy(world: &mut World, player: Entity, index: u32) {
     };
     let now = world.resource::<WallClock>().now;
     let bought = match offer_refusal(world, player, shop, index, now) {
-        Some(refusal) => Err(refusal.describe(&content)),
+        Some(refusal) => Err(refusal.line(&content)),
         None => trade(
             world,
             player,
@@ -712,7 +737,8 @@ fn sell(world: &mut World, player: Entity, stacks: &[SlotStack]) {
                     .collect(),
             }),
             Err(refusal) => {
-                notification::error(world, player, refusal);
+                let line = refusal.line(&content, shop.get(&content), stack.item);
+                notification::error(world, player, line);
                 return;
             }
         }
@@ -722,7 +748,7 @@ fn sell(world: &mut World, player: Entity, stacks: &[SlotStack]) {
         .flat_map(|sale| sale.paid.iter().copied())
         .collect();
     if let Err(refusal) = inventory.exchange(&content, &[], &paid) {
-        notification::error(world, player, refusal.describe(&content));
+        notification::error(world, player, refusal.line(&content));
         return;
     }
     if let Some(mut held) = world.get_mut::<Inventory>(player) {
@@ -775,14 +801,14 @@ fn trade(
     player: Entity,
     takes: &[ItemStack],
     gives: &[ItemStack],
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let mut inventory = world
         .get_mut::<Inventory>(player)
-        .ok_or_else(|| "You have no inventory".to_owned())?;
+        .ok_or_else(|| LineText::from("You have no inventory"))?;
     inventory
         .exchange(&content, takes, gives)
-        .map_err(|refusal| refusal.describe(&content))
+        .map_err(|refusal| refusal.line(&content))
 }
 
 fn held(inventory: &Inventory, price: &[ItemStack]) -> Vec<u32> {

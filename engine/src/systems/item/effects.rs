@@ -17,11 +17,13 @@ use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::command;
 use crate::systems::equipment;
+use crate::systems::mention::Mention;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::RowRef;
 use crate::systems::script::effect::{self as effects, Reaching};
 use crate::systems::script::{Condition, EffectCall, EffectReach, Place, RiftScripting};
+use crate::systems::text::LineText;
 use crate::systems::visibility::Presence;
 
 /// Takes and gives items in one exchange, all or nothing.
@@ -551,8 +553,10 @@ impl EffectDef<RiftScripting> for MoveItems {
             ) else {
                 return effects::refuse(world, cx, &refused, "Nobody to trade between");
             };
-            let outcome = move_between(world, from, to, &items);
-            effects::settle(world, cx, &refused, outcome)
+            match move_between(world, from, to, &items) {
+                Ok(()) => EffectStep::Done,
+                Err(reason) => effects::refuse(world, cx, &refused, reason),
+            }
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -573,14 +577,14 @@ pub fn exchange(
     actor: Entity,
     take: &[ItemStack],
     give: &[ItemStack],
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let mut inventory = world
         .get_mut::<Inventory>(actor)
         .ok_or_else(|| "Has no bag".to_owned())?;
     inventory
         .exchange(&content, take, give)
-        .map_err(|refusal| refusal.describe(&content))
+        .map_err(|refusal| refusal.line(&content))
 }
 
 pub fn move_between(
@@ -588,28 +592,28 @@ pub fn move_between(
     from: Entity,
     to: Entity,
     items: &[ItemStack],
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     if from == to {
-        return Err("Nothing to move".to_owned());
+        return Err("Nothing to move".into());
     }
     if let Some(bound) = items.iter().find(|stack| stack.item.get(&content).bound()) {
-        return Err(format!("{} is bound", bound.item.get(&content).name));
+        return Err(Mention::Item(bound.item).line(&content).then(" is bound"));
     }
     let mut giving = world
         .get::<Inventory>(from)
         .cloned()
-        .ok_or_else(|| "Has no bag".to_owned())?;
+        .ok_or_else(|| LineText::plain("Has no bag"))?;
     let mut taking = world
         .get::<Inventory>(to)
         .cloned()
-        .ok_or_else(|| "Has no bag".to_owned())?;
+        .ok_or_else(|| LineText::plain("Has no bag"))?;
     giving
         .exchange(&content, items, &[])
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     taking
         .exchange(&content, &[], items)
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     world.entity_mut(from).insert(giving);
     world.entity_mut(to).insert(taking);
     Ok(())
@@ -641,17 +645,19 @@ fn standing(world: &World, who: Entity) -> Option<(AreaId, Pos<Meters>)> {
     Some((world.get::<AreaTag>(who)?.area, position(world, who)?))
 }
 
-fn drop_held(world: &mut World, actor: Entity, stack: ItemStack) -> Result<(), String> {
+fn drop_held(world: &mut World, actor: Entity, stack: ItemStack) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     if stack.item.get(&content).bound() {
-        return Err(format!("{} is bound to you", stack.item.get(&content).name));
+        return Err(Mention::Item(stack.item)
+            .line(&content)
+            .then(" is bound to you"));
     }
     let mut inventory = world
         .get_mut::<Inventory>(actor)
-        .ok_or_else(|| "Has no bag".to_owned())?;
+        .ok_or_else(|| LineText::plain("Has no bag"))?;
     inventory
         .exchange(&content, &[stack], &[])
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     super::scatter_drop(world, actor, &[(stack.item, stack.count)], None, None);
     Ok(())
 }

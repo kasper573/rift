@@ -13,6 +13,7 @@ use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Departure, Players};
 use crate::systems::save::{self, Checkpoints};
 use crate::systems::society::{self, ServerSociety, SocietyAsk};
+use crate::systems::text::LineText;
 use crate::systems::{player, stat, step_area};
 
 /// Which of a server's worlds: the one everyone in `area` shares, or an instance of it.
@@ -171,7 +172,7 @@ fn hear(views: &mut [Option<&mut World>], above: &AboveWorlds) -> Heard {
 fn carry(
     views: &mut [Option<&mut World>],
     to: ClientId,
-    deed: impl FnOnce(&mut World, Entity) -> Result<(), String>,
+    deed: impl FnOnce(&mut World, Entity) -> Result<(), LineText>,
 ) -> ErrandOutcome {
     let found = views.iter_mut().flatten().find_map(|world| {
         let character = *world.get_resource::<Players>()?.0.get(&to)?;

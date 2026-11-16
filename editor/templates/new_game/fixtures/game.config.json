@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "f0f050fc",
+  "content_version": "caf809f2",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -174,7 +174,6 @@
     "you_were_removed": "You were removed from the party",
     "party_disbanded": "{name} disbanded the party",
     "party_leads": "{name} leads the party now",
-    "xp_shared": "Shared with {names}",
     "you_joined_party": "You joined {name}'s party",
     "you_left_party": "You left the party",
     "chat_too_fast": "You are writing too fast",

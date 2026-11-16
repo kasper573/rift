@@ -22,6 +22,7 @@ use crate::systems::actor::{self, Actor};
 use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::{CursorShape, InterfaceSound};
+use crate::systems::mention::Mention;
 use crate::systems::mount::seat::MountRequest;
 use crate::systems::mount::{self, MountId, Travels};
 use crate::systems::player::session;
@@ -120,7 +121,9 @@ pub fn cast_at_pointer(world: &mut World, skill: SkillId) -> bool {
         None => {
             notification::local_error(
                 world,
-                format!("{}: nothing under the pointer to cast at", def.name),
+                Mention::Skill(skill)
+                    .line(&content)
+                    .then(": nothing under the pointer to cast at"),
             );
             false
         }

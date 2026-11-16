@@ -348,7 +348,7 @@ fn note(world: &World, stack: ItemStack) -> Option<String> {
 /// An item that may not change hands is refused where it lies, while a message is written.
 fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
     let stays = stack.item.get(world.resource::<Content>()).bound();
-    (stays && attaching(world)).then(|| SlotVerdict::Refused("It stays with you".to_owned()))
+    (stays && attaching(world)).then(|| SlotVerdict::Refused("It stays with you".into()))
 }
 
 /// Keeps what is attached within what the bag holds, and hears whether the message was sent:

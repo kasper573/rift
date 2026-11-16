@@ -11,12 +11,14 @@ use ui::paint::TextShadow;
 use ui::{chip, dusk, ink};
 
 use crate::core::gui;
+use crate::core::text::{self, TextLook};
 use crate::core::units::HourOfDay;
 use crate::systems::GameSettings;
 use crate::systems::area::TimeOfDayName;
 use crate::systems::script::condition::{Wording, WordingPart};
 use crate::systems::script::sky;
 use crate::systems::settings::UserSettings;
+use crate::systems::text::{LineText, SpanText};
 
 /// How far past the disc it goes round the clock reaches.
 pub(crate) const REACH: f32 = ORBIT + NUMERAL_ROOM;
@@ -113,6 +115,14 @@ pub(crate) fn wording(
                 }
                 WordingPart::Time { time } => {
                     time_mark(ui, world, time, role, color);
+                }
+                WordingPart::Named { name, mark } => {
+                    let named = SpanText::Named {
+                        name: name.clone(),
+                        mark: mark.clone(),
+                    };
+                    let look = TextLook::role(role, color);
+                    text::show(ui, world, &LineText::from(named).styled(), look, None);
                 }
             }
         }

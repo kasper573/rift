@@ -406,7 +406,7 @@ fn attachments(ui: &mut Ui, world: &mut World, row: &InboxRow) -> Option<Done> {
                 &response,
                 world,
                 &def.name,
-                &["Click to take it".to_owned()],
+                &["Click to take it".into()],
                 None,
             );
         }
@@ -422,8 +422,8 @@ fn delete(world: &mut World, id: MessageId, title: String) {
     hud::confirm(
         world,
         Confirm {
-            title: format!("Delete \"{title}\"?"),
-            body: vec!["It cannot be brought back.".to_owned()],
+            title: format!("Delete \"{title}\"?").into(),
+            body: vec!["It cannot be brought back.".into()],
             confirm: "Delete".to_owned(),
             cancel: "Keep".to_owned(),
             answer: Box::new(move |world, deleted| {

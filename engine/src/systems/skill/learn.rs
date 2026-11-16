@@ -7,10 +7,12 @@ use super::{Learned, Rank};
 use crate::core::content::Content;
 use crate::systems::class::{self, AccessRequirement, ClassDef, NodeKey, SkillPoints};
 use crate::systems::history::HistoryTopic;
+use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::script::{Condition, condition};
+use crate::systems::text::LineText;
 
 /// The whole plan the player confirmed: each node of their class tree with the rank to reach.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -62,7 +64,7 @@ pub fn learn(
     world: &mut World,
     player: Entity,
     picks: &[(NodeKey, Rank)],
-) -> Result<Vec<(NodeKey, Rank)>, String> {
+) -> Result<Vec<(NodeKey, Rank)>, LineText> {
     let content = world.resource::<Content>().clone();
     let class = class::of(world, player).ok_or("No class")?;
     let def = class.get(&content);
@@ -75,13 +77,14 @@ pub fn learn(
         class::level(world, player),
         |c| condition::holds(world, player, c),
     )
-    .map_err(|refusal| refusal.sentence(&content, def, picks))?;
+    .map_err(|refusal| refusal.line(&content, def, picks))?;
     let available = class::points_to_spend(world, player);
     if planned.cost > available {
         return Err(format!(
             "Needs {} skill points, you have {}",
             planned.cost.0, available.0
-        ));
+        )
+        .into());
     }
     world.entity_mut(player).insert(Learned(planned.ranks));
     Ok(picks.to_vec())
@@ -148,29 +151,28 @@ impl PlanRefusal {
         class: &ClassDef,
         picks: &[(NodeKey, Rank)],
     ) -> String {
+        self.line(content, class, picks).plain_words()
+    }
+
+    pub fn line(&self, content: &Content, class: &ClassDef, picks: &[(NodeKey, Rank)]) -> LineText {
         let (key, rank) = &picks[self.pick()];
         let name = class.tree.node(key).map_or_else(
-            || key.to_string(),
-            |node| node.skill.get(content).name.clone(),
+            || LineText::plain(key.to_string()),
+            |node| Mention::Skill(node.skill).line(content),
         );
         match self {
-            PlanRefusal::NotInTree { .. } => format!("{key} is not in your tree"),
-            PlanRefusal::NotAbove { held, .. } => {
-                format!("{name} is already rank {}", held.0)
-            }
+            PlanRefusal::NotInTree { .. } => LineText::plain(format!("{key} is not in your tree")),
+            PlanRefusal::NotAbove { held, .. } => name.then(format!(" is already rank {}", held.0)),
             PlanRefusal::OutOfRange { .. } => {
                 let has = class
                     .tree
                     .node(key)
                     .map_or(0, |node| node.skill.get(content).rank_count());
-                format!("{name} has only {has} ranks, not {}", rank.0)
+                name.then(format!(" has only {has} ranks, not {}", rank.0))
             }
-            PlanRefusal::Unmet { requirement, .. } => {
-                format!(
-                    "{name} needs {}",
-                    requirement.describe(content, &class.tree)
-                )
-            }
+            PlanRefusal::Unmet { requirement, .. } => name
+                .then(" needs ")
+                .then(requirement.line(content, &class.tree)),
         }
     }
 }
@@ -186,10 +188,11 @@ fn announce(world: &mut World, player: Entity, learned: &[(NodeKey, Rank)]) {
             continue;
         };
         let skill = node.skill.get(&content);
+        let name = Mention::Skill(node.skill).name(&content);
         let text = if rank.is_first() {
-            format!("Learned {}", skill.name)
+            LineText::plain("Learned ").then(name)
         } else {
-            format!("{} rank {}", skill.name, rank.0)
+            LineText::from(name).then(format!(" rank {}", rank.0))
         };
         notification::notify(
             world,

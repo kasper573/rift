@@ -110,6 +110,18 @@ impl TrackerTone {
     }
 }
 
+/// Letters the `mark` of a row at `at`, and tells how far the row's words stand in behind it.
+pub fn mark(ui: &Ui, at: Pos2, mark: Mark, color: Color32, size: f32) -> f32 {
+    let icon = mark.icon();
+    let font = FontId::new(size, icon.weight.family());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(icon.glyph.to_owned(), font, color);
+    let width = galley.size().x;
+    dusk::lettering(ui.painter(), at, galley, dusk::EDGED, TSTransform::IDENTITY);
+    width + MARK_GAP
+}
+
 impl TrackerLine<'_> {
     pub fn letter(self, ui: &mut Ui, id: Id) -> Rect {
         let mut job = LayoutJob::default();

@@ -10,7 +10,7 @@ use crate::core::gui;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::hud;
 use crate::systems::player::session;
-use crate::systems::text::duration;
+use crate::systems::text::{LineText, duration};
 
 const ICON: f32 = 24.0;
 const GAP: f32 = 5.0;
@@ -54,13 +54,9 @@ pub fn row(ui: &mut Ui, world: &mut World, width: f32, first_row: Align) {
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label.clone())
         });
-        let lines: Vec<String> = [
-            Some(format!(
-                "{} · {}",
-                def.category.label(),
-                time_left(status, now)
-            )),
-            (!def.description.is_empty()).then(|| def.description.clone()),
+        let lines: Vec<LineText> = [
+            Some(format!("{} · {}", def.category.label(), time_left(status, now)).into()),
+            (!def.description.is_empty()).then(|| def.description.as_str().into()),
         ]
         .into_iter()
         .flatten()

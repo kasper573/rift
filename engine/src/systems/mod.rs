@@ -25,6 +25,7 @@ pub mod interface;
 pub mod item;
 pub mod launch;
 pub mod memory;
+pub mod mention;
 pub mod mount;
 pub mod movement;
 pub mod notification;
@@ -483,8 +484,6 @@ pub struct GameWords {
     pub party_disbanded: String,
     /// What the members of a party are told as `{name}` comes to lead it.
     pub party_leads: String,
-    /// What a player is told as they share the experience of a kill with `{names}`.
-    pub xp_shared: String,
     /// What the party's chat says to a player as they join the party `{name}` leads.
     pub you_joined_party: String,
     /// What chat says to a player as they leave their party.
@@ -1262,7 +1261,6 @@ fn check_settings(loading: &mut Loading) {
         ("you_were_removed", &settings.words.you_were_removed),
         ("party_disbanded", &settings.words.party_disbanded),
         ("party_leads", &settings.words.party_leads),
-        ("xp_shared", &settings.words.xp_shared),
         ("you_joined_party", &settings.words.you_joined_party),
         ("you_left_party", &settings.words.you_left_party),
         ("chat_too_fast", &settings.words.chat_too_fast),

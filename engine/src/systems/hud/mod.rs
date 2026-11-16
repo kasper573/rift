@@ -33,6 +33,7 @@ use crate::systems::item::{Inventory, ItemId};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
+use crate::systems::text::LineText;
 use crate::systems::{area_instance, equipment, item, mount, party, quest, skill, social_request};
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
@@ -84,8 +85,8 @@ pub trait HudWidget: Send + Sync {
 /// A question put to the player, answered with `true` for the confirming button and `false` for the
 /// cancelling one or a dismissal.
 pub(crate) struct Confirm {
-    pub title: String,
-    pub body: Vec<String>,
+    pub title: LineText,
+    pub body: Vec<LineText>,
     pub confirm: String,
     pub cancel: String,
     pub answer: Answer,
@@ -96,7 +97,7 @@ pub(crate) type Answer = Box<dyn FnOnce(&mut World, bool) + Send + Sync>;
 /// A question of how many, put to the player with a slider over `amounts`: answered with the
 /// amount chosen for the confirming button, and with none for the cancelling one or a dismissal.
 pub(crate) struct AmountQuestion {
-    pub title: String,
+    pub title: LineText,
     pub amounts: RangeInclusive<u32>,
     /// The amount the slider starts on.
     pub suggested: u32,
@@ -195,7 +196,7 @@ pub(crate) fn tooltip(
     response: &egui::Response,
     world: &World,
     title: &str,
-    lines: &[String],
+    lines: &[LineText],
     hint: Option<&StyledLine>,
 ) {
     tooltip_marked(response, world, title, None, lines, hint);
@@ -207,7 +208,7 @@ pub(crate) fn tooltip_marked(
     world: &World,
     title: &str,
     mark: Option<&gui::GuiImage>,
-    lines: &[String],
+    lines: &[LineText],
     hint: Option<&StyledLine>,
 ) {
     float::tooltip(response, |ui| {
@@ -222,11 +223,8 @@ pub(crate) fn tooltip_marked(
                 {
                     ui.add(mark.widget(Vec2::splat(TextRole::Tooltip.size())));
                 }
-                ui.label(
-                    egui::RichText::new(line)
-                        .size(TextRole::Tooltip.size())
-                        .color(ink::INK2),
-                );
+                let look = TextLook::new(TextRole::Tooltip.size(), ink::INK2);
+                text::show(ui, world, &line.styled(), look, None);
             });
         }
         if let Some(hint) = hint {
@@ -277,8 +275,8 @@ struct Lifting(Option<NoteText>);
 
 #[derive(Clone)]
 struct NoteText {
-    title: String,
-    body: Vec<String>,
+    title: LineText,
+    body: Vec<LineText>,
     confirm: String,
     cancel: String,
     amount: Option<NoteAmount>,
@@ -302,7 +300,7 @@ impl NoteText {
             },
             Asked::Amount { question, chosen } => NoteText {
                 title: question.title.clone(),
-                body: vec![(question.says)(*chosen)],
+                body: vec![(question.says)(*chosen).into()],
                 confirm: "Confirm".to_owned(),
                 cancel: "Cancel".to_owned(),
                 amount: Some(NoteAmount {
@@ -404,11 +402,17 @@ fn draw_confirm(world: &mut World) {
             sheet::note_shadowed(ui, padding, pose.shadow, |ui| {
                 let padding = 2.0 * f32::from(dialog::PADDING);
                 ui.set_width(NOTE.x - padding);
-                dialog::title(ui, &text.title);
+                let ink = ui.visuals().text_color();
+                let title = TextLook::role(TextRole::NoteTitle, ink::INK);
+                text::show(ui, world, &text.title.styled(), title, None);
+                ui.add_space(dialog::TITLE_GAP);
                 let said = text
                     .body
                     .iter()
-                    .map(|line| ui.add(egui::Label::new(face::body(line)).wrap()))
+                    .map(|line| {
+                        let look = TextLook::role(TextRole::Body, ink);
+                        text::show(ui, world, &line.styled(), look, None)
+                    })
                     .last();
                 let slid = text.amount.as_ref().map(|amount| {
                     ui.add_space(8.0);

@@ -19,6 +19,7 @@ use crate::systems::GameSettings;
 use crate::systems::actor::{self, playing};
 use crate::systems::combat::{self, Relation};
 use crate::systems::item::Inventory;
+use crate::systems::mention::Mention;
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{self, Berths};
 use crate::systems::player::RequestNeeds;
@@ -30,6 +31,7 @@ use crate::systems::script::{
     condition, event,
 };
 use crate::systems::stat::{self, Vital};
+use crate::systems::text::LineText;
 use crate::systems::{notification, visibility};
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
@@ -72,7 +74,7 @@ pub fn request(world: &mut World) {
         if let CastAim::Actor(target) = request.aim
             && !visibility::in_sight(world, caster, target)
         {
-            return Err("Can't see them".to_owned());
+            return Err("Can't see them".into());
         }
         if !mount::left_by(world, caster, request.skill) {
             let act = if super::carried_as_item(world, caster, request.skill) {
@@ -94,7 +96,7 @@ pub fn cast(
     skill: SkillId,
     aim: CastAim,
     repeat: bool,
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     if let Some(refusal) = super::unusable(world, caster, skill) {
         return Err(refusal);
     }
@@ -114,7 +116,7 @@ pub fn cast(
         if def.target != Targeting::Spot
             && let Some(refusal) = mount::uncallable(world, caster, mount, aim)
         {
-            return Err(refusal);
+            return Err(refusal.into());
         }
     }
     ready(world, caster, skill)?;
@@ -122,27 +124,27 @@ pub fn cast(
         (Targeting::Caster, _) => ReachTarget::Actor(caster),
         (Targeting::SingleAlly | Targeting::SingleEnemy, CastAim::Actor(target)) => {
             if !fits(world, caster, target, def.target) {
-                return Err(format!("{} can't target them", def.name));
+                return Err(named(skill, &content).then(" can't target them"));
             }
             ReachTarget::Actor(target)
         }
         (Targeting::SingleAlly | Targeting::SingleEnemy, _) => {
-            return Err(format!("{} needs a target", def.name));
+            return Err(named(skill, &content).then(" needs a target"));
         }
         (Targeting::AreaAlly | Targeting::AreaEnemy, CastAim::Point(point)) => {
             ReachTarget::Point(point)
         }
         (Targeting::AreaAlly | Targeting::AreaEnemy, _) => {
-            return Err(format!("{} needs a point to aim at", def.name));
+            return Err(named(skill, &content).then(" needs a point to aim at"));
         }
         (Targeting::Spot, CastAim::Point(spot)) => {
             if let Some(refusal) = spot_refused(world, caster, skill, spot) {
-                return Err(refusal);
+                return Err(refusal.into());
             }
             ReachTarget::Point(spot)
         }
         (Targeting::Spot, _) => {
-            return Err(format!("{} needs a spot to aim at", def.name));
+            return Err(named(skill, &content).then(" needs a spot to aim at"));
         }
     };
     reach::intend(world, caster, target, ReachAct::Cast { skill, repeat });
@@ -173,7 +175,7 @@ pub fn spot_refused(
 
 /// Whether a skill may be used now by someone who knows it: not cooling down, its requirements
 /// holding, its mana held and its cost in the bag.
-pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), String> {
+pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), LineText> {
     let content = world.resource::<Content>();
     let def = skill.get(content);
     let now = world.resource::<WallClock>().now;
@@ -181,29 +183,32 @@ pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), String
         .get::<Cooldowns>(caster)
         .is_some_and(|cooldowns| cooldowns.cooling(skill, now))
     {
-        return Err(format!("{} is cooling down", def.name));
+        return Err(named(skill, content).then(" is cooling down"));
     }
     if let Some(unmet) = condition::first_unmet(world, caster, def.requires.iter()) {
-        return Err(format!("{} needs {unmet}", def.name));
+        return Err(named(skill, content)
+            .then(" needs ")
+            .then(LineText::from(&unmet)));
     }
     for stack in &def.cost {
         let held = world
             .get::<Inventory>(caster)
             .map_or(0, |inventory| inventory.count(stack.item));
         if held < stack.count {
-            return Err(format!(
-                "{} needs {} {}",
-                def.name,
-                stack.count,
-                stack.item.get(content).name
-            ));
+            return Err(named(skill, content)
+                .then(format!(" needs {} ", stack.count))
+                .then(Mention::Item(stack.item).span(content)));
         }
     }
     let mana = def.mana_at(super::rank_of(world, caster, skill));
     if stat::current(world, caster, Vital::Mana) < mana {
-        return Err(format!("{} needs {mana} mana", def.name));
+        return Err(named(skill, content).then(format!(" needs {mana} mana")));
     }
     Ok(())
+}
+
+fn named(skill: SkillId, content: &Content) -> LineText {
+    Mention::Skill(skill).line(content)
 }
 
 /// The one rule for whom a skill of a kind may land on: an actor the caster could reach, not held
@@ -259,7 +264,7 @@ impl Planner for StepCasts {
 enum CastStep {
     /// The cast is given up, told to the player who meant it when it was refused.
     Forget {
-        refused: Option<String>,
+        refused: Option<LineText>,
     },
     /// Playing a cast, or waiting on the delay before the next.
     Wait,

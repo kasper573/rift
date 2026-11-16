@@ -44,6 +44,7 @@ use crate::systems::shop::{self, ShopLedger};
 use crate::systems::skill::{BasicAttack, Cooldowns, Hotbar, Learned};
 use crate::systems::stat::{self, Immortal, Stats};
 use crate::systems::status::{self, CarriedStatuses, Statuses};
+use crate::systems::text::LineText;
 use crate::systems::visibility;
 use crate::systems::{
     GameSettings, WorldArea, belongings, drain_requests, notification, reach, region, resource,
@@ -311,7 +312,7 @@ pub enum RequestNeeds {
 pub(crate) fn player_requests<M: Message>(
     world: &mut World,
     needs: RequestNeeds,
-    mut answer: impl FnMut(&mut World, Entity, M) -> Result<(), String>,
+    mut answer: impl FnMut(&mut World, Entity, M) -> Result<(), LineText>,
 ) {
     for request in drain_requests::<M>(world) {
         let Some(player) = conn_player(world, request.client) else {
@@ -324,7 +325,10 @@ pub(crate) fn player_requests<M: Message>(
             RequestNeeds::Seat(act) => mount::seat::act(world, player, act),
             RequestNeeds::Nothing | RequestNeeds::Command => Ok(()),
         };
-        let answered = seated.and_then(|()| answer(world, player, request.message));
+        let answered = match seated {
+            Ok(()) => answer(world, player, request.message),
+            Err(reason) => Err(reason),
+        };
         if let Err(reason) = answered {
             notification::error(world, player, reason);
         }

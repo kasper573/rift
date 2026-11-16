@@ -438,7 +438,7 @@ pub(super) fn objective_row(
                 ui.add(
                     Label::new(
                         TextRole::CardBody
-                            .rich(progress.label.as_str())
+                            .rich(progress.label.plain_words())
                             .color(color),
                     )
                     .wrap(),

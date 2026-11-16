@@ -89,11 +89,14 @@ pub(crate) fn block(world: &mut World, player: SocietyMember) {
     hud::confirm(
         world,
         Confirm {
-            title: format!("Block {name}?"),
-            body: vec![format!(
-                "{name} will not be able to send you requests or messages, and you will not \
-                 see what they say in chat. {name} is not told."
-            )],
+            title: format!("Block {name}?").into(),
+            body: vec![
+                format!(
+                    "{name} will not be able to send you requests or messages, and you will not \
+                     see what they say in chat. {name} is not told."
+                )
+                .into(),
+            ],
             confirm: "Block".to_owned(),
             cancel: "Cancel".to_owned(),
             answer: Box::new(move |world, blocked| {

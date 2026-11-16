@@ -1,6 +1,7 @@
 use bevy::prelude::*;
-use ui::egui::{Color32, Pos2, Rect, Ui, Vec2};
+use ui::egui::{Color32, Pos2, Rect, Ui, UiBuilder, Vec2};
 use ui::face::{Face, TextRole};
+use ui::ink::Ground;
 use ui::tracker::{self, INDENT, TrackerHeading, TrackerLine, TrackerTone, WIDTH};
 
 use super::card::Countdown;
@@ -8,14 +9,18 @@ use super::{Parties, QuestId, QuestLog, QuestResult, ready_mark};
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::core::gui;
+use crate::core::text::{self, TextLook};
 use crate::systems::area_map::minimap;
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::item::Inventory;
 use crate::systems::player::session;
 use crate::systems::settings::UserSettings;
+use crate::systems::text::LineText;
 
 const UNDER_THE_MAP: f32 = 6.0;
 const MARK: f32 = 16.0;
+/// The dark ring that keeps a row's letters readable over the world.
+const HALO: Color32 = Color32::from_rgba_premultiplied(10, 7, 5, 210);
 
 pub const QUEST_TRACKER: &str = "quest_tracker";
 
@@ -72,7 +77,7 @@ struct Entry {
     quest: QuestId,
     mark: Option<ImageRef>,
     timed: bool,
-    rows: Vec<(String, Count, TrackerTone)>,
+    rows: Vec<(LineText, Count, TrackerTone)>,
 }
 
 enum Count {
@@ -110,7 +115,7 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry, at:
             Count::Live(shows) => shows.label(log, entry.quest, super::card::clock_now()),
         };
         let said = match count {
-            Some(count) => format!("{label} {count}"),
+            Some(count) => label.clone().then(format!(" {count}")),
             None => label.clone(),
         };
         (said, *tone)
@@ -119,20 +124,32 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry, at:
         .timed
         .then(|| Countdown::LeftDetail.label(log, entry.quest, super::card::clock_now()))
         .flatten()
-        .map(|left| (left, TrackerTone::Timed));
-    for (index, (said, tone)) in rows.chain(left_on_the_clock).enumerate() {
-        top = TrackerLine {
-            at: Pos2::new(at.x + INDENT, top + tracker::ROW_GAP),
-            width: WIDTH - INDENT,
-            mark: tone.mark().map(|mark| (mark, tone.color())),
-            text: &said,
-            font: TextRole::Small.font_id(),
-            color: tone.color(),
-        }
-        .letter(ui, id.with(index))
-        .bottom();
+        .map(|left| (LineText::plain(left), TrackerTone::Timed));
+    for (said, tone) in rows.chain(left_on_the_clock) {
+        let at = Pos2::new(at.x + INDENT, top + tracker::ROW_GAP);
+        top = row(ui, world, at, &said, tone);
     }
     top
+}
+
+/// Letters a row of an entry from `at`, behind its tone's mark, and tells where it ends: what
+/// it names shows the way the interface mentions it over the world.
+fn row(ui: &mut Ui, world: &World, at: Pos2, said: &LineText, tone: TrackerTone) -> f32 {
+    let size = TextRole::Small.size();
+    let lead = tone
+        .mark()
+        .map_or(0.0, |mark| tracker::mark(ui, at, mark, tone.color(), size));
+    let room = Rect::from_min_max(
+        Pos2::new(at.x + lead, at.y),
+        Pos2::new(at.x + WIDTH - INDENT, ui.max_rect().bottom().max(at.y)),
+    );
+    let look = TextLook::role(TextRole::Small, tone.color())
+        .on(Ground::Dusk)
+        .haloed(HALO);
+    let mut within = ui.new_child(UiBuilder::new().max_rect(room));
+    text::show(&mut within, world, &said.styled(), look, None)
+        .rect
+        .bottom()
 }
 
 fn entries(world: &World) -> Vec<Entry> {
@@ -155,7 +172,7 @@ fn entries(world: &World) -> Vec<Entry> {
                         mark: Some(ready_mark(def).get(content).icon.clone()),
                         timed,
                         rows: vec![(
-                            def.hand_in_hint(parties, quest),
+                            def.hand_in_hint(content, parties, quest),
                             Count::Hidden,
                             TrackerTone::Done,
                         )],
@@ -188,14 +205,14 @@ fn entries(world: &World) -> Vec<Entry> {
             let finished = log.finished(quest)?;
             let rows = match finished.result {
                 QuestResult::Completed => vec![(
-                    "Done for today".to_owned(),
+                    "Done for today".into(),
                     Count::Live(Countdown::Resets),
                     TrackerTone::Done,
                 )],
                 QuestResult::Failed => vec![
-                    ("Failed".to_owned(), Count::Hidden, TrackerTone::Bad),
+                    ("Failed".into(), Count::Hidden, TrackerTone::Bad),
                     (
-                        def.retry_hint(parties, quest),
+                        def.retry_hint(content, parties, quest),
                         Count::Hidden,
                         TrackerTone::Plain,
                     ),

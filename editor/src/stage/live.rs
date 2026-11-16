@@ -215,7 +215,7 @@ impl LiveWorld {
                         };
                         self.report = format!("{} · cast {casts}", def.name);
                     }
-                    Err(reason) => self.report = reason,
+                    Err(reason) => self.report = reason.plain_words(),
                 }
             }
             Phase::Resting { .. } => {}

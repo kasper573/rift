@@ -72,7 +72,7 @@ fn an_item_for_a_slot_the_body_lacks_stays_in_the_bag() {
 
     let refused = equipment::equip_from_bag(&mut sim.world, player, boots).expect_err("refused");
 
-    assert_eq!(refused, "boots can't be worn by this body");
+    assert_eq!(refused.plain_words(), "boots can't be worn by this body");
     assert_eq!(sim.count(player, "boots"), 1);
     assert!(!equipment::wears(&sim.world, player, boots));
 }

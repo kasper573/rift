@@ -12,10 +12,12 @@ use crate::systems::actor::skeleton::EquipmentSlot;
 use crate::systems::actor::stance::HandIndex;
 use crate::systems::actor::{ActorModel, appearance};
 use crate::systems::item::{self, Inventory, ItemId, ItemKind, ItemStack, Wear};
+use crate::systems::mention::Mention;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::resource::Working;
 use crate::systems::script::condition;
+use crate::systems::text::LineText;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -95,7 +97,7 @@ pub fn hand_slots(world: &World, player: Entity) -> usize {
     held::hands_of(world, player).len().max(1)
 }
 
-pub fn equip_from_bag(world: &mut World, player: Entity, item: ItemId) -> Result<(), String> {
+pub fn equip_from_bag(world: &mut World, player: Entity, item: ItemId) -> Result<(), LineText> {
     let slot = item::bag_slot(world, player, item)?;
     equip(world, player, slot, None)
 }
@@ -108,26 +110,28 @@ pub fn equip(
     player: Entity,
     inv_slot: usize,
     hand: Option<HandIndex>,
-) -> Result<(), String> {
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let item = world
         .get::<Inventory>(player)
         .and_then(|inventory| inventory.slots.get(inv_slot).map(|slot| slot.item))
-        .ok_or_else(|| "Nothing there".to_owned())?;
+        .ok_or_else(|| LineText::plain("Nothing there"))?;
     let ItemKind::Equipment { wear, requires, .. } = &item.get(&content).kind else {
-        return Err(format!("{} can't be worn", item.get(&content).name));
+        return Err(Mention::Item(item).line(&content).then(" can't be worn"));
     };
     if let Some(unmet) = condition::first_unmet(world, player, requires) {
-        return Err(format!("{} needs {unmet}", item.get(&content).name));
+        return Err(Mention::Item(item)
+            .line(&content)
+            .then(" needs ")
+            .then(LineText::from(&unmet)));
     }
     let worn = world.get::<Equipment>(player).cloned().unwrap_or_default();
     let (slots, returned): (BTreeMap<EquipmentPlace, ItemId>, Vec<ItemId>) = match wear {
         Wear::Worn { slot, .. } => {
             if !body_slots(world, player).contains(slot) {
-                return Err(format!(
-                    "{} can't be worn by this body",
-                    item.get(&content).name
-                ));
+                return Err(Mention::Item(item)
+                    .line(&content)
+                    .then(" can't be worn by this body"));
             }
             let mut slots = worn.slots.clone();
             let returned = slots.insert(EquipmentPlace::Slot(slot.clone()), item);
@@ -162,9 +166,9 @@ pub fn equip(
         .collect();
     world
         .get_mut::<Inventory>(player)
-        .ok_or_else(|| "Has no bag".to_owned())?
+        .ok_or_else(|| LineText::plain("Has no bag"))?
         .exchange(&content, &[ItemStack::new(item, 1)], &returned)
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     world.entity_mut(player).insert(Equipment { slots });
     Ok(())
 }
@@ -280,15 +284,20 @@ pub fn check_put_on(
 }
 
 /// Takes off what is worn in `slot`, from every hand it takes, back into the bag.
-pub fn unequip_slot(world: &mut World, player: Entity, slot: EquipmentPlace) -> Result<(), String> {
+pub fn unequip_slot(
+    world: &mut World,
+    player: Entity,
+    slot: EquipmentPlace,
+) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
-    let item = in_slot(world, player, &slot).ok_or_else(|| "Nothing worn there".to_owned())?;
+    let item =
+        in_slot(world, player, &slot).ok_or_else(|| LineText::plain("Nothing worn there"))?;
     let mut inventory = world
         .get_mut::<Inventory>(player)
-        .ok_or_else(|| "Has no bag".to_owned())?;
+        .ok_or_else(|| LineText::plain("Has no bag"))?;
     inventory
         .exchange(&content, &[], &[ItemStack::new(item, 1)])
-        .map_err(|refusal| refusal.describe(&content))?;
+        .map_err(|refusal| refusal.line(&content))?;
     if let Some(equipment) = world.get::<Equipment>(player) {
         let mut slots = equipment.slots.clone();
         slots.retain(|worn, there| {
@@ -300,7 +309,7 @@ pub fn unequip_slot(world: &mut World, player: Entity, slot: EquipmentPlace) -> 
 }
 
 /// Takes `item` off, from wherever it is worn.
-pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(), String> {
+pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(), LineText> {
     let slot = world
         .get::<Equipment>(player)
         .and_then(|equipment| {
@@ -310,7 +319,11 @@ pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(
                 .find(|(_, worn)| **worn == item)
                 .map(|(slot, _)| slot.clone())
         })
-        .ok_or_else(|| format!("{} is not worn", item.get(world.resource::<Content>()).name))?;
+        .ok_or_else(|| {
+            Mention::Item(item)
+                .line(world.resource::<Content>())
+                .then(" is not worn")
+        })?;
     unequip_slot(world, player, slot)
 }
 

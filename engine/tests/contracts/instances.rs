@@ -806,6 +806,7 @@ fn game(holds: u32) -> Game {
         .area("forest", &Map::open(12, 12), json!([]))
         .hero("village", 4.0, 4.0)
         .sfx("ui_refuse")
+        .interface_icon("map")
         .npc("warden", 25.0, json!([]))
         .vfx("damage_taken")
         .shader("damage_pop")

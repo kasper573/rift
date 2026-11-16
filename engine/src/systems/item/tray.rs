@@ -195,9 +195,9 @@ pub fn tray_slots(
                         clicked = Some(index);
                     }
                     let lines = if placed.short {
-                        vec!["You no longer carry this".to_owned()]
+                        ["You no longer carry this".into()]
                     } else {
-                        vec!["Click to take it back".to_owned()]
+                        ["Click to take it back".into()]
                     };
                     card::chat_shortcut(world, &response, &[placed.stack.item]);
                     hud::tooltip(&response, world, &def.name, &lines, None);
