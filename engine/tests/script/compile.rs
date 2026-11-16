@@ -113,6 +113,7 @@ fn may_do_lists_exactly_what_a_script_reaches() {
         EffectReach::Warp(place),
         EffectReach::Remembers(bribed),
         EffectReach::OpensShop(honesty_box),
+        EffectReach::PaysItems,
     ];
     assert_eq!(may_do.reaches.len(), expected.len(), "{:?}", may_do.reaches);
     for reach in expected {

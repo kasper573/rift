@@ -98,8 +98,7 @@ impl CarriedInputs {
         CarriedInputs {
             uses: free(InputAction::UseItem) && carried().any(|def| card::use_verb(def).is_some()),
             carries: !inventory.slots.is_empty(),
-            drops: free(InputAction::DropItem)
-                && carried().any(|def| !def.has(ItemModuleKind::Bound)),
+            drops: free(InputAction::DropItem) && carried().any(|def| !def.bound()),
             inspects: free(InputAction::InspectItem) && !inventory.slots.is_empty(),
         }
     }

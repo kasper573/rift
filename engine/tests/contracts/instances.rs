@@ -436,14 +436,16 @@ fn a_game_whose_instances_cannot_be_played_is_refused() {
         rules(game(2).row("test_character", "scout", scout)),
         ["starts in an instance"]
     );
+    let mut unsent = rules(game(2).edit_settings(|settings| {
+        settings
+            .as_object_mut()
+            .expect("settings")
+            .remove("messages");
+    }));
+    unsent.dedup();
     assert_eq!(
-        rules(game(2).edit_settings(|settings| {
-            settings
-                .as_object_mut()
-                .expect("settings")
-                .remove("messages");
-        })),
-        ["rewards items without messages"],
+        unsent,
+        ["pays items without messages"],
         "what a bag has no room for needs somewhere to go"
     );
     assert_eq!(

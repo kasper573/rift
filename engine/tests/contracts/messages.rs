@@ -10,6 +10,7 @@ use engine::systems::inbox::{
     DeleteMessage, InboxView, MessageAnswered, MessageText, OpenMessage, SendMessage, TakeAttached,
 };
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
+use engine::systems::payout::{self, PayoutReason};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::player::{self};
 use engine::systems::save::SavedCharacter;
@@ -352,6 +353,87 @@ fn what_a_bag_has_no_room_for_as_its_character_comes_back_is_sent_by_the_game() 
         again.character.bag.set_aside(),
         [],
         "and what was sent is in her character no longer"
+    );
+}
+
+#[test]
+fn a_payout_fills_the_bag_and_sends_what_has_no_room_by_message() {
+    let mut server = Server::of(game(), vec![friend::request_source()]);
+    let content = server.village.world.resource::<Content>().clone();
+    let (lure, plank, rod) = (
+        item(&content, "lure"),
+        item(&content, "plank"),
+        item(&content, "rod"),
+    );
+    let wren = server.sign_in(1, "Wren", "village");
+    carry(&mut server, 1, &[plank(50)]);
+    let pay = |server: &mut Server, stacks: &[ItemStack]| {
+        let paid = payout::pay(
+            &mut server.village.world,
+            wren,
+            stacks,
+            PayoutReason::Given(None),
+        );
+        server.step();
+        paid
+    };
+    let messages = |server: &mut Server| -> Vec<(String, bool, Vec<ItemStack>)> {
+        inbox_of(server, 1)
+            .rows
+            .into_iter()
+            .map(|row| (row.title, row.from.is_none(), row.attached))
+            .collect()
+    };
+
+    let paid = pay(&mut server, &[lure(6)]);
+    assert_eq!(
+        (paid.kept, paid.sent, bag(&server, 1), messages(&mut server)),
+        (
+            vec![lure(6)],
+            Vec::new(),
+            vec![plank(50), lure(6)],
+            Vec::new()
+        ),
+        "what fits goes into the bag, and nothing is sent"
+    );
+
+    let paid = pay(&mut server, &[rod(1), lure(4)]);
+    assert_eq!(
+        (paid.kept.clone(), paid.sent.clone(), bag(&server, 1)),
+        (vec![lure(4)], vec![rod(1)], vec![plank(50), lure(10)]),
+        "a stack with no room never holds back the ones after it"
+    );
+    assert_eq!(
+        paid.overflow(&content).map(|line| line.plain_words()),
+        Some("No room in your bag for 1 rod: sent to your messages.".to_owned()),
+        "the payout's notification tells what went to messages"
+    );
+    assert_eq!(
+        messages(&mut server),
+        [("Items from village".to_owned(), true, vec![rod(1)])],
+        "the rest comes as a message from the game, named for what paid it"
+    );
+
+    carry(&mut server, 1, &[]);
+    server.village.disconnect(1);
+    let paid = payout::pay(
+        &mut server.village.world,
+        wren,
+        &[lure(2)],
+        PayoutReason::Given(None),
+    );
+    server.step();
+    assert_eq!(
+        (paid.kept, paid.sent),
+        (Vec::new(), vec![lure(2)]),
+        "a character whose player is away is paid everything by message"
+    );
+    server.sign_in(1, "Wren", "village");
+    server.step();
+    assert_eq!(
+        (bag(&server, 1), messages(&mut server).len()),
+        (Vec::new(), 2),
+        "and the message waits for them, though they left before it was written"
     );
 }
 

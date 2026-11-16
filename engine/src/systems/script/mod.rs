@@ -325,13 +325,13 @@ pub enum EffectReach {
     Casts(SkillId),
     /// Seats someone as the driver of the mount.
     Mounts(MountId),
-    /// Lets someone into an instance of the area `to` is in, which they leave for `return_to`,
-    /// and whether clearing it gives items.
+    /// Lets someone into an instance of the area `to` is in, which they leave for `return_to`.
     EntersInstance {
         to: Place,
         return_to: Place,
-        items: bool,
     },
+    /// Pays someone items, sending what has no room in their bag as a message.
+    PaysItems,
     ResetsSkills,
     Animates,
     ShowsVfx,

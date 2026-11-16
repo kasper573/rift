@@ -501,13 +501,18 @@ fn serving(content: &Content, area: &str) -> Sim {
 }
 
 /// A village to start in and, with `forest`, a forest laid out so; two things to carry, an
-/// errand that asks for one of them, and a class with a skill to learn.
+/// errand that asks for one of them, and a class with a skill to learn. It has no messages, so
+/// what a bag has no room for is kept aside.
 fn game(forest: Option<&Map>) -> Game {
     let stacked =
         json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 50 }] });
     let game = Game::new()
         .area("village", &Map::open(9, 9), json!([]))
         .hero("village", 4.0, 4.0)
+        .edit_settings(|settings| {
+            let settings = settings.as_object_mut().expect("settings");
+            settings.remove("messages");
+        })
         .vfx("damage_taken")
         .shader("damage_pop")
         .item("token", stacked.clone())

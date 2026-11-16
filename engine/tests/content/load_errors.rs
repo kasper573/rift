@@ -958,6 +958,58 @@ fn a_file_that_did_not_load_is_reported_alone() {
 }
 
 #[test]
+fn content_that_pays_out_items_needs_messages_for_what_a_bag_has_no_room_for() {
+    let paying = |messages: bool| {
+        let gift = json!({
+            "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "give" },
+            "give": { "type": "items", "give": [{ "item": path("item", "ore") }] },
+        });
+        let taking = json!({
+            "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "take" },
+            "take": { "type": "items", "take": [{ "item": path("item", "ore") }] },
+        });
+        let errand = json!({
+            "title": "Errand", "category": "Errands", "blurb": "Errand", "xp": 10,
+            "modules": [{ "type": "reward", "items": [{ "item": path("item", "ore") }] }],
+        });
+        let script = |name: &str| json!([{ "type": "script", "script": path("script", name) }]);
+        game()
+            .edit_settings(|settings| {
+                if !messages {
+                    let settings = settings.as_object_mut().expect("settings");
+                    settings.remove("messages");
+                }
+            })
+            .item("ore", json!({ "kind": { "type": "resource" } }))
+            .script("gift", "npc", gift)
+            .script("taking", "npc", taking)
+            .npc("giver", 10.0, script("gift"))
+            .npc("taker", 10.0, script("taking"))
+            .quest("errand", errand)
+            .try_load()
+    };
+    let refused = |report: LoadReport| -> Vec<String> {
+        report
+            .errors
+            .into_iter()
+            .filter(|error| error.problem.rule == "pays items without messages")
+            .map(|error| error.file)
+            .collect()
+    };
+
+    assert_eq!(
+        refused(paying(false).err().expect("refused")),
+        [path("quest", "errand"), path("npc", "giver")],
+        "a script that gives and a quest that rewards items, never one that only takes"
+    );
+    assert_eq!(
+        paying(true).err().map(refused).unwrap_or_default(),
+        Vec::<String>::new(),
+        "with messages, what has no room is sent"
+    );
+}
+
+#[test]
 fn a_game_of_only_what_the_engine_requires_loads_as_a_whole_one() {
     let loaded = game().engine_rows().whole().try_load();
 

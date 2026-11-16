@@ -39,6 +39,7 @@ use crate::systems::item::{Inventory, ItemId, ItemModuleKind, ItemStack, scatter
 use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
+use crate::systems::payout::{self, PayoutReason};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{PlayedBy, player_requests};
 use crate::systems::rewards::KillCredited;
@@ -835,13 +836,20 @@ pub fn turn_in(
         .get_mut::<Inventory>(player)
         .ok_or_else(|| "Has no bag".to_owned())?;
     inventory
-        .exchange(&content, def.hand_in(), &gives)
+        .exchange(&content, def.hand_in(), &[])
         .map_err(|refusal| refusal.line(&content))?;
-    complete(world, player, quest);
+    let paid = payout::pay(world, player, &gives, PayoutReason::QuestCompleted(quest));
+    finish_completed(world, player, quest, paid.overflow(&content));
     Ok(())
 }
 
 pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
+    finish_completed(world, player, quest, None);
+}
+
+/// Completes `quest` for `player`, its notification telling what of its rewards went to
+/// messages.
+fn finish_completed(world: &mut World, player: Entity, quest: QuestId, sent: Option<LineText>) {
     let content = world.resource::<Content>().clone();
     let clock = *world.resource::<WallClock>();
     let def = quest.get(&content);
@@ -866,7 +874,10 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
                 topic: HistoryTopic::Quest,
                 sfx: Some(InterfaceSound::QuestCompleted.id(&content)),
             },
-            Mention::Quest(quest).line(&content),
+            match sent {
+                Some(sent) => Mention::Quest(quest).line(&content).then(" · ").then(sent),
+                None => Mention::Quest(quest).line(&content),
+            },
         ),
     );
     raise(world, quest, EventKind::Completed, player);
@@ -1204,25 +1215,6 @@ pub fn check_all(loading: &mut Loading) {
             );
         }
         loading.row_errors(id, check);
-    }
-}
-
-/// Every quest's rewards against the bag they must fit in, which the game's settings size.
-pub fn check_rewards(loading: &mut Loading) {
-    let content = loading.content();
-    let bag = content.built::<GameSettings>().slots.bag;
-    for (id, quest) in loading.rows::<QuestDef>(&content) {
-        let slots = quest.rewards().len() + usize::from(!quest.pick_one().is_empty());
-        if slots > bag as usize {
-            let mut check = RowCheck::default();
-            check.error(
-                "/modules",
-                "rewards don't fit",
-                format!("{slots} slots"),
-                format!("at most {bag} slots of rewards, a pick counting as one"),
-            );
-            loading.row_errors(id, check);
-        }
     }
 }
 

@@ -239,6 +239,9 @@ impl Game {
                 "corpses_linger": 5.0,
                 "claims_last": 60.0,
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },
+                "messages": {
+                    "inbox": 20, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 6
+                },
                 "drops": {
                     "last": 120.0,
                     "scatter": 1.0,
@@ -1097,6 +1100,11 @@ fn words() -> GameWords {
         instance_not_yours: "You are no longer of this party".to_owned(),
         instance_rewards_title: "Your rewards from {area}".to_owned(),
         instance_rewards_text: "Your bag had no room for these.".to_owned(),
+        payout_overflow: "No room in your bag for {items}: sent to your messages.".to_owned(),
+        quest_rewards_title: "Your rewards for {quest}".to_owned(),
+        quest_rewards_text: "Your bag had no room for these.".to_owned(),
+        given_items_title: "Items from {source}".to_owned(),
+        given_items_text: "Your bag had no room for these.".to_owned(),
     }
 }
 

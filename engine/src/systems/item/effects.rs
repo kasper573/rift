@@ -17,8 +17,11 @@ use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::command;
 use crate::systems::equipment;
+use crate::systems::history::HistoryTopic;
 use crate::systems::mention::Mention;
 use crate::systems::movement::{Position, position};
+use crate::systems::notification::{self, Notification};
+use crate::systems::payout::{self, PayoutReason};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::RowRef;
 use crate::systems::script::effect::{self as effects, Reaching};
@@ -26,7 +29,8 @@ use crate::systems::script::{Condition, EffectCall, EffectReach, Place, RiftScri
 use crate::systems::text::LineText;
 use crate::systems::visibility::Presence;
 
-/// Takes and gives items in one exchange, all or nothing.
+/// Takes items, all or nothing, and pays what it gives: what has no room in the bag is sent as a
+/// message.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("item"))]
 pub struct Items {
@@ -298,6 +302,7 @@ impl EffectDef<RiftScripting> for Items {
             .map(|stack| stack.filled(cx))
             .collect::<Result<Vec<_>, _>>()?;
         let refused = self.refused.clone();
+        let reason = PayoutReason::Given(cx.owner_row());
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
             let (take, give) = (take.clone(), give.clone());
@@ -311,16 +316,27 @@ impl EffectDef<RiftScripting> for Items {
                     refused: Some(&refused),
                     nobody: Some("Nobody to trade with"),
                 },
-                move |world, actor| exchange(world, actor, &take, &give),
+                move |world, actor| {
+                    exchange(world, actor, &take, &[])?;
+                    let paid = payout::pay(world, actor, &give, reason);
+                    let content = world.resource::<Content>().clone();
+                    if let Some(sent) = paid.overflow(&content) {
+                        let told = Notification::feed(HistoryTopic::Item, sent);
+                        notification::notify(world, actor, None, told);
+                    }
+                    Ok(())
+                },
             )
         }))
     }
     fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         let takes = self.take.iter().filter_map(|stack| stack.item(cx));
         let gives = self.give.iter().filter_map(|stack| stack.item(cx));
+        let pays = (!self.give.is_empty()).then_some(EffectReach::PaysItems);
         takes
             .map(EffectReach::Takes)
             .chain(gives.map(EffectReach::Gives))
+            .chain(pays)
             .collect()
     }
 }

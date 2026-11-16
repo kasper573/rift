@@ -25,6 +25,7 @@ use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
 use crate::systems::mount;
 use crate::systems::notification::{self, Notification};
 use crate::systems::party::{self, PartyRequest, PlayerParties, PlayerParty};
+use crate::systems::payout::Delivery;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
 use crate::systems::save::Unwritten;
@@ -321,29 +322,62 @@ pub enum SocietyAsk {
     EnterInstance(AreaInstanceEntry),
 }
 
-/// What a world's players asked of society since the server's worlds last conferred.
+/// What a world asked of society since the server's worlds last conferred: what its players
+/// asked, and what its payouts had no room for.
 #[derive(Resource, Default)]
-pub struct SocietyAsks(Vec<(ClientId, SocietyAsk)>);
+pub struct SocietyAsks {
+    asked: Vec<(ClientId, SocietyAsk)>,
+    delivered: Vec<Delivery>,
+}
+
+impl SocietyAsks {
+    fn is_empty(&self) -> bool {
+        self.asked.is_empty() && self.delivered.is_empty()
+    }
+}
+
+/// What a world asked of society, as the worlds confer.
+#[derive(Default)]
+pub struct Asked {
+    pub asked: Vec<(ClientId, SocietyAsk)>,
+    /// Settled whatever became of the player they are for, so nothing paid goes missing.
+    pub delivered: Vec<Delivery>,
+}
+
+impl Asked {
+    pub fn append(&mut self, other: &mut Asked) {
+        self.asked.append(&mut other.asked);
+        self.delivered.append(&mut other.delivered);
+    }
+}
 
 /// Asks society for `ask`, for the player `by`. It is settled when the worlds next confer.
 pub fn ask(world: &mut World, by: ClientId, ask: SocietyAsk) {
-    world.resource_mut::<SocietyAsks>().0.push((by, ask));
+    world.resource_mut::<SocietyAsks>().asked.push((by, ask));
 }
 
-/// What the players of `world` asked of society since the worlds last conferred, leaving it
-/// nothing asked, in a world that holds `society` from here on.
-pub fn take_asks(world: &mut World, society: &ServerSociety) -> Vec<(ClientId, SocietyAsk)> {
+/// Has society write `delivery` as a message when the worlds next confer.
+pub fn deliver(world: &mut World, delivery: Delivery) {
+    world.resource_mut::<SocietyAsks>().delivered.push(delivery);
+}
+
+/// What `world` asked of society since the worlds last conferred, leaving it nothing asked, in a
+/// world that holds `society` from here on.
+pub fn take_asks(world: &mut World, society: &ServerSociety) -> Asked {
     let Some(asks) = world.get_resource::<SocietyAsks>() else {
-        return Vec::new();
+        return Asked::default();
     };
-    let asked = !asks.0.is_empty();
+    let asked = !asks.is_empty();
     if !world.resource::<ServerSociety>().is(society) {
         world.insert_resource(society.clone());
     }
-    if asked {
-        std::mem::take(&mut world.resource_mut::<SocietyAsks>().0)
-    } else {
-        Vec::new()
+    if !asked {
+        return Asked::default();
+    }
+    let mut asks = world.resource_mut::<SocietyAsks>();
+    Asked {
+        asked: std::mem::take(&mut asks.asked),
+        delivered: std::mem::take(&mut asks.delivered),
     }
 }
 
@@ -408,7 +442,7 @@ impl Settling<'_, '_> {
 pub fn settle(
     views: &mut [Option<&mut World>],
     above: &mut AboveWorlds,
-    asked: Vec<(ClientId, SocietyAsk)>,
+    asked: Asked,
     now: UnixMillis,
 ) {
     let game: Option<Content> = views
@@ -424,8 +458,11 @@ pub fn settle(
         unwritten: &mut above.checkpoints.unwritten,
         now,
     };
+    for delivery in asked.delivered {
+        delivery.settle(&mut settling);
+    }
     area_instance::look(&mut settling);
-    for (by, ask) in asked {
+    for (by, ask) in asked.asked {
         let Some(content) = &game else {
             break;
         };

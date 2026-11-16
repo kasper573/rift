@@ -31,6 +31,7 @@ pub mod movement;
 pub mod notification;
 pub mod npc;
 pub mod party;
+pub mod payout;
 pub mod player;
 pub mod probe;
 pub mod prompt;
@@ -302,7 +303,7 @@ pub struct GameSettings {
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlotCounts {
-    /// Stacks of items in a bag; the most rewards a quest may hand out at once.
+    /// Stacks of items in a bag.
     pub bag: u32,
     /// Slots of the player bar, however a player lays them out.
     pub hotbar: u32,
@@ -534,6 +535,21 @@ pub struct GameWords {
     /// The text of the message the game sends a player whose bag had no room for what clearing
     /// an instance of `{area}` gave them.
     pub instance_rewards_text: String,
+    /// What a payout's notification adds as `{items}` had no room in the player's bag and were
+    /// sent to their messages.
+    pub payout_overflow: String,
+    /// The title of the message the game sends a player whose bag had no room for the rewards of
+    /// the quest `{quest}`.
+    pub quest_rewards_title: String,
+    /// The text of the message the game sends a player whose bag had no room for the rewards of
+    /// the quest `{quest}`.
+    pub quest_rewards_text: String,
+    /// The title of the message the game sends a player whose bag had no room for what `{source}`
+    /// gave them: an npc, an item, an area or whatever else the script giving it is of.
+    pub given_items_title: String,
+    /// The text of the message the game sends a player whose bag had no room for what `{source}`
+    /// gave them.
+    pub given_items_text: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -1083,7 +1099,6 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, resource::check_all)
         .hook(LoadStep::Across, crafting::check_all)
         .hook(LoadStep::Across, quest::check_all)
-        .hook(LoadStep::Settings, quest::check_rewards)
         .hook(LoadStep::Settings, command::check_all)
         .hook(LoadStep::Across, notification::check_all)
         .hook(LoadStep::Across, script::check_all)
@@ -1290,6 +1305,11 @@ fn check_settings(loading: &mut Loading) {
             "instance_rewards_text",
             &settings.words.instance_rewards_text,
         ),
+        ("payout_overflow", &settings.words.payout_overflow),
+        ("quest_rewards_title", &settings.words.quest_rewards_title),
+        ("quest_rewards_text", &settings.words.quest_rewards_text),
+        ("given_items_title", &settings.words.given_items_title),
+        ("given_items_text", &settings.words.given_items_text),
     ]
     .into_iter()
     .chain(inbox::words(&settings.words))
@@ -1331,6 +1351,7 @@ fn check_settings(loading: &mut Loading) {
         loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
     }
     area_instance::check_all(loading, &content, settings);
+    payout::check(loading, &content, settings);
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);
     }

@@ -78,11 +78,12 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
     sim.tick();
     let told = lines(&mut sim, 2);
     assert_eq!(
-        told[told.len() - 5..],
+        told[told.len() - 6..],
         [
             "/commands",
             "/give <item>, [amount], [player]",
             "/join <player>",
+            "/take <item>, [amount], [player]",
             "/visit <player>",
             "/warp <to>, [x], [y]"
         ]
@@ -100,12 +101,16 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
         "a global player is reached in whichever area they play"
     );
 
-    send(&mut wood, 3, "/give potion, 100000");
+    send(&mut wood, 3, "/take potion, 5");
     wood.tick();
     let refusal = wood.errors(3);
-    assert_eq!(refusal.len(), 1, "more than a bag holds is refused");
+    assert_eq!(
+        refusal.len(),
+        1,
+        "taking more than the bag holds is refused"
+    );
     sim.forget_notified();
-    send(&mut sim, 1, "/give potion, 100000, player 3");
+    send(&mut sim, 1, "/take potion, 5, player 3");
     testkit::confer(&mut [&mut sim, &mut wood]);
     sim.tick();
     assert_eq!(
@@ -263,10 +268,10 @@ fn a_command_is_for_the_roles_it_names_which_an_account_holds_by_what_its_token_
     assert_eq!(
         (offered(&mut sim, 1, "/"), offered(&mut sim, 2, "/")),
         (
-            ["commands", "give ", "join ", "visit ", "warp "]
+            ["commands", "give ", "join ", "take ", "visit ", "warp "]
                 .map(str::to_owned)
                 .to_vec(),
-            ["commands", "give ", "join ", "visit "]
+            ["commands", "give ", "join ", "take ", "visit "]
                 .map(str::to_owned)
                 .to_vec()
         ),
@@ -409,6 +414,31 @@ fn game() -> Game {
             "command",
             "give",
             json!({ "script": path("script", "give"), "inputs": ["item", "amount", "player"] }),
+        )
+        .row(
+            "script",
+            "take",
+            json!({
+                "runs_on": "command",
+                "variables": {
+                    "item": { "type": "row", "table": "item" },
+                    "amount": { "type": "integer", "default": 1 },
+                    "player": { "type": "global_player", "default": { "type": "subject" } },
+                },
+                "nodes": {
+                    "sent": { "type": "on", "event": "invoked", "next": "hand" },
+                    "hand": {
+                        "type": "items",
+                        "who": { "var": "player" },
+                        "take": [{ "item": { "var": "item" }, "count": { "var": "amount" } }],
+                    },
+                },
+            }),
+        )
+        .row(
+            "command",
+            "take",
+            json!({ "script": path("script", "take"), "inputs": ["item", "amount", "player"] }),
         )
         .row(
             "script",

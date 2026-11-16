@@ -86,15 +86,12 @@ impl EffectDef<RiftScripting> for EnterInstance {
         }))
     }
     fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        cx.peek_place(&self.to)
+        let enters = cx
+            .peek_place(&self.to)
             .zip(cx.peek_place(&self.return_to))
-            .map(|(to, return_to)| EffectReach::EntersInstance {
-                to,
-                return_to,
-                items: !self.rewards.items.is_empty(),
-            })
-            .into_iter()
-            .collect()
+            .map(|(to, return_to)| EffectReach::EntersInstance { to, return_to });
+        let pays = (!self.rewards.items.is_empty()).then_some(EffectReach::PaysItems);
+        enters.into_iter().chain(pays).collect()
     }
 }
 

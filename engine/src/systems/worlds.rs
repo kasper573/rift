@@ -12,7 +12,7 @@ use crate::systems::player::errand::{self, Errand, ErrandOutcome};
 use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Departure, Players};
 use crate::systems::save::{self, Checkpoints};
-use crate::systems::society::{self, ServerSociety, SocietyAsk};
+use crate::systems::society::{self, Asked, ServerSociety};
 use crate::systems::text::LineText;
 use crate::systems::{player, stat, step_area};
 
@@ -127,8 +127,8 @@ pub fn confer(
 struct Heard {
     /// The errands each world asked for, with the world that asked.
     errands: Vec<(usize, Errand)>,
-    /// What each world's players asked of society.
-    asked: Vec<(ClientId, SocietyAsk)>,
+    /// What each world asked of society.
+    asked: Asked,
     /// The characters that left a world.
     gone: Vec<Departure>,
 }

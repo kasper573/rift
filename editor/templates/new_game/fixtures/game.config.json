@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "3db9171e",
+  "content_version": "0b5143db",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -196,7 +196,12 @@
     "instance_timed_out": "Time ran out in {area}",
     "instance_not_yours": "You are no longer of this party",
     "instance_rewards_title": "Your rewards from {area}",
-    "instance_rewards_text": "Your inventory had no room for these."
+    "instance_rewards_text": "Your inventory had no room for these.",
+    "payout_overflow": "No room in your inventory for {items}: sent to your messages.",
+    "quest_rewards_title": "Your rewards for {quest}",
+    "quest_rewards_text": "Your inventory had no room for these.",
+    "given_items_title": "Items from {source}",
+    "given_items_text": "Your inventory had no room for these."
   },
   "typing": {
     "pace": 45.0,

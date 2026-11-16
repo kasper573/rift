@@ -176,7 +176,7 @@ fn quest_items_never_sell_or_drop() {
 }
 
 #[test]
-fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
+fn a_full_bag_takes_the_hand_in_and_sends_the_reward_that_has_no_room_by_message() {
     let mut sim = harbour();
     let player = sim.join(1);
     accept(&mut sim, player, "tusks");
@@ -190,33 +190,26 @@ fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
     let tusks = sim.id::<QuestDef>("tusks");
     assert_eq!(thanks.panel, Some(ConversationPanel::QuestTurnIn(tusks)));
     assert!(!locked(&thanks, "I'll take the shield."));
-    let refused = sim
-        .pick(1, "I'll take the shield.")
-        .and_then(|now| now.refused);
-    assert!(refused.is_some());
-    assert_eq!(
-        sim.errors(1).last().map(String::as_str),
-        Some("Needs 1 free slot")
-    );
-    assert_eq!(sim.count(player, "tusk"), 7);
-    assert_eq!(sim.count(player, "shield"), 0);
-    sim.leave(1);
-
-    let conn = sim.conn(1);
-    let slot = sim.slot_of(player, "tusk");
-    sim.send(conn, DropItemRequest { slot });
-    sim.tick();
-    sim.give(player, "tusk", 5);
-    sim.run(0.5);
-
-    sim.talk(1, "trader");
-    sim.pick(1, "Tusks");
     sim.pick(1, "I'll take the shield.");
-    assert_eq!(sim.count(player, "tusk"), 0);
-    assert_eq!(sim.count(player, "shield"), 1);
+    assert_eq!(
+        [
+            sim.count(player, "tusk"),
+            sim.count(player, "gold"),
+            sim.count(player, "shield")
+        ],
+        [2, 36, 0],
+        "the hand-in is taken, and what fits is paid into the bag"
+    );
     assert_eq!(
         log(&sim, player).finished(tusks).map(|done| done.result),
-        Some(QuestResult::Completed)
+        Some(QuestResult::Completed),
+        "a full bag never holds a quest back"
+    );
+    let told = sim.told(1);
+    assert_eq!(
+        told.last().map(|told| told.text.plain_words()),
+        Some("Tusks · No room in your bag for 1 shield: sent to your messages.".to_owned()),
+        "the quest's own notification tells what went to messages"
     );
 }
 

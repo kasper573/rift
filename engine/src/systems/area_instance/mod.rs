@@ -25,17 +25,18 @@ use crate::systems::area::transition::Crossing;
 use crate::systems::area::{self, AreaDef, AreaId};
 use crate::systems::combat::Died;
 use crate::systems::history::HistoryTopic;
-use crate::systems::item::{DropRow, Inventory, ItemStack};
+use crate::systems::item::{DropRow, ItemStack};
 use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification};
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::party::{PartyId, PlayerParties};
+use crate::systems::payout::{self, PayoutReason};
 use crate::systems::player::snapshot::{self, CharacterSnapshot};
 use crate::systems::player::{self, CharacterAccount, RequestNeeds};
-use crate::systems::script::{EffectReach, FlowKey, OwnerRow, Place, RiftInstances, RiftScripts};
+use crate::systems::script::{FlowKey, Place, RiftInstances};
 use crate::systems::society::{ServerSociety, Settling, Society};
 use crate::systems::text::LineText;
-use crate::systems::{GameSettings, SETTINGS_FILE, class, identity, inbox};
+use crate::systems::{GameSettings, SETTINGS_FILE, class, identity};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -580,8 +581,7 @@ pub(crate) fn keep(settling: &mut Settling, content: &Content) {
     });
 }
 
-/// What the game's settings must hold for its instances: nobody starts inside an instanced
-/// area, and a door that rewards items has messages to send what a bag has no room for.
+/// Nobody starts inside an instanced area.
 pub fn check_all(loading: &mut Loading, content: &Content, settings: &GameSettings) {
     let instanced = |place: Place| place.area.get(content).instance.is_some();
     let starts_inside = |place: Place| {
@@ -600,32 +600,6 @@ pub fn check_all(loading: &mut Loading, content: &Content, settings: &GameSettin
         if instanced(start) {
             loading.json_error(character.path(content), "/start", starts_inside(start));
         }
-    }
-    if settings.messages.is_some() {
-        return;
-    }
-    let scripts = content.built::<RiftScripts>();
-    let unsent: Vec<OwnerRow> = scripts
-        .owners()
-        .map(|(row, _)| *row)
-        .filter(|row| {
-            let reaches = &scripts.may_do(*row).reaches;
-            reaches
-                .iter()
-                .any(|reach| matches!(reach, EffectReach::EntersInstance { items: true, .. }))
-        })
-        .collect();
-    for row in unsent {
-        let site = crate::systems::script::owner_site(content, row);
-        loading.json_error(
-            &site.file,
-            &site.pointer,
-            ContentProblem::new(
-                "rewards items without messages",
-                "an enter_instance whose rewards hold items",
-                "messages in the game's settings, to send what a bag has no room for",
-            ),
-        );
     }
 }
 
@@ -751,7 +725,6 @@ fn tally(settling: &mut Settling, content: &Content) {
 /// whole and items rolled for them alone, into their bag as far as it has room, the rest sent to
 /// them by the game. One whose player is gone gets every item sent.
 fn clear(settling: &mut Settling, content: &Content, id: AreaInstanceId) {
-    let settings = content.built::<GameSettings>();
     let Some(instance) = settling.society.instances.get(id).cloned() else {
         return;
     };
@@ -793,55 +766,22 @@ fn clear(settling: &mut Settling, content: &Content, id: AreaInstanceId) {
             .map(|account| (account, instance.rewards.rolled(&mut rng)))
             .collect()
     });
-    let said = (
-        settings
-            .words
-            .instance_rewards_title
-            .replace("{area}", &def.name),
-        settings
-            .words
-            .instance_rewards_text
-            .replace("{area}", &def.name),
-    );
     let mut given: BTreeMap<AccountId, AreaInstanceGiven> = BTreeMap::new();
     for (account, stacks) in rolled {
-        // Whoever is not at their character is not there to be handed anything.
-        let attended = settling
-            .reach(&account)
-            .is_some_and(|(world, character)| player::attended(world, character));
-        let gave = match settling.reach(&account) {
+        let xp = match settling.reach(&account) {
             Some((world, character)) => {
                 class::grant_xp(world, character, instance.rewards.xp);
-                let sent = match world.get_mut::<Inventory>(character) {
-                    Some(mut bag) if attended => bag.give_what_fits(content, &stacks),
-                    _ => stacks.clone(),
-                };
-                AreaInstanceGiven {
-                    xp: instance.rewards.xp,
-                    kept: stacks
-                        .iter()
-                        .filter(|stack| !sent.contains(stack))
-                        .copied()
-                        .collect(),
-                    sent,
-                }
+                instance.rewards.xp
             }
-            None => AreaInstanceGiven {
-                xp: 0,
-                kept: Vec::new(),
-                sent: stacks,
-            },
+            None => 0,
         };
-        if !gave.sent.is_empty() {
-            inbox::from_game(
-                settling.society,
-                settling.unwritten,
-                settling.now,
-                &account,
-                (&said.0, &said.1),
-                gave.sent.clone(),
-            );
-        }
+        let reason = PayoutReason::InstanceCleared(instance.area);
+        let paid = payout::pay_account(settling, content, &account, &stacks, reason);
+        let gave = AreaInstanceGiven {
+            xp,
+            kept: paid.kept,
+            sent: paid.sent,
+        };
         settling.society.changed(&account);
         given.insert(account, gave);
     }
