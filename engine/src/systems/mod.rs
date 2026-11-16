@@ -4,6 +4,7 @@ pub mod area;
 pub mod area_instance;
 pub mod area_map;
 pub mod attention;
+pub mod auction;
 pub mod belongings;
 pub mod chat;
 pub mod class;
@@ -125,6 +126,7 @@ pub fn protocol(app: &mut App) {
     mount::register(app);
     area_instance::register(app);
     trade::register(app);
+    auction::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -304,6 +306,9 @@ pub struct GameSettings {
     /// How players trade. A game without it has no trading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trade: Option<trade::TradeSettings>,
+    /// How the auction house works. A game without it has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auctions: Option<auction::AuctionSettings>,
 }
 
 /// How much a player keeps.
@@ -619,6 +624,27 @@ pub struct GameWords {
     pub trade_overflow_title: String,
     /// The text of that message.
     pub trade_overflow_text: String,
+    /// What a player is told as they list `{item}` on the auction house.
+    pub auction_listed: String,
+    /// What a player is told as they buy `{item}` for `{price}`, and the title of the message
+    /// of what their bag had no room for.
+    pub auction_bought: String,
+    /// What a seller is told as `{item}` sells and they get `{price}`, and the title of the
+    /// message paying them while they are away.
+    pub auction_sold: String,
+    /// What a seller is told as `{item}` comes back unsold, and the title of the message
+    /// bringing it while they are away.
+    pub auction_expired: String,
+    /// What a seller is told as `{item}` comes back from an auction they cancelled.
+    pub auction_cancelled: String,
+    /// What a player is told as someone else bought `{item}` before their purchase settled.
+    pub auction_gone: String,
+    /// What a player is told listing more than the `{listings}` auctions they may run.
+    pub auction_too_many: String,
+    /// The text of every message the auction house sends.
+    pub auction_message: String,
+    /// What a player is told listing a stack for nothing.
+    pub auction_no_price: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -765,7 +791,11 @@ pub fn server_app(
                     item::use_item,
                     (item::drop_item, item::arrange_stacks).chain(),
                     (item::pickup_request, resource::gather_request).chain(),
-                    (interact::interact_request, trade::requests),
+                    (
+                        interact::interact_request,
+                        trade::requests,
+                        auction::requests,
+                    ),
                     dialogue::requests,
                     (shop::requests, prompt::requests, crafting::requests).chain(),
                     quest::requests,
@@ -792,7 +822,7 @@ pub fn server_app(
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
                     (prompt::hold, crafting::hold, crafting::work).chain(),
-                    (area_instance::entrance::hold, trade::hold),
+                    (area_instance::entrance::hold, trade::hold, auction::hold),
                     item::expire_drops,
                     player::join,
                     (
@@ -990,7 +1020,10 @@ pub fn client_app(
             area_instance::plate::plugin,
             area_instance::entrance::plugin,
             area_instance::gather::plugin,
+        ))
+        .add_plugins((
             trade::window::plugin,
+            auction::window::plugin,
             actor::options::plugin,
         ));
     app
@@ -1293,6 +1326,25 @@ fn check_settings(loading: &mut Loading) {
         check.at_least("/trade/slots", trade.slots, 1, "items");
         check.at_least("/trade/accept_waits", trade.accept_waits.0, 0.0, "seconds");
     }
+    if let Some(auctions) = &settings.auctions {
+        check.at_least(
+            "/auctions/durations",
+            auctions.durations.len(),
+            1,
+            "lengths",
+        );
+        for (index, duration) in auctions.durations.iter().enumerate() {
+            check.at_least(
+                format!("/auctions/durations/{index}"),
+                duration.0,
+                1.0,
+                "seconds",
+            );
+        }
+        check.range("/auctions/deposit", auctions.deposit, 0.0, 100.0, "percent");
+        check.range("/auctions/cut", auctions.cut, 0.0, 100.0, "percent");
+        check.at_least("/auctions/listings", auctions.listings, 1, "auctions");
+    }
     settings.cards.check("/cards", &mut check);
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
@@ -1434,6 +1486,7 @@ fn check_settings(loading: &mut Loading) {
     .into_iter()
     .chain(inbox::words(&settings.words))
     .chain(trade::words(&settings.words))
+    .chain(auction::words(&settings.words))
     {
         check.text(format!("/words/{field}"), said, 1, 80);
     }
@@ -1473,6 +1526,7 @@ fn check_settings(loading: &mut Loading) {
     }
     area_instance::check_all(loading, &content, settings);
     payout::check(loading, &content, settings);
+    auction::check(loading, &content, settings);
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);
     }

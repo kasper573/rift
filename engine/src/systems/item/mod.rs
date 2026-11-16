@@ -671,7 +671,18 @@ pub struct StackLimit {
     pub max: u32,
 }
 
-#[derive(JsonSchema, Serialize, Deserialize, IntoStaticStr, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(
+    JsonSchema,
+    Serialize,
+    Deserialize,
+    IntoStaticStr,
+    VariantArray,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemCategory {
     Consumable,

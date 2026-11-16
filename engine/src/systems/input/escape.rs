@@ -6,7 +6,7 @@ use crate::core::gui;
 use crate::systems::dialogue::stage;
 use crate::systems::hud::menu;
 use crate::systems::{
-    actor, area_instance, crafting, hud, item, quest, resource, skill, terminal, trade,
+    actor, area_instance, auction, crafting, hud, item, quest, resource, skill, terminal, trade,
 };
 
 pub(super) fn plugin(app: &mut App) {
@@ -34,6 +34,7 @@ fn step_out(world: &mut World) {
                 || close_front(world)
                 || area_instance::gather::call_off(world)
                 || trade::window::cancel(world)
+                || auction::window::close(world)
                 || resource::render::stop(world)
         }
     };

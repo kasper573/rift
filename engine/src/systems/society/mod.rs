@@ -19,6 +19,7 @@ use crate::systems::GameSettings;
 use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::area::AreaId;
 use crate::systems::area_instance::{self, AreaInstances, InstanceAsk};
+use crate::systems::auction::{self, Auction, AuctionAsk, AuctionHouse};
 use crate::systems::chat::ChatSaid;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
 use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
@@ -51,6 +52,7 @@ pub struct Society {
     pub(crate) inboxes: Inboxes,
     pub(crate) parties: PlayerParties,
     pub(crate) instances: AreaInstances,
+    pub(crate) auctions: AuctionHouse,
     sources: Vec<SocialRequestSource>,
     /// The accounts whose characters stand in a world, and where.
     playing: HashMap<AccountId, Playing>,
@@ -93,6 +95,9 @@ impl Society {
             requests: SocialRequests::of(all::<SocialRequest>(store, scope).await?),
             inboxes: Inboxes::counted(messages, reads),
             parties: PlayerParties::of(all::<PlayerParty>(store, scope).await?),
+            auctions: AuctionHouse::of(
+                all::<Auction>(store, &scope.clone().setting_aside()).await?,
+            ),
             sources,
             ..Society::default()
         })
@@ -130,6 +135,10 @@ impl Society {
 
     pub fn parties(&self) -> &PlayerParties {
         &self.parties
+    }
+
+    pub fn auctions(&self) -> &AuctionHouse {
+        &self.auctions
     }
 
     /// Who `account` takes requests from, in a game with these `settings`.
@@ -319,6 +328,7 @@ pub enum SocietyAsk {
     PartyLine(ChatSaid),
     /// Of instances: a copy of their own, a call to their party, or an answer to one.
     Instance(InstanceAsk),
+    Auction(AuctionAsk),
 }
 
 /// What a world asked of society since the server's worlds last conferred: what its players
@@ -494,6 +504,7 @@ pub fn settle(
             SocietyAsk::Instance(ask) => {
                 area_instance::roster::settle(&mut settling, content, &by, ask);
             }
+            SocietyAsk::Auction(ask) => auction::settle(&mut settling, content, &by, ask),
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {
                     account.accepts_requests_from = Some(from);
@@ -514,6 +525,7 @@ pub fn settle(
         }
         area_instance::roster::keep(&mut settling, &content);
         area_instance::keep(&mut settling, &content);
+        auction::keep(&mut settling, &content);
     }
     for account in std::mem::take(&mut settling.society.changed) {
         if let Some((world, character)) = reach(settling.views, settling.roster, &account) {

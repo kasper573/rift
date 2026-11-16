@@ -443,7 +443,7 @@ pub fn from_game(
     now: UnixMillis,
     to: &AccountId,
     said: (&str, &str),
-    stacks: Vec<ItemStack>,
+    stacks: impl Into<SavedList<ItemStack>>,
 ) {
     let message = InboxMessage {
         id: MessageId(0),

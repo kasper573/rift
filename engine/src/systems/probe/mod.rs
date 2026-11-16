@@ -382,6 +382,8 @@ pub struct ProbeSnapshot {
     pub trade: Option<ShownTrade>,
     /// The options open for another player: what the player can do with them.
     pub actor_options: Option<crate::systems::actor::options::ShownActorOptions>,
+    /// The auction house, while it is open.
+    pub auction_house: Option<crate::systems::auction::window::ShownAuctionHouse>,
     /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
     /// spot has against it.
     pub spot_aim: Option<SpotAim>,
@@ -1289,6 +1291,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         instance_call: area_instance::gather::shown(world),
         trade: crate::systems::trade::window::shown(world),
         actor_options: crate::systems::actor::options::shown(world),
+        auction_house: crate::systems::auction::window::shown(world),
         spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
         history: ProbeHistory {

@@ -6,7 +6,7 @@ use bevy_ecs::prelude::*;
 use crate::core::content::{Content, ContentProblem, Loading, SETTINGS_FILE};
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
-use crate::systems::item::{Inventory, ItemStack};
+use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::player::{self, CharacterAccount};
 use crate::systems::quest::{QuestDef, QuestId};
 use crate::systems::script::{self, EffectReach, OwnerRow, RiftScripts, RunnerKind};
@@ -23,6 +23,10 @@ pub enum PayoutReason {
     Traded {
         with: String,
     },
+    AuctionBought(ItemId),
+    AuctionSold(ItemId),
+    AuctionExpired(ItemId),
+    AuctionCancelled(ItemId),
     /// A script's `items` effect, named by the file it runs in, where it runs in one.
     Given(Option<OwnerRow>),
 }
@@ -159,6 +163,13 @@ pub fn check(loading: &mut Loading, content: &Content, settings: &GameSettings) 
             "messages in the game's settings, to send what a bag has no room for",
         )
     };
+    if settings.auctions.is_some() {
+        loading.json_error(
+            SETTINGS_FILE,
+            "/auctions",
+            unsent("an auction house, which pays what is bought and sold"),
+        );
+    }
     if settings.trade.is_some() {
         loading.json_error(
             SETTINGS_FILE,
@@ -204,6 +215,12 @@ impl PayoutReason {
         let filled = |title: &str, text: &str, hole: &str, with: &str| {
             (title.replace(hole, with), text.replace(hole, with))
         };
+        let auctioned = |title: &str, item: ItemId| {
+            let named = title
+                .replace("{item}", &item.get(content).name)
+                .replace("{price}", "");
+            (named.trim().to_owned(), words.auction_message.clone())
+        };
         match self {
             PayoutReason::InstanceCleared(area) => filled(
                 &words.instance_rewards_title,
@@ -223,6 +240,10 @@ impl PayoutReason {
                 "{name}",
                 &with,
             ),
+            PayoutReason::AuctionBought(item) => auctioned(&words.auction_bought, item),
+            PayoutReason::AuctionSold(item) => auctioned(&words.auction_sold, item),
+            PayoutReason::AuctionExpired(item) => auctioned(&words.auction_expired, item),
+            PayoutReason::AuctionCancelled(item) => auctioned(&words.auction_cancelled, item),
             PayoutReason::Given(row) => {
                 let source = row
                     .and_then(|row| source_name(content, row))

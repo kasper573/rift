@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "629589aa",
+  "content_version": "1b52e03e",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -229,7 +229,16 @@
     "trade_gave": "You gave {name} {gave}.",
     "trade_got": "{name} gave you {got}.",
     "trade_overflow_title": "Items from your trade with {name}",
-    "trade_overflow_text": "Your inventory had no room for these."
+    "trade_overflow_text": "Your inventory had no room for these.",
+    "auction_listed": "You listed {item} on the auction house.",
+    "auction_bought": "Bought {item} for {price}",
+    "auction_sold": "Sold {item} for {price}",
+    "auction_expired": "{item} didn't sell",
+    "auction_cancelled": "{item} came back from the auction house",
+    "auction_gone": "Someone bought {item} just before you.",
+    "auction_too_many": "You already have {listings} auctions running.",
+    "auction_message": "From the auction house.",
+    "auction_no_price": "Set a price above zero."
   },
   "typing": {
     "pace": 45.0,

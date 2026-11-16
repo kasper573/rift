@@ -13,6 +13,7 @@ use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::area_instance::AreaInstanceShown;
 use crate::systems::area_instance::roster::InstanceCallShown;
+use crate::systems::auction::{self, AuctionRow};
 use crate::systems::inbox;
 use crate::systems::party::PartyShown;
 use crate::systems::player::CharacterAccount;
@@ -52,6 +53,8 @@ pub struct SocietyView {
     pub instance: Option<AreaInstanceShown>,
     /// The call to an instance the account leads, or was called to by its party's leader.
     pub call: Option<InstanceCallShown>,
+    /// The auctions the account has running, those ending first first.
+    pub auctions: Vec<AuctionRow>,
 }
 
 /// A friend, as the player whose friend they are sees them.
@@ -123,6 +126,7 @@ pub(crate) fn show(world: &mut World, character: Entity, society: &Society) {
     let content = world.resource::<Content>();
     view.instance = AreaInstanceShown::of(society, &account.0, content);
     view.call = InstanceCallShown::of(society, &account.0, content);
+    view.auctions = auction::mine(society, &account.0);
     if world.get::<SocietyView>(character) != Some(&view) {
         world.entity_mut(character).insert(view);
     }
@@ -194,6 +198,7 @@ impl SocietyView {
             party: None,
             instance: None,
             call: None,
+            auctions: Vec::new(),
         })
     }
 }

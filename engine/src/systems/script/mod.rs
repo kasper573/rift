@@ -332,6 +332,7 @@ pub enum EffectReach {
     },
     /// Pays someone items, sending what has no room in their bag as a message.
     PaysItems,
+    OpensAuctionHouse,
     ResetsSkills,
     Animates,
     ShowsVfx,

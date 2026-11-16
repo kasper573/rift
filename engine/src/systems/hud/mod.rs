@@ -35,7 +35,7 @@ use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
 use crate::systems::text::LineText;
 use crate::systems::{
-    area_instance, equipment, item, mount, party, quest, skill, social_request, trade,
+    area_instance, auction, equipment, item, mount, party, quest, skill, social_request, trade,
 };
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
@@ -305,6 +305,10 @@ static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     (
         trade::window::TRADE_WINDOW,
         &trade::window::TradeWindowWidget,
+    ),
+    (
+        auction::window::AUCTION_HOUSE,
+        &auction::window::AuctionWindowWidget,
     ),
 ];
 

@@ -1140,6 +1140,15 @@ fn words() -> GameWords {
         trade_got: "{name} gave you {got}.".to_owned(),
         trade_overflow_title: "Items from your trade with {name}".to_owned(),
         trade_overflow_text: "Your bag had no room for these.".to_owned(),
+        auction_listed: "You listed {item} on the auction house.".to_owned(),
+        auction_bought: "Bought {item} for {price}".to_owned(),
+        auction_sold: "Sold {item} for {price}".to_owned(),
+        auction_expired: "{item} didn't sell".to_owned(),
+        auction_cancelled: "{item} came back from the auction house".to_owned(),
+        auction_gone: "Someone bought {item} just before you.".to_owned(),
+        auction_too_many: "You already have {listings} auctions running.".to_owned(),
+        auction_message: "From the auction house.".to_owned(),
+        auction_no_price: "Set a price above zero.".to_owned(),
     }
 }
 

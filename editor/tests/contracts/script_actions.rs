@@ -318,6 +318,16 @@ fn every_node_a_script_offers_lands_after_its_event_or_is_refused_for_what_it_is
             .sfx("swish")
             .vfx("spark")
             .row("skill", "lunge", skill.clone())
+            .item("coin", json!({ "kind": { "type": "resource" } }))
+            .edit_settings(|settings| {
+                settings["auctions"] = json!({
+                    "currency": path("item", "coin"),
+                    "durations": [3600.0],
+                    "deposit": 5.0,
+                    "cut": 5.0,
+                    "listings": 10,
+                });
+            })
             .npc("wolf", 10.0, wolf.clone())
             .script(
                 "lunge_used",

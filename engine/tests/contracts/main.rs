@@ -1,3 +1,4 @@
+mod auctions;
 mod babble;
 mod backoff;
 mod bindings;
