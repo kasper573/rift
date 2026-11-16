@@ -140,16 +140,19 @@ pub(crate) struct Notice<'a> {
     pub title: &'a str,
     pub lines: &'a [String],
     pub notes: &'a [String],
-    pub action: Option<&'a str>,
+    /// How much of the work it waits on is done.
+    pub progress: Option<f32>,
+    /// The buttons at its foot, the first the one most players want.
+    pub actions: &'a [&'a str],
 }
 
-/// Returns whether the notice's action was taken.
+/// Returns which of the notice's actions was taken.
 pub(crate) fn notice_screen(
     gui: &egui::Context,
     id: &str,
     backdrop: Option<egui::Color32>,
     notice: Notice,
-) -> bool {
+) -> Option<usize> {
     system_screen(gui, id, backdrop, |ui| notice_panel(ui, notice)).inner
 }
 
@@ -228,19 +231,44 @@ struct PacedFrom(WinitSettings);
 
 const WAITING_FRAME: Duration = Duration::from_millis(100);
 
-fn notice_panel(ui: &mut Ui, notice: Notice) -> bool {
+fn notice_panel(ui: &mut Ui, notice: Notice) -> Option<usize> {
     panel(ui, notice.title, |ui| {
         for line in notice.lines {
             ui.label(line);
         }
+        if let Some(share) = notice.progress {
+            let size = egui::Vec2::new(ui.available_width(), PROGRESS_HEIGHT);
+            ui::paint::progress_line(ui, size, share, ui::ink::AZURE);
+        }
         for text in notice.notes {
             note(ui, text);
         }
-        notice
-            .action
-            .is_some_and(|action| controls::primary(ui, action).clicked())
+        let mut taken = None;
+        let mut buttons = |ui: &mut Ui| {
+            for (index, action) in notice.actions.iter().enumerate().rev() {
+                let button = if index == 0 {
+                    controls::primary(ui, *action)
+                } else {
+                    controls::button(ui, *action)
+                };
+                if button.clicked() {
+                    taken = Some(index);
+                }
+            }
+        };
+        match notice.actions.len() {
+            0 => {}
+            1 => buttons(ui),
+            _ => {
+                let row = egui::Layout::right_to_left(egui::Align::Center);
+                ui.with_layout(row, buttons);
+            }
+        }
+        taken
     })
 }
+
+const PROGRESS_HEIGHT: f32 = 4.0;
 
 fn notice_height(ui: &Ui) -> f32 {
     let line = ui.text_style_height(&TextStyle::Body) + LINE_GAP;

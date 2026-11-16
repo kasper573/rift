@@ -2,6 +2,7 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=RIFT_BUILD");
+    println!("cargo:rerun-if-env-changed=RIFT_RELEASE_KEY");
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/index");
     if let Some(head) = git(&["rev-parse", "--symbolic-full-name", "HEAD"]) {
@@ -13,6 +14,9 @@ fn main() {
         .or_else(git_build)
         .unwrap_or_else(|| "unknown".to_owned());
     println!("cargo:rustc-env=RIFT_BUILD={build}");
+    if let Ok(key) = std::env::var("RIFT_RELEASE_KEY") {
+        println!("cargo:rustc-env=RIFT_RELEASE_KEY={key}");
+    }
 }
 
 fn git_build() -> Option<String> {

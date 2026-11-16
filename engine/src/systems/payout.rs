@@ -194,12 +194,11 @@ pub fn check(loading: &mut Loading, content: &Content, settings: &GameSettings) 
         let problem = unsent("a script that pays out items");
         loading.json_error(&site.file, &site.pointer, problem);
     }
-    let rewarding: Vec<QuestId> = content
-        .ids::<QuestDef>()
-        .filter(|quest| {
-            let def = quest.get(content);
-            !def.rewards().is_empty() || !def.pick_one().is_empty()
-        })
+    let rewarding: Vec<QuestId> = loading
+        .rows::<QuestDef>(content)
+        .into_iter()
+        .filter(|(_, def)| !def.rewards().is_empty() || !def.pick_one().is_empty())
+        .map(|(quest, _)| quest)
         .collect();
     for quest in rewarding {
         let problem = unsent("a quest whose rewards hold items");

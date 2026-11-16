@@ -1,11 +1,13 @@
 use std::sync::Arc;
 
 use askama::Template;
-use axum::extract::State;
+use axum::body::Bytes;
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum_extra::extract::cookie::CookieJar;
 
+use crate::bundle::{self, ArchiveKind};
 use crate::{App, auth};
 
 pub(crate) async fn landing(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
@@ -15,45 +17,38 @@ pub(crate) async fn landing(State(app): State<Arc<App>>, jar: CookieJar) -> Resp
 }
 
 pub(crate) async fn downloads(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
-    let platforms = PLATFORMS
-        .iter()
-        .map(|platform| PlatformDownload {
-            platform,
-            client: format!(
-                "{}/{}/{}",
-                app.config.downloads_url,
-                app.config.release,
-                platform.archive(CLIENT)
-            ),
-            archive: platform.archive(CLIENT),
-        })
-        .collect();
     page(Downloads {
         nav: app.nav(&jar, "/downloads").await,
-        platforms,
-        domain: app.domain.clone(),
+        platforms: &PLATFORMS,
     })
 }
 
-pub(crate) async fn rift_env(State(app): State<Arc<App>>) -> Response {
-    let file = RiftEnv {
-        domain: &app.domain,
-        game_server_url: &app.config.game_server_url,
-        sign_in: &app.desktop_sign_in,
+/// The game client of `platform`, extracted to a folder that holds everything it needs to play
+/// on this site.
+pub(crate) async fn download(
+    State(app): State<Arc<App>>,
+    Path(platform): Path<String>,
+) -> Response {
+    let Some(index) = PLATFORMS.iter().position(|known| known.id == platform) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
-    match file.render() {
-        Ok(text) => (
+    let platform = &PLATFORMS[index];
+    let bundle = app.bundles[index]
+        .get_or_try_init(|| app.bundle(platform))
+        .await;
+    match bundle {
+        Ok(bytes) => (
             [
-                (header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+                (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
                 (
                     header::CONTENT_DISPOSITION,
-                    "attachment; filename=\"rift.env\"",
+                    format!("attachment; filename=\"{}\"", app.archive_name(platform)),
                 ),
             ],
-            text,
+            bytes.clone(),
         )
             .into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+        Err(error) => (StatusCode::BAD_GATEWAY, error).into_response(),
     }
 }
 
@@ -103,8 +98,7 @@ struct Landing {
 #[template(path = "downloads.html")]
 struct Downloads {
     nav: Nav,
-    platforms: Vec<PlatformDownload>,
-    domain: String,
+    platforms: &'static [Platform],
 }
 
 #[derive(Template)]
@@ -112,49 +106,112 @@ struct Downloads {
 struct RiftEnv<'a> {
     domain: &'a str,
     game_server_url: &'a str,
+    releases_url: &'a str,
     sign_in: &'a oidc::BrowserSignInSettings,
 }
 
-struct PlatformDownload {
-    platform: &'static Platform,
-    archive: String,
-    client: String,
-}
-
-struct Platform {
+pub(crate) struct Platform {
     id: &'static str,
     name: &'static str,
     detail: &'static str,
-    archive_suffix: &'static str,
+    kind: ArchiveKind,
 }
 
 impl Platform {
-    /// The name of the release's archive of `binary` for this platform.
-    fn archive(&self, binary: &str) -> String {
-        format!("{binary}-{}{}", self.id, self.archive_suffix)
+    fn suffix(&self) -> &'static str {
+        match self.kind {
+            ArchiveKind::TarGz => ".tar.gz",
+            ArchiveKind::Zip => ".zip",
+        }
+    }
+}
+
+impl App {
+    async fn bundle(&self, platform: &Platform) -> Result<Bytes, String> {
+        let url = format!(
+            "{}/{}/{CLIENT}-{}{}",
+            self.config.downloads_url,
+            self.config.release,
+            platform.id,
+            platform.suffix()
+        );
+        let fetched = async {
+            openidconnect::reqwest::Client::new()
+                .get(&url)
+                .send()
+                .await?
+                .error_for_status()?
+                .bytes()
+                .await
+        };
+        let release = fetched.await.map_err(|error| format!("{url}: {error}"))?;
+        let rift_env = RiftEnv {
+            domain: &self.domain,
+            game_server_url: &self.config.game_server_url,
+            releases_url: &self.config.downloads_url,
+            sign_in: &self.desktop_sign_in,
+        }
+        .render()
+        .map_err(|error| error.to_string())?;
+        bundle::bundle(&release, platform.kind, &self.folder_name(), &rift_env).map(Bytes::from)
+    }
+
+    /// The folder the game client extracts to, named after the game.
+    fn folder_name(&self) -> String {
+        let named: String = self
+            .game
+            .name
+            .chars()
+            .map(|letter| {
+                if letter.is_alphanumeric() {
+                    letter
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        let named = named
+            .split('-')
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>()
+            .join("-");
+        if named.is_empty() {
+            CLIENT.to_owned()
+        } else {
+            named
+        }
+    }
+
+    fn archive_name(&self, platform: &Platform) -> String {
+        format!(
+            "{}-{}{}",
+            self.folder_name(),
+            platform.id,
+            platform.suffix()
+        )
     }
 }
 
 const CLIENT: &str = "game-client";
 
-const PLATFORMS: [Platform; 3] = [
+pub(crate) const PLATFORMS: [Platform; 3] = [
     Platform {
         id: "linux-x86_64",
         name: "Linux",
         detail: "x86-64",
-        archive_suffix: ".tar.gz",
+        kind: ArchiveKind::TarGz,
     },
     Platform {
         id: "windows-x86_64",
         name: "Windows",
         detail: "x86-64",
-        archive_suffix: ".zip",
+        kind: ArchiveKind::Zip,
     },
     Platform {
         id: "macos-arm64",
         name: "macOS",
         detail: "Apple silicon",
-        archive_suffix: ".tar.gz",
+        kind: ArchiveKind::TarGz,
     },
 ];
 

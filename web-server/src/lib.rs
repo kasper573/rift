@@ -1,4 +1,5 @@
 mod auth;
+mod bundle;
 mod pages;
 
 pub use auth::SignInSettings;
@@ -17,7 +18,8 @@ use tower_http::services::ServeFile;
 
 pub const ENV_PREFIX: &str = "RIFT_WEB_SERVER_";
 
-/// The prefix of the sign-in settings the site hands game clients in their `rift.env`.
+/// The prefix of the sign-in settings the site puts in the `rift.env` beside the game client it
+/// hands out.
 pub const DESKTOP_SIGN_IN_ENV_PREFIX: &str = "RIFT_WEB_SERVER_DESKTOP_AUTH_";
 
 #[derive(Serialize, Deserialize)]
@@ -29,7 +31,8 @@ pub struct WebServerConfig {
     pub game_server_url: String,
     /// The same game server as the web-server itself reaches it.
     pub game_server_internal_url: String,
-    /// Where releases are downloaded from: a release's archives are at `<downloads_url>/<release>/`.
+    /// Where releases are published: a release's archives are at `<downloads_url>/<release>/`. The
+    /// site hands out the game client from there, and game clients update themselves from there.
     pub downloads_url: String,
     /// The engine release the site serves, whose game client it offers.
     pub release: String,
@@ -64,11 +67,12 @@ pub async fn router(site: Site) -> Router {
         game,
         desktop_sign_in,
         config,
+        bundles: Default::default(),
     });
     Router::new()
         .route("/", get(pages::landing))
         .route("/downloads", get(pages::downloads))
-        .route("/rift.env", get(pages::rift_env))
+        .route("/download/{platform}", get(pages::download))
         .route("/auth/sign-in", get(auth::sign_in))
         .route("/auth/sign-out", get(auth::sign_out))
         .route("/auth-callback", get(auth::callback))
@@ -99,6 +103,9 @@ pub(crate) struct App {
     pub(crate) game: GameInfo,
     pub(crate) desktop_sign_in: oidc::BrowserSignInSettings,
     pub(crate) config: WebServerConfig,
+    /// Each platform's game client as players download it, made from the release once it's asked
+    /// for.
+    pub(crate) bundles: [tokio::sync::OnceCell<axum::body::Bytes>; pages::PLATFORMS.len()],
 }
 
 async fn fetch_game(http: &openidconnect::reqwest::Client, url: &str) -> Result<GameInfo, String> {

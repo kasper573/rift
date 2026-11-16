@@ -143,7 +143,8 @@ fn connecting(world: &mut World) {
         title: "Connecting…",
         lines: &[],
         notes: &[],
-        action: None,
+        progress: None,
+        actions: &[],
     };
     notice_screen(&gui, "connecting", world.resource::<Backdrop>().0, notice);
 }
@@ -172,10 +173,11 @@ fn connection_lost(world: &mut World) {
         title,
         lines: &[line.to_owned()],
         notes: &[],
-        action: Some(action),
+        progress: None,
+        actions: &[action],
     };
     let retry = notice_screen(&gui, "lost", world.resource::<Backdrop>().0, notice);
-    if retry {
+    if retry.is_some() {
         let held = world.resource::<Retry>().held();
         world.insert_resource(held);
         world

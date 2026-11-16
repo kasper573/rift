@@ -539,8 +539,9 @@ fn sell(ui: &mut Ui, world: &mut World, settings: &AuctionSettings) {
             ui.add_space(6.0);
             let mut price = world.resource::<Browse>().price;
             ui.horizontal(|ui| {
-                ui.label("Price");
-                ui.add(egui::DragValue::new(&mut price).range(0..=u32::MAX));
+                let label = ui.label("Price");
+                ui.add(egui::DragValue::new(&mut price).range(0..=u32::MAX))
+                    .labelled_by(label.id);
                 ui.label(face::body(settings.currency.get(&content).name.clone()));
                 if picked.stack.count > 1 {
                     let each = f64::from(price) / f64::from(picked.stack.count);

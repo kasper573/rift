@@ -784,8 +784,8 @@ pub fn check_all(loading: &mut Loading, content: &Content, settings: &GameSettin
         let problem = starts_inside(settings.initial_spawn);
         loading.json_error(SETTINGS_FILE, "/initial_spawn", problem);
     }
-    for character in content.ids::<CharacterSnapshot>() {
-        let start = snapshot::start_of(content, character.get(content));
+    for (character, snapshot) in loading.rows::<CharacterSnapshot>(content) {
+        let start = snapshot::start_of(content, snapshot);
         if instanced(start) {
             loading.json_error(character.path(content), "/start", starts_inside(start));
         }

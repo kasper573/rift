@@ -23,7 +23,7 @@ use crate::systems::history::HistoryTopic;
 use crate::systems::inbox;
 use crate::systems::interact::Interactive;
 use crate::systems::item::rarity::ItemRarityId;
-use crate::systems::item::{Inventory, ItemCategory, ItemId, ItemStack};
+use crate::systems::item::{Inventory, ItemCategory, ItemDef, ItemId, ItemStack};
 use crate::systems::mention::Mention;
 use crate::systems::notification::Notification;
 use crate::systems::payout::{self, PayoutReason};
@@ -348,7 +348,10 @@ pub(crate) fn words(words: &GameWords) -> [(&'static str, &String); 9] {
 /// A game whose content opens the auction house has one, paid in an item that can change hands.
 pub(crate) fn check(loading: &mut Loading, content: &Content, settings: &GameSettings) {
     if let Some(auctions) = &settings.auctions
-        && auctions.currency.get(content).bound()
+        && content
+            .table::<ItemDef>()
+            .get(auctions.currency)
+            .is_some_and(ItemDef::bound)
     {
         let problem = ContentProblem::new(
             "bound currency",

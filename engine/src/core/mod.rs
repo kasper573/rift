@@ -22,4 +22,5 @@ pub mod text;
 pub mod tick;
 pub mod time;
 pub mod units;
+pub mod update;
 pub mod vfx;

@@ -527,21 +527,34 @@ fn a_layer_filling_a_parameter_its_shader_lacks_is_refused() {
 
 #[test]
 fn a_game_file_that_does_not_parse_is_refused_at_its_field() {
-    let report = game()
+    let unread_settings = game()
         .quest("errand",
             json!({ "title": "Errand", "category": "Errands", "blurb": "Errand", "xp": 10, "modules": [] }),
         )
-        .edit_settings(|settings| settings["initial_spawn"] = json!(path("area", "start")))
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == SETTINGS_FILE)
-        .unwrap_or_else(|| panic!("no error in the settings:\n{report}"));
-    assert_eq!(error.problem.rule, "wrong type");
+        .edit_settings(|settings| settings["initial_spawn"] = json!(path("area", "start")));
+    let unread_character = game().row("test_character", "nameless", json!({ "xp": 10 }));
+    for (said, game, file, rule) in [
+        (
+            "the settings",
+            unread_settings,
+            SETTINGS_FILE.to_owned(),
+            "wrong type",
+        ),
+        (
+            "a test character the rules about every character read",
+            unread_character,
+            path("test_character", "nameless"),
+            "missing field",
+        ),
+    ] {
+        let report = game.try_load().err().expect("refused");
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == file)
+            .unwrap_or_else(|| panic!("{said}: no error in {file}:\n{report}"));
+        assert_eq!(error.problem.rule, rule, "{said}");
+    }
 }
 
 #[test]

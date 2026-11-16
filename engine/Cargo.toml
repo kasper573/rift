@@ -90,8 +90,11 @@ blake3 = "1"
 schemars = "1"
 naga = { version = "30", features = ["wgsl-in"] }
 png = "0.18"
-tar = "0.4"
-flate2 = "1"
+tar.workspace = true
+flate2.workspace = true
+zip.workspace = true
+minisign-verify.workspace = true
+self-replace.workspace = true
 postcard.workspace = true
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 polyanya = "0.17"
@@ -114,6 +117,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+minisign.workspace = true
 walkdir.workspace = true
 tempfile.workspace = true
 

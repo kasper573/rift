@@ -2,133 +2,45 @@
 
 {% block content %}
 <div class="page">
-  <div class="guide">
-    <nav class="contents" aria-label="On this page">
-      <h2>On this page</h2>
-      <ol>
-        <li><a href="#download">Download</a></li>
-        <li><a href="#play">Play on {{ domain }}</a></li>
-        <li><a href="#rift-env">rift.env</a></li>
-      </ol>
-    </nav>
+  <article class="downloads">
+    <h1>Download {{ nav.game }}</h1>
 
-    <article class="downloads">
-      <h1 id="download">Download {{ nav.game }}</h1>
-      <p class="lead">Play {{ nav.game }} on your computer.</p>
-
-      <div class="tabs" role="tablist" aria-label="Platform" hidden>
-        {% for download in platforms %}
-        <button
-          type="button"
-          role="tab"
-          id="tab-{{ download.platform.id }}"
-          aria-controls="panel-{{ download.platform.id }}"
-          aria-selected="false"
-          tabindex="-1"
-          data-platform="{{ download.platform.id }}"
-        >{{ download.platform.name }}</button>
-        {% endfor %}
-      </div>
-
-      {% for download in platforms %}
-      <section
-        class="platform"
-        role="tabpanel"
-        id="panel-{{ download.platform.id }}"
-        aria-labelledby="tab-{{ download.platform.id }}"
-        data-platform="{{ download.platform.id }}"
-      >
-        <h2>{{ download.platform.name }} <span class="detail">{{ download.platform.detail }}</span></h2>
-
-        <table class="files">
-          <tbody>
-          <tr>
-            <td><a href="{{ download.client }}"><code>{{ download.archive }}</code></a></td>
-            <td>The game, as the program <code>game-client</code>.</td>
-          </tr>
-          <tr>
-            <td><a href="/rift.env"><code>rift.env</code></a></td>
-            <td>Tells <code>game-client</code> where to connect. Keep it next to it.</td>
-          </tr>
-          </tbody>
-        </table>
-
-        <h3>Before the first start</h3>
-        {% if download.platform.id == "windows-x86_64" %}
-        <p>
-          Extract <code>{{ download.archive }}</code>, then double-click <code>game-client</code> to start it.
-          The program isn't signed, so Windows may say it protected your PC: click <em>More info</em>, then
-          <em>Run anyway</em>.
-        </p>
-        {% else %}
-        <p>Open a terminal in your download folder, and extract <code>{{ download.archive }}</code>:</p>
-        <pre><code>tar -xzf {{ download.archive }}</code></pre>
-        {% if download.platform.id == "macos-arm64" %}
-        <p>The program isn't signed, so macOS blocks it. Unblock it:</p>
-        <pre><code>xattr -d com.apple.quarantine game-client</code></pre>
-        {% endif %}
-        <p>Then start it from the terminal: <code>./game-client</code>.</p>
-        {% endif %}
-      </section>
+    <div class="tabs" role="tablist" aria-label="Platform" hidden>
+      {% for platform in platforms %}
+      <button
+        type="button"
+        role="tab"
+        id="tab-{{ platform.id }}"
+        aria-controls="panel-{{ platform.id }}"
+        aria-selected="false"
+        tabindex="-1"
+        data-platform="{{ platform.id }}"
+      >{{ platform.name }}</button>
       {% endfor %}
+    </div>
 
-      <section id="play">
-        <h2>Play on {{ domain }}</h2>
-        <ol class="steps">
-          <li>Download the archive and <code>rift.env</code> into the same folder, and extract the archive
-            there, so <code>game-client</code> lands next to <code>rift.env</code>.</li>
-          <li>Start <code>game-client</code>. The first start downloads the game, which takes a while.
-            Later starts only download what changed.</li>
-          <li>Click <em>Sign in</em>, or <em>Create account</em> if you have no {{ domain }} account yet. Your
-            browser opens the sign-in page. Sign in there, then switch back to the game.</li>
-        </ol>
-        <p>It's the same account you sign in to this site with.</p>
-      </section>
-
-      <section id="rift-env">
-        <h2>rift.env</h2>
-        <p>
-          <code>game-client</code> reads <code>rift.env</code> from its own folder. Each line sets one value, as
-          <code>NAME=value</code>. Every value is required, unless it says optional. A relative path counts from
-          the folder <code>rift.env</code> is in. An environment variable with the same name wins over the line
-          in <code>rift.env</code>.
-        </p>
-        <dl class="values">
-          <dt><code>RIFT_CLIENT_GAME_SERVER_URL</code></dt>
-          <dd>The HTTP address of the game server to play on. It hands the client the address it plays
-            at.</dd>
-          <dt><code>RIFT_CLIENT_AUTH</code></dt>
-          <dd><code>oidc</code>: sign in with a {{ domain }} account, in your browser. <code>fake</code>: sign
-            in with any name, on a server that lets anyone play as anyone.</dd>
-          <dt><code>RIFT_CLIENT_PROFILE_DIR</code></dt>
-          <dd>The folder where <code>game-client</code> keeps your preferences and the downloaded game.</dd>
-          <dt><code>RIFT_CLIENT_EXIT_ON_STDIN_EOF</code></dt>
-          <dd><code>true</code> quits <code>game-client</code> when the program that started it closes its
-            input. Otherwise <code>false</code>.</dd>
-          <dt><code>RIFT_CLIENT_ACCESS_TOKEN</code> <span class="optional">optional</span></dt>
-          <dd>Signs in with this token and skips the sign-in screen.</dd>
-          <dt><code>RIFT_CLIENT_PROBE</code> <span class="optional">optional</span></dt>
-          <dd>Only for automated tests.</dd>
-        </dl>
-
-        <h3>For {{ domain }} accounts</h3>
-        <p>
-          Read only when <code>RIFT_CLIENT_AUTH</code> is <code>oidc</code>. They point at the sign-in service
-          of {{ domain }}, so keep them as downloaded.
-        </p>
-        <dl class="values">
-          <dt><code>RIFT_AUTH_CLIENT_ID</code></dt>
-          <dd>The name the sign-in service knows the game by.</dd>
-          <dt><code>RIFT_AUTH_AUTHORIZATION_URI</code></dt>
-          <dd>The page your browser opens to sign in.</dd>
-          <dt><code>RIFT_AUTH_SIGN_UP_URI</code></dt>
-          <dd>The page your browser opens to create an account.</dd>
-          <dt><code>RIFT_AUTH_TOKEN_URI</code></dt>
-          <dd>Where <code>game-client</code> finishes a sign-in.</dd>
-        </dl>
-      </section>
-    </article>
-  </div>
+    {% for platform in platforms %}
+    <section
+      class="platform"
+      role="tabpanel"
+      id="panel-{{ platform.id }}"
+      aria-labelledby="tab-{{ platform.id }}"
+      data-platform="{{ platform.id }}"
+    >
+      <a class="download" href="/download/{{ platform.id }}">Download for {{ platform.name }} <span class="detail">{{ platform.detail }}</span></a>
+      {% if platform.id == "windows-x86_64" %}
+      <p>Extract it and start <code>game-client</code>. The game isn't signed, so Windows may say it
+        protected your PC: click <em>More info</em>, then <em>Run anyway</em>.</p>
+      {% else if platform.id == "macos-arm64" %}
+      <p>Extract it and open <code>game-client</code>. The game isn't signed, so macOS blocks it the
+        first time: open <em>System Settings</em>, then <em>Privacy &amp; Security</em>, and click
+        <em>Open Anyway</em>.</p>
+      {% else %}
+      <p>Extract it and start <code>game-client</code>.</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </article>
 </div>
 <script>
   // Without script every platform's section shows; with it, one at a time behind tabs, starting on

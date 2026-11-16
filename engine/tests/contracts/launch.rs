@@ -55,6 +55,8 @@ fn a_binarys_config_reads_back_from_the_env_written_for_it() {
         profile_dir: PathBuf::from("/profiles/tester"),
         exit_on_stdin_eof: false,
         probe: Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9000)),
+        releases_url: Some("https://downloads.example/releases".to_owned()),
+        updated_from: Some("2026.11.14-9c2e1a07".to_owned()),
     };
     assert_eq!(
         read_back::<ClientConfig>(CLIENT_ENV_PREFIX, &config),
@@ -70,6 +72,8 @@ fn client_config() -> ClientConfig {
         profile_dir: PathBuf::from("profile"),
         exit_on_stdin_eof: false,
         probe: None,
+        releases_url: None,
+        updated_from: None,
     }
 }
 

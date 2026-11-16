@@ -1,7 +1,7 @@
 //! The website, the game server and the game client smoke-tested together from a binaries
-//! folder: a player seeded in a stand-in identity provider starts the game client from a folder
-//! holding the `rift.env` the site hands out, and the window must come to look like the trusted
-//! snapshot of the game's first view.
+//! folder: a player seeded in a stand-in identity provider downloads the game client from the site,
+//! starts it as extracted, and the window must come to look like the trusted snapshot of the
+//! game's first view.
 
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use engine::core::content::{Content, ContentScope, FilesystemFolder, with_content};
+use engine::core::update;
 use engine::systems::launch::{
     self, AuthMode, CLIENT_ENV_PREFIX, ProbeDriver, SERVER_ENV_PREFIX, ServerConfig,
     ServerDaylight, ServerReady, ServerWeather,
@@ -73,6 +74,7 @@ async fn main() {
         jwks_uri: provider.endpoints.jwks.clone(),
     };
 
+    let releases = releases(&binaries).await;
     let (_game_server, game_server) =
         game_server(&binaries.join("game-server"), &sign_in, scratch.path());
     // Held until now so the servers started before the site's don't take its port for their own.
@@ -84,19 +86,18 @@ async fn main() {
         game_server,
         &provider,
         &client.client_id,
+        &releases,
     );
 
-    let folder = scratch.path().join("player");
-    std::fs::create_dir_all(&folder).expect("the player's folder");
-    std::fs::copy(binaries.join("game-client"), folder.join("game-client"))
-        .expect("the game client in the player's folder");
-    let rift_env = ureq::get(format!("{site}/rift.env"))
+    let download = ureq::get(format!("{site}/download/{}", update::platform()))
         .call()
-        .expect("the site hands out rift.env")
+        .expect("the site hands out the game client")
         .body_mut()
-        .read_to_string()
-        .expect("rift.env reads");
-    std::fs::write(folder.join(launch::LAUNCH_FILE), rift_env).expect("rift.env saved");
+        .with_config()
+        .limit(u64::MAX)
+        .read_to_vec()
+        .expect("the download reads");
+    let folder = extracted(&download, &scratch.path().join("player"));
 
     let display = Display::start();
     let driver = TcpListener::bind((LOCALHOST, 0)).expect("a port for the probe");
@@ -138,7 +139,7 @@ async fn main() {
         std::process::exit(1);
     }
     println!(
-        "the seeded player joined from the site's rift.env and the game client drew the game \
+        "the seeded player joined on the game client downloaded from the site, and it drew the game \
          (resemblance {resemblance:.2})"
     );
 }
@@ -383,6 +384,50 @@ fn game_client(
     )
 }
 
+/// Where releases are published, holding a release of the game client in `binaries`.
+async fn releases(binaries: &Path) -> String {
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut archive = tar::Builder::new(gz);
+    archive
+        .append_path_with_name(binaries.join(update::CLIENT_BINARY), update::CLIENT_BINARY)
+        .expect("the game client archived");
+    let archive = archive
+        .into_inner()
+        .and_then(|gz| gz.finish())
+        .expect("the release's archive");
+    let listener = tokio::net::TcpListener::bind((LOCALHOST, 0))
+        .await
+        .expect("a port for the releases");
+    let address = listener.local_addr().expect("a bound port");
+    let route = format!(
+        "/{RELEASE}/{}-{}.tar.gz",
+        update::CLIENT_BINARY,
+        update::platform()
+    );
+    let releases =
+        axum::Router::new().route(&route, axum::routing::get(move || async move { archive }));
+    tokio::spawn(async move { axum::serve(listener, releases).await });
+    format!("http://{address}")
+}
+
+/// The one folder `archive` extracts to in `into`.
+fn extracted(archive: &[u8], into: &Path) -> PathBuf {
+    tar::Archive::new(flate2::read::GzDecoder::new(archive))
+        .unpack(into)
+        .expect("the download extracts");
+    let mut folders = std::fs::read_dir(into)
+        .expect("the extracted download")
+        .map(|entry| entry.expect("an entry").path());
+    let folder = folders.next().expect("a folder in the download");
+    assert!(
+        folders.next().is_none() && folder.is_dir(),
+        "the download extracts to one folder"
+    );
+    folder
+}
+
+const RELEASE: &str = "smoke";
+
 /// The game server on the game, taking the seeded player's tokens, once players can connect.
 fn game_server(
     binary: &Path,
@@ -417,6 +462,7 @@ fn web_server(
     game_server: ServerReady,
     provider: &OAuthTestServer,
     client: &str,
+    releases: &str,
 ) -> Running {
     let game_server_url = format!("http://{LOCALHOST}:{}", game_server.http);
     let config = WebServerConfig {
@@ -425,8 +471,8 @@ fn web_server(
         redirect_uri: RedirectUrl::new(format!("{site}/auth-callback")).expect("a url"),
         game_server_url: game_server_url.clone(),
         game_server_internal_url: game_server_url,
-        downloads_url: format!("{site}/no-downloads"),
-        release: "smoke".to_owned(),
+        downloads_url: releases.to_owned(),
+        release: RELEASE.to_owned(),
         preview_video: PathBuf::from("no-preview-video"),
     };
     let sign_in = SignInSettings {

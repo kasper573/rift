@@ -19,7 +19,7 @@ alone.
 | [`oidc/`](oidc), [`service/`](service) | Sign-in through any OpenID Connect provider, and what the HTTP services share: metrics and profiles. |
 | [`ui/`](ui) | The interface the editor and the game share: colors, shapes, text roles, fonts and every general-purpose egui component, so both look and behave alike. |
 | [`bevy/`](bevy) | Bevy plugins that know nothing of rift: entity replication and a server-authoritative terminal. |
-| [`smoke/`](smoke) | The website, the game server and the game client, smoke-tested together: a player of a stand-in identity provider starts the client from the `rift.env` the site hands out, and its window must come to look like `smoke/snapshot.png`. |
+| [`smoke/`](smoke) | The website, the game server and the game client, smoke-tested together: a player of a stand-in identity provider downloads the client from the site, starts it as extracted, and its window must come to look like `smoke/snapshot.png`. |
 | [`testkit/`](testkit) | What the tests and the server bench stand on: small games declared in code, and a bare world of only the systems a test runs. |
 
 ## Releases
@@ -42,6 +42,14 @@ binary and platform, `<binary>-<platform>.tar.gz` (`.zip` on Windows), each hold
 | `rift` | Linux, Windows, macOS | The command line tool. |
 | `web-server` | Linux, Windows, macOS | A game's website. |
 | `game-server-profiling` | Linux | `game-server` with the symbols and frame pointers a sampling profiler reads. |
+
+Every archive comes with its minisign signature beside it, `<archive>.minisig`, made with the release
+key whose public half is [`release.pub`](release.pub). A build reports its release's tag as its build
+(`--build-info`), and a release build has the key built in: a game client whose server runs another
+build downloads that build's `game-client` archive, installs it only when the key signed it, and starts
+again on it. A build made without the key (`RIFT_RELEASE_KEY` unset when it was built), or a client
+started without `RIFT_CLIENT_RELEASES_URL`, tells the player to start a client of the server's build
+instead.
 
 Archives extracted into one folder make a **binaries folder**: `editor` and `rift` find `game-server`,
 `game-client` and `game-server-profiling` beside themselves. `just dist` builds this machine's
@@ -307,12 +315,16 @@ required unless it says otherwise, and a binary refuses to start without one.
   when it is told to stop, trying again for as long as its store refuses; told to stop a second
   time, it stops with what was not written named in its log.
 - **`game-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`),
-  `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN` and `PROBE`.
+  `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN`, `PROBE` and where
+  releases are published (`RELEASES_URL`, as the web-server's `DOWNLOADS_URL`), which it updates
+  itself from. It sets `UPDATED_FROM` itself, on the start after an update.
 - **`web-server`** reads `RIFT_WEB_SERVER_*`: `BIND`, `PORT`, `REDIRECT_URI`, the game server as
   game clients reach it (`GAME_SERVER_URL`) and as it reaches it itself
   (`GAME_SERVER_INTERNAL_URL`), the release whose game client its downloads offer
-  (`DOWNLOADS_URL`, `RELEASE`), and the video file its landing page plays (`PREVIEW_VIDEO`). The
-  `rift.env` it serves to game clients points them at its game server and at the sign-in pages in
+  (`DOWNLOADS_URL`, `RELEASE`), and the video file its landing page plays (`PREVIEW_VIDEO`). Its
+  downloads are each platform's `game-client` archive of that release, remade with a `rift.env`
+  beside the client, both in a folder named after the game: extracted, it plays. That `rift.env`
+  points the client at its game server, at its releases, and at the sign-in pages in
   `RIFT_WEB_SERVER_DESKTOP_AUTH_*` (`CLIENT_ID`, `AUTHORIZATION_URI`, `SIGN_UP_URI`, `TOKEN_URI`).
   The site is named after the game its game server serves.
 
@@ -371,7 +383,7 @@ just dist target/dist profiling # …and game-server-profiling, on Linux
 just bench            # the server bench on the generated game
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests
-just smoke            # start the game client from the website's rift.env and see it draw the game
+just smoke            # download the game client from the website, start it, and see it draw the game
 ```
 
 ## Tests

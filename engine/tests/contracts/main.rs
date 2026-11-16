@@ -2,6 +2,7 @@ mod auctions;
 mod babble;
 mod backoff;
 mod bindings;
+mod client_update;
 mod climate;
 mod clock;
 mod clouds;

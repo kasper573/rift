@@ -195,82 +195,18 @@ button.subtle:hover {
   padding: 40px 20px 64px;
 }
 
-.guide {
-  display: grid;
-  grid-template-columns: minmax(0, 780px);
-  justify-content: center;
-  gap: 48px;
-}
-
-.contents {
-  font-size: 14px;
-}
-
-.contents h2 {
-  margin: 0 0 8px;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-subtle);
-}
-
-.contents ol {
-  margin: 0;
-  padding-left: 20px;
-}
-
-.contents li {
-  margin-bottom: 6px;
-}
-
-.contents a,
-.downloads a {
-  color: var(--primary-hover);
-}
-
 .downloads {
+  max-width: 780px;
+  margin: 0 auto;
   line-height: 1.55;
 }
 
 .downloads h1 {
-  margin: 0 0 8px;
+  margin: 0 0 20px;
 }
 
-.downloads .lead {
-  color: var(--text-subtle);
-  margin: 0 0 28px;
-}
-
-.downloads > section {
-  scroll-margin-top: 24px;
-}
-
-.downloads > section + section {
-  margin-top: 40px;
-}
-
-.downloads > section > h2 {
-  font-size: 22px;
-  margin: 0 0 10px;
-}
-
-.downloads > section > h3 {
-  font-size: 17px;
-  margin: 24px 0 8px;
-}
-
-.downloads code,
-.downloads pre {
+.downloads code {
   font: 13px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-}
-
-.downloads pre {
-  margin: 8px 0;
-  padding: 10px 12px;
-  overflow-x: auto;
-  background: var(--background);
-  border: 1px solid var(--border);
-  border-radius: 6px;
 }
 
 .tabs {
@@ -318,111 +254,22 @@ button.subtle:hover {
   display: none;
 }
 
-.platform h2 {
-  margin: 0 0 12px;
-  font-size: 20px;
+.downloads .download {
+  display: inline-block;
+  margin: 4px 0 8px;
+  padding: 10px 24px;
+  border-radius: 6px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 16px;
+  text-decoration: none;
 }
 
-.platform h2 .detail {
-  color: var(--text-subtle);
-  font-weight: normal;
-  font-size: 15px;
+.downloads .download:hover {
+  background: var(--primary-hover);
 }
 
-.platform h3 {
-  margin: 20px 0 4px;
-  font-size: 15px;
-  color: var(--text-subtle);
-}
-
-.files {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.files th {
-  padding: 24px 0 6px;
-  text-align: left;
-  font-size: 15px;
-  color: var(--text-subtle);
-}
-
-.files tbody:first-child th {
-  padding-top: 4px;
-}
-
-.files td {
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-  vertical-align: baseline;
-}
-
-.files td:first-child {
-  width: 1%;
-  padding-right: 32px;
-  white-space: nowrap;
-}
-
-.files td:first-child code {
+.downloads .download .detail {
+  opacity: 0.8;
   font-size: 14px;
-  font-weight: 600;
 }
-
-.files td:last-child {
-  color: var(--text-subtle);
-}
-
-@media (max-width: 600px) {
-  .files td,
-  .files td:first-child {
-    display: block;
-    width: auto;
-  }
-
-  .files td:last-child {
-    border-top: none;
-    padding-top: 0;
-  }
-}
-
-.steps {
-  margin: 0 0 16px;
-  padding-left: 22px;
-}
-
-.steps li {
-  margin-bottom: 12px;
-}
-
-.values dt {
-  margin-top: 14px;
-  font-weight: 600;
-}
-
-.values dd {
-  margin: 4px 0 0 20px;
-  color: var(--text-subtle);
-}
-
-.values .optional {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--surface-hover);
-  color: var(--text-subtle);
-  font-size: 12px;
-  font-weight: normal;
-}
-
-@media (min-width: 1100px) {
-  .guide {
-    grid-template-columns: 220px minmax(0, 780px);
-  }
-
-  .contents {
-    position: sticky;
-    top: 0;
-    align-self: start;
-  }
-}
-

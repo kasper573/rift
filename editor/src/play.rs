@@ -958,6 +958,8 @@ fn spawn_client(
         profile_dir: profile,
         exit_on_stdin_eof: true,
         probe: None,
+        releases_url: None,
+        updated_from: None,
     };
     let mut command = Command::new(binaries.join(CLIENT));
     command.envs(launch::env_of(CLIENT_ENV_PREFIX, &config));

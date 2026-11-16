@@ -277,6 +277,18 @@ pub struct ClientConfig {
     pub profile_dir: PathBuf,
     pub exit_on_stdin_eof: bool,
     pub probe: Option<SocketAddr>,
+    /// Where releases are published: a client whose server runs another build installs that
+    /// build's client from there, when it was built with a release key.
+    pub releases_url: Option<String>,
+    /// The build this client updated itself from, which it sets on the restart after an update.
+    pub updated_from: Option<String>,
+}
+
+impl ClientConfig {
+    /// The variable a client sets on the restart after an update, naming the build it replaced.
+    pub fn updated_from_var() -> String {
+        format!("{CLIENT_ENV_PREFIX}UPDATED_FROM")
+    }
 }
 
 pub fn env_of<T: Serialize>(prefix: &str, config: &T) -> Vec<(String, String)> {
