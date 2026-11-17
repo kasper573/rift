@@ -240,7 +240,7 @@ fn a_resource_takes_what_it_spends_with_every_extraction_and_is_worked_from_as_f
     sim.run(1.0);
     assert_eq!(
         (sim.errors(1), position(&sim.world, miner)),
-        (vec!["Needs 1 more powder".to_owned()], Some(start)),
+        (vec!["Needs 1 powder more".to_owned()], Some(start)),
         "what it spends is asked for before a step is taken, as its tool is"
     );
     sim.forget_notified();
@@ -285,7 +285,7 @@ fn a_resource_takes_what_it_spends_with_every_extraction_and_is_worked_from_as_f
             sim.world.get::<Working>(miner).is_some(),
             sim.errors(1),
         ),
-        (0, 4, Some(3), false, vec!["Needs 1 more powder".to_owned()]),
+        (0, 4, Some(3), false, vec!["Needs 1 powder more".to_owned()]),
         "the extraction that spent the last of it is the last, and the worker is told what is missing"
     );
 
@@ -308,7 +308,7 @@ fn a_resource_takes_what_it_spends_with_every_extraction_and_is_worked_from_as_f
             left(&sim, vein),
             sim.errors(1),
         ),
-        (1, 0, Some(4), vec!["Needs 1 more powder".to_owned()]),
+        (1, 0, Some(4), vec!["Needs 1 powder more".to_owned()]),
         "an extraction that drops nothing spends all the same"
     );
 }

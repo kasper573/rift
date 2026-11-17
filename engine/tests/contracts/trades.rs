@@ -57,7 +57,7 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
     host.send(1, TradeRequest::Offer(host.stack("gold", 200)));
     assert_eq!(
         (host.mine(1), host.errors(1).last().cloned()),
-        (vec![], Some("Tattered Map is bound".to_owned())),
+        (vec![], Some("Tattered Map is bound.".to_owned())),
         "a bound item can't be offered, nor more than the bag holds"
     );
     host.send(1, TradeRequest::Offer(host.stack("gold", 30)));
@@ -65,15 +65,21 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
     assert_eq!(
         (
             seen.theirs,
-            seen.changed.map(|changed| changed.added),
+            {
+                let village = &mut host.server.village;
+                let told = village.told(2);
+                told.last()
+                    .map(|told| told.text.plain_words(village.content()))
+            },
             host.server.village.count(wren, "gold")
         ),
         (
             vec![host.stack("gold", 30)],
-            Some(vec![host.stack("gold", 30).item]),
+            Some("Wren changed their offer.".to_owned()),
             120
         ),
-        "what one offers shows to the other, marked new, and stays in the bag until the trade"
+        "what one offers shows to the other, who is told it changed, and stays in the bag \
+         until the trade"
     );
 
     let version = host.view(1).expect("a trade").version;
@@ -89,16 +95,14 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
     host.send(2, TradeRequest::Offer(host.stack("sword", 1)));
     let changed = host.view(1).expect("a trade");
     assert_eq!(
-        (
-            changed.i_accept,
-            host.server
-                .village
-                .told(1)
-                .last()
-                .map(|told| told.text.plain_words())
-        ),
+        (changed.i_accept, {
+            let village = &mut host.server.village;
+            let told = village.told(1);
+            told.last()
+                .map(|told| told.text.plain_words(village.content()))
+        }),
         (false, Some("Hale changed their offer.".to_owned())),
-        "a change undoes every accept, and tells whoever accepted"
+        "a change undoes every accept, and tells the other player"
     );
     host.server.later(3.0);
     host.send(1, TradeRequest::Accept(version));
@@ -132,11 +136,6 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
         (None, None),
         "and closes both windows"
     );
-    assert_eq!(
-        host.feed(1).last().cloned(),
-        Some("You traded with Hale. You got 1 Iron Sword and gave 30 Gold.".to_owned())
-    );
-
     host.fill_bag(1);
     host.open_trade();
     host.send(2, TradeRequest::Offer(host.stack("dagger", 1)));

@@ -358,7 +358,7 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
     let content = sim.world.resource::<Content>().clone();
     let settings = content.built::<GameSettings>();
     let mut snapshot =
-        CharacterSnapshot::of_player(&content, "Hero", settings.player.get(&content));
+        CharacterSnapshot::of_def(&content, "Hero", settings.character.get(&content));
     snapshot.equipped = vec![sword, sim.id::<ItemDef>("helm")].into();
     let joined = sim.join_as(
         2,
@@ -578,7 +578,7 @@ fn bag(sim: &Sim, player: Entity) -> Vec<(ItemId, u32)> {
         .collect()
 }
 
-/// Whether `played` lasts `length` and lands at `apex` of its clip, at the player's attack speed.
+/// Whether `played` lasts `length` and lands at `apex` of its clip, at the character's attack speed.
 fn assert_timed(
     sim: &Sim,
     player: Entity,

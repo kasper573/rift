@@ -1442,7 +1442,7 @@ fn speaker_rows(
             SpeakerKind::Npc => npc.map(Speaker::Npc),
             SpeakerKind::Object => Some(Speaker::Object),
             SpeakerKind::Narrator => Some(Speaker::Narrator),
-            SpeakerKind::Player => Some(Speaker::Player),
+            SpeakerKind::Character => Some(Speaker::Character),
         };
         match by {
             Some(by) => {

@@ -25,4 +25,3 @@ pub use game::{
 pub use players::confer;
 pub use script::{dialogue, hunting, said};
 pub use sim::{Sim, drawn_seed, sent};
-pub use talk::{labels, lines, locked};

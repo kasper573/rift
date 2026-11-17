@@ -42,7 +42,7 @@ impl HudWidget for PartyFramesWidget {
         let others: Vec<&PartyMemberRow> = party
             .members
             .iter()
-            .filter(|member| member.player.account != view.account)
+            .filter(|member| member.character.account != view.account)
             .collect();
         let now = time::server_now(world);
         let folded = world.resource::<Folded>().0;
@@ -138,16 +138,16 @@ fn frame(
     at: Pos2,
 ) -> f32 {
     let standing = standing(world, member);
-    let id = ui.id().with(("party member", member.player.account));
+    let id = ui.id().with(("party member", member.character.account));
     let top = at.y + tracker::ENTRY_GAP;
     let rows = Pos2::new(at.x + INDENT, top);
     tracker::bullet(ui, Pos2::new(at.x, top));
-    let leads = party.leader == member.player.account;
+    let leads = party.leader == member.character.account;
     let mut foot = TrackerLine {
         at: rows,
         width: WIDTH - INDENT,
         mark: leads.then_some((Mark::Crown, ink::GOLD2)),
-        text: &member.player.name,
+        text: &member.character.name,
         font: Face::BookBold.id(TextRole::Body.size()),
         color: Color32::WHITE,
     }

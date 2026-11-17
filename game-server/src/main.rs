@@ -161,7 +161,7 @@ fn main() {
             .filter(|area| area.get(&content).instance.is_none())
             .collect(),
         content: content.clone(),
-        policy: config.player_spawn_policy,
+        policy: config.character_spawn_policy,
         online,
         places: HashMap::new(),
         test_characters: http.test_characters.clone(),
@@ -171,8 +171,8 @@ fn main() {
     let api = serve_http(listener, http, metrics);
 
     let rules = SpawnRules {
-        policy: config.player_spawn_policy,
-        immortal: config.player_immortal,
+        policy: config.character_spawn_policy,
+        immortal: config.characters_immortal,
     };
     let reset = config.daily_reset_utc_hour;
     let rng_seed = seeded(config.rng_seed);

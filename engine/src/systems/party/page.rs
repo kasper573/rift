@@ -16,9 +16,10 @@ use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
 use crate::systems::class;
-use crate::systems::friend::search::{self, FindPlayers, PlayersFound};
+use crate::systems::friend::search::{self, CharactersFound, FindCharacters};
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::item::inline;
 use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -26,7 +27,7 @@ use crate::systems::social_request::card::time_left;
 use crate::systems::social_request::{
     AnswerSocialRequest, RequestAnswer, SocialRequestId, SocialRequestKind,
 };
-use crate::systems::society::tab::{PlayerAction, SocialPage};
+use crate::systems::society::tab::{CharacterAction, SocialPage};
 use crate::systems::society::{AccountNumber, RequestCard, SocietyMember, SocietyView};
 use crate::systems::text::LineText;
 
@@ -78,7 +79,7 @@ impl SocialPage for PartyPage {
 /// Inviting a player a page lists to the player's party.
 pub struct InviteToParty;
 
-impl PlayerAction for InviteToParty {
+impl CharacterAction for InviteToParty {
     fn label(&self) -> &'static str {
         "Invite to party"
     }
@@ -125,8 +126,8 @@ pub fn shown(world: &World) -> ShownParty {
             .iter()
             .flat_map(|party| party.members.iter().map(move |member| (party, member)))
             .map(|(party, member)| ShownPartyMember {
-                name: member.player.name.clone(),
-                leads: party.leader == member.player.account,
+                name: member.character.name.clone(),
+                leads: party.leader == member.character.account,
                 area: member.area.map(|area| area.get(content).name.clone()),
             })
             .collect(),
@@ -144,7 +145,7 @@ pub(crate) fn plugin(app: &mut App) {
 pub(super) fn name(ui: &mut Ui, party: &PartyShown, member: &PartyMemberRow, name: egui::RichText) {
     ui.horizontal(|ui| {
         ui.add(egui::Label::new(name).truncate());
-        if party.leader == member.player.account {
+        if party.leader == member.character.account {
             glyph::show(ui, Mark::Crown, CROWN, ink::GOLD);
         }
     });
@@ -152,10 +153,10 @@ pub(super) fn name(ui: &mut Ui, party: &PartyShown, member: &PartyMemberRow, nam
 
 /// A member's name as the party's lists read it out: its leader's says so.
 pub(super) fn named(party: &PartyShown, member: &PartyMemberRow) -> String {
-    if party.leader == member.player.account {
-        format!("{}, {}", member.player.name, Mark::Crown.word())
+    if party.leader == member.character.account {
+        format!("{}, {}", member.character.name, Mark::Crown.word())
     } else {
-        member.player.name.clone()
+        member.character.name.clone()
     }
 }
 
@@ -168,7 +169,7 @@ struct Inviting {
     /// When what is typed last changed, on the interface's clock.
     typed_at: f64,
     asked: Option<String>,
-    found: Option<PlayersFound>,
+    found: Option<CharactersFound>,
     chosen: Option<AccountNumber>,
 }
 
@@ -221,7 +222,7 @@ fn invited(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
 /// Takes what the server found, and asks it for what is typed once the typing has paused.
 fn hear(world: &mut World) {
     let found = world
-        .resource_mut::<Messages<PlayersFound>>()
+        .resource_mut::<Messages<CharactersFound>>()
         .drain()
         .last();
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
@@ -234,7 +235,7 @@ fn hear(world: &mut World) {
     if paused && unasked && search::searches(&inviting.typed) {
         let typed = inviting.typed.clone();
         inviting.asked = Some(typed.clone());
-        world.write_message(FindPlayers(typed));
+        world.write_message(FindCharacters(typed));
     }
 }
 
@@ -290,31 +291,31 @@ fn members(ui: &mut Ui, world: &mut World, view: &SocietyView, party: &PartyShow
     let now = time::server_now(world);
     let chosen = world.resource::<Inviting>().chosen;
     let chosen = party.members.iter().find(|member| {
-        Some(member.player.account) == chosen && member.player.account != view.account
+        Some(member.character.account) == chosen && member.character.account != view.account
     });
     let mut done = None;
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for member in &party.members {
             let selected =
-                chosen.is_some_and(|chosen| chosen.player.account == member.player.account);
-            ui.push_id(("member", member.player.account.0), |ui| {
+                chosen.is_some_and(|chosen| chosen.character.account == member.character.account);
+            ui.push_id(("member", member.character.account.0), |ui| {
                 if member_row(ui, world, party, member, selected, now) {
-                    done = Some(Done::Choose(member.player.account));
+                    done = Some(Done::Choose(member.character.account));
                 }
             });
         }
     });
     ui.add_space(GAP);
     if let Some(chosen) = chosen.filter(|_| leads) {
-        let name = &chosen.player.name;
+        let name = &chosen.character.name;
         ui.horizontal(|ui| {
             if named_button(controls::button(ui, "Make leader"), "Make leader", name).clicked() {
-                done = Some(Done::Ask(PartyRequest::Lead(chosen.player.account)));
+                done = Some(Done::Ask(PartyRequest::Lead(chosen.character.account)));
             }
             let remove = controls::danger(ui, "Remove from party");
             if named_button(remove, "Remove from party", name).clicked() {
-                done = Some(Done::Ask(PartyRequest::Remove(chosen.player.account)));
+                done = Some(Done::Ask(PartyRequest::Remove(chosen.character.account)));
             }
         });
     } else if !leads {
@@ -376,9 +377,14 @@ fn member_row(
                     health_bar(ui, health, BAR_WIDTH);
                 }
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                    self::name(ui, party, member, face::bold(member.player.name.as_str()));
+                    self::name(
+                        ui,
+                        party,
+                        member,
+                        face::bold(member.character.name.as_str()),
+                    );
                     let look = TextLook::role(TextRole::Small, ink::INK3);
-                    text::show(ui, world, &state.styled(), look, None);
+                    inline::show_line(ui, world, &state, look, None);
                 });
             });
         });
@@ -387,7 +393,7 @@ fn member_row(
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| {
-        let said = format!("{name}, {}", state.plain_words());
+        let said = format!("{name}, {}", state.plain_words(&content));
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, said)
     });
     map::clicked(world, InputAction::Select, &response)
@@ -419,9 +425,9 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
                 caption(ui, "Looking");
                 ui.ctx().request_repaint();
             }
-            Some(found) if found.players.is_empty() => caption(ui, "Nobody by that name"),
+            Some(found) if found.characters.is_empty() => caption(ui, "Nobody by that name"),
             Some(found) => {
-                for player in &found.players {
+                for player in &found.characters {
                     ui.push_id(("found", player.account.0), |ui| {
                         done = done
                             .take()
@@ -451,12 +457,12 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
                 .online_in
                 .map(|area| Mention::Area(area).line(&content))
         };
-        ui.push_id(("friend", friend.player.account.0), |ui| {
-            let offered = (!friend.in_a_party).then_some(&friend.player);
+        ui.push_id(("friend", friend.character.account.0), |ui| {
+            let offered = (!friend.in_a_party).then_some(&friend.character);
             done = done.take().or(match offered {
                 Some(player) => invite_row(ui, world, view, player, note.as_ref(), server_now),
                 None => {
-                    line(ui, &friend.player.name, true, |ui| {
+                    line(ui, &friend.character.name, true, |ui| {
                         if let Some(note) = &note {
                             note_label(ui, world, note);
                         }
@@ -484,7 +490,7 @@ fn invite_row(
         .party
         .iter()
         .flat_map(|party| &party.members)
-        .any(|member| member.player.account == player.account);
+        .any(|member| member.character.account == player.account);
     let waits = invited(view).find(|card| card.other.account == player.account);
     let mut done = None;
     line(ui, name, player.account == view.account, |ui| {
@@ -512,7 +518,13 @@ fn invite_row(
 
 fn note_label(ui: &mut Ui, world: &World, note: &LineText) {
     let look = TextLook::role(TextRole::Small, ink::INK3);
-    text::show(ui, world, &note.styled(), look, None);
+    text::show(
+        ui,
+        world,
+        &note.styled(world.resource::<Content>()),
+        look,
+        None,
+    );
 }
 
 /// Asks the leader whether to end the party, and ends it once they confirm.

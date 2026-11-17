@@ -435,7 +435,7 @@ fn game_server(
     run: &Path,
 ) -> (Running, ServerReady) {
     let config = ServerConfig {
-        player_immortal: true,
+        characters_immortal: true,
         daylight: ServerDaylight::Still,
         weather: ServerWeather::Still,
         rng_seed: Some(SEED),

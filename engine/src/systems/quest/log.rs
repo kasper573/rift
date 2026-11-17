@@ -7,13 +7,11 @@ use ui::face::{self, TextRole};
 use ui::glyph::{self, Mark};
 use ui::{card, ink, sheet};
 
-use super::card::{
-    Countdown, Standing, caption, inspectable, objective_row, picks, reward_chips, time_left,
-};
+use super::card::{Countdown, Standing, caption, objective_row, picks, reward_chips, time_left};
 use super::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestRequest, QuestResult};
 use crate::core::content::Content;
 use crate::core::gui;
-use crate::core::text::{self, TextLook};
+use crate::core::text::TextLook;
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::dialogue::ChoiceReveal;
@@ -22,7 +20,8 @@ use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::card::detail_line;
-use crate::systems::item::widget::slot_note_source;
+use crate::systems::item::inline;
+use crate::systems::item::widget::{answer_drawn, slot_note_source};
 use crate::systems::item::{Inventory, ItemModuleKind, ItemStack};
 use crate::systems::mention::Mention;
 use crate::systems::player::session;
@@ -467,16 +466,19 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         Some(&page.inventory),
     );
     let finished = page.finished(quest);
-    for (index, (objective, mut progress)) in def.objectives().zip(progress).enumerate() {
+    for (index, mut progress) in progress.into_iter().enumerate() {
         let standing = match finished.map(|finished| finished.result) {
             Some(QuestResult::Completed) => Standing::Done,
             Some(QuestResult::Failed) => Standing::Failed,
             None => Standing::Open,
         };
         progress.counted &= finished.is_none();
-        ui.push_id(("objective", index), |ui| {
-            objective_row(ui, world, &content, objective, &progress, standing);
-        });
+        let shown = ui
+            .push_id(("objective", index), |ui| {
+                objective_row(ui, world, &content, &progress, standing)
+            })
+            .inner;
+        answer_drawn(world, shown);
     }
     if let Some(paths) = def.decision() {
         sheet::section(ui, "Choices");
@@ -488,12 +490,12 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
     if def.reveals(ChoiceReveal::Gains) || handed_in {
         sheet::section(ui, "Rewards");
         let shown = reward_chips(ui, world, &content, def);
-        inspectable(world, shown);
+        answer_drawn(world, shown);
     }
     if def.reveals(ChoiceReveal::Gains) && !def.pick_one().is_empty() && finished.is_none() {
         sheet::section(ui, "Pick one when you return");
         let shown = picks(ui, world, &content, def);
-        inspectable(world, shown);
+        answer_drawn(world, shown);
     }
     if def.time_limit().is_some() {
         sheet::section(ui, "If time runs out");
@@ -520,7 +522,7 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
             _ => LineText::plain(outcome),
         };
         let look = TextLook::role(TextRole::CardBody, color).bold();
-        text::show(ui, world, &outcome.styled(), look, None);
+        inline::show_line(ui, world, &outcome, look, None);
     }
 }
 

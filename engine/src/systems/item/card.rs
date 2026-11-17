@@ -23,6 +23,7 @@ use crate::systems::GameSettings;
 use crate::systems::chat::ChatEmbed;
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
+use crate::systems::item::inline;
 use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
 use crate::systems::mention::Mention;
 use crate::systems::player::session;
@@ -130,6 +131,30 @@ pub fn tooltip_noted(
     notes: impl IntoIterator<Item = LineText>,
     hint: Option<&StyledLine>,
 ) {
+    let name = item.get(world.resource::<Content>()).name.clone();
+    tooltip_titled(world, response, item, Some(&name), notes, hint);
+}
+
+/// An item's tooltip beside where its name is shown already, as a named inline item shows it:
+/// what the item is, `notes` under that, and a hint, without the name again.
+pub fn tooltip_beside_name(
+    world: &mut World,
+    response: &Response,
+    item: ItemId,
+    notes: impl IntoIterator<Item = LineText>,
+    hint: Option<&StyledLine>,
+) {
+    tooltip_titled(world, response, item, None, notes, hint);
+}
+
+fn tooltip_titled(
+    world: &mut World,
+    response: &Response,
+    item: ItemId,
+    title: Option<&str>,
+    notes: impl IntoIterator<Item = LineText>,
+    hint: Option<&StyledLine>,
+) {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
     let rarity = def.rarity.get(&content);
@@ -141,7 +166,7 @@ pub fn tooltip_noted(
         std::iter::once(format!("{} · {}", rarity.name, overview(def)).into())
             .chain(notes)
             .collect();
-    hud::tooltip_marked(response, world, &def.name, mark.as_ref(), &lines, hint);
+    hud::tooltip_marked(response, world, title, mark.as_ref(), &lines, hint);
 }
 
 /// What an item is, in a line, for a tooltip, which has no band or style to say it: led by the
@@ -202,7 +227,7 @@ pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> Car
     let shown = card.show(ui, |ui, plate| {
         summary(ui, &content, item, plate);
         let viewer = session::me(world);
-        details_named(ui, world, &content, item, |requirement| {
+        details_named(ui, world, &content, item, |world, requirement| {
             let viewer = viewer?;
             Some(condition::holds(world, viewer, requirement))
         });
@@ -281,8 +306,9 @@ pub fn details(
     item: ItemId,
     meets: impl Fn(&Condition) -> Option<bool>,
 ) {
-    details_drawn(ui, content, item, meets, |ui, met, line| {
-        let words = line.plain_words();
+    details_drawn(ui, content, item, |ui, requirement, line| {
+        let met = requirement.and_then(&meets);
+        let words = line.plain_words(content);
         match met {
             Some(met) => card::requirement(ui, met, &words),
             None => card::fact(ui, &words),
@@ -293,21 +319,22 @@ pub fn details(
 /// `details` for a reader in the game, whose lines name what they mention.
 pub fn details_named(
     ui: &mut Ui,
-    world: &World,
+    world: &mut World,
     content: &Content,
     item: ItemId,
-    meets: impl Fn(&Condition) -> Option<bool>,
+    meets: impl Fn(&World, &Condition) -> Option<bool>,
 ) {
-    details_drawn(ui, content, item, meets, |ui, met, line| {
-        detail_line(ui, world, met, line)
+    details_drawn(ui, content, item, |ui, requirement, line| {
+        let met = requirement.and_then(|requirement| meets(world, requirement));
+        detail_line(ui, world, met, line);
     });
 }
 
 /// A line of a card's facts: a requirement with the mark of whether it is met, or else a fact.
-pub fn detail_line(ui: &mut Ui, world: &World, met: Option<bool>, line: &LineText) {
+pub fn detail_line(ui: &mut Ui, world: &mut World, met: Option<bool>, line: &LineText) {
     let Some(met) = met else {
         let look = TextLook::role(TextRole::CardBody, ink::INK);
-        text::show(ui, world, &line.styled(), look, None);
+        inline::show_line(ui, world, line, look, None);
         return;
     };
     ui.horizontal(|ui| {
@@ -319,22 +346,23 @@ pub fn detail_line(ui: &mut Ui, world: &World, met: Option<bool>, line: &LineTex
         };
         glyph::show(ui, mark, 12.0, color);
         let look = TextLook::role(TextRole::CardBody, color);
-        text::show(ui, world, &line.styled(), look, None);
+        inline::show_line(ui, world, line, look, None);
     });
 }
 
+/// Draws an item's flavour and facts, each fact by `line`, with the requirement it states where
+/// it states one.
 fn details_drawn(
     ui: &mut Ui,
     content: &Content,
     item: ItemId,
-    meets: impl Fn(&Condition) -> Option<bool>,
-    mut line: impl FnMut(&mut Ui, Option<bool>, &LineText),
+    mut line: impl FnMut(&mut Ui, Option<&Condition>, &LineText),
 ) {
     let def = item.get(content);
     if let Some(flavor) = def.flavor() {
         card::flavour(ui, flavor);
     }
-    facts(ui, content, item, def, meets, &mut line);
+    facts(ui, content, item, def, &mut line);
 }
 
 /// The skills an item lends while worn. Answers each one's line, for a reader who may take the
@@ -451,8 +479,7 @@ fn facts(
     content: &Content,
     item: ItemId,
     def: &ItemDef,
-    meets: impl Fn(&Condition) -> Option<bool>,
-    line: &mut impl FnMut(&mut Ui, Option<bool>, &LineText),
+    line: &mut impl FnMut(&mut Ui, Option<&Condition>, &LineText),
 ) {
     let boosts = status::boosts_of(content, item);
     match &def.kind {
@@ -464,7 +491,7 @@ fn facts(
             if let Some(requirement) = requires {
                 let requires = LineText::plain("Requires ")
                     .then(LineText::from(&condition::describe(content, requirement)));
-                line(ui, meets(requirement), &requires);
+                line(ui, Some(requirement), &requires);
             }
         }
         ItemKind::Usable { casts: None } => {}

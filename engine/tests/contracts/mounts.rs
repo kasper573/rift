@@ -443,7 +443,9 @@ fn a_warp_keeps_its_rider_mounted_only_where_the_mount_may_be_at_the_spot_it_lea
     let landing = Pos::new(4.0, 4.0);
     let pace = |sim: &Sim, who: Entity| stat::effective(&sim.world, who, StatKind::MovementSpeed);
     let told = |sim: &mut Sim, client: u32| -> Option<String> {
-        sim.told(client).last().map(|told| told.text.plain_words())
+        sim.told(client)
+            .last()
+            .map(|told| told.text.plain_words(sim.content()))
     };
     let not_here = "The Grey Mare can't go where you arrived. You're on foot.";
 
@@ -543,7 +545,7 @@ fn a_character_saved_where_no_walker_stands_signs_in_where_dying_would_send_them
                 x: BEACH.x,
                 y: BEACH.y,
             }),
-            ..CharacterSnapshot::of_player(&content, "Wren", player::def(&content))
+            ..CharacterSnapshot::of_def(&content, "Wren", player::def(&content))
         };
         let join_as = JoinAs {
             snapshot,
@@ -911,7 +913,7 @@ impl Server {
         let sim = self.village_or_forest(client);
         sim.told(client)
             .into_iter()
-            .map(|told| told.text.plain_words())
+            .map(|told| told.text.plain_words(sim.content()))
             .collect()
     }
 }

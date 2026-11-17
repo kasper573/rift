@@ -4,7 +4,6 @@ pub mod area;
 pub mod area_instance;
 pub mod area_map;
 pub mod attention;
-pub mod auction;
 pub mod belongings;
 pub mod chat;
 pub mod class;
@@ -25,6 +24,7 @@ pub mod interact;
 pub mod interface;
 pub mod item;
 pub mod launch;
+pub mod market;
 pub mod memory;
 pub mod mention;
 pub mod mount;
@@ -94,7 +94,7 @@ use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
 use crate::core::units::{Hertz, HourOfDay, Meters, Seconds, WindowPx};
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
-use crate::systems::player::PlayerDefId;
+use crate::systems::player::CharacterDefId;
 
 pub const TICK_HZ: Hertz = Hertz(30.0);
 
@@ -126,7 +126,7 @@ pub fn protocol(app: &mut App) {
     mount::register(app);
     area_instance::register(app);
     trade::register(app);
-    auction::register(app);
+    market::register(app);
     item::register(app);
     class::register(app);
     skill::register(app);
@@ -245,7 +245,8 @@ pub struct GameSettings {
     pub name: String,
     pub content_version: ContentVersion,
     pub initial_spawn: script::Place,
-    pub player: PlayerDefId,
+    /// What every new character starts as.
+    pub character: CharacterDefId,
     /// Without one the game has no clock: every area's light stands as authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<area::DayCycle>,
@@ -266,7 +267,7 @@ pub struct GameSettings {
     pub wading: Option<movement::Wading>,
     /// How long a fallen npc that never comes back lies before it is gone.
     pub corpses_linger: Seconds,
-    /// How long a player's claim on a foe holds after their last hit: whoever holds it when the
+    /// How long a character's claim on a foe holds after their last hit: whoever holds it when the
     /// foe falls is credited with the fall, and what it drops is theirs.
     pub claims_last: Seconds,
     pub slots: SlotCounts,
@@ -284,7 +285,7 @@ pub struct GameSettings {
     pub look: Look,
     pub dialogue_shots: dialogue::camera::DialogueShots,
     pub relations: SideRelations,
-    /// How soon after each other like entries of a player's history count as one, a run of loot
+    /// How soon after each other like entries of a character's history count as one, a run of loot
     /// or kills read as a tally.
     pub history_merges_within: Seconds,
     /// How many ways to go on the terminal offers at the most for a command being typed.
@@ -306,12 +307,12 @@ pub struct GameSettings {
     /// How players trade. A game without it has no trading.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trade: Option<trade::TradeSettings>,
-    /// How the auction house works. A game without it has none.
+    /// How the market works. A game without it has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auctions: Option<auction::AuctionSettings>,
+    pub market: Option<market::MarketSettings>,
 }
 
-/// How much a player keeps.
+/// How much a character keeps.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SlotCounts {
@@ -354,11 +355,11 @@ pub struct GameWords {
     pub no_longer: String,
     /// What a player is told offered a quest with every slot of their quest log taken.
     pub quest_log_full: String,
-    /// What a trade asking for items a player lacks says: `{count}` more of the item `{item}`.
+    /// What a trade asking for items a character lacks says: `{items}`, how many more of which item.
     pub needs_more: String,
-    /// What a trade says that a player's bag has no room for, one slot short.
+    /// What a trade says that a character's bag has no room for, one slot short.
     pub needs_a_slot: String,
-    /// What a trade says that a player's bag has no room for, `{slots}` slots short.
+    /// What a trade says that a character's bag has no room for, `{slots}` slots short.
     pub needs_slots: String,
     /// What a player is told working a resource without a tool of the kind `{tool}` in their
     /// tool slot.
@@ -479,6 +480,8 @@ pub struct GameWords {
     pub party_invite_asks: String,
     /// What an invitation to a party says to the player who invited `{name}`.
     pub party_invite_asked: String,
+    /// What a player is told as their invitation to a party is sent to `{name}`.
+    pub party_invite_sent: String,
     /// What a player is told as `{name}` denies their invitation to a party.
     pub party_invite_denied: String,
     /// What a player is told as their invitation to `{name}` runs out unanswered.
@@ -532,13 +535,15 @@ pub struct GameWords {
     /// What a member of a party is told at an entrance: only `{leader}` takes the party in.
     pub instance_leader_only: String,
     /// What an entrance or a roster says while fewer than `{least}` players would go into `{area}`.
-    pub instance_needs_players: String,
+    pub instance_needs_characters: String,
     /// What a player in no party is told at an entrance that needs `{least}` players or more.
     pub instance_form_party: String,
     /// What an entrance tells a member of a party that already holds a copy of `{area}`.
     pub instance_already_inside: String,
     /// What a member's call card says: `{leader}` takes the party into `{area}`.
     pub instance_call: String,
+    /// What a leader is told as they call their party into `{area}`.
+    pub instance_call_sent: String,
     /// What a member's call card says once they joined and `{leader}` did not pick them.
     pub instance_benched: String,
     /// What a member's call card says while they stand out of `{leader}`'s sight.
@@ -571,7 +576,7 @@ pub struct GameWords {
     /// The text of the message the game sends a player whose bag had no room for what clearing
     /// an instance of `{area}` gave them.
     pub instance_rewards_text: String,
-    /// What a payout's notification adds as `{items}` had no room in the player's bag and were
+    /// What a payout's notification adds as `{items}` had no room in the character's bag and were
     /// sent to their messages.
     pub payout_overflow: String,
     /// The title of the message the game sends a player whose bag had no room for the rewards of
@@ -590,6 +595,8 @@ pub struct GameWords {
     pub trade_asks: String,
     /// What a player reads while their request to trade with `{name}` waits.
     pub trade_asked: String,
+    /// What a player is told as their request to trade is sent to `{name}`.
+    pub trade_sent: String,
     /// What a player is told as `{name}` denies their request to trade.
     pub trade_denied: String,
     /// What a player is told asking `{name}` to trade while they trade with someone else.
@@ -610,41 +617,50 @@ pub struct GameWords {
     pub trade_why_mounted: String,
     /// The reason a trade ends as something `{who}` offered leaves their bag.
     pub trade_why_offer_gone: String,
-    /// What a player who accepted is told as `{name}` changes their offer.
+    /// What a player is told as `{name}`, whom they trade with, changes their offer.
     pub trade_offer_changed: String,
-    /// What a player is told as their trade with `{name}` goes through: they got `{got}` and
-    /// gave `{gave}`.
-    pub trade_done: String,
-    /// What a player is told as they gave `{name}` `{gave}` in a trade, getting nothing.
-    pub trade_gave: String,
-    /// What a player is told as `{name}` gave them `{got}` in a trade, for nothing.
-    pub trade_got: String,
     /// The title of the message the game sends a player whose bag had no room for what their
     /// trade with `{name}` gave them.
     pub trade_overflow_title: String,
     /// The text of that message.
     pub trade_overflow_text: String,
-    /// What a player is told as they list `{item}` on the auction house.
-    pub auction_listed: String,
-    /// What a player is told as they buy `{item}` for `{price}`, and the title of the message
-    /// of what their bag had no room for.
-    pub auction_bought: String,
-    /// What a seller is told as `{item}` sells and they get `{price}`, and the title of the
-    /// message paying them while they are away.
-    pub auction_sold: String,
-    /// What a seller is told as `{item}` comes back unsold, and the title of the message
-    /// bringing it while they are away.
-    pub auction_expired: String,
-    /// What a seller is told as `{item}` comes back from an auction they cancelled.
-    pub auction_cancelled: String,
-    /// What a player is told as someone else bought `{item}` before their purchase settled.
-    pub auction_gone: String,
-    /// What a player is told listing more than the `{listings}` auctions they may run.
-    pub auction_too_many: String,
-    /// The text of every message the auction house sends.
-    pub auction_message: String,
-    /// What a player is told listing a stack for nothing.
-    pub auction_no_price: String,
+    /// What a player is told whose item, `{item}`, can't change hands.
+    pub item_bound: String,
+    /// What the player is told once their listing of `{offer}` is up on the market.
+    pub market_listed: String,
+    /// What a player is told as they get `{offer}` for `{price}` on the market.
+    pub market_bought: String,
+    /// What a seller is told as their listing of `{offer}` is bought and they get `{price}`.
+    pub market_sold: String,
+    /// What a seller is told as their listing of `{offer}` ends unbought.
+    pub market_expired: String,
+    /// What a seller is told as `{offer}` comes back from a listing they cancelled.
+    pub market_cancelled: String,
+    /// What a player is told as someone else bought the listing of `{offer}` before their
+    /// purchase settled.
+    pub market_gone: String,
+    /// What a player is told listing more than the `{listings}` listings they may have up.
+    pub market_too_many: String,
+    /// The text of every message the market sends.
+    pub market_message: String,
+    /// The title of the message of what a purchase on the market brought that had no room.
+    pub market_bought_title: String,
+    /// The title of the message paying a seller for their listing.
+    pub market_sold_title: String,
+    /// The title of the message bringing back what a listing offered.
+    pub market_returned_title: String,
+    /// What a player is told listing nothing to offer.
+    pub market_no_offer: String,
+    /// What a player is told listing without setting a price.
+    pub market_no_price: String,
+    /// What a player is told offering more than the `{items}` items a listing's offer may hold.
+    pub market_offer_too_many: String,
+    /// What a player is told pricing in more than the `{items}` items a listing's price may hold.
+    pub market_price_too_many: String,
+    /// What a player is told naming the same item twice on one side of a listing.
+    pub market_named_twice: String,
+    /// What a player is told naming `{item}` without how many.
+    pub market_needs_amount: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -682,7 +698,7 @@ pub struct DroppedItems {
     pub last: Seconds,
     /// How far from where they fell several items lie, around it.
     pub scatter: Meters,
-    /// How close a player comes to an item to pick it up.
+    /// How close a character comes to an item to pick it up.
     pub pickup_reach: Meters,
     /// How far from an item on the ground a click still picks it.
     pub click_reach: Meters,
@@ -794,7 +810,7 @@ pub fn server_app(
                     (
                         interact::interact_request,
                         trade::requests,
-                        auction::requests,
+                        market::requests,
                     ),
                     dialogue::requests,
                     (shop::requests, prompt::requests, crafting::requests).chain(),
@@ -822,7 +838,7 @@ pub fn server_app(
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
                     (prompt::hold, crafting::hold, crafting::work).chain(),
-                    (area_instance::entrance::hold, trade::hold, auction::hold),
+                    (area_instance::entrance::hold, trade::hold, market::hold),
                     item::expire_drops,
                     player::join,
                     (
@@ -1023,7 +1039,7 @@ pub fn client_app(
         ))
         .add_plugins((
             trade::window::plugin,
-            auction::window::plugin,
+            market::window::plugin,
             actor::options::plugin,
         ));
     app
@@ -1093,7 +1109,7 @@ pub fn install_content(world: &mut World, synced: SyncedContent, content: Conten
 }
 
 /// A whole game: the tables it's made of, its settings, every row the engine itself requires, and
-/// every quest and shop within a player's reach.
+/// every quest and shop within a character's reach.
 pub fn registry() -> &'static ContentRegistry {
     use crate::core::content::LoadStep;
     // Built once a process, as its content version hashes every shape it reads.
@@ -1108,7 +1124,7 @@ pub fn registry() -> &'static ContentRegistry {
 }
 
 /// A game being made: all a whole game is, but that its quests and shops may still be out of a
-/// player's reach, as one is made before the scripts that offer or open it can name it.
+/// character's reach, as one is made before the scripts that offer or open it can name it.
 pub fn making_registry() -> &'static ContentRegistry {
     static REGISTRY: std::sync::LazyLock<ContentRegistry> = std::sync::LazyLock::new(|| {
         let mut registry = settled_tables();
@@ -1167,8 +1183,8 @@ pub fn tables() -> ContentRegistry {
         .file::<npc::NpcDef>()
         .named::<npc::NpcDef>()
         .modules::<npc::NpcDef>()
-        .file::<player::PlayerDef>()
-        .modules::<player::PlayerDef>()
+        .file::<player::CharacterDef>()
+        .modules::<player::CharacterDef>()
         .file::<player::snapshot::CharacterSnapshot>()
         .named::<player::snapshot::CharacterSnapshot>()
         .file::<crafting::RecipeBookDef>()
@@ -1326,24 +1342,29 @@ fn check_settings(loading: &mut Loading) {
         check.at_least("/trade/slots", trade.slots, 1, "items");
         check.at_least("/trade/accept_waits", trade.accept_waits.0, 0.0, "seconds");
     }
-    if let Some(auctions) = &settings.auctions {
-        check.at_least(
-            "/auctions/durations",
-            auctions.durations.len(),
-            1,
-            "lengths",
-        );
-        for (index, duration) in auctions.durations.iter().enumerate() {
+    if let Some(market) = &settings.market {
+        check.at_least("/market/durations", market.durations.len(), 1, "lengths");
+        for (index, duration) in market.durations.iter().enumerate() {
             check.at_least(
-                format!("/auctions/durations/{index}"),
+                format!("/market/durations/{index}"),
                 duration.0,
                 1.0,
                 "seconds",
             );
         }
-        check.range("/auctions/deposit", auctions.deposit, 0.0, 100.0, "percent");
-        check.range("/auctions/cut", auctions.cut, 0.0, 100.0, "percent");
-        check.at_least("/auctions/listings", auctions.listings, 1, "auctions");
+        check.at_least(
+            "/market/max_offer_items",
+            market.max_offer_items,
+            1,
+            "items",
+        );
+        check.at_least(
+            "/market/max_price_items",
+            market.max_price_items,
+            1,
+            "items",
+        );
+        check.at_least("/market/max_listings", market.max_listings, 1, "listings");
     }
     settings.cards.check("/cards", &mut check);
     for (field, said) in [
@@ -1354,6 +1375,7 @@ fn check_settings(loading: &mut Loading) {
         ("no_longer", &settings.words.no_longer),
         ("quest_log_full", &settings.words.quest_log_full),
         ("needs_more", &settings.words.needs_more),
+        ("item_bound", &settings.words.item_bound),
         ("needs_a_slot", &settings.words.needs_a_slot),
         ("needs_slots", &settings.words.needs_slots),
         ("needs_tool", &settings.words.needs_tool),
@@ -1402,6 +1424,7 @@ fn check_settings(loading: &mut Loading) {
         ("sent_in_a_message", &settings.words.sent_in_a_message),
         ("party_invite_asks", &settings.words.party_invite_asks),
         ("party_invite_asked", &settings.words.party_invite_asked),
+        ("party_invite_sent", &settings.words.party_invite_sent),
         ("party_invite_denied", &settings.words.party_invite_denied),
         ("party_invite_lapsed", &settings.words.party_invite_lapsed),
         ("party_full", &settings.words.party_full),
@@ -1428,8 +1451,8 @@ fn check_settings(loading: &mut Loading) {
         ("instance_gather", &settings.words.instance_gather),
         ("instance_leader_only", &settings.words.instance_leader_only),
         (
-            "instance_needs_players",
-            &settings.words.instance_needs_players,
+            "instance_needs_characters",
+            &settings.words.instance_needs_characters,
         ),
         ("instance_form_party", &settings.words.instance_form_party),
         (
@@ -1437,6 +1460,7 @@ fn check_settings(loading: &mut Loading) {
             &settings.words.instance_already_inside,
         ),
         ("instance_call", &settings.words.instance_call),
+        ("instance_call_sent", &settings.words.instance_call_sent),
         ("instance_benched", &settings.words.instance_benched),
         (
             "instance_out_of_sight",
@@ -1486,7 +1510,7 @@ fn check_settings(loading: &mut Loading) {
     .into_iter()
     .chain(inbox::words(&settings.words))
     .chain(trade::words(&settings.words))
-    .chain(auction::words(&settings.words))
+    .chain(market::words(&settings.words))
     {
         check.text(format!("/words/{field}"), said, 1, 80);
     }
@@ -1526,7 +1550,7 @@ fn check_settings(loading: &mut Loading) {
     }
     area_instance::check_all(loading, &content, settings);
     payout::check(loading, &content, settings);
-    auction::check(loading, &content, settings);
+    market::check(loading, &content, settings);
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);
     }

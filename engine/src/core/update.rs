@@ -154,8 +154,9 @@ pub fn unpack(archive: &[u8], kind: ArchiveKind, binary: &str) -> Result<Vec<u8>
     found.ok_or_else(|| malformed(format!("the archive holds no {binary}")))
 }
 
-/// Puts `executable` in the place of the running client, so its next start runs it.
-pub fn replace_running(executable: &[u8]) -> Result<(), UpdateFailure> {
+/// Puts `executable` in the place of the running client, so its next start runs it. Answers the
+/// path it now lies at, for `restart`.
+pub fn replace_running(executable: &[u8]) -> Result<PathBuf, UpdateFailure> {
     let running = std::env::current_exe().map_err(|error| UpdateFailure::Unwritable {
         folder: PathBuf::new(),
         reason: error.to_string(),
@@ -173,12 +174,14 @@ pub fn replace_running(executable: &[u8]) -> Result<(), UpdateFailure> {
         .and_then(|running| std::fs::set_permissions(&staged, running.permissions()))
         .and_then(|()| self_replace::self_replace(&staged));
     let _ = std::fs::remove_file(&staged);
-    replaced.map_err(unwritable)
+    replaced.map(|()| running).map_err(unwritable)
 }
 
-/// Starts the client again as it was started, telling it which build it updated from.
-pub fn restart(updated_from_var: &str, from: &str) -> std::io::Result<()> {
-    std::process::Command::new(std::env::current_exe()?)
+/// Starts the client `installed` at the path `replace_running` answered, as this one was started,
+/// telling it which build it updated from. The running binary's own path won't do: once it is
+/// replaced, the system names it as deleted.
+pub fn restart(installed: &Path, updated_from_var: &str, from: &str) -> std::io::Result<()> {
+    std::process::Command::new(installed)
         .args(std::env::args_os().skip(1))
         .env(updated_from_var, from)
         .spawn()

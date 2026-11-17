@@ -146,8 +146,8 @@ pub struct MapReachStep(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MapMarkKind {
     Townsperson,
-    Player,
-    /// A player of the viewer's party.
+    Character,
+    /// A character of the viewer's party.
     PartyMember,
     WayOut,
     /// An item on the ground whose rarity marks it, drawn as the rarity's icon.
@@ -202,7 +202,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
                     if party.contains(&by.client) {
                         MapMarkKind::PartyMember
                     } else {
-                        MapMarkKind::Player
+                        MapMarkKind::Character
                     },
                     name.map(|name| name.name.clone()).unwrap_or_default(),
                 ),
@@ -488,7 +488,7 @@ const PIN_TALL: f32 = 15.0;
 const BLANK: Color32 = Color32::from_rgb(0xD9, 0xCB, 0xA3);
 const NO_GROUND: Color32 = Color32::from_rgb(0x4B, 0x43, 0x3A);
 const TOWNSPERSON: Color32 = Color32::from_rgb(0x6F, 0xB8, 0x74);
-const PLAYER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
+const CHARACTER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
 const PARTY_MEMBER: Color32 = Color32::from_rgb(0xE6, 0xC2, 0x5B);
 const PIN: Color32 = Color32::from_rgb(0xD9, 0x4F, 0x4F);
 const EDGE: Color32 = ink::FRAME;
@@ -663,7 +663,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
         MapMarkKind::WayOut,
         MapMarkKind::Loot,
         MapMarkKind::Townsperson,
-        MapMarkKind::Player,
+        MapMarkKind::Character,
         MapMarkKind::PartyMember,
     ] {
         for &(index, mark, at) in on_disc.iter().filter(|(_, mark, _)| mark.kind == kind) {
@@ -691,10 +691,10 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                     }
                     mark.name.clone()
                 }
-                MapMarkKind::Player | MapMarkKind::PartyMember => {
+                MapMarkKind::Character | MapMarkKind::PartyMember => {
                     let (color, said) = match kind {
                         MapMarkKind::PartyMember => (PARTY_MEMBER, "party member"),
-                        _ => (PLAYER, "player"),
+                        _ => (CHARACTER, "character"),
                     };
                     let diamond = [Vec2::UP, Vec2::RIGHT, Vec2::DOWN, Vec2::LEFT]
                         .map(|corner| at + corner * DIAMOND)
@@ -746,7 +746,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
         float::tooltip(&topmost, |ui| {
             let look = TextLook::role(TextRole::Tooltip, ui.visuals().text_color());
             for line in &under {
-                text::show(ui, world, &line.styled(), look, None);
+                text::show(ui, world, &line.styled(&content), look, None);
             }
         });
     }

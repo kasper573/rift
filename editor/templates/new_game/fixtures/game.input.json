@@ -51,7 +51,7 @@
       ]
     },
     "split_stack": {
-      "label": "Split a stack of items in two",
+      "label": "Split a stack in two, or move some of it to or from an open window",
       "bindings": [
         {
           "type": "click",
@@ -62,7 +62,7 @@
       ]
     },
     "place_item": {
-      "label": "Place one of an item in the open prompt",
+      "label": "Move one of an item to or from an open window",
       "bindings": [
         {
           "type": "click",
@@ -72,13 +72,12 @@
       ]
     },
     "place_stack": {
-      "label": "Place a whole stack in the open prompt",
+      "label": "Move a whole stack to or from an open window",
       "bindings": [
         {
           "type": "click",
-          "button": "Right",
-          "times": 1,
-          "shift": true
+          "button": "Left",
+          "times": 1
         }
       ]
     },
@@ -659,7 +658,7 @@
       ]
     },
     "actor_options": {
-      "label": "See what you can do with another player",
+      "label": "See what you can do with another character",
       "bindings": [
         {
           "type": "mouse",

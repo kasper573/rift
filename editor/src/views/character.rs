@@ -91,7 +91,6 @@ pub enum CharacterSection {
     #[strum(serialize = "Lines heard")]
     LinesHeard,
     Shops,
-    History,
 }
 
 impl CharacterSection {
@@ -125,10 +124,9 @@ impl CharacterSection {
             CharacterSection::Quests | CharacterSection::Memories => {
                 (&[CharacterSection::Quests], &[CharacterSection::Memories])
             }
-            CharacterSection::LinesHeard | CharacterSection::Shops | CharacterSection::History => (
-                &[CharacterSection::LinesHeard, CharacterSection::Shops],
-                &[CharacterSection::History],
-            ),
+            CharacterSection::LinesHeard | CharacterSection::Shops => {
+                (&[CharacterSection::LinesHeard], &[CharacterSection::Shops])
+            }
         }
     }
 }
@@ -346,13 +344,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                         &mut character.shops,
                                         field!(CharacterSnapshot, shops),
                                     ),
-                                    CharacterSection::History => section_of(
-                                        ui,
-                                        &mut cx,
-                                        "History",
-                                        &mut character.history,
-                                        field!(CharacterSnapshot, history),
-                                    ),
                                 };
                                 changed |= result;
                                 ui.add_space(8.0);
@@ -388,7 +379,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         CharacterSection::Hotbar => {
             "slots count from 0; a slot may hold a known skill or a held item".to_owned()
         }
-        _ => "every section is what the server keeps for a player".to_owned(),
+        _ => "every section is what the server keeps for a character".to_owned(),
     });
     if let Some(request) = pick {
         if let Some(area) = request.area.clone() {
@@ -1621,10 +1612,10 @@ pub(crate) fn preview_extras(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .map(|tier| format!(" · {xp} of {} xp to {}", tier.xp, level + 1))
         .unwrap_or_else(|| format!(" · {xp} xp · top tier"));
     let base = reader
-        .path_of(settings.player)
+        .path_of(settings.character)
         .and_then(|player| {
             project
-                .read::<engine::systems::player::PlayerDef>(player)
+                .read::<engine::systems::player::CharacterDef>(player)
                 .ok()
         })
         .map_or(0.0, |player| player.stats.get(StatKind::MaxHealth));

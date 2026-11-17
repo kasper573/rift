@@ -12,6 +12,7 @@ use ui::face::Face;
 use super::rows::{self, Clock, NoticePlace};
 use super::{Notification, NotificationKind, NotificationSent};
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::content::Content;
 use crate::core::content::ImageRef;
 use crate::core::gui;
 use crate::core::math::Rgba;
@@ -76,7 +77,7 @@ pub fn shown(world: &World) -> Option<ShownIntro> {
     };
     Some(ShownIntro {
         title: title.to_string(),
-        text: notification.text.plain_words(),
+        text: notification.text.plain_words(world.resource::<Content>()),
     })
 }
 
@@ -97,7 +98,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
         else {
             continue;
         };
-        let line = notification.text.styled();
+        let line = notification.text.styled(world.resource::<Content>());
         let tint = appearance.tint.map_or(Color32::WHITE, Color32::from);
         let title_font = Face::BookBold.id(TITLE_SIZE);
         let title_size = paint::text_size(gui, title, title_font.clone());

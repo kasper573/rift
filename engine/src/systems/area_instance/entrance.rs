@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::roster::{InstanceAsk, InstanceDoor};
-use super::{AreaInstanceEntry, PlayerCount};
+use super::{AreaInstanceEntry, CharacterCount};
 use crate::core::content::Content;
 use crate::core::script::{Answer, REFUSED};
 use crate::core::units::{MeterPos, Meters, Seconds};
@@ -41,7 +41,7 @@ pub struct EntranceStep(pub u32);
 pub struct EntranceView {
     pub step: EntranceStep,
     pub area: AreaId,
-    pub players: PlayerCount,
+    pub characters: CharacterCount,
     pub lasts: Option<Seconds>,
     pub goals: u32,
     pub party: EntranceParty,
@@ -50,7 +50,7 @@ pub struct EntranceView {
 impl EntranceView {
     /// Whether the area may be done alone.
     pub fn alone_opens(&self) -> bool {
-        self.players.least <= 1
+        self.characters.least <= 1
     }
 }
 
@@ -112,7 +112,7 @@ pub(crate) fn enter(
     let society = society.read();
     let parties = society.parties();
     let party = match parties.of_account(&account) {
-        None if rules.players.least <= 1 => {
+        None if rules.characters.least <= 1 => {
             drop(society);
             society::ask(
                 world,
@@ -153,7 +153,7 @@ pub(crate) fn enter(
     let view = EntranceView {
         step,
         area,
-        players: rules.players,
+        characters: rules.characters,
         lasts: rules.lasts,
         goals: rules.goals.len() as u32,
         party,
@@ -255,8 +255,8 @@ pub fn shown(world: &World) -> Option<ShownInstanceEntrance> {
     let content = world.resource::<Content>();
     Some(ShownInstanceEntrance {
         area: view.area.get(content).name.clone(),
-        least: view.players.least,
-        most: view.players.most,
+        least: view.characters.least,
+        most: view.characters.most,
         alone: view.alone_opens(),
         gather: matches!(view.party, EntranceParty::Leads { .. }),
         nearby: match &view.party {
@@ -336,14 +336,14 @@ fn ask(world: &mut World, mut asked: Local<Option<EntranceStep>>) {
     let content = world.resource::<Content>().clone();
     let words = world.resource::<GameSettings>().words.clone();
     let area = Mention::Area(view.area).span(&content);
-    let players = view.players;
-    let needs = LineText::plain(words.instance_needs_players.as_str())
+    let characters = view.characters;
+    let needs = LineText::plain(words.instance_needs_characters.as_str())
         .filling("{area}", area.clone())
-        .filling("{least}", players.least.to_string());
-    let mut chips = vec![match (players.least, players.most) {
-        (1, 1) => "1 player".to_owned(),
-        (least, most) if least == most => format!("{least} players"),
-        (least, most) => format!("{least} to {most} players"),
+        .filling("{least}", characters.least.to_string());
+    let mut chips = vec![match (characters.least, characters.most) {
+        (1, 1) => "1 character".to_owned(),
+        (least, most) if least == most => format!("{least} characters"),
+        (least, most) => format!("{least} to {most} characters"),
     }];
     if let Some(lasts) = view.lasts {
         chips.push(format!("{} min limit", (lasts.0 / 60.0).ceil() as u32));
@@ -371,7 +371,7 @@ fn ask(world: &mut World, mut asked: Local<Option<EntranceStep>>) {
             vec![LineText::plain(
                 words
                     .instance_form_party
-                    .replace("{least}", &players.least.to_string()),
+                    .replace("{least}", &characters.least.to_string()),
             )],
             "Close",
             None,
@@ -386,7 +386,7 @@ fn ask(world: &mut World, mut asked: Local<Option<EntranceStep>>) {
                         .collect(),
                 );
                 let stand = if nearby.len() == 1 { "stands" } else { "stand" };
-                said = format!("{said} {} {stand} near you.", names.plain_words());
+                said = format!("{said} {} {stand} near you.", names.plain_words(&content));
             }
             let gather = hud::ChoiceOption {
                 label: format!("{} · {} nearby", words.instance_gather, nearby.len()),

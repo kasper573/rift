@@ -409,7 +409,7 @@ fn a_walker_covers_ground_in_the_gait_whose_clip_covers_nearest_its_speed() {
                 .area("field", &Map::open(19, 19), json!([]))
                 .skeleton_of(BODY, &rig_clips(), json!({}))
                 .hero("field", 2.0, 9.0)
-                .edit("player", "hero", |hero| {
+                .edit("character", "hero", |hero| {
                     hero["stats"]["movement_speed"] = json!(speed)
                 }),
         )

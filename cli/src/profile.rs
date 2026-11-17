@@ -30,7 +30,7 @@ pub fn run(game: Option<&Path>, out: &Path) {
     let server = GameServer::start(&binaries::beside(GAME_SERVER_PROFILING), |run| {
         ServerConfig {
             max_clients: MAX_CLIENTS,
-            player_spawn_policy: SpawnPolicy::Dist,
+            character_spawn_policy: SpawnPolicy::Dist,
             test_characters: false,
             ..bench_config(&game, run)
         }

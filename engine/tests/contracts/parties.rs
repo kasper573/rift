@@ -52,7 +52,10 @@ fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
         ),
         "accepting makes one of the two, led by whoever invited, wherever each is"
     );
-    assert_eq!(server.told(1), ["Hale joined the party"]);
+    assert_eq!(
+        server.told(1),
+        ["Party invite sent to Hale", "Hale joined the party"]
+    );
 
     invite(&mut server, 3, "Hale");
     assert_eq!(
@@ -69,7 +72,13 @@ fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
     );
     server.answer(3, RequestAnswer::Deny);
     server.step();
-    assert_eq!(server.told(2), ["Marrow denied your invitation"]);
+    assert_eq!(
+        server.told(2),
+        [
+            "Party invite sent to Marrow",
+            "Marrow denied your invitation"
+        ]
+    );
     invite(&mut server, 1, "Marrow");
     server.later(61.0);
     assert_eq!(
@@ -241,7 +250,7 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
         marked,
         [
             ("Hale".to_owned(), MapMarkKind::PartyMember),
-            ("Osric".to_owned(), MapMarkKind::Player)
+            ("Osric".to_owned(), MapMarkKind::Character)
         ],
         "a member's map tells the party's players from the rest"
     );
@@ -474,7 +483,7 @@ fn party(server: &mut Server, client: u32) -> Vec<String> {
         .members
         .iter()
         .map(|member| {
-            let leads = if party.leader == member.player.account {
+            let leads = if party.leader == member.character.account {
                 " ★"
             } else {
                 ""
@@ -484,7 +493,7 @@ fn party(server: &mut Server, client: u32) -> Vec<String> {
                 Some(_) => "village",
                 None => "away",
             };
-            format!("{}{leads} {place}", member.player.name)
+            format!("{}{leads} {place}", member.character.name)
         })
         .collect()
 }

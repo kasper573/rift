@@ -9,6 +9,7 @@ use crate::core::content::{Content, ContentNames};
 use crate::core::script::{Compiler, Eval, Expr, FlowCx, QueryDef, ScriptFault, Value, ValueType};
 use crate::systems::area::{AreaId, TimeOfDayName};
 use crate::systems::item::ItemId;
+use crate::systems::item::inline::InlineItem;
 use crate::systems::mention::Mention;
 use crate::systems::quest::QuestId;
 use crate::systems::skill::SkillId;
@@ -29,9 +30,30 @@ pub struct Wording(pub Vec<WordingPart>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WordingPart {
-    Words { words: String },
-    Time { time: TimeOfDayName },
-    Named { name: String, mark: NameMark },
+    Words {
+        words: String,
+    },
+    Time {
+        time: TimeOfDayName,
+    },
+    Named {
+        name: String,
+        mark: NameMark,
+    },
+    /// An item, as its inline item shows it, with how many of it where the wording counts it.
+    Item {
+        item: ItemId,
+        count: Option<u32>,
+        name: String,
+    },
+}
+
+impl WordingPart {
+    /// The inline item an item of a wording shows as.
+    pub fn inline(item: ItemId, count: Option<u32>) -> InlineItem {
+        let shown = InlineItem::of(item);
+        count.map_or(shown, |count| shown.count(count))
+    }
 }
 
 /// Where a condition's wording finds how what it asks about is named.
@@ -40,16 +62,33 @@ pub trait ConditionNames: ContentNames {
     /// more of it is known.
     fn mentioned(&self, mention: Mention) -> Wording {
         Wording::words(match mention {
-            Mention::Item(item) => self.name_of(item),
+            Mention::Item(item) => return self.counted(item, None),
             Mention::Quest(quest) => self.name_of(quest),
             Mention::Skill(skill) => self.name_of(skill),
             Mention::Area(area) => self.name_of(area),
         })
     }
+
+    /// How many of an item a wording asks for, by the item's name, where it counts it.
+    fn counted(&self, item: ItemId, count: Option<u32>) -> Wording {
+        let name = self.name_of(item);
+        Wording::words(match count {
+            Some(count) => format!("{count} {name}"),
+            None => name,
+        })
+    }
 }
 
 impl ConditionNames for Content {
+    fn counted(&self, item: ItemId, count: Option<u32>) -> Wording {
+        let name = item.get(self).name.clone();
+        Wording(vec![WordingPart::Item { item, count, name }])
+    }
+
     fn mentioned(&self, mention: Mention) -> Wording {
+        if let Mention::Item(item) = mention {
+            return self.counted(item, None);
+        }
         let shown = mention.shown(self);
         Wording(vec![WordingPart::Named {
             name: shown.name,
@@ -111,6 +150,12 @@ impl fmt::Display for Wording {
             WordingPart::Words { words } => f.write_str(words),
             WordingPart::Time { time } => f.write_str(&time.0),
             WordingPart::Named { name, .. } => f.write_str(name),
+            WordingPart::Item {
+                count: Some(count),
+                name,
+                ..
+            } => write!(f, "{count} {name}"),
+            WordingPart::Item { name, .. } => f.write_str(name),
         })
     }
 }
@@ -134,6 +179,9 @@ impl From<&Wording> for LineText {
                         name: name.clone(),
                         mark: mark.clone(),
                     },
+                    &WordingPart::Item { item, count, .. } => {
+                        SpanText::Item(WordingPart::inline(item, count))
+                    }
                 })
                 .collect(),
         )
@@ -263,7 +311,7 @@ pub fn describe(content: &impl ConditionNames, condition: &Condition) -> Wording
                 format!("Level {level}").into()
             }
             (Expr::Query(RiftQuery::Holding { item, .. }), Expr::Int(count)) => {
-                Wording::words(format!("{count} ")).then(content.mentioned(Mention::Item(*item)))
+                content.counted(*item, u32::try_from(*count).ok())
             }
             (Expr::Query(RiftQuery::Stat { stat, .. }), Expr::Num(min)) => {
                 format!("{min} {}", stat.label()).into()

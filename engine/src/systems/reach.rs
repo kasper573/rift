@@ -41,7 +41,7 @@ pub fn chasing(world: &World, actor: Entity) -> bool {
 }
 
 /// Keeps every character's `Engaged` in step with the actor its cast intent aims at, and every
-/// player's `Chasing` with whether it reaches for a cast at all.
+/// character's `Chasing` with whether it reaches for a cast at all.
 pub fn mirror_engaged(
     world: &mut World,
     intents: &mut Intents,

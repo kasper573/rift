@@ -12,23 +12,22 @@ use ui::{controls, form, ink, sheet};
 use super::{MessageAnswered, SendMessage};
 use crate::core::content::Content;
 use crate::systems::GameSettings;
-use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::tray::{ItemTray, TrayDone, tray_slots};
+use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, item_transfer};
+use crate::systems::item::tray::ItemTray;
 use crate::systems::item::widget::{
-    InventoryPane, SlotAction, SlotVerdict, inventory_pane, slot_action, slot_aside_source,
-    slot_note_source, slot_verdict_source,
+    InventoryPane, SlotVerdict, inventory_pane, slot_note_source, slot_verdict_source,
 };
 use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
-use crate::systems::society::tab::{self, PlayerAction};
+use crate::systems::society::tab::{self, CharacterAction};
 use crate::systems::society::{AccountNumber, SocietyMember, SocietyView};
 
 /// Writing to a player a page lists.
-pub struct WriteToPlayer;
+pub struct WriteToCharacter;
 
-impl PlayerAction for WriteToPlayer {
+impl CharacterAction for WriteToCharacter {
     fn label(&self) -> &'static str {
         "Write a message"
     }
@@ -90,25 +89,7 @@ pub(super) fn writing(world: &World) -> bool {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    slot_action(
-        app,
-        SlotAction {
-            action: InputAction::PlaceItem,
-            active: attaching,
-            act: |world, slot| attach(world, slot, false),
-            verb: "attach",
-        },
-    );
-    slot_action(
-        app,
-        SlotAction {
-            action: InputAction::PlaceStack,
-            active: attaching,
-            act: |world, slot| attach(world, slot, true),
-            verb: "attach the stack",
-        },
-    );
-    slot_aside_source(app, aside);
+    item_transfer(app, TRANSFER);
     slot_note_source(app, note);
     slot_verdict_source(app, verdict);
     app.init_resource::<Draft>()
@@ -132,13 +113,13 @@ pub(crate) fn may_write_to(view: &SocietyView, player: AccountNumber) -> bool {
     receivers(view).iter().any(|other| other.account == player)
 }
 
-/// The players a message can be written to: the player's friends, and the members of their
+/// The players a message can be written to: the character's friends, and the members of their
 /// party.
 fn receivers(view: &SocietyView) -> Vec<SocietyMember> {
-    let friends = view.friends.iter().map(|friend| &friend.player);
+    let friends = view.friends.iter().map(|friend| &friend.character);
     let party = view.party.iter().flat_map(|party| &party.members);
     let mut receivers: Vec<SocietyMember> = Vec::new();
-    for player in friends.chain(party.map(|member| &member.player)) {
+    for player in friends.chain(party.map(|member| &member.character)) {
         let listed = receivers
             .iter()
             .any(|other| other.account == player.account);
@@ -238,20 +219,15 @@ fn message(ui: &mut Ui, world: &mut World, view: &SocietyView, rules: &super::Me
     let slots = (tray.placed().len() as u32 + 1).min(rules.attachments);
     let attached = format!("{} of {}", tray.placed().len(), rules.attachments);
     form::section_count(ui, "Attached", attached);
-    let done = ui
-        .add_enabled_ui(!sending, |ui| {
-            tray_slots(ui, world, &tray, slots, "Attached")
-        })
-        .inner;
-    match done {
-        Some(TrayDone::Clicked(index)) => {
-            world.resource_mut::<Draft>().tray.take_back(index);
-            InterfaceSound::UiMove.play(world);
-        }
-        Some(TrayDone::Dropped(slot)) => attach(world, slot, true),
-        None => {}
-    }
-    form::caption(ui, "Click an attached item to take it back", ink::INK3);
+    ui.add_enabled_ui(!sending, |ui| {
+        let pane = TransferPane {
+            placed: tray.placed(),
+            slots,
+            named: "Attached",
+            transfer: Some(TRANSFER),
+        };
+        transfer::transfer_pane(ui, world, pane);
+    });
     ui.add_space(GAP);
     let draft = world.resource::<Draft>();
     let ready = draft.to.is_some() && !draft.title.trim().is_empty();
@@ -308,7 +284,17 @@ fn attaching(world: &World) -> bool {
     writing(world) && tab::showing(world, super::page::TITLE)
 }
 
-fn attach(world: &mut World, slot: u32, whole: bool) {
+/// The message being written as a window items move into.
+const TRANSFER: ItemTransfer = ItemTransfer {
+    key: "message draft",
+    open: attaching,
+    verb: "attach",
+    put: attach,
+    take: detach,
+    aside,
+};
+
+fn attach(world: &mut World, slot: u32, count: u32) -> bool {
     let most = world
         .resource::<GameSettings>()
         .messages
@@ -316,18 +302,18 @@ fn attach(world: &mut World, slot: u32, whole: bool) {
     let content = world.resource::<Content>().clone();
     let bag = session::my_character(world).and_then(|me| me.get::<Inventory>().cloned());
     let stays = |stack: &ItemStack| stack.item.get(&content).bound();
-    let attached = match bag {
+    match bag {
         Some(bag) if !bag.slots.get(slot as usize).is_some_and(stays) => {
             let mut draft = world.resource_mut::<Draft>();
-            !draft.sending && draft.tray.place(&bag, slot, whole, most)
+            !draft.sending && draft.tray.place(&bag, slot, count, most)
         }
         _ => false,
-    };
-    if attached {
-        InterfaceSound::UiMove.play(world);
-    } else {
-        InterfaceSound::UiRefuse.play(world);
     }
+}
+
+fn detach(world: &mut World, index: usize, count: u32) -> bool {
+    let mut draft = world.resource_mut::<Draft>();
+    !draft.sending && draft.tray.take_back(index, count)
 }
 
 fn aside(world: &World, slot: u32, stack: ItemStack) -> u32 {

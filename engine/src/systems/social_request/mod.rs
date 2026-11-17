@@ -31,7 +31,7 @@ use crate::systems::{GameSettings, GameWords};
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
     app.add_client_message::<AnswerSocialRequest>()
-        .add_client_message::<BlockPlayer>()
+        .add_client_message::<BlockCharacter>()
         .add_client_message::<ChooseAcceptsRequests>();
 }
 
@@ -126,8 +126,8 @@ pub struct SocialRequestWords<'a> {
     pub asks: &'a str,
     /// What the asker reads while it waits.
     pub asked: &'a str,
-    /// What the asker is told as it is sent, for a kind that tells them.
-    pub sent: Option<&'a str>,
+    /// What the asker is told as it is sent.
+    pub sent: &'a str,
     /// What the asker is told when it is accepted, for a kind that tells them.
     pub accepted: Option<&'a str>,
     /// What the asker is told when it is denied. A kind that does not tell them keeps a request that was
@@ -350,7 +350,7 @@ pub enum RequestAnswer {
 
 /// A player blocking another, or undoing it.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BlockPlayer {
+pub struct BlockCharacter {
     pub account: AccountNumber,
     pub blocked: bool,
 }
@@ -377,17 +377,21 @@ pub fn requests(world: &mut World) {
             Ok(())
         },
     );
-    player::player_requests::<BlockPlayer>(world, RequestNeeds::Nothing, |world, player, block| {
-        let ask = if block.blocked {
-            BlockAsk::Block(block.account)
-        } else {
-            BlockAsk::Unblock(block.account)
-        };
-        if let Some(client) = client(world, player) {
-            society::ask(world, client, SocietyAsk::Block(ask));
-        }
-        Ok(())
-    });
+    player::player_requests::<BlockCharacter>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, block| {
+            let ask = if block.blocked {
+                BlockAsk::Block(block.account)
+            } else {
+                BlockAsk::Unblock(block.account)
+            };
+            if let Some(client) = client(world, player) {
+                society::ask(world, client, SocietyAsk::Block(ask));
+            }
+            Ok(())
+        },
+    );
     player::player_requests::<ChooseAcceptsRequests>(
         world,
         RequestNeeds::Nothing,
@@ -581,10 +585,10 @@ fn send(
     if source.reaches_offline {
         settling.unwritten.put(request);
     }
-    if let Some(sent) = (source.words)(&settings.words).sent {
-        let text = sent.replace("{name}", &settling.name(asked));
-        settling.tell(asker, Notification::feed(HistoryTopic::Notification, text));
-    }
+    let sent = (source.words)(&settings.words)
+        .sent
+        .replace("{name}", &settling.name(asked));
+    settling.tell(asker, Notification::feed(HistoryTopic::Notification, sent));
 }
 
 fn accept(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId) {

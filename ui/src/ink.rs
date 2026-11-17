@@ -93,6 +93,25 @@ pub fn legible(color: Color32, ground: Color32) -> Color32 {
         .unwrap_or(Color32::WHITE)
 }
 
+/// `color` as text over the light `ground`: itself where it stands clear of it, else mixed toward
+/// ink until it does.
+pub fn inked(color: Color32, ground: Color32) -> Color32 {
+    (0..=LIFTS)
+        .map(|lift| on(color, INK, f32::from(lift) / f32::from(LIFTS)))
+        .find(|darkened| contrast(*darkened, ground) >= READABLE)
+        .unwrap_or(INK)
+}
+
+impl Ground {
+    /// `color` as text that reads on this ground: darkened on paper, lifted on dusk.
+    pub fn legible(self, color: Color32) -> Color32 {
+        match self {
+            Ground::Paper => inked(color, CREAM),
+            Ground::Dusk => legible(color, VEIL),
+        }
+    }
+}
+
 /// How far two colours stand apart, from 1 for the same to 21 for black on white.
 pub fn contrast(one: Color32, other: Color32) -> f32 {
     let (one, other) = (luminance(one), luminance(other));

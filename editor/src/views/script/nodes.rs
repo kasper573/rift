@@ -80,7 +80,7 @@ pub(crate) enum SpeakerKind {
     Npc,
     Object,
     Narrator,
-    Player,
+    Character,
 }
 
 impl SpeakerKind {
@@ -89,7 +89,7 @@ impl SpeakerKind {
             Speaker::Npc(_) => SpeakerKind::Npc,
             Speaker::Object => SpeakerKind::Object,
             Speaker::Narrator => SpeakerKind::Narrator,
-            Speaker::Player => SpeakerKind::Player,
+            Speaker::Character => SpeakerKind::Character,
         }
     }
 
@@ -98,7 +98,7 @@ impl SpeakerKind {
             SpeakerKind::Npc => "npc",
             SpeakerKind::Object => "object",
             SpeakerKind::Narrator => "narrator",
-            SpeakerKind::Player => "player",
+            SpeakerKind::Character => "character",
         }
     }
 

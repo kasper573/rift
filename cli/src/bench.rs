@@ -3,6 +3,7 @@ mod driver;
 mod editor;
 mod frames;
 mod hands;
+mod market;
 mod memory;
 mod places;
 mod play;
@@ -21,8 +22,8 @@ use std::time::{Duration, Instant};
 use engine::core::content::Content;
 use engine::core::math::Size;
 use engine::core::units::WindowPx;
-use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaModule};
+use engine::systems::{GameSettings, TICK_HZ};
 
 use crate::loadtest::Pool;
 use crate::render::{VideoFilter, VideoPreset};
@@ -59,6 +60,8 @@ pub enum BenchPart {
 pub struct BenchArgs {
     pub game: Option<PathBuf>,
     pub spread: bool,
+    /// The areas the server is measured at, rather than finding the most it sustains.
+    pub areas: Option<usize>,
     pub only: Vec<BenchPart>,
     /// Only the scenarios whose names match, `*` standing for anything.
     pub scenario: Option<String>,
@@ -66,7 +69,7 @@ pub struct BenchArgs {
     pub scenarios: Option<PathBuf>,
     /// The video presets to run at.
     pub video: VideoFilter,
-    /// How many times each scenario runs; the report keeps the median run and the spread.
+    /// How many times each scenario runs, or the server is measured at `areas`.
     pub repeat: u32,
     pub report: PathBuf,
     pub compare: Option<PathBuf>,
@@ -93,12 +96,12 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
         }
         let folder = tempfile::tempdir().expect("a folder to write the crowd into");
         testkit::crowd().write_to(folder.path());
-        server(&load(folder.path()), layout);
+        server(&load(folder.path()), layout, args);
         return Ok(0);
     };
     let content = load(game);
     if runs(BenchPart::Server) {
-        server(&content, layout);
+        server(&content, layout, args);
     }
     let videos = args.video.presets();
     let mut report: Option<BenchReport> = None;
@@ -640,8 +643,11 @@ fn failure_text(failure: &Failure) -> String {
 }
 
 /// The highest count of the game's spawn area, each with its players, the server sustains within
-/// the tick budget.
-fn server(content: &Content, layout: sim::Layout) {
+/// the tick budget; or how it runs at the areas asked for.
+fn server(content: &Content, layout: sim::Layout, args: &BenchArgs) {
+    if let Some(areas) = args.areas {
+        return server_at(content, layout, areas, args.repeat.max(1));
+    }
     println!(
         "[bench] finding the highest A sustained within the {:.1}ms budget ({} players)...",
         budget_ms(),
@@ -682,8 +688,9 @@ fn server(content: &Content, layout: sim::Layout) {
         r.full.p99,
         r.full.max,
         r.sim,
-        (r.full.mean - r.sim).max(0.0),
+        r.repl(),
     );
+    r.market.print();
     println!(
         "[bench] capacity: {} isolated areas = {} NPCs + {} players sustained at {:.1}ms/tick (budget {:.1}ms)",
         areas,
@@ -694,9 +701,82 @@ fn server(content: &Content, layout: sim::Layout) {
     );
 }
 
+/// The server at `areas`, measured `repeat` times from a fresh start each, and the run with the
+/// median mean tick.
+fn server_at(content: &Content, layout: sim::Layout, areas: usize, repeat: u32) {
+    println!(
+        "[bench] measuring {areas} areas {repeat} times ({} players)...",
+        layout.as_ref()
+    );
+    let mut runs: Vec<Point> = (0..repeat)
+        .map(|run| {
+            let point = point(areas, layout, content);
+            println!(
+                "[bench]   run {}: mean={:6.2}ms sim={:6.2}ms repl={:6.2}ms",
+                run + 1,
+                point.full.mean,
+                point.sim,
+                point.repl()
+            );
+            point
+        })
+        .collect();
+    runs.sort_by(|one, other| one.full.mean.total_cmp(&other.full.mean));
+    let median = &runs[runs.len() / 2];
+    let spread = runs[runs.len() - 1].full.mean - runs[0].full.mean;
+    println!("\n[bench] areas,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms,spread_ms");
+    println!(
+        "[bench] AT {areas},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{spread:.3}",
+        median.full.mean,
+        median.full.p50,
+        median.full.p99,
+        median.full.max,
+        median.sim,
+        median.repl(),
+    );
+    median.market.print();
+}
+
 struct Point {
     full: Timings,
     sim: f64,
+    market: Market,
+}
+
+/// The market over a run: how many listings it held at the end, and what its traders asked of
+/// it a second.
+struct Market {
+    listings: usize,
+    searches: f64,
+    new_listings: f64,
+    purchases: f64,
+}
+
+impl Market {
+    fn of(bench: &Bench) -> Market {
+        let (listings, asks, ticks) = bench.market();
+        let seconds = ticks.max(1) as f64 / f64::from(TICK_HZ.0);
+        Market {
+            listings,
+            searches: asks.searches as f64 / seconds,
+            new_listings: asks.listings as f64 / seconds,
+            purchases: asks.purchases as f64 / seconds,
+        }
+    }
+
+    fn print(&self) {
+        println!(
+            "[bench] market: {} listings up; a second, {:.1} searches, {:.1} new listings, {:.1} purchases",
+            self.listings, self.searches, self.new_listings, self.purchases
+        );
+    }
+}
+
+impl Point {
+    /// What the clients add to a tick: replicating the world to them.
+    fn repl(&self) -> f64 {
+        (self.full.mean - self.sim).max(0.0)
+    }
 }
 
 struct Timings {
@@ -710,9 +790,11 @@ fn point(areas: usize, layout: sim::Layout, content: &Content) -> Point {
     let mut bench = Bench::new(areas, layout, content);
     let sim = measure_ticks(&mut bench).mean;
     bench.connect();
+    let full = measure_ticks(&mut bench);
     Point {
-        full: measure_ticks(&mut bench),
+        full,
         sim,
+        market: Market::of(&bench),
     }
 }
 

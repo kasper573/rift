@@ -93,12 +93,12 @@ impl PlateLabel {
         }
     }
 
-    /// A player's plate, under its name what is `said` of a character whose player is gone.
-    pub fn player(name: &str, said: Option<&str>) -> PlateLabel {
+    /// A character's plate, under its name what is `said` of it while its player is gone.
+    pub fn character(name: &str, said: Option<&str>) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
             state: said.map(str::to_owned),
-            color: dusk::PLAYER,
+            color: dusk::CHARACTER,
         }
     }
 }
@@ -317,7 +317,7 @@ fn label(
         }
         (None, Some(_)) => {
             let words = &content.built::<GameSettings>().words;
-            Some(PlateLabel::player(
+            Some(PlateLabel::character(
                 &name?.name,
                 away.then_some(words.away.as_str()),
             ))

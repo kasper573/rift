@@ -11,17 +11,17 @@ use ui::{ink, sheet};
 
 use super::{PromptKind, PromptRequest, PromptStep, PromptView};
 use crate::core::content::Content;
-use crate::core::text::{self, StyledLine, TextLook, TextPiece};
+use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::GameSettings;
 use crate::systems::dialogue::Conversation;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
-use crate::systems::input::map::{InputAction, InputMap, input};
+use crate::systems::input::map::InputMap;
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::tray::{ItemTray, TrayDone, tray_slots};
-pub use crate::systems::item::tray::{Placed, slots_height, slots_width};
-use crate::systems::item::widget::{
-    InventoryPane, SlotAction, inventory_pane, slot_action, slot_aside_source, slot_note_source,
-};
+use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, item_transfer};
+pub use crate::systems::item::transfer::{slots_height, slots_width};
+use crate::systems::item::tray::ItemTray;
+pub use crate::systems::item::tray::Placed;
+use crate::systems::item::widget::{InventoryPane, inventory_pane, slot_note_source};
 use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -34,25 +34,7 @@ pub struct PromptTrayPlugin;
 
 impl Plugin for PromptTrayPlugin {
     fn build(&self, app: &mut App) {
-        slot_action(
-            app,
-            SlotAction {
-                action: InputAction::PlaceItem,
-                active: open,
-                act: |world, slot| place(world, slot, false),
-                verb: "place",
-            },
-        );
-        slot_action(
-            app,
-            SlotAction {
-                action: InputAction::PlaceStack,
-                active: open,
-                act: |world, slot| place(world, slot, true),
-                verb: "place the stack",
-            },
-        );
-        slot_aside_source(app, aside);
+        item_transfer(app, TRANSFER);
         slot_note_source(app, note);
         stage::dock(app, DockedPanel { head, show });
         app.init_resource::<Placing>()
@@ -96,25 +78,30 @@ pub fn sent(world: &mut World, step: PromptStep) {
     world.resource_mut::<Placing>().sent = Some(step);
 }
 
-/// Places one of the item in the bag's slot `slot` in the tray, or with `whole` all of that slot
-/// that is not placed yet: on the stack of it already there, else in the next empty slot. What
-/// was submitted stays as it is until the server answers.
-pub fn place(world: &mut World, slot: u32, whole: bool) {
+/// The tray as a window items move into: what was submitted stays as it is until the server
+/// answers.
+const TRANSFER: ItemTransfer = ItemTransfer {
+    key: "prompt",
+    open,
+    verb: "place",
+    put: place,
+    take: take_back,
+    aside,
+};
+
+/// Places `count` of the item in the bag's slot `slot` in the tray: on the stack of it already
+/// there, else in the next empty slot.
+fn place(world: &mut World, slot: u32, count: u32) -> bool {
     let Some(slots) = view(world).map(|view| view.slots as usize) else {
-        return;
+        return false;
     };
     let bag = session::my_character(world).and_then(|me| me.get::<Inventory>().cloned());
-    let placed = match bag {
+    match bag {
         Some(bag) if !waiting(world) => {
             let tray = &mut world.resource_mut::<Placing>().tray;
-            tray.place(&bag, slot, whole, slots)
+            tray.place(&bag, slot, count, slots)
         }
         _ => false,
-    };
-    if placed {
-        InterfaceSound::UiMove.play(world);
-    } else {
-        InterfaceSound::UiRefuse.play(world);
     }
 }
 
@@ -124,9 +111,9 @@ pub fn put(world: &mut World, stack: ItemStack) {
     world.resource_mut::<Placing>().tray.put(stack);
 }
 
-/// Takes back what the tray's slot `index` holds.
-pub fn take_back(world: &mut World, index: usize) {
-    world.resource_mut::<Placing>().tray.take_back(index);
+/// Takes back `count` of what the tray's slot `index` holds.
+fn take_back(world: &mut World, index: usize, count: u32) -> bool {
+    !waiting(world) && world.resource_mut::<Placing>().tray.take_back(index, count)
 }
 
 /// Empties the tray.
@@ -134,28 +121,32 @@ pub fn clear(world: &mut World) {
     world.resource_mut::<Placing>().tray.clear();
 }
 
-/// The tray's slots: every placed stack in its slot, a click on one taking it back, and what is
-/// dropped on them placed whole.
+/// The tray's slots: every placed stack in its slot.
 pub fn slots(ui: &mut Ui, world: &mut World, count: u32) {
     let tray = world.resource::<Placing>().tray.clone();
-    match tray_slots(ui, world, &tray, count, "Placed") {
-        Some(TrayDone::Clicked(_)) if waiting(world) => InterfaceSound::UiRefuse.play(world),
-        Some(TrayDone::Clicked(index)) => {
-            take_back(world, index);
-            InterfaceSound::UiMove.play(world);
-        }
-        Some(TrayDone::Dropped(slot)) => place(world, slot, true),
-        None => {}
-    }
+    let pane = TransferPane {
+        placed: tray.placed(),
+        slots: count,
+        named: "Placed",
+        transfer: Some(TRANSFER),
+    };
+    transfer::transfer_pane(ui, world, pane);
+}
+
+/// How the tray is filled and emptied, in a line.
+pub fn how_to() -> StyledLine {
+    transfer::how_to(&TRANSFER)
 }
 
 /// The line of the script's own words over a prompt's tray, when it has one.
 pub fn words(ui: &mut Ui, world: &World, view: &PromptView) {
     if let Some(text) = &view.text {
         ui.label(
-            egui::RichText::new(text.words(world.resource::<InputMap>()))
-                .size(TextRole::Body.size())
-                .color(ink::INK2),
+            egui::RichText::new(
+                text.words(world.resource::<Content>(), world.resource::<InputMap>()),
+            )
+            .size(TextRole::Body.size())
+            .color(ink::INK2),
         );
         ui.add_space(6.0);
     }
@@ -264,14 +255,7 @@ fn foot(ui: &mut Ui, world: &mut World, view: &PromptView) {
         leave_button(ui, world);
     });
     ui.add_space(BUTTON_GAP);
-    let hint = StyledLine::new(vec![
-        input(InputAction::PlaceItem),
-        TextPiece::text(" places one · "),
-        input(InputAction::PlaceStack),
-        TextPiece::text(" the stack · "),
-        input(InputAction::CarryItem),
-        TextPiece::text(" works too"),
-    ]);
+    let hint = how_to();
     let look = TextLook::new(TextRole::Small.size(), ink::INK3);
     text::show(ui, world, &hint, look, None);
 }

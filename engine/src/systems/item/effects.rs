@@ -614,7 +614,7 @@ pub fn move_between(
         return Err("Nothing to move".into());
     }
     if let Some(bound) = items.iter().find(|stack| stack.item.get(&content).bound()) {
-        return Err(Mention::Item(bound.item).line(&content).then(" is bound"));
+        return Err(ItemStack::bound_line(bound.item, &content));
     }
     let mut giving = world
         .get::<Inventory>(from)

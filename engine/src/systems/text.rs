@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 use ui::ink::Prose;
 
-use crate::core::content::SchemaMark;
+use crate::core::content::{Content, SchemaMark};
 use crate::core::math::Rgb;
 use crate::core::script::{Expr, Value};
 use crate::core::text::{StyledLine, StyledSpan, TextMotion, TextPiece, TextVoice};
 use crate::core::units::{Millis, Seconds};
 use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::item::inline::InlineItem;
 use crate::systems::script::RiftScripting;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -181,6 +182,7 @@ pub enum SpanText {
     Text { text: String, fx: Vec<Fx> },
     Input(InputAction),
     Named { name: String, mark: NameMark },
+    Item(InlineItem),
 }
 
 /// What marks a name as one of a kind: the kind's icon before it, and the kind's colour where
@@ -286,11 +288,12 @@ impl LineText {
         }])
     }
 
-    pub fn words(&self, inputs: &InputMap) -> String {
+    pub fn words(&self, content: &Content, inputs: &InputMap) -> String {
         self.0
             .iter()
             .map(|span| match span {
                 SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => text.clone(),
+                SpanText::Item(item) => item.words(content),
                 SpanText::Input(action) => {
                     inputs.cap(*action).map(|cap| cap.name).unwrap_or_default()
                 }
@@ -298,38 +301,46 @@ impl LineText {
             .collect()
     }
 
-    pub fn plain_words(&self) -> String {
+    pub fn plain_words(&self, content: &Content) -> String {
         self.0
             .iter()
             .map(|span| match span {
-                SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => text.as_str(),
-                SpanText::Input(_) => "",
+                SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => text.clone(),
+                SpanText::Item(item) => item.words(content),
+                SpanText::Input(_) => String::new(),
             })
             .collect()
     }
 
-    pub fn word_count(&self) -> usize {
+    pub fn word_count(&self, content: &Content) -> usize {
         self.0
             .iter()
             .map(|span| match span {
                 SpanText::Text { text, .. } | SpanText::Named { name: text, .. } => {
                     text.split_whitespace().count()
                 }
+                SpanText::Item(item) => item.words(content).split_whitespace().count(),
                 SpanText::Input(_) => 1,
             })
             .sum()
     }
 
-    pub fn styled(&self) -> StyledLine {
-        StyledLine::new(self.0.iter().flat_map(SpanText::pieces).collect())
+    pub fn styled(&self, content: &Content) -> StyledLine {
+        StyledLine::new(
+            self.0
+                .iter()
+                .flat_map(|span| span.pieces(content))
+                .collect(),
+        )
     }
 }
 
 impl SpanText {
-    fn pieces(&self) -> Vec<TextPiece> {
+    fn pieces(&self, content: &Content) -> Vec<TextPiece> {
         let (text, fx) = match self {
             SpanText::Text { text, fx } => (text, fx),
             SpanText::Input(action) => return vec![map::input(*action)],
+            SpanText::Item(item) => return item.pieces(content),
             SpanText::Named { name, mark } => {
                 let icon = mark.icon.clone().map(|icon| TextPiece::Image(icon.into()));
                 let name = StyledSpan::plain(name.clone()).lit(mark.color.into());

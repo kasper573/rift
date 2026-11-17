@@ -27,7 +27,7 @@ pub struct Underfoot {
 /// draws as much water as one of the game's `draughts`, over the tiles of ground held: each tile
 /// triangulated as it is first held, and the meshes joined anew over the held tiles whenever the
 /// tiles held change. A tile is held for as long as a [`GroundHold`] wants it, so a
-/// process holds the ground near its players or in its view alone, however wide the area and
+/// process holds the ground near its characters or in its view alone, however wide the area and
 /// however far they have been. A mesh is read without a lock or a count, so every core reads it at
 /// once, and swapped whole when it is laid anew.
 pub struct Meshes {

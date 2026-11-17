@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Pos2, Rect, Ui};
 use ui::{controls, dialog, face, ink};
 
-use super::{AnswerSocialRequest, BlockPlayer, RequestAnswer};
+use super::{AnswerSocialRequest, BlockCharacter, RequestAnswer};
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::Seconds;
 use crate::systems::area_instance;
@@ -102,7 +102,7 @@ pub(crate) fn block(world: &mut World, player: SocietyMember) {
             cancel: "Cancel".to_owned(),
             answer: Box::new(move |world, blocked| {
                 if blocked {
-                    world.write_message(BlockPlayer {
+                    world.write_message(BlockCharacter {
                         account: player.account,
                         blocked: true,
                     });

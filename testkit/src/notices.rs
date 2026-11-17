@@ -35,7 +35,7 @@ impl Sim {
         self.told(client)
             .into_iter()
             .filter(|told| matches!(told.kind, NotificationKind::Error { .. }))
-            .map(|told| told.text.plain_words())
+            .map(|told| told.text.plain_words(self.world.resource::<Content>()))
             .collect()
     }
 

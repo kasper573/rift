@@ -195,21 +195,21 @@ pub struct Welcome {
     pub clouds: Offset<Meters>,
 }
 
-pub type PlayerDefId = ContentId<PlayerDef>;
+pub type CharacterDefId = ContentId<CharacterDef>;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-pub struct PlayerDef {
+pub struct CharacterDef {
     pub class: ClassId,
     pub stats: Stats,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub modules: Vec<PlayerModule>,
+    pub modules: Vec<CharacterModule>,
 }
 
-impl ContentFile for PlayerDef {
-    const TABLE: &'static str = "player";
+impl ContentFile for CharacterDef {
+    const TABLE: &'static str = "character";
 
-    fn fresh(near: &Nearby) -> Result<PlayerDef, String> {
-        Ok(PlayerDef {
+    fn fresh(near: &Nearby) -> Result<CharacterDef, String> {
+        Ok(CharacterDef {
             class: near.file()?,
             stats: Stats::default(),
             modules: Vec::new(),
@@ -217,44 +217,44 @@ impl ContentFile for PlayerDef {
     }
 }
 
-impl ModuleSet for PlayerDef {
-    type Module = PlayerModule;
+impl ModuleSet for CharacterDef {
+    type Module = CharacterModule;
 
-    fn modules(&self) -> &[PlayerModule] {
+    fn modules(&self) -> &[CharacterModule] {
         &self.modules
     }
 
-    fn modules_mut(&mut self) -> &mut Vec<PlayerModule> {
+    fn modules_mut(&mut self) -> &mut Vec<CharacterModule> {
         &mut self.modules
     }
 
-    fn rule(_: &PlayerModule) -> ModuleRule {
+    fn rule(_: &CharacterModule) -> ModuleRule {
         ModuleRule::AtMostOne
     }
 }
 
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum PlayerModule {
+pub enum CharacterModule {
     Regen(VitalRegen),
 }
 
-impl PlayerDef {
+impl CharacterDef {
     pub fn regen(&self) -> Option<VitalRegen> {
         self.modules
             .iter()
             .map(|module| match module {
-                PlayerModule::Regen(regen) => *regen,
+                CharacterModule::Regen(regen) => *regen,
             })
             .next()
     }
 }
 
-pub fn def(content: &Content) -> &PlayerDef {
-    content.built::<GameSettings>().player.get(content)
+pub fn def(content: &Content) -> &CharacterDef {
+    content.built::<GameSettings>().character.get(content)
 }
 
-/// How tall the game's player stands: the height of the body they are hit in.
+/// How tall the game's character stands: the height of the body they are hit in.
 pub fn stature(content: &Content) -> Meters {
     ActorModel::get(content, def(content).class.get(content).model)
         .hitbox()
@@ -616,7 +616,7 @@ pub fn join(world: &mut World) {
                 let spawn = spawn_position(world, policy, zone, area);
                 region::hold_around(world, spawn);
                 let at = movement::place_beside(world, zone, &area.mesh(), spawn);
-                let fresh = CharacterSnapshot::of_player(&content, &name, def(&content));
+                let fresh = CharacterSnapshot::of_def(&content, &name, def(&content));
                 let start = Place { area: zone, at };
                 let state = snapshot::materialize(&content, &fresh, start, clock, clock.now);
                 (at, state, false)

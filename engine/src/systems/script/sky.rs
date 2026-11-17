@@ -70,7 +70,7 @@ impl SkyCondition {
     fn answering(&self, content: &Content) -> Result<Eval, ScriptFault> {
         if let Some(reads) = unshared_read(&self.condition) {
             return Err(ScriptFault::new(
-                "reads a player",
+                "reads a character",
                 format!(
                     "a condition of the sky alone (the hour, a time of day, the weather), \
                      not {reads}"

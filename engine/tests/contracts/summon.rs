@@ -12,7 +12,7 @@ use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility;
 use engine::systems::{actor, movement, rewards, script, skill};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, dialogue, hunting, lines, path};
+use testkit::{Game, Map, Sim, dialogue, hunting, path};
 
 #[test]
 fn a_gamblers_dice_take_ten_gold_a_roll_and_pay_twenty_on_a_win() {
@@ -26,7 +26,8 @@ fn a_gamblers_dice_take_ten_gold_a_roll_and_pay_twenty_on_a_win() {
     let (mut won, mut lost) = (false, false);
     for _ in 0..30 {
         let before = sim.count(player, "gold");
-        let said = lines(&sim.pick(1, roll).expect("at the table"));
+        let picked = sim.pick(1, roll).expect("at the table");
+        let said = sim.lines(&picked);
         let after = sim.count(player, "gold");
         if said == ["Beginner's luck."] {
             assert_eq!(after, before + 10);
@@ -74,7 +75,10 @@ fn calling_the_gambler_a_cheat_sends_guards_after_you_alone() {
     );
 
     assert_eq!(
-        lines(&sim.talk(1, "gambler")),
+        {
+            let talked = sim.talk(1, "gambler");
+            sim.lines(&talked)
+        },
         vec!["You've got some nerve.".to_owned()]
     );
 }
@@ -346,7 +350,7 @@ fn lose_at_dice(sim: &mut Sim, client: u32) {
     let mut roll = "Roll the dice.";
     for _ in 0..40 {
         let at_the_table = sim.pick(client, roll).expect("still at the table");
-        if lines(&at_the_table) == ["The house wins!"] {
+        if sim.lines(&at_the_table) == ["The house wins!"] {
             return;
         }
         roll = "Roll again.";

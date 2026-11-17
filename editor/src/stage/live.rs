@@ -221,7 +221,7 @@ impl LiveWorld {
                         };
                         self.report = format!("{} · cast {casts}", def.name);
                     }
-                    Err(reason) => self.report = reason.plain_words(),
+                    Err(reason) => self.report = reason.plain_words(&content),
                 }
             }
             Phase::Resting { .. } => {}
@@ -326,7 +326,7 @@ fn skill_setup(
     let def = skill.get(content);
     let settings = content.built::<GameSettings>();
     let mut snapshot =
-        CharacterSnapshot::of_player(content, "Caster", settings.player.get(content));
+        CharacterSnapshot::of_def(content, "Caster", settings.character.get(content));
     match taught_by(content, skill) {
         Some((class, node)) => {
             let levels = &class.get(content).levels;
@@ -358,7 +358,7 @@ fn skill_setup(
     let caster = join(world, snapshot.clone(), spawn, ClientId(1))?.actor;
     let ally = || {
         let mut friend =
-            CharacterSnapshot::of_player(content, "Friend", settings.player.get(content));
+            CharacterSnapshot::of_def(content, "Friend", settings.character.get(content));
         friend.start = snapshot.start;
         friend
     };
@@ -531,7 +531,7 @@ fn enemy_model(content: &Content, zone: AreaId) -> ModelId {
                 .map(|npc| npc.get(content).appearance.model)
         })
         .unwrap_or_else(|| {
-            let player = content.built::<GameSettings>().player.get(content);
+            let player = content.built::<GameSettings>().character.get(content);
             player.class.get(content).model
         })
 }

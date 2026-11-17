@@ -2,18 +2,27 @@
 //! shows at its caret.
 
 use egui::{
-    Align2, Area, Context, Id, Margin, Order, Rect, Sense, Stroke, Vec2, WidgetInfo, WidgetType,
+    Align, Align2, Area, Context, Id, Layout, Margin, Order, Rect, Response, Sense, Stroke, Ui,
+    UiBuilder, Vec2, WidgetInfo, WidgetType,
 };
 
 use crate::face::TextRole;
 use crate::{float, form, ink, sheet};
 
 /// One way to go on: what would be typed, what it is besides, and whether it is dimmed for being
-/// refused for now.
+/// refused for now. A suggestion that names a thing shows as `drawn` draws it, where it has a way.
 pub struct Suggestion<'a> {
     pub text: &'a str,
     pub detail: &'a str,
     pub muted: bool,
+    pub drawn: Option<&'a dyn DrawnSuggestion>,
+}
+
+/// A suggestion that shows as more than words: how wide it is, and how it draws itself in the
+/// room its words would take.
+pub trait DrawnSuggestion {
+    fn width(&self) -> f32;
+    fn draw(&self, ui: &mut Ui);
 }
 
 const ROW: f32 = 22.0;
@@ -25,6 +34,13 @@ const APART: f32 = 24.0;
 /// Lists `suggestions` by the field at `field`: under it where the screen has the room, over it
 /// otherwise. `heading`, when there is one, says what is being typed; the `selected` suggestion
 /// is lit. Returns the place of the suggestion clicked.
+/// What a list of suggestions answers: the place of the one clicked, and the row the pointer is
+/// on, with its place.
+pub struct Suggested {
+    pub clicked: Option<usize>,
+    pub pointed: Option<(usize, Response)>,
+}
+
 pub fn suggestions(
     gui: &Context,
     id: Id,
@@ -32,7 +48,7 @@ pub fn suggestions(
     heading: &str,
     suggestions: &[Suggestion],
     selected: usize,
-) -> Option<usize> {
+) -> Suggested {
     let rows = suggestions.len() + usize::from(!heading.is_empty());
     let tall = rows as f32 * ROW + 2.0 * PAD;
     let under = field.bottom() + GAP + tall <= gui.content_rect().bottom();
@@ -58,8 +74,10 @@ pub fn suggestions(
             let wide = suggestions
                 .iter()
                 .map(|suggestion| {
-                    width(TextRole::Mono, suggestion.text)
-                        + APART
+                    suggestion.drawn.map_or_else(
+                        || width(TextRole::Mono, suggestion.text),
+                        |drawn| drawn.width(),
+                    ) + APART
                         + width(TextRole::Small, suggestion.detail)
                 })
                 .fold(width(TextRole::Small, heading), f32::max)
@@ -78,6 +96,7 @@ pub fn suggestions(
                 }
             }
             let mut clicked = None;
+            let mut pointed = None;
             for (place, suggestion) in suggestions.iter().enumerate() {
                 let (rect, response) = ui.allocate_exact_size(Vec2::new(wide, ROW), Sense::click());
                 response
@@ -93,13 +112,23 @@ pub fn suggestions(
                 } else {
                     ink::INK
                 };
-                ui.painter().text(
-                    rect.left_center() + Vec2::new(PAD, 0.0),
-                    Align2::LEFT_CENTER,
-                    suggestion.text,
-                    TextRole::Mono.font_id(),
-                    ink,
-                );
+                match suggestion.drawn {
+                    Some(drawn) => {
+                        let room = UiBuilder::new()
+                            .max_rect(rect.shrink2(Vec2::new(PAD, 0.0)))
+                            .layout(Layout::left_to_right(Align::Center));
+                        drawn.draw(&mut ui.new_child(room));
+                    }
+                    None => {
+                        ui.painter().text(
+                            rect.left_center() + Vec2::new(PAD, 0.0),
+                            Align2::LEFT_CENTER,
+                            suggestion.text,
+                            TextRole::Mono.font_id(),
+                            ink,
+                        );
+                    }
+                }
                 ui.painter().text(
                     rect.right_center() - Vec2::new(PAD, 0.0),
                     Align2::RIGHT_CENTER,
@@ -110,8 +139,11 @@ pub fn suggestions(
                 if response.clicked() {
                     clicked = Some(place);
                 }
+                if response.hovered() {
+                    pointed = Some((place, response));
+                }
             }
-            clicked
+            Suggested { clicked, pointed }
         })
         .inner
     })

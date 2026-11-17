@@ -111,7 +111,7 @@ fn refusals_read_as_what_is_needed() {
     );
     assert_eq!(
         ExchangeRefusal::Missing(ItemStack::new(gold, 20)).describe(&content),
-        "Needs 20 more Gold"
+        "Needs 20 Gold more"
     );
 }
 

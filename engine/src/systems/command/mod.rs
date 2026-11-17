@@ -6,6 +6,7 @@
 pub mod complete;
 pub mod cooldown;
 pub mod input;
+pub mod search;
 
 use std::collections::BTreeMap;
 
@@ -211,7 +212,7 @@ fn invoke(world: &mut World, conn: Entity, line: &str) -> Result<(), String> {
         })?;
     if let Some(unmet) = condition::first_unmet(world, caller, def.requires.iter()) {
         let needs = LineText::plain(format!("{named} needs ")).then(LineText::from(&unmet));
-        return Err(needs.plain_words());
+        return Err(needs.plain_words(&content));
     }
     let cooling_said = |left: Seconds| {
         words

@@ -16,6 +16,8 @@ use crate::{drag, ink, paint, sheet};
 
 /// Every control stands this tall, so an icon-only button lines up with the text buttons beside it.
 pub const CONTROL_HEIGHT: f32 = 26.0;
+/// How far a row's content stands from its edges.
+pub const ROW_MARGIN: Margin = Margin::symmetric(8, 5);
 pub(crate) const BUTTON_PADDING: Vec2 = Vec2::new(12.0, 4.0);
 pub const RADIUS: f32 = 4.0;
 pub const SLOT: f32 = 38.0;
@@ -148,6 +150,141 @@ pub fn combo(id_salt: impl egui::AsIdSalt) -> egui::ComboBox {
         })
 }
 
+/// The choices of a [`drawn_combo`]: each shows as more than words, and runs of them may stand
+/// under a heading in the list it opens.
+pub trait DrawnChoices {
+    fn count(&self) -> usize;
+    /// The choice at `place` in words, for a screen reader.
+    fn name(&self, place: usize) -> String;
+    /// The heading over the run of choices that starts at `place`, where one starts there.
+    fn heading(&self, _place: usize) -> Option<String> {
+        None
+    }
+    /// How wide the widest choice is drawn in `part`.
+    fn widest(&self, ui: &Ui, part: ComboPart) -> f32;
+    fn draw(&self, ui: &mut Ui, place: usize, part: ComboPart);
+}
+
+/// Where a [`DrawnChoices`] draws a choice: on the combo's button, or as a row of its list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComboPart {
+    Button,
+    List,
+}
+
+/// What a drawn combo answers: its button, the place of the choice picked, and the row of its
+/// list the pointer is on, with that row's place.
+pub struct DrawnCombo {
+    pub response: Response,
+    pub picked: Option<usize>,
+    pub pointed: Option<(usize, Response)>,
+}
+
+/// A combo over `choices`, as wide as the widest of them on its button, whose list is as wide as
+/// its widest row so no choice wraps.
+pub fn drawn_combo(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    choices: &dyn DrawnChoices,
+    selected: usize,
+) -> DrawnCombo {
+    let padding = ui.spacing().button_padding;
+    let caret = ui.spacing().icon_spacing + ui.spacing().icon_width;
+    let width = choices.widest(ui, ComboPart::Button) + 2.0 * padding.x + caret;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, CONTROL_HEIGHT), Sense::click());
+    let id = ui.make_persistent_id(id_salt);
+    let open = egui::Popup::is_id_open(ui.ctx(), id);
+    response.widget_info(|| {
+        let mut info = WidgetInfo::new(WidgetType::ComboBox);
+        info.enabled = ui.is_enabled();
+        info.current_text_value = Some(choices.name(selected));
+        info
+    });
+    if ui.is_rect_visible(rect) {
+        let visuals = if open {
+            ui.visuals().widgets.open
+        } else {
+            *ui.style().interact(&response)
+        };
+        ui.painter().rect(
+            rect.expand(visuals.expansion),
+            visuals.corner_radius,
+            visuals.weak_bg_fill,
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let inner = rect.shrink2(padding);
+        let caret = egui::Align2::RIGHT_CENTER
+            .align_size_within_rect(Vec2::splat(ui.spacing().icon_width), inner);
+        Mark::CaretDown.paint(ui.painter(), caret, visuals.fg_stroke.color);
+        let shown = Rect::from_min_max(
+            inner.min,
+            Pos2::new(caret.min.x - ui.spacing().icon_spacing, inner.max.y),
+        );
+        let room = UiBuilder::new()
+            .max_rect(shown)
+            .layout(Layout::left_to_right(Align::Center));
+        choices.draw(&mut ui.new_child(room), selected, ComboPart::Button);
+    }
+    let row_width = choices.widest(ui, ComboPart::List) + 2.0 * padding.x;
+    let list_width = row_width.max(width - ui.spacing().menu_margin.sum().x)
+        + ui.spacing().scroll.allocated_width();
+    let listed = egui::Popup::menu(&response)
+        .id(id)
+        .width(list_width + ui.spacing().menu_margin.sum().x)
+        .style(egui::style::StyleModifier::from(
+            crate::popup_style as fn(&mut egui::Style),
+        ))
+        .show(|ui| {
+            ui.set_min_width(list_width);
+            egui::ScrollArea::vertical()
+                .max_height(ui.spacing().combo_height)
+                .show(ui, |ui| {
+                    let row_width = ui.available_width().max(row_width);
+                    let mut picked = None;
+                    let mut pointed = None;
+                    for place in 0..choices.count() {
+                        if let Some(heading) = choices.heading(place) {
+                            sheet::list_heading(ui, &heading);
+                        }
+                        let (row, chosen) = ui.allocate_exact_size(
+                            Vec2::new(row_width, CONTROL_HEIGHT),
+                            Sense::click(),
+                        );
+                        chosen.widget_info(|| {
+                            WidgetInfo::selected(
+                                WidgetType::SelectableLabel,
+                                true,
+                                place == selected,
+                                choices.name(place),
+                            )
+                        });
+                        ui.painter()
+                            .add(row_marks(row, chosen.hovered(), place == selected));
+                        let room = UiBuilder::new()
+                            .max_rect(row.shrink2(padding))
+                            .layout(Layout::left_to_right(Align::Center));
+                        choices.draw(&mut ui.new_child(room), place, ComboPart::List);
+                        if chosen.clicked() {
+                            picked = Some(place);
+                        }
+                        if chosen.hovered() {
+                            pointed = Some((place, chosen));
+                        }
+                    }
+                    (picked, pointed)
+                })
+                .inner
+        })
+        .map(|shown| shown.inner);
+    let (picked, pointed) = listed.unwrap_or((None, None));
+    DrawnCombo {
+        response,
+        picked,
+        pointed,
+    }
+}
+
 /// A combo of `width` showing `selected`, whose rows `rows` draws for the filter typed above them,
 /// and returns whether one was picked, which closes it.
 pub fn filtered_combo(
@@ -225,7 +362,7 @@ pub fn pill_with<R>(
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
-                    ui.style_mut().override_font_id = Some(Face::BookBold.id(12.0));
+                    ui.style_mut().override_font_id = Some(TextRole::Pill.font_id());
                     ui.visuals_mut().override_text_color = Some(color);
                     add(ui)
                 })
@@ -526,7 +663,7 @@ pub fn row<R>(ui: &mut Ui, look: RowLook, add: impl FnOnce(&mut Ui) -> R) -> Inn
             ui.visuals_mut().override_text_color = Some(ink::INK3);
         }
         egui::Frame::new()
-            .inner_margin(Margin::symmetric(8, 5))
+            .inner_margin(ROW_MARGIN)
             .show(ui, add)
             .inner
     });

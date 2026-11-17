@@ -51,7 +51,7 @@ fn what_a_server_saved_as_it_stopped_is_what_the_next_one_plays_on() {
     village.world.get_mut::<Xp>(wren).expect("xp").gain(40);
     movement::relocate(&mut village.world, wren, Pos::new(6.0, 2.0));
     let staged = JoinAs {
-        snapshot: CharacterSnapshot::of_player(&content, "Stand-in", player::def(&content)),
+        snapshot: CharacterSnapshot::of_def(&content, "Stand-in", player::def(&content)),
         start: content.built::<GameSettings>().initial_spawn,
         origin: JoinOrigin::Staged,
     };
@@ -170,7 +170,7 @@ fn a_character_that_left_is_read_from_memory_until_the_store_has_it() {
     let mut above = saves.above(&content);
     let wren = village.sign_in(1, "wren", None);
     let staged = JoinAs {
-        snapshot: CharacterSnapshot::of_player(&content, "Stand-in", player::def(&content)),
+        snapshot: CharacterSnapshot::of_def(&content, "Stand-in", player::def(&content)),
         start: content.built::<GameSettings>().initial_spawn,
         origin: JoinOrigin::Staged,
     };
@@ -231,7 +231,7 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
             }]
             .into(),
             start: CharacterStart::At(stood),
-            ..CharacterSnapshot::of_player(&before, "Wren", player::def(&before))
+            ..CharacterSnapshot::of_def(&before, "Wren", player::def(&before))
         },
         told: Vec::new(),
     };
@@ -316,7 +316,7 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
         .get::<History>(back)
         .expect("a history")
         .records()
-        .map(|record| record.entry.text.plain_words())
+        .map(|record| record.entry.text.plain_words(woods.content()))
         .collect();
     let written: Vec<String> = lines
         .iter()

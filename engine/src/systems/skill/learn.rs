@@ -151,7 +151,7 @@ impl PlanRefusal {
         class: &ClassDef,
         picks: &[(NodeKey, Rank)],
     ) -> String {
-        self.line(content, class, picks).plain_words()
+        self.line(content, class, picks).plain_words(content)
     }
 
     pub fn line(&self, content: &Content, class: &ClassDef, picks: &[(NodeKey, Rank)]) -> LineText {

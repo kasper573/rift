@@ -121,7 +121,7 @@ pub fn fit_to_mesh(editor: &mut Editor, key: &str) -> bool {
         return false;
     };
     let Some(tall) = walker(editor) else {
-        editor.toast("The game must load before a footprint is fitted to its player's height");
+        editor.toast("The game must load before a footprint is fitted to its character's height");
         return false;
     };
     let Some(footprint) =

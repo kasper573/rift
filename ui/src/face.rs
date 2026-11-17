@@ -56,6 +56,8 @@ pub enum TextRole {
     Mono,
     Count,
     SlotKey,
+    /// The words on a pill.
+    Pill,
 }
 
 impl TextRole {
@@ -67,7 +69,7 @@ impl TextRole {
             | TextRole::MainTab
             | TextRole::Band
             | TextRole::Name => Face::SmallCapsBold,
-            TextRole::NoteTitle => Face::BookBold,
+            TextRole::NoteTitle | TextRole::Pill => Face::BookBold,
             TextRole::Body
             | TextRole::CardBody
             | TextRole::Line
@@ -84,7 +86,7 @@ impl TextRole {
         match self {
             TextRole::Title | TextRole::Line => 17.0,
             TextRole::NoteTitle | TextRole::Name => 16.0,
-            TextRole::Section | TextRole::Tab | TextRole::KeyHint => 12.0,
+            TextRole::Section | TextRole::Tab | TextRole::KeyHint | TextRole::Pill => 12.0,
             TextRole::Band => 12.5,
             TextRole::Body => 15.0,
             TextRole::CardBody | TextRole::Flavour => 14.5,

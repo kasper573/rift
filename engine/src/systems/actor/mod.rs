@@ -165,7 +165,7 @@ pub enum Pose {
     Sleep,
 }
 
-/// One live player or npc: where it faces, what it does, how it stands and how fast it moves. Its
+/// One live character or npc: where it faces, what it does, how it stands and how fast it moves. Its
 /// statuses, boosts, aspects and cooldowns start empty with it.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[require(Statuses, Boosts, ActiveAspects, Cooldowns)]

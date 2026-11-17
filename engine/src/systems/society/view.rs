@@ -13,8 +13,8 @@ use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::area_instance::AreaInstanceShown;
 use crate::systems::area_instance::roster::InstanceCallShown;
-use crate::systems::auction::{self, AuctionRow};
 use crate::systems::inbox;
+use crate::systems::market::{self, ListingRow};
 use crate::systems::party::PartyShown;
 use crate::systems::player::CharacterAccount;
 use crate::systems::player::roster::ServerRoster;
@@ -25,13 +25,13 @@ use crate::systems::social_request::{
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
     app.replicate_private::<SocietyView>()
-        .replicate::<PlayerAccount>();
+        .replicate::<CharacterAccountNumber>();
 }
 
 /// The account that plays a character, as every player knows it: what a player names another
 /// by as they ask them for something.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PlayerAccount(pub AccountNumber);
+pub struct CharacterAccountNumber(pub AccountNumber);
 
 /// What society holds of a character's account, as its player sees it.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -53,14 +53,14 @@ pub struct SocietyView {
     pub instance: Option<AreaInstanceShown>,
     /// The call to an instance the account leads, or was called to by its party's leader.
     pub call: Option<InstanceCallShown>,
-    /// The auctions the account has running, those ending first first.
-    pub auctions: Vec<AuctionRow>,
+    /// The listings the account has up on the market, those ending first first.
+    pub listings: Vec<ListingRow>,
 }
 
 /// A friend, as the player whose friend they are sees them.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FriendRow {
-    pub player: SocietyMember,
+    pub character: SocietyMember,
     /// The area they play in, while they are at their character.
     pub online_in: Option<AreaId>,
     pub last_seen: UnixMillis,
@@ -103,7 +103,9 @@ pub fn greet(world: &mut World, arrived: &mut QueryState<Entity, Added<Character
     for character in arrived {
         show(world, character, &society);
         if let Some(account) = world.get::<SocietyView>(character).map(|view| view.account) {
-            world.entity_mut(character).insert(PlayerAccount(account));
+            world
+                .entity_mut(character)
+                .insert(CharacterAccountNumber(account));
         }
         if let Some(account) = world.get::<CharacterAccount>(character).cloned() {
             inbox::show(world, character, &account.0, &society);
@@ -126,7 +128,7 @@ pub(crate) fn show(world: &mut World, character: Entity, society: &Society) {
     let content = world.resource::<Content>();
     view.instance = AreaInstanceShown::of(society, &account.0, content);
     view.call = InstanceCallShown::of(society, &account.0, content);
-    view.auctions = auction::mine(society, &account.0);
+    view.listings = market::mine(society, &account.0);
     if world.get::<SocietyView>(character) != Some(&view) {
         world.entity_mut(character).insert(view);
     }
@@ -167,7 +169,7 @@ impl SocietyView {
             .of_account(account)
             .filter_map(|friend| {
                 Some(FriendRow {
-                    player: member(friend)?,
+                    character: member(friend)?,
                     online_in: society.playing_in(friend),
                     last_seen: society.accounts().get(friend)?.last_seen,
                     in_a_party: society.parties().of_account(friend).is_some()
@@ -178,12 +180,12 @@ impl SocietyView {
         friends.sort_by(|a, b| {
             let online = b.online_in.is_some().cmp(&a.online_in.is_some());
             let seen = match a.online_in {
-                Some(_) => a.player.name.cmp(&b.player.name),
+                Some(_) => a.character.name.cmp(&b.character.name),
                 None => b.last_seen.cmp(&a.last_seen),
             };
             online
                 .then(seen)
-                .then(a.player.account.cmp(&b.player.account))
+                .then(a.character.account.cmp(&b.character.account))
         });
         Some(SocietyView {
             account: society.accounts().number(account)?,
@@ -198,7 +200,7 @@ impl SocietyView {
             party: None,
             instance: None,
             call: None,
-            auctions: Vec::new(),
+            listings: Vec::new(),
         })
     }
 }

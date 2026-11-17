@@ -320,12 +320,14 @@ fn every_node_a_script_offers_lands_after_its_event_or_is_refused_for_what_it_is
             .row("skill", "lunge", skill.clone())
             .item("coin", json!({ "kind": { "type": "resource" } }))
             .edit_settings(|settings| {
-                settings["auctions"] = json!({
-                    "currency": path("item", "coin"),
+                settings["market"] = json!({
+                    "default_currency": path("item", "coin"),
+                    "deposit_currency": path("item", "coin"),
+                    "max_offer_items": 3,
+                    "max_price_items": 3,
                     "durations": [3600.0],
-                    "deposit": 5.0,
-                    "cut": 5.0,
-                    "listings": 10,
+                    "deposit": 5,
+                    "max_listings": 10,
                 });
             })
             .npc("wolf", 10.0, wolf.clone())

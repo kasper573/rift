@@ -382,8 +382,8 @@ pub struct ProbeSnapshot {
     pub trade: Option<ShownTrade>,
     /// The options open for another player: what the player can do with them.
     pub actor_options: Option<crate::systems::actor::options::ShownActorOptions>,
-    /// The auction house, while it is open.
-    pub auction_house: Option<crate::systems::auction::window::ShownAuctionHouse>,
+    /// The market, while it is open.
+    pub market: Option<crate::systems::market::window::ShownMarket>,
     /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
     /// spot has against it.
     pub spot_aim: Option<SpotAim>,
@@ -819,7 +819,7 @@ pub struct ProbeRecipe {
     pub takes: Seconds,
     /// How often one craft comes off: one that fails spends its materials and makes nothing.
     pub chance: Percent,
-    /// Whether the player's bag covers every material.
+    /// Whether the character's bag covers every material.
     pub can_make: bool,
     /// Whether only a crafter who masters it makes it.
     pub mastery: bool,
@@ -1291,7 +1291,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         instance_call: area_instance::gather::shown(world),
         trade: crate::systems::trade::window::shown(world),
         actor_options: crate::systems::actor::options::shown(world),
-        auction_house: crate::systems::auction::window::shown(world),
+        market: crate::systems::market::window::shown(world),
         spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
         history: ProbeHistory {
@@ -1301,7 +1301,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 .resource::<HistoryBook>()
                 .records()
                 .iter()
-                .map(|record| record_line(record, &input_map))
+                .map(|record| record_line(record, world.resource::<Content>(), &input_map))
                 .collect(),
         },
         item_card: item::card::shown(world).map(|(item, rect)| ProbeItemCard {
@@ -1329,7 +1329,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             text: view
                 .text
                 .as_ref()
-                .map(|text| text.words(world.resource::<InputMap>())),
+                .map(|text| text.words(&content, world.resource::<InputMap>())),
             slots: view.slots,
             placed: prompt::tray::placed(world)
                 .iter()
@@ -1394,7 +1394,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                         refusal: view
                             .refusal
                             .as_ref()
-                            .map(|refusal| refusal.line(&content).plain_words()),
+                            .map(|refusal| refusal.line(&content).plain_words(&content)),
                     })
                     .collect(),
                 buyback: shown
@@ -1482,8 +1482,8 @@ fn gpu_memory(world: &World) -> Bytes {
     Bytes(u64::try_from(held.buffer_memory.read() + held.texture_memory.read()).unwrap_or(0))
 }
 
-fn record_line(record: &HistoryRecord, inputs: &InputMap) -> ProbeRecord {
-    let text = record.entry.text.words(inputs);
+fn record_line(record: &HistoryRecord, content: &Content, inputs: &InputMap) -> ProbeRecord {
+    let text = record.entry.text.words(content, inputs);
     ProbeRecord {
         topic: record.entry.topic,
         by: record.entry.by.clone(),

@@ -7,7 +7,8 @@ use engine::core::time::UnixMillis;
 use engine::systems::account::AccountId;
 use engine::systems::friend::{self, AskFriendship};
 use engine::systems::inbox::{
-    DeleteMessage, InboxView, MessageAnswered, MessageText, OpenMessage, SendMessage, TakeAttached,
+    DeleteMessage, InboxMessage, InboxSender, InboxView, MessageAnswered, MessageSender,
+    MessageText, OpenMessage, SendMessage, TakeAttached, TakenStack,
 };
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
 use engine::systems::payout::{self, PayoutReason};
@@ -73,7 +74,7 @@ fn a_message_carries_what_is_attached_from_one_bag_to_another() {
     assert_eq!(
         (
             letter.title.as_str(),
-            letter.from.as_ref().map(|from| from.name.as_str()),
+            written_by(&letter.from),
             letter.read,
             letter.attached.clone()
         ),
@@ -109,10 +110,20 @@ fn a_message_carries_what_is_attached_from_one_bag_to_another() {
         1,
         "a message is not deleted while anything is attached"
     );
-    let take = |stack| TakeAttached {
+    let take = |stack: Option<(u32, u32)>| TakeAttached {
         message: letter.id,
-        stack,
+        stack: stack.map(|(index, count)| TakenStack { index, count }),
     };
+    server.send(2, take(Some((0, 1))));
+    server.step();
+    assert_eq!(
+        (
+            bag(&server, 2),
+            inbox_of(&mut server, 2).rows[0].attached.clone()
+        ),
+        (vec![plank(50), lure(1)], vec![lure(3), rod(1)]),
+        "some of a stack can be taken, and the rest stays attached"
+    );
     server.send(2, take(None));
     server.step();
     assert_eq!(
@@ -127,14 +138,14 @@ fn a_message_carries_what_is_attached_from_one_bag_to_another() {
         server.forest.errors(2),
         ["1 of 2 taken. The rest found no room and waits here"]
     );
-    server.send(2, take(Some(0)));
+    server.send(2, take(Some((0, 1))));
     server.step();
     assert_eq!(
         server.forest.errors(2).last().map(String::as_str),
         Some("Needs 1 free slot")
     );
     carry(&mut server, 2, &[lure(4)]);
-    server.send(2, take(Some(0)));
+    server.send(2, take(Some((0, 1))));
     server.step();
     assert_eq!(bag(&server, 2), [lure(4), rod(1)]);
     assert_eq!(inbox_of(&mut server, 2).rows[0].attached, []);
@@ -197,7 +208,7 @@ fn a_message_that_cannot_be_sent_moves_nothing() {
         "Hale",
         "Lures",
         &[lure(7)],
-        "Needs 1 more Feather Lure",
+        "Needs 1 Feather Lure more",
     );
 
     write(&mut server, 1, "Hale", "One", &[]);
@@ -291,6 +302,24 @@ fn messages_wait_for_whoever_is_gone_and_are_kept_from_one_server_to_the_next() 
         (vec![("A third", false, 0), ("For later", true, 0)], 2),
         "read, taken, deleted and delivered since: all of it is kept, each under an id of its own"
     );
+    let saved_before = |from: serde_json::Value| {
+        serde_json::from_value::<InboxMessage>(json!({
+            "id": 1, "to": "hale", "from": from, "title": "Kept", "text": "", "sent": 0
+        }))
+        .expect("a message saved before loads")
+        .from
+    };
+    assert_eq!(
+        (
+            saved_before(json!("game")),
+            saved_before(json!({ "player": "wren" }))
+        ),
+        (
+            MessageSender::System,
+            MessageSender::Character(AccountId("wren".to_owned()))
+        ),
+        "messages saved when the system was called the game and a character a player still load"
+    );
 }
 
 #[test]
@@ -307,7 +336,7 @@ fn what_a_bag_has_no_room_for_as_its_character_comes_back_is_sent_by_the_game() 
         saved_at: UnixMillis(1_000_000_000),
         character: CharacterSnapshot {
             bag: vec![lure(6), plank(50), rod(1)].into(),
-            ..CharacterSnapshot::of_player(&before, "Wren", player::def(&before))
+            ..CharacterSnapshot::of_def(&before, "Wren", player::def(&before))
         },
         told: Vec::new(),
     };
@@ -338,7 +367,13 @@ fn what_a_bag_has_no_room_for_as_its_character_comes_back_is_sent_by_the_game() 
     let rows: Vec<_> = inbox
         .rows
         .iter()
-        .map(|row| (row.title.as_str(), row.from.clone(), row.attached.clone()))
+        .map(|row| {
+            (
+                row.title.as_str(),
+                written_by(&row.from),
+                row.attached.clone(),
+            )
+        })
         .collect();
     assert_eq!(
         (rows, inbox.held),
@@ -346,7 +381,7 @@ fn what_a_bag_has_no_room_for_as_its_character_comes_back_is_sent_by_the_game() 
             vec![("What your inventory had no room for", None, vec![rod(1)])],
             0
         ),
-        "a message from the game, which counts against no limit"
+        "a message from the system, which counts against no limit"
     );
     let again = SavedCharacter::of_live(&server.village.world, character).expect("her character");
     assert_eq!(
@@ -381,7 +416,7 @@ fn a_payout_fills_the_bag_and_sends_what_has_no_room_by_message() {
         inbox_of(server, 1)
             .rows
             .into_iter()
-            .map(|row| (row.title, row.from.is_none(), row.attached))
+            .map(|row| (row.title, row.from == InboxSender::System, row.attached))
             .collect()
     };
 
@@ -404,7 +439,8 @@ fn a_payout_fills_the_bag_and_sends_what_has_no_room_by_message() {
         "a stack with no room never holds back the ones after it"
     );
     assert_eq!(
-        paid.overflow(&content).map(|line| line.plain_words()),
+        paid.overflow(&content)
+            .map(|line| line.plain_words(&content)),
         Some("No room in your bag for 1 rod: sent to your messages.".to_owned()),
         "the payout's notification tells what went to messages"
     );
@@ -551,4 +587,12 @@ fn game() -> Game {
                 "inbox": 2, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
             });
         })
+}
+
+/// The name of the character who wrote a message, or none for the system.
+fn written_by(from: &InboxSender) -> Option<&str> {
+    match from {
+        InboxSender::System => None,
+        InboxSender::Character(from) => Some(from.name.as_str()),
+    }
 }

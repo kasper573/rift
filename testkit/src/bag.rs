@@ -33,8 +33,12 @@ impl Sim {
     pub fn equip(&mut self, who: Entity, key: &str) {
         self.give(who, key, 1);
         let item = self.id::<ItemDef>(key);
-        equipment::equip_from_bag(&mut self.world, who, item)
-            .unwrap_or_else(|refused| panic!("{key} is worn: {}", refused.plain_words()));
+        equipment::equip_from_bag(&mut self.world, who, item).unwrap_or_else(|refused| {
+            panic!(
+                "{key} is worn: {}",
+                refused.plain_words(self.world.resource::<Content>())
+            )
+        });
         self.tick();
     }
 

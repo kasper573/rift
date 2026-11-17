@@ -1016,7 +1016,7 @@ pub fn credit(world: &mut World, mut kills: Local<MessageCursor<KillCredited>>) 
 
 /// Tells every player what moved in their quest log, each replication tick: what each is told
 /// is worked out on every core from the world as the tick found it, then told in the order the
-/// players were found. A player with a quest past its deadline is settled on their own, as the
+/// players were found. A character with a quest past its deadline is settled on their own, as the
 /// failing changes what the rest says.
 #[derive(Default)]
 pub struct AnnounceQuests {
@@ -1061,7 +1061,7 @@ impl Planner for AnnounceQuests {
     }
 }
 
-/// What a player's log says this tick.
+/// What a character's log says this tick.
 enum Announcement {
     /// A quest ran past its deadline: the log is settled once it has failed.
     Expired,
@@ -1339,7 +1339,7 @@ fn take_back(world: &mut World, player: Entity, grants: &[ItemStack]) {
     }
 }
 
-/// Time-driven and news-bearing changes to a player's quests: expiries, and the moment a quest
+/// Time-driven and news-bearing changes to a character's quests: expiries, and the moment a quest
 /// becomes ready or a daily quest is open again. What the log shows is read from the state
 /// itself, so this only runs where something may have changed.
 fn announce(world: &mut World, player: Entity, clock: WallClock) {
@@ -1495,12 +1495,11 @@ fn still_needs(def: &QuestDef, item: ItemId, inventory: Option<&Inventory>) -> b
 }
 
 pub fn pick_label(content: &Content, pick: ItemStack) -> LineText {
-    let item = Mention::Item(pick.item).name(content);
     match pick.count {
-        1 => LineText::plain("I'll take the ").then(item).then("."),
-        count => LineText::plain(format!("I'll take {count} "))
-            .then(item)
+        1 => LineText::plain("I'll take the ")
+            .then(Mention::Item(pick.item).span(content))
             .then("."),
+        _ => LineText::plain("I'll take ").then(pick.named()).then("."),
     }
 }
 

@@ -7,15 +7,15 @@ use crate::systems::society::{Society, SocietyMember};
 
 /// A player asking for the players whose names start with this.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct FindPlayers(pub String);
+pub struct FindCharacters(pub String);
 
 /// The players whose names start with what a player asked for.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct PlayersFound {
+pub struct CharactersFound {
     /// What was asked for, so an answer to something typed over since is told apart.
     pub starts: String,
     /// The first of them by name, as many as the game suggests at once.
-    pub players: Vec<SocietyMember>,
+    pub characters: Vec<SocietyMember>,
     /// How many there are in all.
     pub in_all: u32,
 }
@@ -30,7 +30,7 @@ pub fn searches(typed: &str) -> bool {
 
 /// The accounts whose names start with `starts`, whatever its case, the asker's own among them:
 /// the first `most` by name, of however many there are.
-pub(crate) fn find(society: &Society, starts: &str, most: usize) -> PlayersFound {
+pub(crate) fn find(society: &Society, starts: &str, most: usize) -> CharactersFound {
     let wanted = starts.trim().to_lowercase();
     let mut found: Vec<SocietyMember> = Vec::new();
     if searches(&wanted) {
@@ -46,9 +46,9 @@ pub(crate) fn find(society: &Society, starts: &str, most: usize) -> PlayersFound
     }
     let in_all = found.len() as u32;
     found.truncate(most);
-    PlayersFound {
+    CharactersFound {
         starts: starts.to_owned(),
-        players: found,
+        characters: found,
         in_all,
     }
 }

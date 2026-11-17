@@ -131,7 +131,7 @@ fn a_character_joined_from_a_row_is_that_character() {
     let history = world.get::<History>(player).expect("history");
     let records: Vec<_> = history.records().collect();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].entry.text, LineText::plain("Hello"));
+    assert_eq!(records[0].entry.text, hello());
     assert_eq!(records[0].at, joined_at.before(Seconds(5.0)));
 }
 
@@ -237,6 +237,12 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
     assert!(cooling(&forest, arrived), "and outlasts a reset of skills");
 
     let live = state(&forest, arrived);
+    assert!(
+        live.history
+            .records()
+            .any(|record| record.entry.text == hello()),
+        "history crosses a warp"
+    );
     let snapshot = CharacterSnapshot::of_live(&forest.world, arrived).expect("a character");
     let scope = ContentScope::of(&content);
     let (written, _) = with_content(scope.clone(), || serde_json::to_string(&snapshot));
@@ -245,7 +251,14 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
         serde_json::from_str::<CharacterSnapshot>(&written)
     });
     let read = read.expect("and read back");
-    assert_eq!(read, snapshot);
+    assert!(read.history.is_empty(), "history is never saved");
+    assert_eq!(
+        read,
+        CharacterSnapshot {
+            history: Vec::new(),
+            ..snapshot
+        }
+    );
     let CharacterStart::At(place) = read.start else {
         panic!(
             "a live character is saved where it stands: {:?}",
@@ -269,7 +282,21 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
         },
     );
     again.tick();
-    assert_eq!(state(&again, loaded), live);
+    let loaded_state = state(&again, loaded);
+    assert!(
+        !loaded_state
+            .history
+            .records()
+            .any(|record| record.entry.text == hello()),
+        "and is gone once the character comes back from being saved"
+    );
+    assert_eq!(
+        loaded_state,
+        CharacterState {
+            history: loaded_state.history.clone(),
+            ..live
+        }
+    );
     assert_eq!(
         stat::max_health(&again.world, loaded),
         unblessed + 7.0,
@@ -624,7 +651,7 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         .into(),
         history: vec![SnapshotRecord {
             ago: Seconds(5.0),
-            entry: HistoryEntry::of(HistoryTopic::Talk, LineText::plain("Hello")),
+            entry: HistoryEntry::of(HistoryTopic::Talk, hello()),
         }],
         statuses: SavedList::default(),
         cooldowns: vec![SnapshotCooldown {
@@ -640,6 +667,10 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         rises_at: None,
         start: CharacterStart::At(start),
     }
+}
+
+fn hello() -> LineText {
+    LineText::plain("Hello")
 }
 
 fn sale(content: &Content) -> Sale {

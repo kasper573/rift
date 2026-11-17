@@ -6,12 +6,12 @@ use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFa
 use crate::systems::script::effect as effects;
 use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting};
 
-/// Opens the auction house for a player, in a window of its own: the script goes on at once. A
-/// house opened by a thing in the world closes as the player walks out of its reach.
+/// Opens the market for a player, in a window of its own: the script goes on at once. A market
+/// opened by a thing in the world closes as the player walks out of its reach.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[schemars(transform = SchemaMark::System.with("auction"))]
-pub struct OpenAuctionHouse {
+#[schemars(transform = SchemaMark::System.with("market"))]
+pub struct OpenMarket {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
@@ -19,7 +19,7 @@ pub struct OpenAuctionHouse {
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for OpenAuctionHouse {
+impl EffectDef<RiftScripting> for OpenMarket {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
@@ -37,6 +37,6 @@ impl EffectDef<RiftScripting> for OpenAuctionHouse {
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::OpensAuctionHouse]
+        vec![EffectReach::OpensMarket]
     }
 }

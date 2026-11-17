@@ -22,9 +22,9 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
     let mut frames = Frames::new(SCREEN);
     let drawn = frames.run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));
     for shown in [
-        "ingot ×1",
-        "ore ×2",
-        "coal ×1",
+        "1 ingot",
+        "2 ore",
+        "1 coal",
         "2.5",
         "1 recipes · 1 items made",
     ] {
@@ -118,7 +118,7 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
             .rect(text)
             .unwrap_or_else(|| panic!("{text} in {narrow:?}"))
     };
-    let (ingot, ore, slag) = (drawn("ingot ×2"), drawn("ore ×2"), drawn("slag ×1"));
+    let (ingot, ore, slag) = (drawn("2 ingot"), drawn("2 ore"), drawn("1 slag"));
     assert!(
         (ingot.left() - ore.left()).abs() < 1.0,
         "what each recipe is made from starts at one column: {ingot:?} {ore:?}"

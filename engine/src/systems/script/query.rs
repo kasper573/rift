@@ -262,7 +262,7 @@ pub enum RiftQuery {
         of: Option<Box<Condition>>,
         recipe: RecipeKey,
     },
-    /// Whether the character's player is in a party.
+    /// Whether the character is in a party.
     InParty {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]

@@ -13,7 +13,7 @@ use crate::support::game;
 #[test]
 fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     let report = game()
-        .edit_settings(|settings| settings["player"] = json!("heroo.player.json"))
+        .edit_settings(|settings| settings["character"] = json!("heroo.character.json"))
         .sfx("slash")
         .row("sfx", "splash", json!({ "volume": 1.0, "pitch": 1.0 }))
         .file("apprentice.class.json", "{ \"name\": 3 }")
@@ -47,9 +47,9 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
         [
             (
                 SETTINGS_FILE,
-                json(8, 13, "/player"),
+                json(8, 16, "/character"),
                 "missing file",
-                Some("\"hero.player.json\""),
+                Some("\"hero.character.json\""),
             ),
             (
                 "apprentice.class.json",
@@ -82,7 +82,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     );
     let text = report.to_string();
     for at in [
-        "fixtures/game.config.json:8:13  /player",
+        "fixtures/game.config.json:8:16  /character",
         "cove.area/paint/0_0.png  whole file",
         "nearest   \"icons/hero.png\"",
     ] {
@@ -686,7 +686,7 @@ fn what_follows_the_sky_or_is_away_by_it_reads_the_sky_alone_by_times_of_day_the
         (pack(json!({ "respawn": 30.0 })), None),
         (
             light(json!({ "type": "at_least", "a": { "type": "level" }, "b": 3 })),
-            Some("reads a player"),
+            Some("reads a character"),
         ),
         (
             sound(json!({ "type": "during", "time": "Nite" })),

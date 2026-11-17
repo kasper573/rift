@@ -18,8 +18,7 @@ use crate::systems::account::AccountId;
 use crate::systems::actor::Name;
 use crate::systems::area::transition::Crossing;
 use crate::systems::history::HistoryTopic;
-use crate::systems::item::{Inventory, ItemId, ItemStack};
-use crate::systems::mention::Mention;
+use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::payout::{self, PayoutReason};
@@ -88,19 +87,6 @@ pub struct TradeView {
     pub they_accept: bool,
     /// When Accept opens, after the latest change of either offer.
     pub opens: UnixMillis,
-    /// The other player's latest change to their offer, until either offer changes again.
-    pub changed: Option<OfferChangeShown>,
-}
-
-/// How the other player changed their offer.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct OfferChangeShown {
-    /// The items they now give more of.
-    pub added: Vec<ItemId>,
-    /// What they gave before of each item they now give less of.
-    pub removed: Vec<ItemStack>,
-    /// Whether the change undid an accept.
-    pub cleared: bool,
 }
 
 impl TradeView {
@@ -134,7 +120,7 @@ pub fn request_source() -> SocialRequestSource {
         words: |words| SocialRequestWords {
             asks: &words.trade_asks,
             asked: &words.trade_asked,
-            sent: None,
+            sent: &words.trade_sent,
             accepted: None,
             denied: Some(&words.trade_denied),
             lapsed: None,
@@ -213,10 +199,11 @@ pub fn hold(world: &mut World) {
 }
 
 /// The words a game's settings must have for trading, checked as the game loads.
-pub(crate) fn words(words: &GameWords) -> [(&'static str, &String); 18] {
+pub(crate) fn words(words: &GameWords) -> [(&'static str, &String); 16] {
     [
         ("trade_asks", &words.trade_asks),
         ("trade_asked", &words.trade_asked),
+        ("trade_sent", &words.trade_sent),
         ("trade_denied", &words.trade_denied),
         ("trade_busy", &words.trade_busy),
         ("trade_too_far", &words.trade_too_far),
@@ -228,9 +215,6 @@ pub(crate) fn words(words: &GameWords) -> [(&'static str, &String); 18] {
         ("trade_why_mounted", &words.trade_why_mounted),
         ("trade_why_offer_gone", &words.trade_why_offer_gone),
         ("trade_offer_changed", &words.trade_offer_changed),
-        ("trade_done", &words.trade_done),
-        ("trade_gave", &words.trade_gave),
-        ("trade_got", &words.trade_got),
         ("trade_overflow_title", &words.trade_overflow_title),
         ("trade_overflow_text", &words.trade_overflow_text),
     ]
@@ -241,7 +225,6 @@ struct Trade {
     sides: [TradeSide; 2],
     version: TradeVersion,
     opens: UnixMillis,
-    change: Option<OfferChange>,
 }
 
 struct TradeSide {
@@ -251,13 +234,6 @@ struct TradeSide {
     offer: Vec<ItemStack>,
     /// Whether they accept the deal as it stands.
     accepts: bool,
-}
-
-/// The latest change to an offer: whose, and what it was before.
-struct OfferChange {
-    by: usize,
-    before: Vec<ItemStack>,
-    cleared: bool,
 }
 
 /// Why a trade ended without going through.
@@ -365,7 +341,6 @@ fn accepted(
         sides: [side(asker), side(asked)],
         version: TradeVersion(0),
         opens: world.resource::<WallClock>().now,
-        change: None,
     };
     world.resource_mut::<Trades>().0.push(opened);
     show(world);
@@ -373,7 +348,7 @@ fn accepted(
 }
 
 fn busy_words(world: &World, character: Entity) -> String {
-    busy(world, character).plain_words()
+    busy(world, character).plain_words(world.resource::<Content>())
 }
 
 fn offer(world: &mut World, player: Entity, stack: ItemStack) -> Result<(), LineText> {
@@ -385,7 +360,7 @@ fn offer(world: &mut World, player: Entity, stack: ItemStack) -> Result<(), Line
         return Ok(());
     }
     if stack.item.get(&content).bound() {
-        return Err(Mention::Item(stack.item).line(&content).then(" is bound"));
+        return Err(ItemStack::bound_line(stack.item, &content));
     }
     let slots = world
         .resource::<GameSettings>()
@@ -435,8 +410,8 @@ fn withdraw(world: &mut World, player: Entity, stack: ItemStack) {
 }
 
 /// Changes what side `side` of trade `index` gives: a new version of the deal, which nobody has
-/// accepted yet, and which can't be accepted until its wait is over. Whoever accepted the deal
-/// before is told it changed.
+/// accepted yet, and which can't be accepted until its wait is over. The other player is told it
+/// changed.
 fn change(world: &mut World, index: usize, side: usize, edit: impl FnOnce(&mut Vec<ItemStack>)) {
     let now = world.resource::<WallClock>().now;
     let waits = world
@@ -450,36 +425,23 @@ fn change(world: &mut World, index: usize, side: usize, edit: impl FnOnce(&mut V
     if trade.sides[side].offer == before {
         return;
     }
-    let undone: Vec<Entity> = trade
-        .sides
-        .iter()
-        .filter(|other| other.accepts && other.trader != trade.sides[side].trader)
-        .map(|other| other.trader)
-        .collect();
-    let cleared = trade.sides.iter().any(|side| side.accepts);
     for side in &mut trade.sides {
         side.accepts = false;
     }
     trade.version = TradeVersion(trade.version.0.wrapping_add(1));
     trade.opens = now.after(waits);
-    trade.change = Some(OfferChange {
-        by: side,
-        before,
-        cleared,
-    });
     let name = trade.sides[side].name.clone();
+    let other = trade.sides[1 - side].trader;
     let words = &world.resource::<GameSettings>().words;
     let said = LineText::plain(words.trade_offer_changed.replace("{name}", &name));
-    for player in undone {
-        let changed = Notification::new(
-            NotificationKind::Narration {
-                label: "Trade".into(),
-                sfx: None,
-            },
-            said.clone(),
-        );
-        notification::notify(world, player, None, changed);
-    }
+    let changed = Notification::new(
+        NotificationKind::Narration {
+            label: "Trade".into(),
+            sfx: None,
+        },
+        said,
+    );
+    notification::notify(world, other, None, changed);
 }
 
 fn accept(world: &mut World, player: Entity, version: TradeVersion) {
@@ -533,13 +495,6 @@ fn swap(world: &mut World, index: usize) {
             with: other.name.clone(),
         };
         let paid = payout::pay(world, side.trader, &other.offer, reason);
-        let said = traded(&content, &other.name, &other.offer, &side.offer);
-        notification::notify(
-            world,
-            side.trader,
-            None,
-            Notification::feed(HistoryTopic::Item, said),
-        );
         if let Some(overflow) = paid.overflow(&content) {
             notification::notify(
                 world,
@@ -549,23 +504,6 @@ fn swap(world: &mut World, index: usize) {
             );
         }
     }
-}
-
-/// What a player is told of a trade that went through, in the game's words.
-fn traded(content: &Content, with: &str, got: &[ItemStack], gave: &[ItemStack]) -> LineText {
-    let words = &content.built::<GameSettings>().words;
-    let listed = |stacks: &[ItemStack]| {
-        LineText::listed(stacks.iter().map(|stack| stack.named(content)).collect())
-    };
-    let said = match (got.is_empty(), gave.is_empty()) {
-        (false, false) => &words.trade_done,
-        (true, _) => &words.trade_gave,
-        (false, true) => &words.trade_got,
-    };
-    LineText::plain(said.as_str())
-        .filling("{name}", with.to_owned())
-        .filling("{got}", listed(got))
-        .filling("{gave}", listed(gave))
 }
 
 /// Ends trade `index` without it going through, telling each player still here why.
@@ -651,25 +589,6 @@ fn show(world: &mut World) {
 
 fn view(trade: &Trade, side: usize, other: usize) -> (Entity, TradeView) {
     let (mine, theirs) = (&trade.sides[side], &trade.sides[other]);
-    let changed = trade
-        .change
-        .as_ref()
-        .filter(|change| change.by == other)
-        .map(|change| OfferChangeShown {
-            added: theirs
-                .offer
-                .iter()
-                .filter(|now| count_in(&change.before, now.item) < now.count)
-                .map(|now| now.item)
-                .collect(),
-            removed: change
-                .before
-                .iter()
-                .filter(|was| count_in(&theirs.offer, was.item) < was.count)
-                .copied()
-                .collect(),
-            cleared: change.cleared,
-        });
     let shown = TradeView {
         with: theirs.name.clone(),
         version: trade.version,
@@ -678,17 +597,8 @@ fn view(trade: &Trade, side: usize, other: usize) -> (Entity, TradeView) {
         i_accept: mine.accepts,
         they_accept: theirs.accepts,
         opens: trade.opens,
-        changed,
     };
     (mine.trader, shown)
-}
-
-fn count_in(stacks: &[ItemStack], item: ItemId) -> u32 {
-    stacks
-        .iter()
-        .filter(|stack| stack.item == item)
-        .map(|stack| stack.count)
-        .sum()
 }
 
 /// Whether `trader`'s bag still holds all of `offer`.

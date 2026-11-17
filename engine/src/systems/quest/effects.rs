@@ -430,7 +430,7 @@ fn turn_in_card(world: &World, player: Entity, quest: QuestId) -> Vec<CardOffer>
             .map(|&pick| CardOffer {
                 label: super::pick_label(content, pick),
                 tag: ChoiceTag::Quest,
-                icon: Some(pick.item.get(content).icon.clone()),
+                icon: None,
                 chips: chips(Some(pick)),
                 locked: false,
                 warn: None,

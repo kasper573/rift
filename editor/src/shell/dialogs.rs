@@ -13,7 +13,7 @@ use engine::core::content::{ContentFile, SETTINGS_FILE, fields_file, version};
 use engine::core::render::video;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::player::PlayerDef;
+use engine::systems::player::CharacterDef;
 use engine::systems::script::ScriptDef;
 use strum::VariantArray;
 use ui::egui::{Context, RichText, Ui};
@@ -288,12 +288,12 @@ fn template_cards(ui: &mut Ui, picked: &mut String, templates: &[GameTemplate]) 
 
 fn template_counts(template: &GameTemplate) -> String {
     let areas = template.rows_in(AreaDef::TABLE);
-    let players = template.rows_in(PlayerDef::TABLE);
+    let characters = template.rows_in(CharacterDef::TABLE);
     let scripts = template.rows_in(ScriptDef::TABLE);
     format!(
-        "{areas} area{} · {players} player{} · {scripts} script{}",
+        "{areas} area{} · {characters} character{} · {scripts} script{}",
         words::plural(areas),
-        words::plural(players),
+        words::plural(characters),
         words::plural(scripts)
     )
 }

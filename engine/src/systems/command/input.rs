@@ -383,7 +383,7 @@ fn players_elsewhere(world: &World) -> Vec<InputOption> {
     let content = world.resource::<Content>();
     let here = world.resource::<Players>();
     let mut elsewhere: Vec<InputOption> = Vec::new();
-    roster.each(|enrolled| {
+    roster.each(|enrolled, _| {
         if !here.0.contains_key(&enrolled.client) {
             elsewhere.push(InputOption {
                 detail: enrolled.area.get(content).shown_name().to_owned(),

@@ -22,7 +22,7 @@ pub const BENCH_CLIENTS: usize = 64;
 pub fn bench_config(game: &Path, run: &Path) -> ServerConfig {
     ServerConfig {
         max_clients: BENCH_CLIENTS,
-        player_immortal: true,
+        characters_immortal: true,
         daylight: ServerDaylight::Fixed,
         hour: Some(HourOfDay::NOON),
         weather: ServerWeather::Still,

@@ -140,7 +140,7 @@ pub fn shown(world: &World) -> Vec<ShownBubble> {
             lines: speaking
                 .lines
                 .iter()
-                .map(|line| line.notification.text.plain_words())
+                .map(|line| line.notification.text.plain_words(content))
                 .collect(),
             folded: speaking.drawn.is_some_and(|drawn| drawn.folded),
         })
@@ -633,7 +633,7 @@ fn speech(world: &World, content: &Content, speaking: &Speaking, folded: bool) -
                 .typing
                 .and_then(|typing| world.get::<Typewriter>(typing));
             LineDraw {
-                text: line.notification.text.styled(),
+                text: line.notification.text.styled(content),
                 shown: typing.and_then(Typewriter::shown),
                 read: line.read_by.is_some_and(|read_by| now >= read_by),
             }
@@ -701,7 +701,7 @@ fn start_typing(world: &mut World, speaking: &mut Speaking) {
     for line in &mut speaking.lines[..shown] {
         if line.typing.is_none() {
             let mut typing = world.spawn((
-                line.notification.text.styled(),
+                line.notification.text.styled(world.resource::<Content>()),
                 Typewriter::default(),
                 DespawnOnExit(ClientScreen::Area),
             ));

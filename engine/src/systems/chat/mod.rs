@@ -256,7 +256,7 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
         .get::<ActorName>(speaker)
         .map(|name| name.name.clone())
         .unwrap_or_default();
-    let words = text.words(world.resource::<InputMap>());
+    let words = text.words(world.resource::<Content>(), world.resource::<InputMap>());
     let voice = LineSpeaker {
         name: name.clone(),
         typist: None,

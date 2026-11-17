@@ -18,8 +18,8 @@ pub const BORDER: Color32 = Color32::from_rgb(50, 50, 57);
 pub const HOVER: Color32 = Color32::from_rgb(48, 48, 54);
 pub const TEXT: Color32 = Color32::from_rgb(228, 228, 232);
 pub const DANGER: Color32 = Prose::Danger.on(Ground::Dusk);
-/// A player's name floating over the world.
-pub const PLAYER: Color32 = Prose::Place.on(Ground::Dusk);
+/// A character's name floating over the world.
+pub const CHARACTER: Color32 = Prose::Place.on(Ground::Dusk);
 pub const TOWNSPERSON: Color32 = Prose::Name.on(Ground::Dusk);
 pub const NOTICE: Color32 = Prose::Item.on(Ground::Dusk);
 

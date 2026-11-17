@@ -1,4 +1,4 @@
-//! The one way the game hands a player items it owes them: what fits goes into their bag, the
+//! The one way the game hands a character items it owes them: what fits goes into their bag, the
 //! rest arrives as a message from the game, and a payout is never refused for a full bag.
 
 use bevy_ecs::prelude::*;
@@ -6,7 +6,7 @@ use bevy_ecs::prelude::*;
 use crate::core::content::{Content, ContentProblem, Loading, SETTINGS_FILE};
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
-use crate::systems::item::{Inventory, ItemId, ItemStack};
+use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::player::{self, CharacterAccount};
 use crate::systems::quest::{QuestDef, QuestId};
 use crate::systems::script::{self, EffectReach, OwnerRow, RiftScripts, RunnerKind};
@@ -14,7 +14,7 @@ use crate::systems::society::{self, Settling};
 use crate::systems::text::LineText;
 use crate::systems::{GameSettings, WorldArea, inbox};
 
-/// What paid a player, which words the message of what had no room uses.
+/// What paid a character, which words the message of what had no room uses.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PayoutReason {
     InstanceCleared(AreaId),
@@ -23,10 +23,12 @@ pub enum PayoutReason {
     Traded {
         with: String,
     },
-    AuctionBought(ItemId),
-    AuctionSold(ItemId),
-    AuctionExpired(ItemId),
-    AuctionCancelled(ItemId),
+    /// A purchase on the market.
+    MarketBought,
+    /// A seller's listing on the market, bought.
+    MarketSold,
+    /// What a listing on the market offered, back as it ended unbought.
+    MarketReturned,
     /// A script's `items` effect, named by the file it runs in, where it runs in one.
     Given(Option<OwnerRow>),
 }
@@ -46,7 +48,7 @@ impl Paid {
             return None;
         }
         let words = &content.built::<GameSettings>().words;
-        let items = LineText::listed(self.sent.iter().map(|stack| stack.named(content)).collect());
+        let items = LineText::listed(self.sent.iter().map(|stack| stack.named()).collect());
         Some(LineText::plain(words.payout_overflow.as_str()).filling("{items}", items))
     }
 }
@@ -128,7 +130,7 @@ pub fn pay_account(
     paid
 }
 
-/// What a payout in a world had no room for, on its way to its player's messages.
+/// What a payout in a world had no room for, on its way to its character's messages.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Delivery {
     to: AccountId,
@@ -140,7 +142,7 @@ pub struct Delivery {
 impl Delivery {
     /// Writes the delivery as a message from the game, whether or not its player still plays.
     pub(crate) fn settle(self, settling: &mut Settling) {
-        inbox::from_game(
+        inbox::from_system(
             settling.society,
             settling.unwritten,
             settling.now,
@@ -163,11 +165,11 @@ pub fn check(loading: &mut Loading, content: &Content, settings: &GameSettings) 
             "messages in the game's settings, to send what a bag has no room for",
         )
     };
-    if settings.auctions.is_some() {
+    if settings.market.is_some() {
         loading.json_error(
             SETTINGS_FILE,
-            "/auctions",
-            unsent("an auction house, which pays what is bought and sold"),
+            "/market",
+            unsent("a market, which pays what is bought and sold"),
         );
     }
     if settings.trade.is_some() {
@@ -214,12 +216,7 @@ impl PayoutReason {
         let filled = |title: &str, text: &str, hole: &str, with: &str| {
             (title.replace(hole, with), text.replace(hole, with))
         };
-        let auctioned = |title: &str, item: ItemId| {
-            let named = title
-                .replace("{item}", &item.get(content).name)
-                .replace("{price}", "");
-            (named.trim().to_owned(), words.auction_message.clone())
-        };
+        let marketed = |title: &str| (title.to_owned(), words.market_message.clone());
         match self {
             PayoutReason::InstanceCleared(area) => filled(
                 &words.instance_rewards_title,
@@ -239,10 +236,9 @@ impl PayoutReason {
                 "{name}",
                 &with,
             ),
-            PayoutReason::AuctionBought(item) => auctioned(&words.auction_bought, item),
-            PayoutReason::AuctionSold(item) => auctioned(&words.auction_sold, item),
-            PayoutReason::AuctionExpired(item) => auctioned(&words.auction_expired, item),
-            PayoutReason::AuctionCancelled(item) => auctioned(&words.auction_cancelled, item),
+            PayoutReason::MarketBought => marketed(&words.market_bought_title),
+            PayoutReason::MarketSold => marketed(&words.market_sold_title),
+            PayoutReason::MarketReturned => marketed(&words.market_returned_title),
             PayoutReason::Given(row) => {
                 let source = row
                     .and_then(|row| source_name(content, row))

@@ -46,7 +46,7 @@ pub struct HoldRequest {
     pub hand: HandIndex,
 }
 
-/// A place a player wears an item: one of its body's hands, in the skeleton's order, one of the
+/// A place a character wears an item: one of its body's hands, in the skeleton's order, one of the
 /// slots its skeleton lists, or the one place every body keeps a tool.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
@@ -91,7 +91,7 @@ pub fn in_slot(world: &World, actor: Entity, slot: &EquipmentPlace) -> Option<It
         .and_then(|equipment| equipment.slots.get(slot).copied())
 }
 
-/// The hand slots a player's body gives it: one per hand of its skeleton, and one still on a body
+/// The hand slots a character's body gives it: one per hand of its skeleton, and one still on a body
 /// with none, where a held item is worn and never shown.
 pub fn hand_slots(world: &World, player: Entity) -> usize {
     held::hands_of(world, player).len().max(1)
@@ -327,7 +327,7 @@ pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(
     unequip_slot(world, player, slot)
 }
 
-/// Keeps what a player's body shows equal to its equipped hands, from the moment it is spawned
+/// Keeps what a character's body shows equal to its equipped hands, from the moment it is spawned
 /// equipped to every change of what it wears, each of which puts its equipment anew.
 pub fn reflect(insert: On<Insert<Equipment>>, world: &World, mut commands: Commands) {
     let working = world.get::<Working>(insert.entity).is_some();

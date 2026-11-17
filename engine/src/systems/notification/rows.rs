@@ -16,6 +16,7 @@ use ui::face::Face;
 use ui::ink::Ground;
 
 use super::{NotificationSent, window_visible};
+use crate::core::content::Content;
 use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, KeyNames, StyledLine, TextLook, TextPiece};
 use crate::core::units::Seconds;
@@ -143,7 +144,10 @@ pub(super) fn join<P: RowPlace>(
 }
 
 pub(super) fn shown<P: RowPlace>(world: &World) -> NotificationRows {
-    world.resource::<PlacedRows<P>>().rows.shown()
+    world
+        .resource::<PlacedRows<P>>()
+        .rows
+        .shown(world.resource::<Content>())
 }
 
 pub(super) fn draw_captions(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
@@ -500,14 +504,14 @@ impl VoiceRows {
             .filter(|turned_away| turned_away.until > now);
     }
 
-    fn labelled_lines(&self) -> Vec<LabelledLine> {
+    fn labelled_lines(&self, content: &Content) -> Vec<LabelledLine> {
         self.rows
             .iter()
             .map(|row| LabelledLine {
                 key: row.key,
                 label: row.voice.to_string(),
                 replaced: row.replaced,
-                text: row.shown.notification.text.styled(),
+                text: row.shown.notification.text.styled(content),
             })
             .collect()
     }
@@ -518,14 +522,14 @@ impl VoiceRows {
             .map(|turned_away| turned_away.more)
     }
 
-    fn shown(&self) -> NotificationRows {
+    fn shown(&self, content: &Content) -> NotificationRows {
         NotificationRows {
             rows: self
                 .rows
                 .iter()
                 .map(|row| NotificationRow {
                     label: row.voice.to_string(),
-                    text: row.shown.notification.text.plain_words(),
+                    text: row.shown.notification.text.plain_words(content),
                     replaced: row.replaced,
                 })
                 .collect(),
@@ -536,7 +540,10 @@ impl VoiceRows {
 
 fn lines_of<P: RowPlace>(world: &World) -> (Vec<LabelledLine>, Option<u32>) {
     let placed = world.resource::<PlacedRows<P>>();
-    (placed.rows.labelled_lines(), placed.rows.more())
+    (
+        placed.rows.labelled_lines(world.resource::<Content>()),
+        placed.rows.more(),
+    )
 }
 
 fn chip_area(

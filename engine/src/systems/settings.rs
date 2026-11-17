@@ -80,10 +80,15 @@ pub(crate) struct Placement {
     pub size: Size<WindowPx>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A window the player places and the game keeps where they left it.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Placed {
     Menu,
     Chat,
+    Trade,
+    Market,
+    Roster,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -695,22 +700,16 @@ impl UserSettings {
 
     pub(crate) fn reset_hud(&mut self) {
         self.ui.widgets.retain(|name, _| !hud::is_piece(name));
-        self.ui.chat.placement = None;
+        self.ui.placements.retain(|of, _| *of == Placed::Menu);
         self.ui.player_bar.shape = None;
     }
 
     pub(crate) fn placement(&self, of: Placed) -> Option<Placement> {
-        match of {
-            Placed::Menu => self.ui.menu.placement,
-            Placed::Chat => self.ui.chat.placement,
-        }
+        self.ui.placements.get(&of).copied()
     }
 
     pub(crate) fn set_placement(&mut self, of: Placed, placement: Placement) {
-        match of {
-            Placed::Menu => self.ui.menu.placement = Some(placement),
-            Placed::Chat => self.ui.chat.placement = Some(placement),
-        }
+        self.ui.placements.insert(of, placement);
     }
 
     pub(crate) fn menu_opens_on(&self) -> Option<MenuTabName> {
@@ -825,6 +824,8 @@ struct UiSettings {
     #[serde(default)]
     widgets: BTreeMap<String, Pos<WindowPx>>,
     #[serde(default)]
+    placements: BTreeMap<Placed, Placement>,
+    #[serde(default)]
     menu: MenuSettings,
     #[serde(default)]
     player_bar: PlayerBarSettings,
@@ -844,6 +845,7 @@ impl Default for UiSettings {
         UiSettings {
             snap: default_snap(),
             widgets: BTreeMap::new(),
+            placements: BTreeMap::new(),
             menu: MenuSettings::default(),
             player_bar: PlayerBarSettings::default(),
             chat: ChatSettings::default(),
@@ -856,8 +858,6 @@ impl Default for UiSettings {
 
 #[derive(Serialize, Deserialize, Default)]
 struct MenuSettings {
-    #[serde(default)]
-    placement: Option<Placement>,
     /// None opens on the tab last used this session.
     #[serde(default)]
     opens_on: Option<MenuTabName>,
@@ -876,8 +876,6 @@ struct MinimapSettings {
 struct ChatSettings {
     #[serde(default)]
     hidden: bool,
-    #[serde(default)]
-    placement: Option<Placement>,
     #[serde(default)]
     background: Option<Percent>,
     #[serde(default)]

@@ -122,7 +122,7 @@ pub fn shown(world: &World) -> Option<ShownAreaInstance> {
             .roster
             .iter()
             .map(|row| ShownRosterMember {
-                name: row.player.name.clone(),
+                name: row.character.name.clone(),
                 place: row.place,
                 me: row.me,
             })
@@ -168,9 +168,9 @@ fn roster(ui: &mut Ui, rows: &[RosterRowInside]) {
     ui.label(face::small("ROSTER").color(ink::INK3));
     for row in rows {
         let name = if row.me {
-            format!("{} (you)", row.player.name)
+            format!("{} (you)", row.character.name)
         } else {
-            row.player.name.clone()
+            row.character.name.clone()
         };
         let (says, color) = match row.place {
             RosterPlace::Inside => ("Inside", ink::VERDIGRIS),
@@ -244,7 +244,13 @@ fn way_out(
                     None => says.clone(),
                 };
                 let look = TextLook::role(TextRole::Small, ink::INK3);
-                text::show(ui, world, &said.styled(), look, None);
+                text::show(
+                    ui,
+                    world,
+                    &said.styled(world.resource::<Content>()),
+                    look,
+                    None,
+                );
             });
         });
     });
@@ -264,7 +270,7 @@ fn announce(world: &mut World, mut told: Local<Option<UnixMillis>>) {
     *told = Some(cleared.closes);
     let content = world.resource::<Content>().clone();
     let named = |stacks: &[ItemStack]| -> Vec<LineText> {
-        stacks.iter().map(|stack| stack.named(&content)).collect()
+        stacks.iter().map(|stack| stack.named()).collect()
     };
     let given = &cleared.given;
     let mut kept = named(&given.kept);

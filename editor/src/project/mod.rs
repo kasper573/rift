@@ -509,7 +509,7 @@ impl Project {
     }
 
     /// What finds, on any thread, what keeps the game from being played as it is now, though it
-    /// loads to be worked on: quests and shops out of a player's reach.
+    /// loads to be worked on: quests and shops out of a character's reach.
     pub(crate) fn playable(&self) -> PlayableCheck {
         PlayableCheck(self.files.clone())
     }

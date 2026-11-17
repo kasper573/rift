@@ -148,7 +148,7 @@ pub struct Dead {
     pub at: Seconds,
 }
 
-/// How much health and mana every player regains, and how often.
+/// How much health and mana every character regains, and how often.
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 pub struct VitalRegen {
     pub every: Seconds,

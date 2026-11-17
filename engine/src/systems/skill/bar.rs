@@ -733,6 +733,7 @@ fn carried_pick(world: &World, carried: Carried) -> Option<BasicAttackPick> {
             HotbarEntry::Item(item) => Some(BasicAttackPick::Weapon(item)),
             HotbarEntry::Empty => None,
         },
+        Carried::Moved { .. } => None,
     }
 }
 
@@ -798,6 +799,7 @@ fn take_drop(world: &mut World, response: &egui::Response, index: HotbarSlot, he
                 entry: held,
             });
         }
+        Carried::Moved { .. } => {}
     }
     InterfaceSound::UiPick.play(world);
 }
@@ -1058,7 +1060,7 @@ fn aim_or_cast(world: &mut World, skill: SkillId, rank: Rank) -> bool {
     }
 }
 
-/// Asks to use what lies in the player's bag at `slot`: an item that casts a skill is aimed as
+/// Asks to use what lies in the character's bag at `slot`: an item that casts a skill is aimed as
 /// the skill is, and any other is used at once.
 pub fn use_bag_slot(world: &mut World, slot: u32) -> bool {
     let casts =

@@ -224,9 +224,11 @@ fn draw_notice(world: &mut World) {
                 vec![at_stake, words.play_on.clone()],
             )
         }
-        (None, Some(until)) if gui.input(|input| input.time) < until => {
-            (&words.saved, dusk::PLAYER, vec![words.saved_again.clone()])
-        }
+        (None, Some(until)) if gui.input(|input| input.time) < until => (
+            &words.saved,
+            dusk::CHARACTER,
+            vec![words.saved_again.clone()],
+        ),
         _ => return,
     };
     let area = egui::Area::new(Id::new("saving"))

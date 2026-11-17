@@ -125,7 +125,7 @@ fn as_the_editor_writes(game: &Path, content: Content) -> Rewritten {
 }
 
 /// What a game's bodies must be beyond what loads: every skeleton worn by a model, and a set on the
-/// player's skeleton for every stance an item names, so no weapon falls back to the base set. The
+/// character's skeleton for every stance an item names, so no weapon falls back to the base set. The
 /// loader's warnings are printed, the designer's to accept.
 fn check_bodies(content: &Content, out: &mut Vec<String>) {
     for warning in &content.built::<LoadWarnings>().0 {
@@ -144,7 +144,7 @@ fn check_bodies(content: &Content, out: &mut Vec<String>) {
             ));
         }
     }
-    let player = content.built::<GameSettings>().player.get(content);
+    let player = content.built::<GameSettings>().character.get(content);
     let body = ActorModel::get(content, player.class.get(content).model).skeleton();
     for item in content.table::<ItemDef>().ids() {
         let Some(stance) = stance::of_item(content, item) else {
@@ -152,7 +152,7 @@ fn check_bodies(content: &Content, out: &mut Vec<String>) {
         };
         if body.def.set(stance).is_none() {
             out.push(format!(
-                "{}: its stance {} has no set on the player's skeleton",
+                "{}: its stance {} has no set on the character's skeleton",
                 item.path(content),
                 stance.path(content)
             ));

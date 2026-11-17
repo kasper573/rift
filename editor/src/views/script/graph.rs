@@ -371,7 +371,7 @@ impl ScriptGraphViewer<'_> {
         let glyph = match line.by {
             Speaker::Npc(_) => "N",
             Speaker::Object => "I",
-            Speaker::Narrator | Speaker::Player => "–",
+            Speaker::Narrator | Speaker::Character => "–",
         };
         ui.painter().rect_filled(rect, big(4.0), theme::RAISED);
         ui.painter().text(

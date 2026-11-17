@@ -33,7 +33,7 @@ use engine::systems::memory::MemoryDef;
 use engine::systems::mount::MountDef;
 use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
-use engine::systems::player::PlayerDef;
+use engine::systems::player::CharacterDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::QuestDef;
 use engine::systems::resource::ResourceDef;
@@ -172,7 +172,7 @@ impl KindFamily {
             | SpawnableDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
             NpcDef::TABLE
-            | PlayerDef::TABLE
+            | CharacterDef::TABLE
             | CharacterSnapshot::TABLE
             | ClassDef::TABLE
             | ModelDef::TABLE
@@ -231,7 +231,7 @@ pub fn of_table(table: &str) -> KindIcon {
         SurfaceDef::TABLE => KindIcon::plain(phosphor::FOOTPRINTS),
         WorldMapDef::TABLE => KindIcon::plain(phosphor::GLOBE_HEMISPHERE_WEST),
         NpcDef::TABLE => KindIcon::plain(phosphor::ROBOT).unpictured(),
-        PlayerDef::TABLE => KindIcon::plain(phosphor::USER).unpictured(),
+        CharacterDef::TABLE => KindIcon::plain(phosphor::USER).unpictured(),
         CharacterSnapshot::TABLE => KindIcon::badged(phosphor::USER, phosphor::FLASK),
         ClassDef::TABLE => KindIcon::plain(phosphor::SHIELD_STAR),
         ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD).unpictured(),

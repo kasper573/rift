@@ -34,7 +34,7 @@ use crate::systems::mention::Mention;
 use crate::systems::mount;
 use crate::systems::notification::{self, Notification};
 use crate::systems::npc::{Npc, NpcId};
-use crate::systems::party::PlayerParties;
+use crate::systems::party::CharacterParties;
 use crate::systems::payout::{self, PayoutReason};
 use crate::systems::player::snapshot::{self, CharacterSnapshot};
 use crate::systems::player::{self, RequestNeeds};
@@ -57,8 +57,8 @@ pub fn register(app: &mut App) {
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaInstanceRules {
-    /// How many players a copy opens with.
-    pub players: PlayerCount,
+    /// How many characters a copy opens with.
+    pub characters: CharacterCount,
     /// What clears one, once every one of them is met.
     pub goals: Vec<AreaInstanceGoal>,
     /// How long one with nobody inside waits before it is gone.
@@ -70,10 +70,10 @@ pub struct AreaInstanceRules {
     pub lasts: Option<Seconds>,
 }
 
-/// How many players a copy opens with: no fewer than `least`, no more than `most`.
+/// How many characters a copy opens with: no fewer than `least`, no more than `most`.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PlayerCount {
+pub struct CharacterCount {
     #[schemars(transform = SchemaMark::Count.with(true))]
     pub least: u32,
     #[schemars(transform = SchemaMark::Count.with(true))]
@@ -118,18 +118,18 @@ impl AreaInstanceGoal {
 
 impl AreaInstanceRules {
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
-        let players = self.players;
+        let characters = self.characters;
         cx.at_least(
-            format!("{pointer}/players/least"),
-            players.least,
+            format!("{pointer}/characters/least"),
+            characters.least,
             1,
-            "players",
+            "characters",
         );
         cx.at_least(
-            format!("{pointer}/players/most"),
-            players.most,
-            players.least.max(1),
-            "players",
+            format!("{pointer}/characters/most"),
+            characters.most,
+            characters.least.max(1),
+            "characters",
         );
         cx.at_least(format!("{pointer}/goals"), self.goals.len(), 1, "goals");
         cx.at_least(
@@ -243,7 +243,7 @@ pub struct AreaInstance {
     over: bool,
 }
 
-/// One of the players a copy opened for.
+/// One of the characters a copy opened for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RosterMember {
     pub account: AccountId,
@@ -350,7 +350,12 @@ impl AreaInstances {
 
     /// Whether another member of the party `account` is in holds a place in a copy of `area`
     /// that is still open.
-    pub fn party_inside(&self, parties: &PlayerParties, account: &AccountId, area: AreaId) -> bool {
+    pub fn party_inside(
+        &self,
+        parties: &CharacterParties,
+        account: &AccountId,
+        area: AreaId,
+    ) -> bool {
         let Some(party) = parties.of_account(account) else {
             return false;
         };
@@ -433,7 +438,7 @@ pub struct AreaInstanceShown {
 /// A member of a copy's roster, as the plate lists them.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RosterRowInside {
-    pub player: SocietyMember,
+    pub character: SocietyMember,
     pub place: RosterPlace,
     /// Whether it is the player the plate is shown to.
     pub me: bool,
@@ -482,7 +487,7 @@ impl AreaInstanceShown {
             .roster()
             .filter_map(|member| {
                 Some(RosterRowInside {
-                    player: society.member(&member.account)?,
+                    character: society.member(&member.account)?,
                     place: member.place,
                     me: member.account == *account,
                 })
@@ -554,17 +559,7 @@ pub fn leave(world: &mut World, character: Entity) {
 /// been inside and now plays elsewhere has left. A copy nobody is inside counts its time from
 /// here, and whoever comes back after a copy they were away from ended is told so.
 pub(crate) fn look(settling: &mut Settling, content: &Content) {
-    let mut listed: BTreeMap<AccountId, (Option<AreaInstanceId>, bool, Pos<Meters>)> =
-        BTreeMap::new();
-    let roster = settling.roster;
-    roster.each(|enrolled| {
-        if let Some(account) = &enrolled.account {
-            let at = roster
-                .place_of(enrolled.client)
-                .map_or(Pos::new(0.0, 0.0), |place| place.at);
-            listed.insert(account.clone(), (enrolled.instance, enrolled.away, at));
-        }
-    });
+    let listed = watched(settling);
     let now = settling.now;
     let mut changed: Vec<AccountId> = Vec::new();
     let mut left: Vec<(AccountId, AreaId, Vec<AccountId>)> = Vec::new();
@@ -656,6 +651,29 @@ pub(crate) fn look(settling: &mut Settling, content: &Content) {
     }
 }
 
+/// Where the roster lists everyone whose place `look` notes: whoever a copy holds a place for,
+/// and whoever is told on coming back that a copy ended. Each is looked up on their own, so this
+/// costs what the copies hold, however many play.
+fn watched(
+    settling: &Settling,
+) -> BTreeMap<AccountId, (Option<AreaInstanceId>, bool, Pos<Meters>)> {
+    let instances = &settling.society.instances;
+    let held = instances
+        .live
+        .values()
+        .flat_map(|instance| &instance.roster)
+        .filter(|member| member.place != RosterPlace::Left)
+        .map(|member| &member.account)
+        .chain(instances.ended_away.keys());
+    let roster = settling.roster;
+    held.filter_map(|account| {
+        let enrolled = roster.account(account)?;
+        let at = roster.place_of(enrolled.client)?.at;
+        Some((account.clone(), (enrolled.instance, enrolled.away, at)))
+    })
+    .collect()
+}
+
 /// Lets `by` into a copy of the entry's area of their own, and tells the flow that asked how it
 /// went. Whoever already stands in a copy of that area moves within it instead.
 pub(crate) fn go_alone(
@@ -719,11 +737,11 @@ fn alone(content: &Content, entry: &AreaInstanceEntry) -> Result<(), LineText> {
         .get(content)
         .instance
         .as_ref()
-        .map_or(1, |rules| rules.players.least);
+        .map_or(1, |rules| rules.characters.least);
     if least <= 1 {
         return Ok(());
     }
-    Err(LineText::plain(words.instance_needs_players.as_str())
+    Err(LineText::plain(words.instance_needs_characters.as_str())
         .filling("{area}", Mention::Area(area).span(content))
         .filling("{least}", least.to_string()))
 }

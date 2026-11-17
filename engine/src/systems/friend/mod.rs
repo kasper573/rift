@@ -12,7 +12,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use search::{FindPlayers, PlayersFound};
+pub use search::{CharactersFound, FindCharacters};
 
 use crate::core::store::{Record, RecordId};
 use crate::core::time::UnixMillis;
@@ -31,8 +31,8 @@ pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
     app.add_client_message::<AskFriendship>()
         .add_client_message::<RemoveFriend>()
-        .add_client_message::<FindPlayers>()
-        .add_server_message::<PlayersFound>();
+        .add_client_message::<FindCharacters>()
+        .add_server_message::<CharactersFound>();
 }
 
 /// How a game has friends work. A game without it has no friends.
@@ -163,7 +163,7 @@ pub fn request_source() -> SocialRequestSource {
         words: |words| SocialRequestWords {
             asks: &words.friendship_asks,
             asked: &words.friendship_asked,
-            sent: Some(&words.friendship_sent),
+            sent: &words.friendship_sent,
             accepted: Some(&words.friendship_accepted),
             denied: None,
             lapsed: None,
@@ -202,16 +202,20 @@ pub fn requests(world: &mut World) {
             Ok(())
         },
     );
-    player::player_requests::<FindPlayers>(world, RequestNeeds::Nothing, |world, player, find| {
-        if let Some(client) = client(world, player) {
-            society::ask(
-                world,
-                client,
-                SocietyAsk::Friend(FriendAsk::Find(find.0.clone())),
-            );
-        }
-        Ok(())
-    });
+    player::player_requests::<FindCharacters>(
+        world,
+        RequestNeeds::Nothing,
+        |world, player, find| {
+            if let Some(client) = client(world, player) {
+                society::ask(
+                    world,
+                    client,
+                    SocietyAsk::Friend(FriendAsk::Find(find.0.clone())),
+                );
+            }
+            Ok(())
+        },
+    );
 }
 
 /// Does what `by` asked of friends, under the game `settings` are of.

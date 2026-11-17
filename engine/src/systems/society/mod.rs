@@ -19,12 +19,12 @@ use crate::systems::GameSettings;
 use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::area::AreaId;
 use crate::systems::area_instance::{self, AreaInstances, InstanceAsk};
-use crate::systems::auction::{self, Auction, AuctionAsk, AuctionHouse};
 use crate::systems::chat::ChatSaid;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
 use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
+use crate::systems::market::{self, Listing, Market, MarketAsk};
 use crate::systems::notification::{self, Notification};
-use crate::systems::party::{self, PartyRequest, PlayerParties, PlayerParty};
+use crate::systems::party::{self, CharacterParties, CharacterParty, PartyRequest};
 use crate::systems::payout::Delivery;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
@@ -33,6 +33,7 @@ use crate::systems::social_request::{
     self, AcceptsRequestsFrom, Block, BlockAsk, BlockLists, RequestSettings, SocialRequest,
     SocialRequestAsk, SocialRequestKind, SocialRequestSource, SocialRequests,
 };
+use crate::systems::text::LineText;
 use crate::systems::visibility;
 use crate::systems::worlds::{AboveWorlds, WorldName};
 
@@ -50,9 +51,9 @@ pub struct Society {
     pub(crate) blocks: BlockLists,
     pub(crate) requests: SocialRequests,
     pub(crate) inboxes: Inboxes,
-    pub(crate) parties: PlayerParties,
+    pub(crate) parties: CharacterParties,
     pub(crate) instances: AreaInstances,
-    pub(crate) auctions: AuctionHouse,
+    pub(crate) market: Market,
     sources: Vec<SocialRequestSource>,
     /// The accounts whose characters stand in a world, and where.
     playing: HashMap<AccountId, Playing>,
@@ -94,10 +95,8 @@ impl Society {
             blocks: BlockLists::of(all::<Block>(store, scope).await?),
             requests: SocialRequests::of(all::<SocialRequest>(store, scope).await?),
             inboxes: Inboxes::counted(messages, reads),
-            parties: PlayerParties::of(all::<PlayerParty>(store, scope).await?),
-            auctions: AuctionHouse::of(
-                all::<Auction>(store, &scope.clone().setting_aside()).await?,
-            ),
+            parties: CharacterParties::of(all::<CharacterParty>(store, scope).await?),
+            market: Market::of(all::<Listing>(store, &scope.clone().setting_aside()).await?),
             sources,
             ..Society::default()
         })
@@ -133,12 +132,12 @@ impl Society {
         &self.inboxes
     }
 
-    pub fn parties(&self) -> &PlayerParties {
+    pub fn parties(&self) -> &CharacterParties {
         &self.parties
     }
 
-    pub fn auctions(&self) -> &AuctionHouse {
-        &self.auctions
+    pub fn market(&self) -> &Market {
+        &self.market
     }
 
     /// Who `account` takes requests from, in a game with these `settings`.
@@ -193,7 +192,7 @@ impl Society {
         if roster.moved() {
             let mut playing: HashMap<AccountId, Playing> = HashMap::new();
             let mut called: Vec<(AccountId, String)> = Vec::new();
-            roster.each(|enrolled| {
+            roster.each(|enrolled, _| {
                 if let Some(account) = &enrolled.account {
                     let playing_as = Playing {
                         area: enrolled.area,
@@ -232,7 +231,7 @@ impl Society {
                 let friends = self.friends.of_account(account);
                 let party = self.parties.of_account(account);
                 let watching: Vec<AccountId> = friends
-                    .chain(party.into_iter().flat_map(PlayerParty::accounts))
+                    .chain(party.into_iter().flat_map(CharacterParty::accounts))
                     .cloned()
                     .collect();
                 self.changed.extend(watching);
@@ -259,7 +258,7 @@ impl Society {
         let friends = self.friends.of_account(account);
         let party = self.parties.of_account(account);
         let listing: Vec<AccountId> = friends
-            .chain(party.into_iter().flat_map(PlayerParty::accounts))
+            .chain(party.into_iter().flat_map(CharacterParty::accounts))
             .cloned()
             .collect();
         self.changed.extend(listing);
@@ -328,7 +327,7 @@ pub enum SocietyAsk {
     PartyLine(ChatSaid),
     /// Of instances: a copy of their own, a call to their party, or an answer to one.
     Instance(InstanceAsk),
-    Auction(AuctionAsk),
+    Market(MarketAsk),
 }
 
 /// What a world asked of society since the server's worlds last conferred: what its players
@@ -446,7 +445,7 @@ impl Settling<'_, '_> {
     }
 
     /// Tells the player of `account` that what they asked for was refused, and why.
-    pub fn refuse(&mut self, account: &AccountId, why: String) {
+    pub fn refuse(&mut self, account: &AccountId, why: impl Into<LineText>) {
         if let Some((world, character)) = self.reach(account) {
             notification::error(world, character, why);
         }
@@ -504,7 +503,7 @@ pub fn settle(
             SocietyAsk::Instance(ask) => {
                 area_instance::roster::settle(&mut settling, content, &by, ask);
             }
-            SocietyAsk::Auction(ask) => auction::settle(&mut settling, content, &by, ask),
+            SocietyAsk::Market(ask) => market::settle(&mut settling, content, &by, ask),
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {
                     account.accepts_requests_from = Some(from);
@@ -525,7 +524,7 @@ pub fn settle(
         }
         area_instance::roster::keep(&mut settling, &content);
         area_instance::keep(&mut settling, &content);
-        auction::keep(&mut settling, &content);
+        market::keep(&mut settling, &content);
     }
     for account in std::mem::take(&mut settling.society.changed) {
         if let Some((world, character)) = reach(settling.views, settling.roster, &account) {
@@ -545,10 +544,9 @@ fn reach<'v>(
     account: &AccountId,
 ) -> Option<(&'v mut World, Entity)> {
     let client = roster.account(account)?.client;
-    views.iter_mut().flatten().find_map(|world| {
-        let character = *world.get_resource::<Players>()?.0.get(&client)?;
-        Some((&mut **world, character))
-    })
+    let world = views.get_mut(roster.world_of(client)?)?.as_deref_mut()?;
+    let character = *world.get_resource::<Players>()?.0.get(&client)?;
+    Some((world, character))
 }
 
 async fn all<R: Record>(

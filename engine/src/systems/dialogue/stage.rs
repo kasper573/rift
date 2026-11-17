@@ -33,6 +33,7 @@ use crate::systems::actor::render::Said;
 use crate::systems::hud::{self, day_clock};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceSound;
+use crate::systems::item::inline::{self, InlineItem, InlineLook};
 use crate::systems::item::{ItemId, card};
 use crate::systems::movement::Position;
 use crate::systems::npc::Npc;
@@ -141,16 +142,19 @@ pub fn view(world: &World) -> Option<StageView> {
         speaker: shown
             .current()
             .and_then(|line| speaker_name(world, line.by)),
-        text: shown
-            .current()
-            .map(|line| line.text.words(world.resource::<InputMap>())),
+        text: shown.current().map(|line| {
+            line.text
+                .words(world.resource::<Content>(), world.resource::<InputMap>())
+        }),
         typing: shown.typed_since.is_none(),
         choices: shown
             .choices
             .iter()
             .enumerate()
             .map(|(index, choice)| StageChoice {
-                label: choice.label.words(world.resource::<InputMap>()),
+                label: choice
+                    .label
+                    .words(world.resource::<Content>(), world.resource::<InputMap>()),
                 gets: choice
                     .chips
                     .iter()
@@ -416,7 +420,7 @@ fn show_line(world: &mut World) {
     else {
         return;
     };
-    let styled = line.text.styled();
+    let styled = line.text.styled(world.resource::<Content>());
     let typing = world.spawn((styled, Typewriter::default())).id();
     let with = world
         .resource::<Stage>()
@@ -585,7 +589,7 @@ fn babble_along(world: &mut World, by: Speaker, line: Entity) {
     let content = world.resource::<Content>().clone();
     let babble = match by {
         Speaker::Npc(npc) => npc.get(&content).voice(),
-        Speaker::Player => session::me(world)
+        Speaker::Character => session::me(world)
             .and_then(|seen| world.get::<Babbler>(seen))
             .map(|babbler| babbler.0),
         Speaker::Object | Speaker::Narrator => None,
@@ -603,7 +607,7 @@ fn babble_along(world: &mut World, by: Speaker, line: Entity) {
 /// the nearest.
 fn body_of(world: &mut World, by: Speaker, with: Option<Entity>) -> Option<Entity> {
     let npc = match by {
-        Speaker::Player => return session::me(world),
+        Speaker::Character => return session::me(world),
         Speaker::Npc(npc) => npc,
         Speaker::Object | Speaker::Narrator => return None,
     };
@@ -915,9 +919,9 @@ fn line(ui: &mut Ui, world: &mut World) {
                 world.get::<Typewriter>(line)?.shown(),
             ))
         })
-        .unwrap_or_else(|| (spoken.text.styled(), None));
+        .unwrap_or_else(|| (spoken.text.styled(world.resource::<Content>()), None));
     egui::Frame::new().inner_margin(LINE_MARGIN).show(ui, |ui| {
-        text::show(
+        inline::show_styled(
             ui,
             world,
             &styled,
@@ -1033,7 +1037,7 @@ fn choice_row(
     let shortcut = CHOICE_SHORTCUTS
         .get(index)
         .and_then(|&action| keys.cap(action));
-    let label = choice.label.words(keys);
+    let label = choice.label.words(world.resource::<Content>(), keys);
     let color = ui.visuals().override_text_color.unwrap_or(ink::INK);
     let mut chip_item = None;
     ui.horizontal(|ui| {
@@ -1049,7 +1053,7 @@ fn choice_row(
                     ui.add(image.widget(Vec2::splat(CHOICE_ICON)));
                 }
                 let look = TextLook::new(TextRole::Body.size(), color);
-                text::show(ui, world, &choice.label.styled(), look, None);
+                inline::show_line_with_tooltips(ui, world, &choice.label, look);
             });
         });
     });
@@ -1073,7 +1077,7 @@ fn pills(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId,
                 controls::pill_with(ui, pill, |ui| {
                     glyph::show(ui, mark, PILL_ICON, pill.color());
                     let color = ui.visuals().text_color();
-                    day_clock::wording(ui, world, what, TextRole::Body, color);
+                    day_clock::wording(ui, world, what, TextRole::Pill, color);
                 });
             }
             ChoiceChip::Pays { item, count, have } => {
@@ -1082,21 +1086,22 @@ fn pills(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId,
                 } else {
                     Pill::Rubric
                 };
-                let icon = item.get(&content).icon.clone();
+                let paid = InlineItem::of(*item).count(*count).nameless();
                 controls::pill_with(ui, pill, |ui| {
-                    hud::icon(ui, world, &icon, PILL_ICON);
-                    ui.label(count.to_string());
+                    let look = InlineLook::new(TextRole::Pill, pill.color());
+                    inline::show_with_tooltip(ui, world, paid, look);
                 });
             }
             ChoiceChip::Gets { item, count } => {
-                let icon = item.get(&content).icon.clone();
+                let got = InlineItem::of(*item).count(*count).nameless();
                 let response = controls::pill_with(ui, Pill::Verdigris, |ui| {
-                    hud::icon(ui, world, &icon, PILL_ICON);
-                    ui.label(format!("+{count}"));
+                    ui.label("+");
+                    let look = InlineLook::new(TextRole::Pill, Pill::Verdigris.color());
+                    let response = inline::draw(ui, world, &content, got, look);
+                    inline::tooltip(world, &response, got);
+                    response
                 })
-                .response
-                .interact(Sense::hover());
-                card::tooltip(world, &response, *item);
+                .inner;
                 if response.contains_pointer() {
                     pointed = Some((*item, response.rect));
                 }
@@ -1155,7 +1160,7 @@ fn speaker_name(world: &World, who: Speaker) -> Option<String> {
             .and_then(|shown| shown.with)
             .and_then(|with| world.get::<Name>(with))
             .map(|name| name.name.clone()),
-        Speaker::Player => session::me(world)
+        Speaker::Character => session::me(world)
             .and_then(|seen| world.get::<Name>(seen))
             .map(|name| name.name.clone()),
         Speaker::Narrator => None,

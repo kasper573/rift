@@ -16,11 +16,11 @@ use crate::core::stage::card::HungCardLamp;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::chat::ChatEmbed;
 use crate::systems::class::{self, ClassId, NodeKey};
-use crate::systems::crafting;
+
 use crate::systems::equipment::Equipment;
 use crate::systems::hud;
 use crate::systems::item::card::{self as item_card, CardLook};
-use crate::systems::item::{Inventory, ItemId};
+use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -153,7 +153,7 @@ pub fn tooltip(
         text::show(
             ui,
             world,
-            &line.styled(),
+            &line.styled(&content),
             TextLook::role(TextRole::Tooltip, ink::INK2),
             None,
         );
@@ -191,7 +191,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
         text::show(
             ui,
             world,
-            &card_overview(&content, def, card).styled(),
+            &card_overview(&content, def, card).styled(&content),
             TextLook::role(TextRole::CardBody, ink::INK2),
             None,
         );
@@ -212,7 +212,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
         if !def.masteries.is_empty() {
             card::heading(ui, plate, "masters");
             for recipe in def.masteries.iter().filter_map(|key| key.get(&content)) {
-                let makes = crafting::stacks_mentioned(&content, &recipe.makes, 0);
+                let makes = ItemStack::summed(&recipe.makes);
                 item_card::detail_line(ui, world, None, &makes);
             }
         }
@@ -386,8 +386,8 @@ fn use_lines(
     for stack in &def.cost {
         let held = bag.map_or(0, |bag| bag.count(stack.item));
         lines.push((
-            LineText::plain(format!("Spends {} ", stack.count))
-                .then(Mention::Item(stack.item).span(content))
+            LineText::plain("Spends ")
+                .then(stack.named())
                 .then(format!(" ({held} held)")),
             held >= stack.count,
         ));

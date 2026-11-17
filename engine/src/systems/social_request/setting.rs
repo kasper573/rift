@@ -6,7 +6,7 @@ use ui::egui::{self, Ui};
 use ui::float::Hinted;
 use ui::{controls, form, ink};
 
-use super::{AcceptsRequestsFrom, BlockPlayer, ChooseAcceptsRequests};
+use super::{AcceptsRequestsFrom, BlockCharacter, ChooseAcceptsRequests};
 use crate::systems::society::{AccountNumber, SocietyView};
 
 /// What the player chose in the section.
@@ -24,7 +24,7 @@ impl SocialChoice {
                 world.write_message(ChooseAcceptsRequests(from));
             }
             SocialChoice::Unblock(account) => {
-                world.write_message(BlockPlayer {
+                world.write_message(BlockCharacter {
                     account,
                     blocked: false,
                 });
@@ -85,7 +85,7 @@ fn name(from: AcceptsRequestsFrom) -> &'static str {
 /// Who may send a request to a player who chose `from`.
 fn admits(from: AcceptsRequestsFrom) -> &'static str {
     match from {
-        AcceptsRequestsFrom::Everyone => "Any player you have not blocked.",
+        AcceptsRequestsFrom::Everyone => "Any character you have not blocked.",
         AcceptsRequestsFrom::Friends => "Only your friends.",
         AcceptsRequestsFrom::Party => "Only members of your party.",
         AcceptsRequestsFrom::Nobody => "No one. You can still ask others.",

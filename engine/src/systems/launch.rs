@@ -159,8 +159,8 @@ pub struct ServerConfig {
     /// How many instances of the game's instanced areas run at once.
     pub max_instances: u32,
     pub content_dir: PathBuf,
-    pub player_spawn_policy: SpawnPolicy,
-    pub player_immortal: bool,
+    pub character_spawn_policy: SpawnPolicy,
+    pub characters_immortal: bool,
     pub daylight: ServerDaylight,
     /// The hour of the day a fixed daylight holds at, 0 to 24.
     pub hour: Option<HourOfDay>,
@@ -199,8 +199,8 @@ impl ServerConfig {
             max_clients: 8,
             max_instances: 8,
             content_dir,
-            player_spawn_policy: SpawnPolicy::Map,
-            player_immortal: false,
+            character_spawn_policy: SpawnPolicy::Map,
+            characters_immortal: false,
             daylight: ServerDaylight::Turning,
             hour: None,
             weather: ServerWeather::Turning,

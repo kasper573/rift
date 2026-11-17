@@ -805,7 +805,7 @@ fn stack_chips(
     chosen: &Option<Picked>,
 ) {
     for (item, amount) in stacks {
-        let label = format!("{} ×{amount}", item.name);
+        let label = format!("{amount} {}", item.name);
         let id = ui.id().with(("stack", &item.path));
         let wide = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or_else(|| {
             let text = egui::WidgetText::from(label.as_str()).into_galley(
@@ -847,7 +847,7 @@ fn draft_row(editor: &mut Editor, ui: &mut Ui, key: &str, len: usize) {
     let top = ui.cursor().top();
     let made = cell(ui, "draft makes", columns.makes, (top, ROW), |ui| {
         item_face(editor, ui, &makes);
-        ui.add(egui::Label::new(face::bold(format!("{name} ×1"))).truncate());
+        ui.add(egui::Label::new(face::bold(format!("1 {name}"))).truncate());
     });
     let from = cell(ui, "draft from", columns.from, (top, ROW), |ui| {
         let first = pick_item(

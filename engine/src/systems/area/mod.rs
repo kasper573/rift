@@ -988,7 +988,7 @@ impl Area {
     }
 
     /// Holds `tiles` in place of what `previous` held, letting go of the ground no hold wants any
-    /// longer: what a holder that moves over the area, such as a player or a view, holds by.
+    /// longer: what a holder that moves over the area, such as a character or a view, holds by.
     pub fn hold_instead(
         &self,
         previous: Option<GroundHold>,

@@ -10,6 +10,7 @@ use ui::{panel, sheet};
 use super::{
     HistoryEntry, HistoryMark, HistoryNews, HistoryRecord, HistoryTopic, KEPT, RecordTally,
 };
+use crate::core::content::Content;
 use crate::core::text::{self, StyledLine, StyledSpan, TextLook};
 use crate::core::time::LocalClock;
 use crate::systems::hud;
@@ -289,12 +290,18 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
             return;
         }
         Some(HistoryMark::Arrived) => {
-            form::divider(ui, format!("{} · {time}", entry.text.plain_words()));
+            form::divider(
+                ui,
+                format!(
+                    "{} · {time}",
+                    entry.text.plain_words(world.resource::<Content>())
+                ),
+            );
             return;
         }
         _ => {}
     }
-    let line = record_line(entry);
+    let line = record_line(entry, world.resource::<Content>());
     let color = match (entry.topic, entry.mark) {
         (_, Some(HistoryMark::Failed)) | (HistoryTopic::Error, _) => ink::RUBRIC,
         _ => ink::INK,
@@ -321,8 +328,8 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
     });
 }
 
-fn record_line(entry: &HistoryEntry) -> StyledLine {
-    let mut line = entry.text.styled();
+fn record_line(entry: &HistoryEntry, content: &Content) -> StyledLine {
+    let mut line = entry.text.styled(content);
     tallied(&mut line, entry.tally, entry.icon.is_some(), Ground::Paper);
     if entry.repeats > 1 {
         line.pieces.push(

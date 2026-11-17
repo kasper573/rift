@@ -176,9 +176,9 @@ impl NotificationSent {
     ) -> NotificationSent {
         let reading = world.resource::<GameSettings>().reading;
         NotificationSent {
-            stays: notification
-                .lasts
-                .unwrap_or_else(|| reading.of(notification.text.word_count())),
+            stays: notification.lasts.unwrap_or_else(|| {
+                reading.of(notification.text.word_count(world.resource::<Content>()))
+            }),
             notification,
             actor,
         }

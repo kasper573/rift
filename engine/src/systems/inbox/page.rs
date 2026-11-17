@@ -6,20 +6,21 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::egui::{self, Align, Layout, Sense, Ui, Vec2};
+use ui::egui::{self, Align, Layout, Sense, Ui};
 use ui::{controls, face, form, ink, sheet, words};
 
 use super::draft::{self, ShownDraft};
 use super::{
-    DeleteMessage, InboxRow, InboxView, MessageId, MessageText, OpenMessage, TakeAttached,
+    DeleteMessage, InboxRow, InboxSender, InboxView, MessageId, MessageText, OpenMessage,
+    TakeAttached, TakenStack,
 };
 use crate::core::content::Content;
 use crate::core::time::LocalClock;
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
-use crate::systems::item;
-use crate::systems::item::widget::{SlotLook, slot};
+use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, item_transfer};
+use crate::systems::item::tray::Placed;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::society::SocietyView;
@@ -44,16 +45,15 @@ impl SocialPage for MessagesPage {
 
     fn hints(&self, world: &World) -> Vec<(InputAction, &'static str)> {
         if draft::writing(world) {
-            vec![
-                (InputAction::PlaceItem, "attach"),
-                (InputAction::PlaceStack, "attach the stack"),
-            ]
-        } else {
-            vec![
-                (InputAction::Select, "choose"),
-                (InputAction::PlaceItem, "take one"),
-            ]
+            return transfer::MOVES.to_vec();
         }
+        let attached = inbox(world)
+            .and_then(|inbox| chosen(inbox, world.resource::<Reading>()))
+            .is_some_and(|row| !row.attached.is_empty());
+        let moves = transfer::MOVES.into_iter().filter(|_| attached);
+        std::iter::once((InputAction::Select, "choose"))
+            .chain(moves)
+            .collect()
     }
 
     fn show(&self, ui: &mut Ui, world: &mut World) {
@@ -99,11 +99,18 @@ pub struct ShownMessages {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ShownMessage {
     pub title: String,
-    /// The player who wrote it. A message from the game has none.
-    pub from: Option<String>,
+    pub from: ShownSender,
     pub read: bool,
     /// How many stacks are attached.
     pub attached: u32,
+}
+
+/// Who wrote a message: the system, or the character named `name`.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShownSender {
+    System,
+    Character { name: String },
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -127,7 +134,12 @@ pub fn shown(world: &World) -> ShownMessages {
             .iter()
             .map(|row| ShownMessage {
                 title: row.title.clone(),
-                from: row.from.as_ref().map(|from| from.name.clone()),
+                from: match &row.from {
+                    InboxSender::System => ShownSender::System,
+                    InboxSender::Character(from) => ShownSender::Character {
+                        name: from.name.clone(),
+                    },
+                },
                 read: row.read,
                 attached: row.attached.len() as u32,
             })
@@ -147,6 +159,7 @@ pub fn shown(world: &World) -> ShownMessages {
 
 pub(crate) fn plugin(app: &mut App) {
     draft::plugin(app);
+    item_transfer(app, RECEIVED);
     app.init_resource::<Reading>()
         .add_systems(OnExit(ClientScreen::Area), forget);
 }
@@ -166,7 +179,7 @@ enum Done {
     Choose(MessageId),
     Write,
     Reply(crate::systems::society::AccountNumber),
-    Take(MessageId, Option<u32>),
+    TakeAll(MessageId),
     Delete(MessageId, String),
 }
 
@@ -179,8 +192,11 @@ impl Done {
             }
             Done::Write => draft::write_to(world, None),
             Done::Reply(to) => draft::write_to(world, Some(to)),
-            Done::Take(message, stack) => {
-                world.write_message(TakeAttached { message, stack });
+            Done::TakeAll(message) => {
+                world.write_message(TakeAttached {
+                    message,
+                    stack: None,
+                });
             }
             Done::Delete(id, title) => delete(world, id, title),
         }
@@ -304,8 +320,20 @@ fn state(row: &InboxRow) -> String {
     says.join(" · ")
 }
 
+/// Who wrote `row`, as its line in the list says: the system, or the character's name.
 fn sender(row: &InboxRow) -> &str {
-    row.from.as_ref().map_or("The game", |from| &from.name)
+    match &row.from {
+        InboxSender::System => "System",
+        InboxSender::Character(from) => &from.name,
+    }
+}
+
+/// Who wrote `row`, as the open message says it.
+fn written_by(row: &InboxRow) -> String {
+    match &row.from {
+        InboxSender::System => "System message".to_owned(),
+        InboxSender::Character(from) => format!("From {}", from.name),
+    }
 }
 
 fn reading(
@@ -323,7 +351,7 @@ fn reading(
     let mut done = None;
     ui.label(face::bold(row.title.as_str()));
     let sent = LocalClock::of_this_machine().label(row.sent);
-    caption(ui, &format!("From {} · {sent}", sender(row)));
+    caption(ui, &format!("{} · {sent}", written_by(row)));
     ui.add_space(GAP);
     match world.resource::<Reading>().texts.get(&row.id) {
         Some(text) => {
@@ -348,22 +376,12 @@ fn reading(
     }
     ui.add_space(GAP * 2.0);
     ui.horizontal(|ui| {
-        let friend = row
-            .from
-            .as_ref()
-            .filter(|from| draft::may_write_to(society, from.account));
-        match (&row.from, friend) {
-            (_, Some(from)) => {
-                if controls::button(ui, "Reply").clicked() {
-                    done = Some(Done::Reply(from.account));
-                }
-            }
-            (Some(from), None) => {
+        if let InboxSender::Character(from) = &row.from {
+            if !draft::may_write_to(society, from.account) {
                 let why = format!("{} is neither a friend nor in your party", from.name);
                 controls::faded(ui, "Reply").on_hover_text(why);
-            }
-            (None, None) => {
-                controls::faded(ui, "Reply").on_hover_text("The game takes no messages");
+            } else if controls::button(ui, "Reply").clicked() {
+                done = Some(Done::Reply(from.account));
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -381,40 +399,47 @@ fn reading(
 /// The stacks attached to the message `row` is, each taken with the input that places an item,
 /// and all of them at once.
 fn attachments(ui: &mut Ui, world: &mut World, row: &InboxRow) -> Option<Done> {
-    let content = world.resource::<Content>().clone();
-    let mut done = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(SLOT_GAP);
-        for (index, stack) in row.attached.iter().enumerate() {
-            let def = stack.item.get(&content);
-            let look = SlotLook {
-                count: stack.count,
-                ..SlotLook::of(&content, stack.item)
-            };
-            let response = slot(ui, world, look, Sense::click());
-            response.widget_info(|| {
-                let said = format!("Attached: {}", stack.describe(&content));
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, said)
-            });
-            let takes = map::clicked(world, InputAction::PlaceItem, &response)
-                || map::clicked(world, InputAction::Select, &response);
-            if takes {
-                done = Some(Done::Take(row.id, Some(index as u32)));
-            }
-            item::card::chat_shortcut(world, &response, &[stack.item]);
-            hud::tooltip(
-                &response,
-                world,
-                &def.name,
-                &["Click to take it".into()],
-                None,
-            );
-        }
-        if !row.attached.is_empty() && controls::primary(ui, "Take all").clicked() {
-            done = Some(Done::Take(row.id, None));
-        }
+    let placed: Vec<Placed> = row
+        .attached
+        .iter()
+        .map(|&stack| Placed {
+            stack,
+            short: false,
+        })
+        .collect();
+    let pane = TransferPane {
+        placed: &placed,
+        slots: placed.len() as u32,
+        named: "Attached",
+        transfer: Some(RECEIVED),
+    };
+    transfer::transfer_pane(ui, world, pane);
+    (!row.attached.is_empty() && controls::primary(ui, "Take all").clicked())
+        .then_some(Done::TakeAll(row.id))
+}
+
+/// What is attached to the open message, as a window items move out of into the bag.
+const RECEIVED: ItemTransfer = ItemTransfer {
+    key: "message attachments",
+    open: |_| false,
+    verb: "take",
+    put: |_, _, _| false,
+    take: take_attached,
+    aside: |_, _, _| 0,
+};
+
+fn take_attached(world: &mut World, index: usize, count: u32) -> bool {
+    let Some(message) = world.resource::<Reading>().chosen else {
+        return false;
+    };
+    world.write_message(TakeAttached {
+        message,
+        stack: Some(TakenStack {
+            index: index as u32,
+            count,
+        }),
     });
-    done
+    true
 }
 
 /// Asks the player whether to delete the message titled `title`, and deletes it once they confirm.
@@ -441,4 +466,3 @@ fn caption(ui: &mut Ui, text: &str) {
 
 const LIST_WIDTH: f32 = 380.0;
 const GAP: f32 = 8.0;
-const SLOT_GAP: f32 = 6.0;

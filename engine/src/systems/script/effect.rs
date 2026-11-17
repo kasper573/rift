@@ -16,7 +16,6 @@ use crate::systems::actor::playing::{Animate, SetPose, SetStance};
 use crate::systems::area::spawnable::SpawnObject;
 use crate::systems::area::warp::{ReturnToSpawn, Warp, WarpToActor};
 use crate::systems::area_instance::effect::{CompleteGoal, EnterInstance, LeaveInstance};
-use crate::systems::auction::effect::OpenAuctionHouse;
 use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
 use crate::systems::combat::effects::{Damage, Heal};
@@ -26,6 +25,7 @@ use crate::systems::item::effects::{
     ClearGroundItems, DropItems, Equip, Items, MoveItems, ShowItem, SpawnGroundItems, Unequip,
     UseItem,
 };
+use crate::systems::market::effect::OpenMarket;
 use crate::systems::memory::{Forget, Remember};
 use crate::systems::mount::effect::{Dismount, Mount};
 use crate::systems::notification::{self, Notify};
@@ -117,7 +117,7 @@ effects! {
     CompleteTask(CompleteTask),
     Decide(Decide),
     OpenShop(OpenShop),
-    OpenAuctionHouse(OpenAuctionHouse),
+    OpenMarket(OpenMarket),
     ItemPrompt(ItemPrompt),
     TakeOffer(TakeOffer),
     OpenCrafting(OpenCrafting),

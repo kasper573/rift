@@ -1,4 +1,3 @@
-mod auctions;
 mod babble;
 mod backoff;
 mod bindings;
@@ -30,6 +29,7 @@ mod kill_credit;
 mod launch;
 mod looks;
 mod loot_names;
+mod market;
 mod memory;
 mod messages;
 mod mounts;

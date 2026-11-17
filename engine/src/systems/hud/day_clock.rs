@@ -10,11 +10,13 @@ use ui::face::{Face, TextRole};
 use ui::paint::TextShadow;
 use ui::{chip, dusk, ink};
 
+use crate::core::content::Content;
 use crate::core::gui;
 use crate::core::text::{self, TextLook};
 use crate::core::units::HourOfDay;
 use crate::systems::GameSettings;
 use crate::systems::area::TimeOfDayName;
+use crate::systems::item::inline::{self, InlineLook};
 use crate::systems::script::condition::{Wording, WordingPart};
 use crate::systems::script::sky;
 use crate::systems::settings::UserSettings;
@@ -122,7 +124,12 @@ pub(crate) fn wording(
                         mark: mark.clone(),
                     };
                     let look = TextLook::role(role, color);
-                    text::show(ui, world, &LineText::from(named).styled(), look, None);
+                    let named = LineText::from(named).styled(world.resource::<Content>());
+                    text::show(ui, world, &named, look, None);
+                }
+                &WordingPart::Item { item, count, .. } => {
+                    let item = WordingPart::inline(item, count);
+                    inline::show_with_tooltip(ui, world, item, InlineLook::new(role, color));
                 }
             }
         }

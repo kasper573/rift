@@ -9,19 +9,21 @@ use ui::{card, ink};
 
 use super::{OfferView, SaleQuote, SaleVerdict, ShopId, ShopRequest, ShopView, WareRefusal};
 use crate::core::content::Content;
-use crate::core::text::{self, TextLook};
+use crate::core::text::TextLook;
 use crate::systems::area::TimeOfDayName;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
-use crate::systems::hud::{self, day_clock};
+use crate::systems::hud::day_clock;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::card::CardLook;
+use crate::systems::item::inline::{self, InlineItem, InlineLook};
+use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, item_transfer};
+use crate::systems::item::tray::ItemTray;
 use crate::systems::item::widget::{
-    InventoryPane, SlotAction, SlotVerdict, StackPane, StackPaneDone, inventory_pane,
-    inventory_room, listed_icon, slot_action, slot_aside_source, slot_verdict_source, stack_pane,
+    InventoryPane, ItemTile, SlotVerdict, TileClicks, inventory_pane, inventory_room, item_tile,
+    slot_verdict_source,
 };
 use crate::systems::item::{self, Inventory, ItemId, ItemStack, SlotStack};
-use crate::systems::mention::Mention;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::condition::Wording;
@@ -32,8 +34,6 @@ const COUNTER_HEIGHT: f32 = 604.0;
 const PAGE_GAP: f32 = 10.0;
 const NOTE_ROOM: f32 = 22.0;
 const PURSE: f32 = 26.0;
-const ICON: f32 = 24.0;
-const PURSE_ICON: f32 = 18.0;
 const BESIDE_SELL: f32 = 12.0;
 
 pub struct ShopCounterPlugin;
@@ -41,16 +41,7 @@ pub struct ShopCounterPlugin;
 impl Plugin for ShopCounterPlugin {
     fn build(&self, app: &mut App) {
         slot_verdict_source(app, verdict);
-        slot_aside_source(app, aside);
-        slot_action(
-            app,
-            SlotAction {
-                action: InputAction::Select,
-                active: offering,
-                act: offer,
-                verb: "offer it",
-            },
-        );
+        item_transfer(app, TRANSFER);
         stage::dock(
             app,
             DockedPanel {
@@ -77,10 +68,10 @@ pub struct OfferedSale {
 
 pub fn offered(world: &World) -> Option<OfferedSale> {
     let shown = view(world)?;
-    let offered = &world.resource::<Browse>().offered;
+    let offered = from_slots(world);
     Some(OfferedSale {
         stacks: offered.iter().map(|offered| offered.stack).collect(),
-        pays: payment(shown, offered).unwrap_or_default(),
+        pays: payment(shown, &offered).unwrap_or_default(),
     })
 }
 
@@ -96,9 +87,8 @@ pub enum ShopTab {
 struct Browse {
     tab: ShopTab,
     ware: usize,
-    /// What the player would sell, each stack still in the slot of the bag it is offered out
-    /// of: nothing leaves the bag before the sale.
-    offered: Vec<SlotStack>,
+    /// What the player would sell, still in the bag: nothing leaves it before the sale.
+    offered: ItemTray,
     open: Option<ShopId>,
     /// Until the shop has answered one more, nothing further is sent.
     answered_when_asked: Option<u32>,
@@ -108,6 +98,8 @@ struct Shelf {
     shown: ShopView,
     tab: ShopTab,
     ware: usize,
+    tray: ItemTray,
+    /// What is offered, slot by slot of the bag it comes out of.
     offered: Vec<SlotStack>,
     waiting: bool,
 }
@@ -141,33 +133,22 @@ fn notice_counter(world: &mut World) {
             InterfaceSound::UiOpen.play(world);
         }
     }
-    let offered = match bag(world) {
-        Some(bag) => kept_within(&world.resource::<Browse>().offered, bag),
-        None => Vec::new(),
-    };
+    let mut offered = world.resource::<Browse>().offered.clone();
+    match bag(world) {
+        Some(bag) => offered.keep_within(bag),
+        None => offered.clear(),
+    }
+    offered.drop_short();
     if world.resource::<Browse>().offered != offered {
         world.resource_mut::<Browse>().offered = offered;
     }
 }
 
-/// What is offered that `bag` still holds, each stack in the slot it is offered out of while
-/// that slot holds it, else in the nearest that does: a bag that changes shifts its slots.
-fn kept_within(offered: &[SlotStack], bag: &Inventory) -> Vec<SlotStack> {
-    let mut free: Vec<u32> = bag.slots.iter().map(|stack| stack.count).collect();
-    offered
-        .iter()
-        .filter_map(|offered| {
-            let SlotStack { slot, stack } = *offered;
-            let near = (0..bag.slots.len())
-                .filter(|&near| bag.slots[near].item == stack.item && free[near] >= stack.count)
-                .min_by_key(|near| near.abs_diff(slot as usize))?;
-            free[near] -= stack.count;
-            Some(SlotStack {
-                slot: near as u32,
-                stack,
-            })
-        })
-        .collect()
+/// What is offered, slot by slot of the bag it comes out of.
+fn from_slots(world: &World) -> Vec<SlotStack> {
+    bag(world).map_or_else(Vec::new, |bag| {
+        world.resource::<Browse>().offered.from_slots(bag)
+    })
 }
 
 fn head(world: &World) -> Option<PanelHead> {
@@ -197,7 +178,8 @@ fn shelf(world: &World) -> Option<Shelf> {
         shown,
         tab: browse.tab,
         ware: browse.ware,
-        offered: browse.offered.clone(),
+        tray: browse.offered.clone(),
+        offered: from_slots(world),
     })
 }
 
@@ -228,9 +210,8 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
             browse.ware = 0;
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let note = wants_note(&wants).styled();
             let look = TextLook::new(TextRole::Small.size(), ink::INK3);
-            text::show(ui, world, &note, look, None);
+            inline::show_line(ui, world, &wants_note(&wants), look, None);
         });
     });
     ui.add_space(PAGE_GAP);
@@ -311,34 +292,25 @@ fn bag_pane(ui: &mut Ui, world: &mut World) {
 fn offer_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
     sheet::section(ui, OFFER);
     let room = ui.available_rect_before_wrap();
-    let stacks: Vec<ItemStack> = shelf.offered.iter().map(|offered| offered.stack).collect();
-    let done = sheet::scroll_pane(
+    sheet::scroll_pane(
         ui,
         sheet::Pane::bare(room),
         egui::ScrollArea::vertical().id_salt("offer"),
         |ui| {
-            let pane = StackPane {
-                width: ui.available_width(),
-                stacks: &stacks,
+            let pane = TransferPane {
+                placed: shelf.tray.placed(),
                 slots: inventory_room(world).slots,
                 named: OFFER,
-                pick: Some("take it back"),
-                split: Some(split_offered),
+                transfer: Some(TRANSFER),
             };
-            stack_pane(ui, world, pane)
+            transfer::transfer_pane(ui, world, pane);
         },
     );
-    match done {
-        Some(StackPaneDone::Picked(index)) => take_back(world, index),
-        Some(StackPaneDone::Dropped(slot)) => offer(world, slot),
-        None => {}
-    }
 }
 
 /// The button that sells what is offered, in the middle; what the shop pays for it to the
 /// button's left, and what stands in the sale's way to its right.
 fn sale_bar(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
-    let content = world.resource::<Content>().clone();
     let bar = ui.max_rect();
     let pays = payment(&shelf.shown, &shelf.offered);
     let refusal = sale_refusal(world, shelf, pays.as_deref());
@@ -363,11 +335,9 @@ fn sale_bar(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
             .layout(Layout::right_to_left(Align::Center)),
         |ui| match pays.as_deref() {
             Some(pays) if !shelf.offered.is_empty() => {
-                let offer = LineText::plain("Offer: ")
-                    .then(stacks_line(&content, pays))
-                    .styled();
+                let offer = LineText::plain("Offer: ").then(ItemStack::summed(pays));
                 let look = TextLook::new(TextRole::Body.size(), ink::INK);
-                text::show(ui, world, &offer, look, None);
+                inline::show_line(ui, world, &offer, look, None);
             }
             _ => {
                 sheet::label(ui, TextRole::Small, "Click what you would sell", ink::INK3);
@@ -477,9 +447,12 @@ fn wares_list(ui: &mut Ui, world: &mut World, shelf: &Shelf, wares: &[Ware], sel
 
 fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui::Response {
     let content = world.resource::<Content>().clone();
-    let name = counted(&content, ware.item, ware.count);
-    let named = name.styled();
-    let plain = name.plain_words();
+    let stack = ItemStack::new(ware.item, ware.count);
+    let name = ware.item.get(&content).name.clone();
+    let plain = match ware.count {
+        1 => name.clone(),
+        _ => stack.describe(&content),
+    };
     let note = ware
         .unavailable()
         .map(|reason| (reason, ink::RUBRIC))
@@ -499,11 +472,15 @@ fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui
                     }
                 });
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    listed_icon(ui, world, &content, ware.item, ICON);
+                    let tile = ItemTile {
+                        clicks: TileClicks::Row,
+                        ..ItemTile::of(stack)
+                    };
+                    item_tile(ui, world, tile);
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
-                        let look = TextLook::new(TextRole::Body.size(), ink::INK);
-                        text::show(ui, world, &named, look, None);
+                        let name = TextRole::Body.rich(name.as_str()).color(ink::INK);
+                        ui.add(egui::Label::new(name).selectable(false).truncate());
                         if let Some((note, color)) = &note {
                             day_clock::wording(ui, world, note, TextRole::Small, *color);
                         } else {
@@ -538,16 +515,11 @@ fn price(ui: &mut Ui, world: &mut World, have: u32, stack: ItemStack) {
     } else {
         ink::RUBRIC
     };
-    let icon = stack.item.get(world.resource::<Content>()).icon.clone();
-    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(face::body(stack.count.to_string()).color(color));
-        hud::icon(ui, world, &icon, ICON);
-    });
+    let price = InlineItem::from(stack).nameless();
+    inline::show_with_tooltip(ui, world, price, InlineLook::new(TextRole::Body, color));
 }
 
 fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware: Option<&Ware>) {
-    let content = world.resource::<Content>().clone();
     let mut pressed = false;
     pane.show(
         ui,
@@ -558,7 +530,7 @@ fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware
         },
         |ui| {
             if let Some(ware) = ware {
-                pressed = trade_button(ui, &content, ware, shelf.waiting).clicked();
+                pressed = trade_button(ui, ware, shelf.waiting).clicked();
                 if let Some(why) = ware.wait() {
                     beside_action(ui, &why);
                 }
@@ -572,13 +544,13 @@ fn ware_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf, pane: CardPane, ware
     }
 }
 
-fn trade_button(ui: &mut Ui, content: &Content, ware: &Ware, waiting: bool) -> egui::Response {
+fn trade_button(ui: &mut Ui, ware: &Ware, waiting: bool) -> egui::Response {
     let label = match &ware.refusal {
         Some(WareRefusal::Unaffordable(_)) => "Can't afford".to_owned(),
         Some(WareRefusal::NoRoom { .. }) => "Inventory full".to_owned(),
         Some(WareRefusal::SoldOut) => "Sold out".to_owned(),
         Some(WareRefusal::Unavailable(_)) => "Unavailable".to_owned(),
-        None => priced(ware.verb, &stacks_text(content, &ware.price, 1)),
+        None => ware.verb.to_owned(),
     };
     match (&ware.refusal, waiting) {
         (_, true) => controls::waiting(ui, label),
@@ -592,9 +564,9 @@ fn beside_action(ui: &mut Ui, why: &str) {
     ui.add(egui::Label::new(face::small(why).color(ink::RUBRIC)).truncate());
 }
 
-fn beside_sale(ui: &mut Ui, world: &World, why: &LineText) {
+fn beside_sale(ui: &mut Ui, world: &mut World, why: &LineText) {
     let look = TextLook::new(TextRole::Small.size(), ink::RUBRIC);
-    text::show(ui, world, &why.styled(), look, None);
+    inline::show_line(ui, world, why, look, None);
 }
 
 fn purse_line(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
@@ -619,13 +591,8 @@ fn purse_line(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
         })
         .collect();
     for (currency, held) in held {
-        let icon = currency.get(&content).icon.clone();
-        hud::icon(ui, world, &icon, PURSE_ICON);
-        let held = LineText::plain(format!("{held} "))
-            .then(Mention::Item(currency).name(&content))
-            .styled();
-        let look = TextLook::new(TextRole::Small.size(), ink::INK2);
-        text::show(ui, world, &held, look, None);
+        let held = InlineItem::of(currency).count(held).nameless();
+        inline::show(ui, world, held, InlineLook::new(TextRole::Small, ink::INK2));
         sheet::label(ui, TextRole::Small, "·", ink::INK3);
     }
     let room = inventory_room(world);
@@ -731,23 +698,6 @@ fn wants_note(wants: &[LineText]) -> LineText {
     LineText::plain("Buys ").then(listed)
 }
 
-fn counted(content: &Content, item: ItemId, count: u32) -> LineText {
-    let name = LineText::from(Mention::Item(item).name(content));
-    if count > 1 {
-        name.then(format!(" ×{count}"))
-    } else {
-        name
-    }
-}
-
-fn priced(verb: &str, price: &str) -> String {
-    if price.is_empty() {
-        verb.to_owned()
-    } else {
-        format!("{verb} for {price}")
-    }
-}
-
 fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
     let content = world.resource::<Content>();
     let quote = quote(view(world)?, stack.item)?;
@@ -757,7 +707,7 @@ fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
                 .iter()
                 .map(|paid| ItemStack::new(paid.item, paid.count.saturating_mul(stack.count)))
                 .collect();
-            SlotVerdict::Wanted(LineText::plain("sells for ").then(stacks_line(content, &pays)))
+            SlotVerdict::Wanted(LineText::plain("sells for ").then(ItemStack::summed(&pays)))
         }
         SaleVerdict::Refused(refusal) => {
             SlotVerdict::Refused(refusal.line(content, view(world)?.shop.get(content), stack.item))
@@ -769,87 +719,50 @@ fn quote(shown: &ShopView, item: ItemId) -> Option<&SaleQuote> {
     shown.quotes.iter().find(|quote| quote.item == item)
 }
 
-fn stacks_line(content: &Content, stacks: &[ItemStack]) -> LineText {
-    stacks
-        .iter()
-        .enumerate()
-        .fold(LineText::default(), |line, (place, stack)| {
-            line.then(if place == 0 { "" } else { " + " })
-                .then(stack.named(content))
-        })
-}
-
-fn stacks_text(content: &Content, stacks: &[ItemStack], times: u32) -> String {
-    stacks
-        .iter()
-        .map(|stack| {
-            ItemStack::new(stack.item, stack.count.saturating_mul(times)).describe(content)
-        })
-        .collect::<Vec<_>>()
-        .join(" + ")
-}
+/// What is offered to the shop as a window items move into.
+const TRANSFER: ItemTransfer = ItemTransfer {
+    key: "shop sale",
+    open: offering,
+    verb: "offer",
+    put: offer,
+    take: take_back,
+    aside,
+};
 
 /// How many of the stack in the bag's slot `slot` are offered to the shop.
-fn aside(world: &World, slot: u32, _: ItemStack) -> u32 {
-    world
-        .resource::<Browse>()
-        .offered
-        .iter()
-        .filter(|offered| offered.slot == slot)
-        .map(|offered| offered.stack.count)
-        .sum()
+fn aside(world: &World, slot: u32, stack: ItemStack) -> u32 {
+    bag(world).map_or(0, |bag| {
+        world.resource::<Browse>().offered.aside(bag, slot, stack)
+    })
 }
 
 fn offering(world: &World) -> bool {
     view(world).is_some() && world.resource::<Browse>().tab == ShopTab::Sell
 }
 
-/// Offers the shop all that is left in the bag's slot `slot`, where it buys such a thing.
-fn offer(world: &mut World, slot: u32) {
-    let offered = bag(world)
-        .and_then(|bag| bag.slots.get(slot as usize).copied())
-        .and_then(|held| {
-            let left = held.count.saturating_sub(aside(world, slot, held));
-            let bought = matches!(
-                quote(view(world)?, held.item)?.verdict,
-                SaleVerdict::Pays(_)
-            );
-            (bought && left > 0).then(|| SlotStack {
-                slot,
-                stack: ItemStack::new(held.item, left),
-            })
-        });
-    match offered {
-        Some(offered) => {
-            world.resource_mut::<Browse>().offered.push(offered);
-            InterfaceSound::UiMove.play(world);
-        }
-        None => InterfaceSound::UiRefuse.play(world),
-    }
+/// Offers the shop `count` of the bag's slot `slot`, where it buys such a thing.
+fn offer(world: &mut World, slot: u32, count: u32) -> bool {
+    let Some(bag) = bag(world).cloned() else {
+        return false;
+    };
+    let bought = bag.slots.get(slot as usize).is_some_and(|held| {
+        view(world)
+            .and_then(|shown| quote(shown, held.item))
+            .is_some_and(|quote| matches!(quote.verdict, SaleVerdict::Pays(_)))
+    });
+    let slots = bag.max as usize;
+    bought
+        && world
+            .resource_mut::<Browse>()
+            .offered
+            .place(&bag, slot, count, slots)
 }
 
-fn take_back(world: &mut World, index: usize) {
-    let offered = &mut world.resource_mut::<Browse>().offered;
-    if index < offered.len() {
-        offered.remove(index);
-        InterfaceSound::UiMove.play(world);
-    }
-}
-
-fn split_offered(world: &mut World, index: usize, count: u32) {
-    let mut browse = world.resource_mut::<Browse>();
-    let Some(whole) = browse.offered.get_mut(index) else {
-        return;
-    };
-    if !(1..whole.stack.count).contains(&count) {
-        return;
-    }
-    whole.stack.count -= count;
-    let split = SlotStack {
-        slot: whole.slot,
-        stack: ItemStack::new(whole.stack.item, count),
-    };
-    browse.offered.insert(index + 1, split);
+fn take_back(world: &mut World, index: usize, count: u32) -> bool {
+    world
+        .resource_mut::<Browse>()
+        .offered
+        .take_back(index, count)
 }
 
 const OFFER: &str = "To sell";

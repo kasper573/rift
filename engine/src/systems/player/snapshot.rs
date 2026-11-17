@@ -25,7 +25,7 @@ use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::memory::{Memory, MemoryId};
 use crate::systems::movement::Position;
 use crate::systems::player::{
-    CharacterAccount, CharacterState, PlayerDef, SpawnPoint, StandIn, Xp, def,
+    CharacterAccount, CharacterDef, CharacterState, SpawnPoint, StandIn, Xp, def,
 };
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::script::Place;
@@ -81,7 +81,9 @@ pub struct CharacterSnapshot {
     pub lines_heard: Vec<HeardLine>,
     #[serde(default, skip_serializing_if = "SavedList::is_empty")]
     pub shops: SavedList<SnapshotShop>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// What the character's history holds: it crosses into another world of the server with the
+    /// character, and is never saved.
+    #[serde(skip)]
     pub history: Vec<SnapshotRecord>,
     #[serde(default, skip_serializing_if = "SavedList::is_empty")]
     pub statuses: SavedList<SnapshotStatus>,
@@ -140,7 +142,7 @@ impl ContentFile for CharacterSnapshot {
 impl CharacterSnapshot {
     /// A character as the player row makes it: of its class, looking as the class's model does,
     /// with nothing on.
-    pub fn of_player(content: &Content, name: &str, def: &PlayerDef) -> CharacterSnapshot {
+    pub fn of_def(content: &Content, name: &str, def: &CharacterDef) -> CharacterSnapshot {
         CharacterSnapshot {
             name: name.to_owned(),
             class: def.class,
@@ -293,8 +295,7 @@ pub struct ShopStock {
     pub restocks_in: Seconds,
 }
 
-#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SnapshotRecord {
     pub ago: Seconds,
     pub entry: HistoryEntry,

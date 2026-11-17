@@ -435,7 +435,7 @@ const EDGE: f32 = 1.5;
 const NAME_WIDEST: f32 = 190.0;
 const OVER_PILE: Meters = Meters(0.7);
 /// How small and how pale a plate at the edge of the key's reach is, against one at the
-/// player's feet.
+/// character's feet.
 const FAR_SCALE: f32 = 0.82;
 const FAR_OPACITY: f32 = 0.7;
 /// How long a name that has run out takes to fade away.
@@ -747,7 +747,7 @@ fn rest_on_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>, n
     }
 }
 
-/// Whether the player's bag has no room for `item`, as taking it would find out.
+/// Whether the character's bag has no room for `item`, as taking it would find out.
 fn bag_refuses(world: &World, content: &Content, item: Option<Entity>) -> bool {
     let Some(dropped) = item.and_then(|item| world.get::<DroppedItem>(item)) else {
         return false;

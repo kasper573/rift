@@ -1,6 +1,6 @@
 mod paint;
 
-pub use paint::{Hand, TextLook, measure, show};
+pub use paint::{Hand, ShownLine, TextLook, measure, show, show_linked};
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -29,6 +29,13 @@ pub enum TextPiece {
     Key(TextKey),
     /// A picture of the game's set in the line as tall as its letters, named by its file.
     Image(Cow<'static, str>),
+    /// Opens a run of the line that stands for `key`, up to the next `LinkEnd`: drawing the line
+    /// tells where the run landed, so whoever draws it can let the run be pointed at and clicked.
+    LinkStart(Cow<'static, str>),
+    LinkEnd,
+    /// Room this many points wide before the next letter, which whoever draws the line paints
+    /// into.
+    Room(f32),
 }
 
 /// A key drawn as a cap in a line: an input as it is bound now, or a cap given outright.
@@ -64,6 +71,9 @@ pub enum SpanInk {
     /// A colour of the game's own, which shows only where the ground is dark, lifted there until
     /// it reads. On paper, where most colours would not, the text keeps its ink.
     Lit(Color32),
+    /// A colour of the game's own on either ground, darkened on paper and lifted on dusk until it
+    /// reads.
+    Legible(Color32),
 }
 
 #[derive(
@@ -242,7 +252,11 @@ impl StyledLine {
             .iter()
             .filter_map(|piece| match piece {
                 TextPiece::Span(span) => Some(span.text.as_ref()),
-                TextPiece::Pause(_) | TextPiece::Image(_) => None,
+                TextPiece::Pause(_)
+                | TextPiece::Image(_)
+                | TextPiece::LinkStart(_)
+                | TextPiece::LinkEnd
+                | TextPiece::Room(_) => None,
                 TextPiece::Key(key) => key.cap(keys).map(|cap| cap.name.as_str()),
             })
             .collect()
@@ -285,6 +299,11 @@ impl StyledSpan {
         self
     }
 
+    pub fn legible(mut self, color: Color32) -> StyledSpan {
+        self.ink = Some(SpanInk::Legible(color));
+        self
+    }
+
     pub fn voice(mut self, voice: TextVoice) -> StyledSpan {
         self.voice = Some(voice);
         self
@@ -315,6 +334,7 @@ pub fn reveal_times(pieces: &[TextPiece], pace: TypingPace) -> Vec<Duration> {
     for piece in pieces {
         match piece {
             TextPiece::Pause(pause) => clock += *pause,
+            TextPiece::LinkStart(_) | TextPiece::LinkEnd | TextPiece::Room(_) => {}
             TextPiece::Span(span) => {
                 let slowness = if span.slow { pace.slow_by } else { 1.0 };
                 for _ in span.text.chars() {

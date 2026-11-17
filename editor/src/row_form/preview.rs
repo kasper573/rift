@@ -18,11 +18,11 @@ use engine::systems::actor::stance::{self, HandIndex};
 use engine::systems::actor::{Action, Appearance, Motion, Pose as BodyPose, appearance, held};
 use engine::systems::class::ClassDef;
 use engine::systems::equipment::{self, Equipment};
-use engine::systems::item::ItemId;
 use engine::systems::item::card::CardLook;
 use engine::systems::item::rarity::ItemRarityDef;
+use engine::systems::item::{ItemId, ItemStack};
 use engine::systems::npc::{NpcDef, NpcModule};
-use engine::systems::player::PlayerDef;
+use engine::systems::player::CharacterDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::card::{QuestCardLook, QuestMoment};
 use engine::systems::quest::{self, Parties, QuestDef};
@@ -95,7 +95,7 @@ pub(crate) enum PreviewPlace {
 pub(crate) fn preview_place(table: &str) -> Option<PreviewPlace> {
     match table {
         NpcDef::TABLE
-        | PlayerDef::TABLE
+        | CharacterDef::TABLE
         | ClassDef::TABLE
         | ModelDef::TABLE
         | QuestDef::TABLE
@@ -141,7 +141,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
     }
     if matches!(
         table,
-        NpcDef::TABLE | PlayerDef::TABLE | ClassDef::TABLE | ModelDef::TABLE
+        NpcDef::TABLE | CharacterDef::TABLE | ClassDef::TABLE | ModelDef::TABLE
     ) {
         ui.horizontal(|ui| {
             let state = &mut editor.views.preview;
@@ -256,7 +256,10 @@ fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
         .collect();
     lines.extend(def.spends.iter().map(|spent| {
         let all = def.quantity * spent.count;
-        format!("Spends {all} {}", spent.item.get(content).name)
+        format!(
+            "Spends {}",
+            ItemStack::new(spent.item, all).describe(content)
+        )
     }));
     lines.push(format!(
         "Empty after {} s of one worker's work",
@@ -291,7 +294,7 @@ fn show_status(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let chosen = state.status_model.get_or_insert_with(|| {
         content
             .built::<GameSettings>()
-            .player
+            .character
             .get(&content)
             .class
             .get(&content)
@@ -592,8 +595,8 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
     match table {
         ModelDef::TABLE => Some(bare(content.by_path::<ModelDef>(key)?)),
         ClassDef::TABLE => Some(bare(content.by_path::<ClassDef>(key)?.get(content).model)),
-        PlayerDef::TABLE => {
-            let player = content.by_path::<PlayerDef>(key)?.get(content);
+        CharacterDef::TABLE => {
+            let player = content.by_path::<CharacterDef>(key)?.get(content);
             Some(bare(player.class.get(content).model))
         }
         NpcDef::TABLE => {
@@ -621,7 +624,7 @@ fn dressed(content: &Content, table: &str, key: &str) -> Option<Dressed> {
                     .map(|(slot, item)| (slot.clone(), *item))
                     .collect(),
                 hands: equipment::hands(&equipment),
-                plate: Some(PlateLabel::player(&snapshot.name, None)),
+                plate: Some(PlateLabel::character(&snapshot.name, None)),
             })
         }
         _ => None,

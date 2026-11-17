@@ -83,7 +83,7 @@ pub struct PartyId(pub u64);
 /// A party: its leader, and its members in the order they joined.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct PlayerParty {
+pub struct CharacterParty {
     pub id: PartyId,
     pub leader: AccountId,
     pub members: Vec<PartyMember>,
@@ -96,7 +96,7 @@ pub struct PartyMember {
     pub joined: UnixMillis,
 }
 
-impl Record for PlayerParty {
+impl Record for CharacterParty {
     const KIND: &'static str = "party";
 
     fn id(&self) -> RecordId {
@@ -104,7 +104,7 @@ impl Record for PlayerParty {
     }
 }
 
-impl PlayerParty {
+impl CharacterParty {
     pub fn holds(&self, account: &AccountId) -> bool {
         self.members.iter().any(|member| member.account == *account)
     }
@@ -116,17 +116,17 @@ impl PlayerParty {
 
 /// Every party of the server.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlayerParties {
-    parties: BTreeMap<PartyId, PlayerParty>,
+pub struct CharacterParties {
+    parties: BTreeMap<PartyId, CharacterParty>,
     of: HashMap<AccountId, PartyId>,
     /// Since when each member's player has been gone.
     absent: HashMap<AccountId, UnixMillis>,
     dealt: u64,
 }
 
-impl PlayerParties {
-    pub fn of(saved: impl IntoIterator<Item = PlayerParty>) -> PlayerParties {
-        let mut parties = PlayerParties::default();
+impl CharacterParties {
+    pub fn of(saved: impl IntoIterator<Item = CharacterParty>) -> CharacterParties {
+        let mut parties = CharacterParties::default();
         for party in saved {
             parties.dealt = parties.dealt.max(party.id.0);
             for account in party.accounts() {
@@ -138,7 +138,7 @@ impl PlayerParties {
     }
 
     /// The party `account` is in.
-    pub fn of_account(&self, account: &AccountId) -> Option<&PlayerParty> {
+    pub fn of_account(&self, account: &AccountId) -> Option<&CharacterParty> {
         self.parties.get(self.of.get(account)?)
     }
 
@@ -162,7 +162,7 @@ impl PlayerParties {
     fn create(&mut self, leader: &AccountId, now: UnixMillis) -> PartyId {
         self.dealt += 1;
         let id = PartyId(self.dealt);
-        let party = PlayerParty {
+        let party = CharacterParty {
             id,
             leader: leader.clone(),
             members: vec![PartyMember {
@@ -201,7 +201,7 @@ pub struct PartyShown {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PartyMemberRow {
-    pub player: SocietyMember,
+    pub character: SocietyMember,
     /// The client their character is played as, while it stands in a world.
     pub client: Option<ClientId>,
     /// The area they play in, while they are at their character.
@@ -231,7 +231,7 @@ impl PartyShown {
                 .accounts()
                 .filter_map(|member| {
                     Some(PartyMemberRow {
-                        player: society.member(member)?,
+                        character: society.member(member)?,
                         client: client_of(member),
                         area: society.playing_in(member),
                         leaves_at: society
@@ -285,7 +285,7 @@ pub fn request_source() -> SocialRequestSource {
         words: |words| SocialRequestWords {
             asks: &words.party_invite_asks,
             asked: &words.party_invite_asked,
-            sent: None,
+            sent: &words.party_invite_sent,
             accepted: None,
             denied: Some(&words.party_invite_denied),
             lapsed: Some(&words.party_invite_lapsed),
@@ -386,7 +386,7 @@ pub(crate) fn settle(
                 settling.society.parties.parties.remove(&party.id);
                 settling
                     .unwritten
-                    .remove::<PlayerParty>(record_id(party.id));
+                    .remove::<CharacterParty>(record_id(party.id));
             }
         }
     }
@@ -463,7 +463,7 @@ pub(crate) fn leave(settling: &mut Settling, account: &AccountId) {
     party.members.retain(|member| member.account != *account);
     let Some(eldest) = party.members.first().map(|member| member.account.clone()) else {
         parties.parties.remove(&id);
-        settling.unwritten.remove::<PlayerParty>(record_id(id));
+        settling.unwritten.remove::<CharacterParty>(record_id(id));
         return;
     };
     if party.leader == *account {
@@ -533,7 +533,7 @@ pub(crate) fn say(settling: &mut Settling, by: &AccountId, said: &ChatSaid) {
 }
 
 /// Tells every member of `party` but `but` what happened in it, the party's chat saying it too.
-fn tell(settling: &mut Settling, party: &PlayerParty, but: &AccountId, said: &str) {
+fn tell(settling: &mut Settling, party: &CharacterParty, but: &AccountId, said: &str) {
     for account in party.accounts().filter(|account| *account != but) {
         settling.tell(account, feed(said));
         settling.send(account, chat::notice(ChatChannel::Party, said));
@@ -576,7 +576,7 @@ fn may_send(
     if party.members.len() >= rules.size as usize {
         return Err(RequestUnsent::Told(words.party_full.clone()));
     }
-    // There is only ever one invitation from a party to a player.
+    // There is only ever one invitation from a party to a character.
     let invited = party.accounts().any(|member| {
         society
             .requests()
@@ -628,7 +628,7 @@ fn accepted(
         .replace("{name}", &settling.name(&party.leader));
     settling.send(joiner, chat::notice(ChatChannel::Party, &said));
     changed(settling, id);
-    // A player is in one party at most: joining one denies the others.
+    // A character is in one party at most: joining one denies the others.
     social_request::deny_others(settling, settings, request);
     Ok(())
 }

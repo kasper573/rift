@@ -18,7 +18,26 @@ pub(crate) struct WindowFrame<'a> {
     pub of: Placed,
     pub title: Option<&'a str>,
     pub start: Rect,
-    pub min: Vec2,
+    pub sizing: Sizing,
+}
+
+/// Whether the player sizes a sheet, or it keeps the size of its `start`.
+#[derive(Clone, Copy)]
+pub(crate) enum Sizing {
+    Fixed,
+    Resizable { min: Vec2 },
+}
+
+impl Sizing {
+    fn limits(self, start: Rect) -> Limits {
+        match self {
+            Sizing::Fixed => Limits {
+                min: start.size(),
+                max: Some(start.size()),
+            },
+            Sizing::Resizable { min } => Limits { min, max: None },
+        }
+    }
 }
 
 pub(crate) fn widget<R>(
@@ -97,7 +116,8 @@ pub(crate) fn grab_sized(
     grab(world, sizer, held(Grip::Resize(piece.corner)));
 }
 
-/// `None` once a closed window has lifted off entirely.
+/// `None` once a closed window has lifted off entirely. A sheet comes to the front as it opens,
+/// over whatever the player had up.
 pub(crate) fn sheet_pose(
     world: &mut World,
     gui: &egui::Context,
@@ -106,14 +126,43 @@ pub(crate) fn sheet_pose(
 ) -> Option<SheetPose> {
     let seconds = motion_step(gui);
     let mut clocks = world.resource_mut::<SheetClocks>();
-    let clock = clocks.0.entry(key).or_insert(if open {
-        SheetClock::OPEN
-    } else {
-        SheetClock::CLOSED
+    let state = clocks.0.entry(key).or_insert(SheetState {
+        clock: if open {
+            SheetClock::OPEN
+        } else {
+            SheetClock::CLOSED
+        },
+        open: false,
     });
-    clock.run(open, seconds);
+    let opens = open && !state.open;
+    state.open = open;
+    state.clock.run(open, seconds);
+    let clock = state.clock;
+    if opens {
+        gui.move_to_top(layer(key));
+    }
     (!clock.is_closed() || open).then(|| clock.pose())
 }
+
+/// What a sheet that shows a view shows: the view while it is up, and the one it last showed as
+/// the sheet lifts off.
+pub(crate) fn lifting<V: Clone + Send + Sync + 'static>(
+    world: &mut World,
+    now: Option<V>,
+) -> Option<V> {
+    match now {
+        Some(view) => {
+            world.insert_resource(LastShown(Some(view.clone())));
+            Some(view)
+        }
+        None => world
+            .get_resource::<LastShown<V>>()
+            .and_then(|last| last.0.clone()),
+    }
+}
+
+#[derive(Resource)]
+struct LastShown<V>(Option<V>);
 
 fn motion_step(gui: &egui::Context) -> f32 {
     gui.input(|input| input.unstable_dt).min(MAX_STEP)
@@ -132,15 +181,18 @@ pub(crate) fn window<R>(
         of,
         title,
         start,
-        min,
+        sizing,
     } = frame;
     let id = panel_id(key);
-    let limits = Limits { min, max: None };
+    let limits = sizing.limits(start);
     let kept = Kept::Placement(of);
     let rest = world
         .resource::<UserSettings>()
         .placement(of)
-        .map(placed_rect)
+        .map(|placement| match sizing {
+            Sizing::Fixed => Rect::from_min_size(placed_rect(placement).min, start.size()),
+            Sizing::Resizable { .. } => placed_rect(placement),
+        })
         .unwrap_or(start);
     let rect = standing(world, gui, key, rest, limits);
     let front = front_sheet(world, gui) == Some(key);
@@ -162,7 +214,7 @@ pub(crate) fn window<R>(
             let sheet = Sheet {
                 title,
                 closable: true,
-                curl: true,
+                curl: matches!(sizing, Sizing::Resizable { .. }),
                 depth: if front { Depth::Front } else { Depth::Behind },
             };
             let parts = sheet.paint_at(ui.painter(), outer, shadow, Color32::WHITE);
@@ -213,10 +265,7 @@ pub(crate) fn window_handle(
     let Some(outer) = ui.memory(|memory| memory.area_rect(id)) else {
         return;
     };
-    let limits = Limits {
-        min: frame.min,
-        max: None,
-    };
+    let limits = frame.sizing.limits(frame.start);
     let kept = Kept::Placement(frame.of);
     grab(
         world,
@@ -309,7 +358,13 @@ pub(super) fn arrange(world: &mut World) {
 const MAX_STEP: f32 = 1.0 / 30.0;
 
 #[derive(Resource, Default)]
-pub(super) struct SheetClocks(HashMap<&'static str, SheetClock>);
+pub(super) struct SheetClocks(HashMap<&'static str, SheetState>);
+
+/// A sheet's clock, and whether it was open as it last ran.
+struct SheetState {
+    clock: SheetClock,
+    open: bool,
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct Held {

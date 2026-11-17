@@ -2,6 +2,7 @@ use std::ops::Range;
 use std::sync::OnceLock;
 
 use bevy_app::{App, Plugin, PostUpdate, PreUpdate};
+use bevy_ecs::archetype::Archetype;
 use bevy_ecs::change_detection::Tick;
 use bevy_ecs::component::ComponentId;
 use bevy_ecs::prelude::*;
@@ -257,6 +258,9 @@ pub struct Sender {
     last_sent: Vec<Option<Sent>>,
     subjects: Vec<OnceLock<Option<Subject>>>,
     frames: Vec<Option<Vec<u8>>>,
+    /// The kinds an entity of each archetype has, by the archetype's index; none for an
+    /// archetype that isn't replicated. Archetypes are never removed, so each is worked out once.
+    archetype_kinds: Vec<Option<Kinds>>,
 }
 
 impl Sender {
@@ -291,6 +295,15 @@ impl Sender {
         let replicated = world
             .component_id::<Replicated>()
             .expect("the plugin registers Replicated");
+        let known = self.archetype_kinds.len();
+        self.archetype_kinds.extend(
+            world
+                .archetypes()
+                .iter()
+                .skip(known)
+                .map(|archetype| archetype_kinds(archetype, protocol, replicated)),
+        );
+        let archetype_kinds = &self.archetype_kinds;
         let private = protocol
             .components
             .iter()
@@ -308,7 +321,7 @@ impl Sender {
             subjects[index]
                 .get_or_init(|| {
                     let summary =
-                        summarize(world, protocol, replicated, entity, last_run, this_run)?;
+                        summarize(world, protocol, archetype_kinds, entity, last_run, this_run)?;
                     Some(Subject {
                         entity,
                         summary,
@@ -575,35 +588,45 @@ enum Update {
 fn summarize(
     world: &World,
     protocol: &Protocol,
-    replicated: ComponentId,
+    archetype_kinds: &[Option<Kinds>],
     entity: Entity,
     last_run: Tick,
     this_run: Tick,
 ) -> Option<Summary> {
     let entity = world.get_entity(entity).ok()?;
-    if !entity.contains_id(replicated) {
-        return None;
-    }
-    let mut summary = Summary {
-        present: 0,
-        changed: 0,
-    };
-    for (kind, rule) in protocol.components.iter().enumerate() {
-        let Some(ticks) = entity.get_change_ticks_by_id(rule.id) else {
-            continue;
-        };
-        if rule
-            .requires
-            .is_some_and(|requires| !entity.contains_id(requires))
-        {
-            continue;
-        }
-        summary.present |= bit(kind);
-        if !rule.once && ticks.is_changed(last_run, this_run) {
-            summary.changed |= bit(kind);
-        }
-    }
-    Some(summary)
+    let present = (*archetype_kinds.get(entity.archetype().id().index())?)?;
+    let changed = kinds_of(present)
+        .filter(|&kind| {
+            let rule = &protocol.components[kind as usize];
+            !rule.once
+                && entity
+                    .get_change_ticks_by_id(rule.id)
+                    .is_some_and(|ticks| ticks.is_changed(last_run, this_run))
+        })
+        .fold(0, |changed, kind| changed | bit(kind as usize));
+    Some(Summary { present, changed })
+}
+
+/// The kinds every entity of `archetype` has, of those whose rules let them go out, if it is
+/// replicated.
+fn archetype_kinds(
+    archetype: &Archetype,
+    protocol: &Protocol,
+    replicated: ComponentId,
+) -> Option<Kinds> {
+    archetype.contains(replicated).then(|| {
+        protocol
+            .components
+            .iter()
+            .enumerate()
+            .filter(|(_, rule)| {
+                archetype.contains(rule.id)
+                    && rule
+                        .requires
+                        .is_none_or(|requires| archetype.contains(requires))
+            })
+            .fold(0, |present, (kind, _)| present | bit(kind))
+    })
 }
 
 /// Serializes the `kind` of `entity`, whole and as an update over the bytes it last went out as.

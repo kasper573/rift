@@ -7,8 +7,8 @@ use crate::systems::class::{self, Class, SkillPoints};
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
+use crate::systems::item::inline::InlineItem;
 use crate::systems::item::{Inventory, ItemId};
-use crate::systems::mention::Mention;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::Xp;
 use crate::systems::skill::Learned;
@@ -131,8 +131,7 @@ fn item_row(content: &Content, item: ItemId, change: i32) -> Notification {
     } else {
         sounds.trade
     };
-    Notification::feed(HistoryTopic::Item, Mention::Item(item).name(content))
-        .icon(item.get(content).icon.path())
+    Notification::feed(HistoryTopic::Item, InlineItem::of(item))
         .tally(RecordTally::Change(change))
         .sound(sfx)
         .into()
@@ -149,10 +148,9 @@ fn worn_row(content: &Content, did: &str, item: ItemId) -> Notification {
             text: did.to_owned(),
             fx: Vec::new(),
         },
-        Mention::Item(item).name(content),
+        InlineItem::of(item).into(),
     ]);
     Notification::feed(HistoryTopic::Item, text)
-        .icon(item.get(content).icon.path())
         .sound(item.get(content).sfx.trade)
         .into()
 }

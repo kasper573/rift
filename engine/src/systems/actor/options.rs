@@ -13,14 +13,14 @@ use crate::core::render;
 use crate::core::units::MeterPos;
 use crate::systems::actor::{self, Name};
 use crate::systems::friend::AskFriendship;
-use crate::systems::inbox::draft::{self, WriteToPlayer};
+use crate::systems::inbox::draft::{self, WriteToCharacter};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::party::page::InviteToParty;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card;
-use crate::systems::society::tab::PlayerAction;
-use crate::systems::society::view::PlayerAccount;
+use crate::systems::society::tab::CharacterAction;
+use crate::systems::society::view::CharacterAccountNumber;
 use crate::systems::society::{SocietyMember, SocietyView};
 use crate::systems::trade::TradeRequest;
 use crate::systems::{GameSettings, class, movement};
@@ -113,7 +113,7 @@ impl ActorOption {
             }
             ActorOption::Invite => InviteToParty.label().to_owned(),
             ActorOption::Befriend => "Add friend".to_owned(),
-            ActorOption::Write => WriteToPlayer.label().to_owned(),
+            ActorOption::Write => WriteToCharacter.label().to_owned(),
             ActorOption::Block => "Block".to_owned(),
         }
     }
@@ -127,7 +127,7 @@ impl ActorOption {
             ActorOption::Befriend => {
                 world.write_message(AskFriendship(member.account));
             }
-            ActorOption::Write => WriteToPlayer.act(world, &member),
+            ActorOption::Write => WriteToCharacter.act(world, &member),
             ActorOption::Block => card::block(world, member),
         }
     }
@@ -210,14 +210,14 @@ fn pointed_player(world: &mut World) -> Option<Entity> {
     let pointed = render::pointed(world)?;
     let me = session::my_character(world).map(|me| me.id());
     actor::target_at(world, &pointed, me, |world, entity| {
-        world.get::<PlayerAccount>(entity).is_some()
+        world.get::<CharacterAccountNumber>(entity).is_some()
     })
 }
 
 /// The player `player` is, as the Social pages list players.
 fn member(world: &World, player: Entity) -> Option<SocietyMember> {
     Some(SocietyMember {
-        account: world.get::<PlayerAccount>(player)?.0,
+        account: world.get::<CharacterAccountNumber>(player)?.0,
         name: world.get::<Name>(player)?.name.clone(),
     })
 }
@@ -225,7 +225,7 @@ fn member(world: &World, player: Entity) -> Option<SocietyMember> {
 /// What the player may do with `player`, by the systems the game has on and how the two stand:
 /// none while `player` is no other player.
 fn offered(world: &World, player: Entity) -> Option<Vec<ActorOption>> {
-    let account = world.get::<PlayerAccount>(player)?.0;
+    let account = world.get::<CharacterAccountNumber>(player)?.0;
     let me = session::my_character(world)?;
     if me.id() == player {
         return None;
@@ -235,7 +235,7 @@ fn offered(world: &World, player: Entity) -> Option<Vec<ActorOption>> {
     let befriended = view
         .friends
         .iter()
-        .any(|friend| friend.player.account == account);
+        .any(|friend| friend.character.account == account);
     let blocked = view.blocked.iter().any(|kept| kept.account == account);
     let options = [
         (ActorOption::Trade, settings.trade.is_some()),
@@ -246,7 +246,7 @@ fn offered(world: &World, player: Entity) -> Option<Vec<ActorOption>> {
         ),
         (
             ActorOption::Write,
-            WriteToPlayer.on(world) && draft::may_write_to(view, account),
+            WriteToCharacter.on(world) && draft::may_write_to(view, account),
         ),
         (ActorOption::Block, !blocked),
     ];

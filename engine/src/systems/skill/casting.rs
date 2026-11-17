@@ -213,9 +213,7 @@ pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), LineTe
             .get::<Inventory>(caster)
             .map_or(0, |inventory| inventory.count(stack.item));
         if held < stack.count {
-            return Err(named(skill, content)
-                .then(format!(" needs {} ", stack.count))
-                .then(Mention::Item(stack.item).span(content)));
+            return Err(named(skill, content).then(" needs ").then(stack.named()));
         }
     }
     let mana = def.mana_at(super::rank_of(world, caster, skill));

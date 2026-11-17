@@ -250,7 +250,7 @@ pub struct NpcDef {
     pub modules: Vec<NpcModule>,
     /// How far from home it wanders, when a wander of its script names no leash of its own.
     pub leash: Meters,
-    /// How it stands toward the players as it comes to life, until a script sets it otherwise.
+    /// How it stands toward the characters as it comes to life, until a script sets it otherwise.
     pub attitude: Attitude,
 }
 

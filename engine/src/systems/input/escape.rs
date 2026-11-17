@@ -6,7 +6,7 @@ use crate::core::gui;
 use crate::systems::dialogue::stage;
 use crate::systems::hud::menu;
 use crate::systems::{
-    actor, area_instance, auction, crafting, hud, item, quest, resource, skill, terminal, trade,
+    actor, area_instance, crafting, hud, item, market, quest, resource, skill, terminal, trade,
 };
 
 pub(super) fn plugin(app: &mut App) {
@@ -32,9 +32,6 @@ fn step_out(world: &mut World) {
             actor::options::close(world)
                 || stop_using_the_bar(world)
                 || close_front(world)
-                || area_instance::gather::call_off(world)
-                || trade::window::cancel(world)
-                || auction::window::close(world)
                 || resource::render::stop(world)
         }
     };
@@ -49,8 +46,8 @@ fn stop_using_the_bar(world: &mut World) -> bool {
     skill::bar::cancel_rebind(world) || skill::aim::disarm(world)
 }
 
-/// The menu and the cards stand in a stack, and a press steps out of the one in front: whichever
-/// the player opened or reached for last. One that is already on its way out is passed over.
+/// The sheets stand in a stack, and a press steps out of the one in front: whichever the player
+/// opened or reached for last. One that is already on its way out is passed over.
 fn close_front(world: &mut World) -> bool {
     hud::sheets_front_first(world)
         .into_iter()
@@ -59,6 +56,9 @@ fn close_front(world: &mut World) -> bool {
             item::card::WINDOW_KEY => item::card::close(world),
             skill::card::WINDOW_KEY => skill::card::close(world),
             quest::card::WINDOW_KEY => quest::card::close(world),
+            trade::window::WINDOW_KEY => trade::window::cancel(world),
+            market::window::WINDOW_KEY => market::window::close(world),
+            area_instance::gather::WINDOW_KEY => area_instance::gather::call_off(world),
             _ => false,
         })
 }

@@ -1,8 +1,10 @@
 pub mod card;
 pub mod effects;
+pub mod inline;
 pub mod plates;
 pub mod rarity;
 pub mod render;
+pub mod transfer;
 pub mod tray;
 pub mod widget;
 
@@ -140,13 +142,41 @@ impl ItemStack {
         ItemStack { item, count }
     }
 
+    /// The stack in plain words, as `named` says it.
     pub fn describe(self, content: &Content) -> String {
-        format!("{} {}", self.count, self.item.get(content).name)
+        self.named().plain_words(content)
     }
 
-    /// The stack as a line names it: how many, and the item as the interface mentions one.
-    pub fn named(self, content: &Content) -> LineText {
-        LineText::plain(format!("{} ", self.count)).then(Mention::Item(self.item).span(content))
+    /// What a player is told whose stack can't change hands, in the game's words.
+    pub fn bound_line(item: ItemId, content: &Content) -> LineText {
+        let words = &content.built::<GameSettings>().words;
+        LineText::plain(words.item_bound.as_str())
+            .filling("{item}", Mention::Item(item).span(content))
+    }
+
+    /// The stack as a line names it: how many, beside the item's icon and name.
+    pub fn named(self) -> LineText {
+        inline::InlineItem::from(self).into()
+    }
+
+    /// `stacks` as a sentence names them, one after another.
+    pub fn listed(stacks: &[ItemStack]) -> LineText {
+        LineText::listed(stacks.iter().map(|stack| stack.named()).collect())
+    }
+
+    /// `stacks` added up, as a cost or a recipe reads them.
+    pub fn summed(stacks: &[ItemStack]) -> LineText {
+        added(stacks.iter().map(|&stack| inline::InlineItem::from(stack)))
+    }
+
+    /// `stacks` added up by their icons alone, as a view whose players know the items by them
+    /// shows a price.
+    pub fn summed_by_icon(stacks: &[ItemStack]) -> LineText {
+        added(
+            stacks
+                .iter()
+                .map(|&stack| inline::InlineItem::from(stack).nameless()),
+        )
     }
 }
 
@@ -160,10 +190,7 @@ impl ExchangeRefusal {
     pub fn describe(self, content: &Content) -> String {
         let words = &content.built::<GameSettings>().words;
         match self {
-            ExchangeRefusal::Missing(stack) => words
-                .needs_more
-                .replace("{count}", &stack.count.to_string())
-                .replace("{item}", &stack.item.get(content).name),
+            ExchangeRefusal::Missing(_) => self.line(content).plain_words(content),
             ExchangeRefusal::NoRoom { slots: 1 } => words.needs_a_slot.clone(),
             ExchangeRefusal::NoRoom { slots } => {
                 words.needs_slots.replace("{slots}", &slots.to_string())
@@ -176,9 +203,7 @@ impl ExchangeRefusal {
         match self {
             ExchangeRefusal::Missing(stack) => {
                 let words = &content.built::<GameSettings>().words;
-                LineText::plain(words.needs_more.as_str())
-                    .filling("{count}", stack.count.to_string())
-                    .filling("{item}", Mention::Item(stack.item).span(content))
+                LineText::plain(words.needs_more.as_str()).filling("{items}", stack.named())
             }
             ExchangeRefusal::NoRoom { .. } => self.describe(content).into(),
         }
@@ -199,6 +224,30 @@ impl Inventory {
             .iter()
             .filter(|slot| slot.item == item)
             .fold(0, |total, slot| total.saturating_add(slot.count))
+    }
+
+    /// How many of the stack in slot `slot` `stacks` take up, each item's count taken out of
+    /// its slots in the bag's order.
+    pub fn taken_from(&self, slot: u32, stacks: &[ItemStack]) -> u32 {
+        let Some(held) = self.slots.get(slot as usize) else {
+            return 0;
+        };
+        let mut left: u32 = stacks
+            .iter()
+            .filter(|stack| stack.item == held.item)
+            .map(|stack| stack.count)
+            .sum();
+        for (index, stack) in self.slots.iter().enumerate() {
+            if stack.item != held.item {
+                continue;
+            }
+            let taken = left.min(stack.count);
+            if index == slot as usize {
+                return taken;
+            }
+            left -= taken;
+        }
+        0
     }
 
     pub fn slot_of(&self, item: ItemId) -> Option<usize> {
@@ -1117,7 +1166,7 @@ pub fn drop_item(world: &mut World) {
     });
 }
 
-/// Splits and joins the stacks of their bag as each player asks. A bag is its player's to
+/// Splits and joins the stacks of their bag as each player asks. A bag is its character's to
 /// arrange whatever else they are doing, so nothing holds these back.
 pub fn arrange_stacks(world: &mut World) {
     let content = world.resource::<Content>().clone();
@@ -1358,4 +1407,13 @@ fn scatter_pos(
     let angle = turn + std::f32::consts::TAU * index as f32 / count as f32;
     let spread = from + Offset::new(angle.cos() * scatter.0, angle.sin() * scatter.0);
     area.mesh().nearest(spread).unwrap_or(from)
+}
+
+/// `items` one after another, with a plus between each two.
+fn added(items: impl Iterator<Item = inline::InlineItem>) -> LineText {
+    items
+        .enumerate()
+        .fold(LineText::default(), |line, (place, item)| {
+            line.then(if place == 0 { "" } else { " + " }).then(item)
+        })
 }

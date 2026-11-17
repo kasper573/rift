@@ -7,7 +7,10 @@ pub(crate) use card::{
     Pinned, draw_pinned, forget_pinned, pin, pinned, pinned_lamp, pinned_rect, pinned_tilt,
     raise_pinned, unpin,
 };
-pub(crate) use panel::{SizedPiece, grab_sized, grab_spot, sheet_pose, sized_rect, widget};
+pub(crate) use panel::{
+    SizedPiece, Sizing, WindowFrame, grab_sized, grab_spot, lifting, sheet_pose, sized_rect,
+    widget, window,
+};
 
 use std::collections::HashSet;
 use std::ops::RangeInclusive;
@@ -28,14 +31,15 @@ use crate::core::gui::{self, Band, ImageSource, WidgetRects};
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::area_map::minimap;
 use crate::systems::input::map::{InputAction, InputMap};
+use crate::systems::item::inline;
 use crate::systems::item::widget::SlotRarity;
-use crate::systems::item::{Inventory, ItemId};
+use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
 use crate::systems::text::LineText;
 use crate::systems::{
-    area_instance, auction, equipment, item, mount, party, quest, skill, social_request, trade,
+    area_instance, equipment, item, market, mount, party, quest, skill, social_request, trade,
 };
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
@@ -96,6 +100,13 @@ pub(crate) struct Confirm {
 
 pub(crate) type Answer = Box<dyn FnOnce(&mut World, bool) + Send + Sync>;
 
+/// Something the player is told, which they dismiss with `dismiss`.
+pub(crate) struct Tell {
+    pub title: LineText,
+    pub body: Vec<LineText>,
+    pub dismiss: String,
+}
+
 /// A choice put to the player among a few ways on, each open or shut with a note under it:
 /// answered with the one picked, and with none for the cancelling button or a dismissal.
 pub(crate) struct Choose {
@@ -148,6 +159,12 @@ pub(crate) enum Carried {
         from: HotbarSlot,
         entry: HotbarEntry,
     },
+    /// The stack at `index` of the slots of the window items move between that `from` names.
+    Moved {
+        from: &'static str,
+        index: usize,
+        stack: ItemStack,
+    },
 }
 
 pub fn icon(
@@ -162,6 +179,13 @@ pub fn icon(
 pub(crate) fn confirm(world: &mut World, confirm: Confirm) {
     world.resource_mut::<Confirming>().0 = Some(Pending {
         asked: Asked::Confirm(confirm),
+        focused: false,
+    });
+}
+
+pub(crate) fn tell(world: &mut World, tell: Tell) {
+    world.resource_mut::<Confirming>().0 = Some(Pending {
+        asked: Asked::Tell(tell),
         focused: false,
     });
 }
@@ -235,14 +259,15 @@ pub(crate) fn tooltip(
     lines: &[LineText],
     hint: Option<&StyledLine>,
 ) {
-    tooltip_marked(response, world, title, None, lines, hint);
+    tooltip_marked(response, world, Some(title), None, lines, hint);
 }
 
-/// A tooltip whose first line is led by `mark`, a small picture of what the line says.
+/// A tooltip whose first line is led by `mark`, a small picture of what the line says. One with
+/// no `title` leaves naming what it is about to where it is shown.
 pub(crate) fn tooltip_marked(
     response: &egui::Response,
     world: &World,
-    title: &str,
+    title: Option<&str>,
     mark: Option<&gui::GuiImage>,
     lines: &[LineText],
     hint: Option<&StyledLine>,
@@ -250,7 +275,9 @@ pub(crate) fn tooltip_marked(
     float::tooltip(response, |ui| {
         ui.set_max_width(TOOLTIP_WIDTH);
         ui.spacing_mut().item_spacing.y = 2.0;
-        ui.label(face::bold(title).size(TextRole::Tooltip.size()));
+        if let Some(title) = title {
+            ui.label(face::bold(title).size(TextRole::Tooltip.size()));
+        }
         for (index, line) in lines.iter().enumerate() {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
@@ -260,7 +287,13 @@ pub(crate) fn tooltip_marked(
                     ui.add(mark.widget(Vec2::splat(TextRole::Tooltip.size())));
                 }
                 let look = TextLook::new(TextRole::Tooltip.size(), ink::INK2);
-                text::show(ui, world, &line.styled(), look, None);
+                text::show(
+                    ui,
+                    world,
+                    &line.styled(world.resource::<Content>()),
+                    look,
+                    None,
+                );
             });
         }
         if let Some(hint) = hint {
@@ -295,20 +328,8 @@ static WIDGETS: &[(&str, &dyn HudWidget)] = &[
         &area_instance::plate::InstancePlateWidget,
     ),
     (
-        area_instance::gather::INSTANCE_ROSTER,
-        &area_instance::gather::RosterWindowWidget,
-    ),
-    (
         area_instance::gather::INSTANCE_CALL,
         &area_instance::gather::CallCardWidget,
-    ),
-    (
-        trade::window::TRADE_WINDOW,
-        &trade::window::TradeWindowWidget,
-    ),
-    (
-        auction::window::AUCTION_HOUSE,
-        &auction::window::AuctionWindowWidget,
     ),
 ];
 
@@ -329,7 +350,8 @@ struct Lifting(Option<NoteText>);
 struct NoteText {
     title: LineText,
     body: Vec<LineText>,
-    confirm: String,
+    /// The confirming button, where the note asks something rather than tells it.
+    confirm: Option<String>,
     cancel: String,
     amount: Option<NoteAmount>,
     choices: Option<NoteChoices>,
@@ -355,7 +377,7 @@ impl NoteText {
             Asked::Confirm(confirm) => NoteText {
                 title: confirm.title.clone(),
                 body: confirm.body.clone(),
-                confirm: confirm.confirm.clone(),
+                confirm: Some(confirm.confirm.clone()),
                 cancel: confirm.cancel.clone(),
                 amount: None,
                 choices: None,
@@ -363,7 +385,7 @@ impl NoteText {
             Asked::Amount { question, chosen } => NoteText {
                 title: question.title.clone(),
                 body: vec![(question.says)(*chosen).into()],
-                confirm: "Confirm".to_owned(),
+                confirm: Some("Confirm".to_owned()),
                 cancel: "Cancel".to_owned(),
                 amount: Some(NoteAmount {
                     chosen: *chosen,
@@ -374,7 +396,7 @@ impl NoteText {
             Asked::Choose(choose) => NoteText {
                 title: choose.title.clone(),
                 body: choose.body.clone(),
-                confirm: String::new(),
+                confirm: None,
                 cancel: choose.cancel.clone(),
                 amount: None,
                 choices: Some(NoteChoices {
@@ -383,6 +405,14 @@ impl NoteText {
                     after: choose.after.clone(),
                     focus: choose.focus,
                 }),
+            },
+            Asked::Tell(tell) => NoteText {
+                title: tell.title.clone(),
+                body: tell.body.clone(),
+                confirm: None,
+                cancel: tell.dismiss.clone(),
+                amount: None,
+                choices: None,
             },
         }
     }
@@ -400,6 +430,7 @@ enum Asked {
         chosen: u32,
     },
     Choose(Choose),
+    Tell(Tell),
 }
 
 impl Asked {
@@ -410,6 +441,7 @@ impl Asked {
                 (question.answer)(world, confirmed.then_some(chosen));
             }
             Asked::Choose(choose) => (choose.answer)(world, None),
+            Asked::Tell(_) => {}
         }
     }
 
@@ -448,6 +480,9 @@ fn draw_hud(world: &mut World) {
             *drawn = drawn.union(past);
         }
     }
+    area_instance::gather::draw(world, &gui);
+    trade::window::draw(world, &gui);
+    market::window::draw(world, &gui);
     menu::draw(world, &gui);
 }
 
@@ -490,7 +525,7 @@ fn draw_confirm(world: &mut World) {
                 ui.set_width(NOTE.x - padding);
                 let ink = ui.visuals().text_color();
                 let title = TextLook::role(TextRole::NoteTitle, ink::INK);
-                text::show(ui, world, &text.title.styled(), title, None);
+                inline::show_line_with_tooltips(ui, world, &text.title, title);
                 ui.add_space(dialog::TITLE_GAP);
                 if let Some(choices) = &text.choices
                     && !choices.chips.is_empty()
@@ -507,7 +542,7 @@ fn draw_confirm(world: &mut World) {
                     .iter()
                     .map(|line| {
                         let look = TextLook::role(TextRole::Body, ink);
-                        text::show(ui, world, &line.styled(), look, None)
+                        inline::show_line_with_tooltips(ui, world, line, look)
                     })
                     .last();
                 let slid = text.amount.as_ref().map(|amount| {
@@ -546,7 +581,7 @@ fn draw_confirm(world: &mut World) {
                                 ink::VERMILION
                             };
                             let look = TextLook::role(TextRole::Small, color);
-                            text::show(ui, world, &note.styled(), look, None);
+                            inline::show_line_with_tooltips(ui, world, note, look);
                         }
                         if focused
                             && let Some(pending) = pending.as_mut()
@@ -562,7 +597,7 @@ fn draw_confirm(world: &mut World) {
                     for line in &choices.after {
                         ui.add_space(6.0);
                         let look = TextLook::role(TextRole::Body, ink::INK2);
-                        text::show(ui, world, &line.styled(), look, None);
+                        inline::show_line_with_tooltips(ui, world, line, look);
                     }
                     ui.add_space(12.0);
                     let row = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
@@ -588,27 +623,34 @@ fn draw_confirm(world: &mut World) {
                 ui.allocate_ui_with_layout(row, across, |ui| {
                     let default_pressed =
                         default_key.is_some_and(|key| ui.input_mut(|i| i.consume_shortcut(&key)));
-                    let (confirm, cancel, first) = match slid {
-                        Some((slider, chosen)) => {
+                    let (confirm, cancel, first) = match (slid, &text.confirm) {
+                        (Some((slider, chosen)), Some(confirming)) => {
                             if let Some(Asked::Amount { chosen: held, .. }) =
                                 pending.as_mut().map(|pending| &mut pending.asked)
                             {
                                 *held = chosen;
                             }
-                            let confirm = controls::primary(ui, text.confirm.as_str());
+                            let confirm = controls::primary(ui, confirming.as_str());
                             let cancel = controls::button(ui, text.cancel.as_str());
                             if default_pressed {
                                 decided = Some(true);
                             }
-                            (confirm, cancel, slider)
+                            (Some(confirm), cancel, slider)
                         }
-                        None => {
+                        (_, Some(confirming)) => {
                             let keep = controls::primary(ui, text.cancel.as_str());
-                            let confirm = controls::danger(ui, text.confirm.as_str());
+                            let confirm = controls::danger(ui, confirming.as_str());
                             if default_pressed {
                                 decided = Some(false);
                             }
-                            (confirm, keep.clone(), keep)
+                            (Some(confirm), keep.clone(), keep)
+                        }
+                        (_, None) => {
+                            let dismiss = controls::primary(ui, text.cancel.as_str());
+                            if default_pressed {
+                                decided = Some(false);
+                            }
+                            (None, dismiss.clone(), dismiss)
                         }
                     };
                     if let Some(pending) = pending.as_mut()
@@ -617,7 +659,7 @@ fn draw_confirm(world: &mut World) {
                         first.request_focus();
                         pending.focused = true;
                     }
-                    if confirm.clicked() {
+                    if confirm.is_some_and(|confirm| confirm.clicked()) {
                         decided = Some(true);
                     }
                     if cancel.clicked() {
@@ -674,6 +716,7 @@ fn draw_carried(world: &mut World) {
             HotbarEntry::Item(item) => CarriedThing::Item(item),
             HotbarEntry::Empty => return,
         },
+        Carried::Moved { stack, .. } => CarriedThing::Item(stack.item),
     };
     let (icon, rarity) = match carried {
         CarriedThing::Skill(skill) => (&skill.get(&content).icon, None),

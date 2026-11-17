@@ -58,6 +58,10 @@ enum Command {
         /// Spreads the server bench's players over the area rather than crowding them on its spawn.
         #[arg(long)]
         spread: bool,
+        /// Measures the server at this many areas, `--repeat` times, rather than finding the
+        /// most it sustains: a steady load to compare builds by.
+        #[arg(long)]
+        areas: Option<usize>,
         /// Runs only these parts of the bench, each named once.
         #[arg(long, value_enum)]
         only: Vec<bench::BenchPart>,
@@ -71,7 +75,8 @@ enum Command {
         /// The video presets to run the scenarios at.
         #[arg(long, value_enum, default_value_t = render::VideoFilter::Highest)]
         video: render::VideoFilter,
-        /// How many times each scenario runs; the report keeps the median run and the spread.
+        /// How many times each scenario runs, or the server is measured at `--areas`; the report
+        /// keeps the median run and the spread.
         #[arg(long, default_value_t = 1)]
         repeat: u32,
         /// Where the report is written.
@@ -165,6 +170,7 @@ fn main() {
         Command::Bench {
             game,
             spread,
+            areas,
             only,
             scenario,
             scenarios,
@@ -178,6 +184,7 @@ fn main() {
             let args = bench::BenchArgs {
                 game,
                 spread,
+                areas,
                 only,
                 scenario,
                 scenarios,

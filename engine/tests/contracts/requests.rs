@@ -33,6 +33,11 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
         [("Wren invites you to their crew".to_owned(), false)],
         "and the player asked sees who asks, wherever they are"
     );
+    assert_eq!(
+        (server.told(1), server.told(2)),
+        (vec!["Invite sent to Hale".to_owned()], vec![]),
+        "the asker is told it was sent"
+    );
     let waits = server.view(2).requests[0].clone();
     assert_eq!(
         (waits.other.name.as_str(), waits.until, waits.shown_until),
@@ -58,7 +63,7 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
         1,
         "accepting does what the kind does"
     );
-    assert_eq!(server.told(1), ["Hale joined you"]);
+    assert_eq!(server.told(1), ["Invite sent to Hale", "Hale joined you"]);
 
     server.ask(1, SocialRequestKind::PartyInvitation, "Hale");
     server.step();
@@ -84,7 +89,7 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     assert_eq!((server.cards(1), server.cards(2)), (vec![], vec![]));
     assert_eq!(
         server.told(2),
-        ["Wren denied"],
+        ["Invite sent to Wren", "Wren denied"],
         "a denial is told to the asker"
     );
 
@@ -106,7 +111,11 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
         (vec![], vec![]),
         "it is gone when its wait is over"
     );
-    assert_eq!(server.told(2), ["Wren denied"], "and nobody is told");
+    assert_eq!(
+        server.told(2).last().map(String::as_str),
+        Some("Invite sent to Wren"),
+        "and nobody is told"
+    );
 
     server.ask(1, SocialRequestKind::Friendship, "Hale");
     server.ask(2, SocialRequestKind::Friendship, "Wren");
@@ -119,7 +128,9 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     assert_eq!(
         server.told(1),
         [
+            "Invite sent to Hale",
             "Hale joined you",
+            "Invite sent to Hale",
             "Friend request sent to Hale",
             "Hale is now your friend"
         ],
@@ -244,7 +255,7 @@ fn a_blocked_player_is_kept_away_until_it_is_undone() {
     assert_eq!(blocked(&mut server, 2), Vec::<String>::new());
     assert_eq!(
         (server.told(2), server.village.errors(2)),
-        (vec![], vec![]),
+        (vec!["Invite sent to Wren".to_owned()], vec![]),
         "the blocked player is not told"
     );
     server.ask(2, SocialRequestKind::Friendship, "Wren");
@@ -305,7 +316,7 @@ fn what_an_account_set_blocked_befriended_and_was_asked_is_kept_from_one_server_
     let friends: Vec<&str> = wren
         .friends
         .iter()
-        .map(|friend| friend.player.name.as_str())
+        .map(|friend| friend.character.name.as_str())
         .collect();
     assert_eq!(friends, ["Osric"]);
     assert_eq!(
@@ -349,7 +360,7 @@ fn sources() -> Vec<SocialRequestSource> {
             words: |_| SocialRequestWords {
                 asks: "{name} invites you to their {about}",
                 asked: "You invited {name}",
-                sent: None,
+                sent: "Invite sent to {name}",
                 accepted: Some("{name} joined you"),
                 denied: Some("{name} denied"),
                 lapsed: None,

@@ -7,7 +7,7 @@ use engine::systems::npc::body::{self, Act, Priority};
 use engine::systems::script::{EventKind, Owner, RiftInstances};
 use engine::systems::stat::{self, StatKind};
 use serde_json::{Value, json};
-use testkit::{Sim, dialogue, labels, lines, path};
+use testkit::{Sim, dialogue, path};
 
 use crate::game::{field, health, module, scripted_npc, spawn};
 
@@ -20,19 +20,19 @@ fn a_wait_pauses_the_flow_and_an_effect_takes_the_output_it_earns() {
     assert!(!sim.run_until(0.5, |world| world.get::<Conversation>(player).is_some()));
     assert!(sim.run_until(1.0, |world| world.get::<Conversation>(player).is_some()));
     assert_eq!(
-        sim.conversation(1).map(|now| lines(&now)),
+        sim.conversation(1).map(|now| sim.lines(&now)),
         Some(vec!["Pay up.".to_owned()])
     );
 
     let broke = sim.pick(1, "Pay.").expect("talking");
-    assert_eq!(lines(&broke), vec!["No coin?".to_owned()]);
+    assert_eq!(sim.lines(&broke), vec!["No coin?".to_owned()]);
     sim.leave(1);
 
     sim.give(player, "gold", 5);
     raise(&mut sim, owner, EventKind::Interacted, player);
     assert!(sim.run_until(2.0, |world| world.get::<Conversation>(player).is_some()));
     let paid = sim.pick(1, "Pay.").expect("talking");
-    assert_eq!(lines(&paid), vec!["Thanks.".to_owned()]);
+    assert_eq!(sim.lines(&paid), vec!["Thanks.".to_owned()]);
     assert_eq!(sim.count(player, "gold"), 0);
 }
 
@@ -146,7 +146,7 @@ fn a_choice_label_fills_its_values_like_a_line_does() {
     sim.tick();
 
     let conversation = sim.conversation(1).expect("in conversation");
-    assert_eq!(labels(&conversation), vec!["Pay Gold".to_owned()]);
+    assert_eq!(sim.labels(&conversation), vec!["Pay Gold".to_owned()]);
 }
 
 fn interacted(next: &str) -> Value {

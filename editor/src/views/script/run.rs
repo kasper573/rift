@@ -504,6 +504,7 @@ pub(crate) fn conversation_box(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc
         return;
     };
     let inputs = run.inputs.clone();
+    let content = run.world().resource::<Content>().clone();
     let mut pick: Option<usize> = None;
     let mut leave = false;
     if !ui.ctx().text_edit_focused() {
@@ -533,7 +534,7 @@ pub(crate) fn conversation_box(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc
                 );
                 for line in &conversation.lines {
                     let who = dialogue::speaker_name(run.world(), run.subject, line.by);
-                    let text = line.text.words(&inputs);
+                    let text = line.text.words(&content, &inputs);
                     let Some(who) = who else {
                         ui.add(
                             egui::Label::new(
@@ -554,7 +555,8 @@ pub(crate) fn conversation_box(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc
                 }
                 ui.add_space(6.0);
                 for (index, choice) in conversation.choices.iter().enumerate() {
-                    let mut text = format!("{}  {}", index + 1, choice.label.words(&inputs));
+                    let mut text =
+                        format!("{}  {}", index + 1, choice.label.words(&content, &inputs));
                     if let Some(warn) = &choice.warn {
                         text.push_str(&format!("  ({warn})"));
                     }
@@ -1225,10 +1227,10 @@ fn snapshot_for(
 ) -> Result<CharacterSnapshot, String> {
     let Some(key) = key else {
         let settings = content.built::<GameSettings>();
-        return Ok(CharacterSnapshot::of_player(
+        return Ok(CharacterSnapshot::of_def(
             content,
             "Tester",
-            settings.player.get(content),
+            settings.character.get(content),
         ));
     };
     reader
@@ -1333,11 +1335,12 @@ impl ScriptRun {
                 .world
                 .resource::<Messages<ToClient<NotificationSent>>>();
             let (conn, inputs) = (self.conn, &self.inputs);
+            let content = self.world.resource::<Content>();
             self.cursor
                 .read(messages)
                 .filter(|message| message.client == conn)
                 .map(|message| {
-                    let text = message.message.notification.text.words(inputs);
+                    let text = message.message.notification.text.words(content, inputs);
                     RunLogLine::Note(format!("notice: {text}"))
                 })
                 .collect()

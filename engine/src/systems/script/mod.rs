@@ -216,7 +216,7 @@ enum SpeakerRow {
     },
     Object,
     Narrator,
-    Player,
+    Character,
 }
 
 impl From<LineRow> for ScriptLine {
@@ -225,7 +225,7 @@ impl From<LineRow> for ScriptLine {
             SpeakerRow::Npc { npc, gesture } => (Speaker::Npc(npc), gesture),
             SpeakerRow::Object => (Speaker::Object, None),
             SpeakerRow::Narrator => (Speaker::Narrator, None),
-            SpeakerRow::Player => (Speaker::Player, None),
+            SpeakerRow::Character => (Speaker::Character, None),
         };
         ScriptLine {
             by,
@@ -246,7 +246,7 @@ impl From<ScriptLine> for LineRow {
                 },
                 Speaker::Object => SpeakerRow::Object,
                 Speaker::Narrator => SpeakerRow::Narrator,
-                Speaker::Player => SpeakerRow::Player,
+                Speaker::Character => SpeakerRow::Character,
             },
             camera: line.camera,
             text: line.text,
@@ -276,7 +276,7 @@ pub enum Speaker {
     Npc(NpcId),
     Object,
     Narrator,
-    Player,
+    Character,
 }
 
 impl LineDef<RiftScripting> for ScriptLine {
@@ -332,7 +332,7 @@ pub enum EffectReach {
     },
     /// Pays someone items, sending what has no room in their bag as a message.
     PaysItems,
-    OpensAuctionHouse,
+    OpensMarket,
     ResetsSkills,
     Animates,
     ShowsVfx,

@@ -92,7 +92,10 @@ pub fn show(world: &mut World, sent: NotificationSent) {
         return;
     };
     let shader = shader.unwrap_or_else(|| VfxShaderFixture::Pop.id(world.resource::<Content>()));
-    let text = sent.notification.text.plain_words();
+    let text = sent
+        .notification
+        .text
+        .plain_words(world.resource::<Content>());
     let texture = text_texture(world, &text);
     let piece = screen_piece(world);
     world

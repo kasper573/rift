@@ -91,7 +91,7 @@ pub fn act(world: &mut World, content: &Content, roster: &[Entity], tick: usize)
     }
 }
 
-fn player_of(world: &World, conn: Entity) -> Option<Entity> {
+pub fn player_of(world: &World, conn: Entity) -> Option<Entity> {
     let client = world.get::<ClientId>(conn)?;
     world.resource::<Players>().0.get(client).copied()
 }

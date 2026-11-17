@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 use ui::egui;
@@ -12,6 +13,7 @@ use ui::egui::{
 };
 use ui::face::{Face, TextRole};
 use ui::ink::{self, Ground};
+use ui::paint::TextShadow;
 
 use super::{KeyNames, Lettering, SpanInk, StyledLine, Swing, TextMotion, TextPiece, TextVoice};
 use crate::core::gui;
@@ -25,6 +27,8 @@ pub struct TextLook {
     pub ground: Ground,
     /// A soft ring of this color around every letter, for text set straight over the world.
     pub halo: Option<Color32>,
+    /// Copies of every letter drawn under it, for text set over the world.
+    pub shadows: &'static [TextShadow],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +48,7 @@ impl TextLook {
             line_height: None,
             ground: Ground::Paper,
             halo: None,
+            shadows: &[],
         }
     }
 
@@ -63,6 +68,10 @@ impl TextLook {
             halo: Some(halo),
             ..self
         }
+    }
+
+    pub const fn shadowed(self, shadows: &'static [TextShadow]) -> TextLook {
+        TextLook { shadows, ..self }
     }
 
     pub const fn bold(self) -> TextLook {
@@ -88,6 +97,24 @@ pub fn show(
     look: TextLook,
     shown: Option<usize>,
 ) -> Response {
+    show_linked(ui, world, line, look, shown).response
+}
+
+/// A line as drawn, and where each run of it that stands for a link landed: one rect a row it
+/// spans, those not yet shown left out.
+pub struct ShownLine {
+    pub response: Response,
+    pub links: Vec<(Cow<'static, str>, Rect)>,
+}
+
+/// Draws `line` as `show` does, and tells where its links landed.
+pub fn show_linked(
+    ui: &mut Ui,
+    world: &World,
+    line: &StyledLine,
+    look: TextLook,
+    shown: Option<usize>,
+) -> ShownLine {
     let keys = world.resource::<KeyNames>();
     let plan = Plan::new(line, keys, *world.resource::<Lettering>(), look);
     let galley = ui.painter().layout_job(plan.job(ui.available_width()));
@@ -96,7 +123,10 @@ pub fn show(
     let plain = line.plain(keys);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &plain));
     if !ui.is_rect_visible(rect) {
-        return response;
+        return ShownLine {
+            response,
+            links: Vec::new(),
+        };
     }
     let origin = rect.min - galley.rect.min.to_vec2();
     let placed = place(&galley, &plan, origin);
@@ -124,7 +154,16 @@ pub fn show(
         };
         paint_word(ui, &plan, visible, at, word.motion, index as f32, time);
     }
-    response
+    let links = plan
+        .links
+        .iter()
+        .flat_map(|link| {
+            link_rows(&plan, &placed, link.letters.clone(), shown)
+                .into_iter()
+                .map(|row| (link.key.clone(), row))
+        })
+        .collect();
+    ShownLine { response, links }
 }
 
 pub fn measure(
@@ -151,9 +190,11 @@ struct Plan {
     words: Vec<Word>,
     caps: Vec<Cap>,
     images: Vec<SetImage>,
+    links: Vec<Link>,
     units: usize,
     pad: f32,
     halo: Option<Color32>,
+    shadows: &'static [TextShadow],
     lettering: Lettering,
 }
 
@@ -173,6 +214,12 @@ struct Cap {
     letters: Range<usize>,
     letter: usize,
     color: Color32,
+}
+
+/// A run of the line's letters that stands for `key`.
+struct Link {
+    key: Cow<'static, str>,
+    letters: Range<usize>,
 }
 
 /// A picture in the room left before the space at `at`.
@@ -199,9 +246,11 @@ impl Plan {
             words: Vec::new(),
             caps: Vec::new(),
             images: Vec::new(),
+            links: Vec::new(),
             units: 0,
             pad,
             halo: look.halo,
+            shadows: look.shadows,
             lettering,
         };
         let mut letter = 0;
@@ -210,6 +259,20 @@ impl Plan {
         for piece in &line.pieces {
             match piece {
                 TextPiece::Pause(_) => {}
+                TextPiece::Room(room) => owed += room,
+                TextPiece::LinkStart(key) => {
+                    let at = plan.letters.len();
+                    plan.links.push(Link {
+                        key: key.clone(),
+                        letters: at..at,
+                    });
+                }
+                TextPiece::LinkEnd => {
+                    let end = plan.letters.len();
+                    if let Some(link) = plan.links.last_mut() {
+                        link.letters.end = end;
+                    }
+                }
                 TextPiece::Image(file) => {
                     plan.images.push(SetImage {
                         at: plan.letters.len(),
@@ -380,6 +443,40 @@ fn place(galley: &Galley, plan: &Plan, origin: Pos2) -> Vec<Option<Placed>> {
         .collect()
 }
 
+/// Where the shown letters of `letters` landed, one rect for each row they run over: a picture's
+/// space reaches back over the picture set before it.
+fn link_rows(
+    plan: &Plan,
+    placed: &[Option<Placed>],
+    letters: Range<usize>,
+    shown: usize,
+) -> Vec<Rect> {
+    let mut rows: Vec<Rect> = Vec::new();
+    for at in letters {
+        let (Some(glyph), letter) = (placed[at], &plan.letters[at]) else {
+            continue;
+        };
+        if letter.letter >= shown {
+            continue;
+        }
+        let picture = plan
+            .images
+            .iter()
+            .find(|image| image.at == at)
+            .map_or(0.0, |image| image.side);
+        let top = glyph.baseline.y - glyph.ascent;
+        let rect = Rect::from_min_max(
+            Pos2::new(glyph.baseline.x - picture, top),
+            Pos2::new(glyph.baseline.x + glyph.advance, top + glyph.height),
+        );
+        match rows.last_mut() {
+            Some(row) if (row.top() - rect.top()).abs() < 1.0 => *row = row.union(rect),
+            _ => rows.push(rect),
+        }
+    }
+    rows
+}
+
 fn paint_cap(ui: &Ui, placed: &[Option<Placed>], cap: &Cap, pad: f32) {
     let glyphs: Vec<Placed> = cap.letters.clone().filter_map(|at| placed[at]).collect();
     let (Some(first), Some(last)) = (glyphs.first(), glyphs.last()) else {
@@ -464,6 +561,12 @@ fn paint_word(
             shape.transform(TSTransform::new(center * (1.0 - scale), scale));
         }
     }
+    for shadow in plan.shadows {
+        let mut copy = shape.clone();
+        copy.pos += shadow.offset;
+        copy.override_text_color = Some(shadow.color);
+        ui.painter().add(Shape::Text(copy));
+    }
     if let Some(halo) = plan.halo {
         for step in 0..HALO_STEPS {
             let angle = step as f32 / HALO_STEPS as f32 * std::f32::consts::TAU;
@@ -484,6 +587,7 @@ fn ink_of(ink: Option<SpanInk>, look: TextLook) -> Color32 {
             Ground::Paper => look.color,
             Ground::Dusk => ink::legible(color, ink::VEIL),
         },
+        Some(SpanInk::Legible(color)) => look.ground.legible(color),
         None => look.color,
     }
 }

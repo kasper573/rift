@@ -512,6 +512,7 @@ fn refill(
     }
     let content = world.resource::<Content>().clone();
     let area_id = world.resource::<WorldArea>().0;
+    let area = area::load(&content, area_id);
     let placed = area::placed(&content, area_id);
     let now = time::uptime(world);
     let mut due: Vec<(SpawnerAt, u32)> = Vec::new();
@@ -525,8 +526,9 @@ fn refill(
             _ => continue,
         };
         match (spawners.kept[&at].entries[entry as usize], respawn) {
-            (Entry::Freed { since, wait }, Some(respawn))
-                if now - since >= wait.unwrap_or(respawn) =>
+            (Entry::Freed { since, wait }, respawn)
+                if wait.or(respawn).is_some_and(|wait| now - since >= wait)
+                    && grounded(area, module) =>
             {
                 due.push((at, entry));
             }
@@ -558,7 +560,6 @@ fn refill(
             },
         );
     }
-    let area = area::load(&content, area_id);
     let watching = watchers(world, characters);
     for (at, entry) in due {
         spawn_entry(world, &content, area, area_id, at, entry, &watching);
@@ -566,7 +567,8 @@ fn refill(
 }
 
 /// Fills the entry, away from where `watching` look from as far as the ground allows, or leaves
-/// it idle when nothing of its spawner holds under the sky.
+/// it idle when nothing of its spawner holds under the sky. An entry whose spawner's ground the
+/// world doesn't hold waits, freed, until a character comes near enough that it does.
 fn spawn_entry(
     world: &mut World,
     content: &Content,
@@ -577,7 +579,16 @@ fn spawn_entry(
     watching: &[Pos<Meters>],
 ) {
     let pack = world.resource::<SpawnerEntries>().kept[&at].pack;
-    let (stands, share) = match &area::placed(content, area_id)[at.0 as usize].module {
+    let module = &area::placed(content, area_id)[at.0 as usize].module;
+    if !grounded(area, module) {
+        let waits = Entry::Freed {
+            since: time::uptime(world),
+            wait: Some(Seconds(0.0)),
+        };
+        world.resource_mut::<SpawnerEntries>().set(at, entry, waits);
+        return;
+    }
+    let (stands, share) = match module {
         AreaModule::Spawner(spawner) => {
             let drawn = world.resource_scope(|world, mut rng: Mut<Rng>| {
                 spawner.draw(&mut rng, |share| holding(world, share))
@@ -603,6 +614,15 @@ fn spawn_entry(
         world
             .entity_mut(stands)
             .insert(Spawned { spawner: at, entry });
+    }
+}
+
+/// Whether the world holds the ground a spawner draws where its entries stand: a spawner's
+/// bounds are held only while a character is near.
+fn grounded(area: &Area, module: &AreaModule) -> bool {
+    match module {
+        AreaModule::Spawner(spawner) => spawner.within.is_none_or(|bounds| area.holds(bounds)),
+        _ => true,
     }
 }
 

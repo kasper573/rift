@@ -62,11 +62,11 @@ fn a_players_map_marks_the_townsfolk_and_players_in_sight_and_never_a_creature()
         .into_iter()
         .map(|mark| (mark.kind, mark.name))
         .collect();
-    marked.sort_by_key(|(kind, _)| *kind == MapMarkKind::Player);
+    marked.sort_by_key(|(kind, _)| *kind == MapMarkKind::Character);
     let kinds: Vec<MapMarkKind> = marked.iter().map(|(kind, _)| *kind).collect();
     assert_eq!(
         kinds,
-        [MapMarkKind::Townsperson, MapMarkKind::Player],
+        [MapMarkKind::Townsperson, MapMarkKind::Character],
         "{marked:?}"
     );
     assert_eq!(marked[0].1, "crow", "the one in sight, by its name");

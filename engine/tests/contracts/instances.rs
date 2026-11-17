@@ -12,7 +12,7 @@ use engine::systems::area_instance::{
     self, AreaInstanceGiven, AreaInstanceShown, AreaInstanceWorld, CallReply, CallRequest,
     LeaveInstance, RosterPlace,
 };
-use engine::systems::inbox::InboxView;
+use engine::systems::inbox::{InboxSender, InboxView};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{self, Inventory, ItemDef, ItemStack, UseItemRequest};
 use engine::systems::movement::{self, position};
@@ -386,7 +386,7 @@ fn a_call_ends_with_its_leaders_lead_their_place_at_the_door_or_its_time() {
         ),
         (
             None,
-            Some("archive needs at least 2 players.".to_owned()),
+            Some("archive needs at least 2 characters.".to_owned()),
             true
         ),
         "Enter waits until enough would go"
@@ -844,7 +844,7 @@ fn a_game_whose_instances_cannot_be_played_is_refused() {
     );
     assert_eq!(
         rules(game(2).edit("area", "vault", |vault| {
-            vault["instance"]["players"] = json!({ "least": 3, "most": 2 })
+            vault["instance"]["characters"] = json!({ "least": 3, "most": 2 })
         })),
         ["out of range"],
         "a copy can't need more players than it takes"
@@ -1258,7 +1258,7 @@ fn told_in(sim: &mut Sim, client: u32) -> Vec<String> {
     let errors = sim.errors(client);
     sim.told(client)
         .into_iter()
-        .map(|told| told.text.plain_words())
+        .map(|told| told.text.plain_words(sim.content()))
         .filter(|said| !errors.contains(said))
         .collect()
 }
@@ -1353,13 +1353,13 @@ fn warden(host: &mut Host, client: u32) -> Entity {
     npc::spawn(&mut sim.world, warden, at, area, None)
 }
 
-/// What the game sent the player of `client`: each message's title, whether the game sent it,
+/// What the system sent the player of `client`: each message's title, whether the system sent it,
 /// and what it holds.
 fn sent(host: &mut Host, client: u32) -> Vec<(String, bool, Vec<ItemStack>)> {
     host.inbox(client)
         .rows
         .into_iter()
-        .map(|row| (row.title, row.from.is_none(), row.attached))
+        .map(|row| (row.title, row.from == InboxSender::System, row.attached))
         .collect()
 }
 
@@ -1375,14 +1375,14 @@ fn roster(plate: &AreaInstanceShown) -> Vec<(String, RosterPlace)> {
     plate
         .roster
         .iter()
-        .map(|row| (row.player.name.clone(), row.place))
+        .map(|row| (row.character.name.clone(), row.place))
         .collect()
 }
 
 fn rows(call: &InstanceCallShown) -> Vec<(&str, RosterRowShown)> {
     call.rows
         .iter()
-        .map(|row| (row.player.name.as_str(), row.shown))
+        .map(|row| (row.character.name.as_str(), row.shown))
         .collect()
 }
 
@@ -1466,7 +1466,7 @@ fn game(most: u32) -> Game {
         game,
         "vault",
         json!({
-            "players": { "least": 1, "most": most },
+            "characters": { "least": 1, "most": most },
             "goals": [
                 { "type": "defeat", "npc": path("npc", "warden"), "count": 2 },
                 { "type": "task", "task": "seal", "label": "Seal the gate" },
@@ -1479,7 +1479,7 @@ fn game(most: u32) -> Game {
         game,
         "archive",
         json!({
-            "players": { "least": 2, "most": 3 },
+            "characters": { "least": 2, "most": 3 },
             "goals": [{ "type": "task", "task": "read", "label": "Read the ledger" }],
             "empties_after": 300.0,
             "closes_after": 30.0,
@@ -1489,7 +1489,7 @@ fn game(most: u32) -> Game {
         game,
         "trial",
         json!({
-            "players": { "least": 1, "most": 1 },
+            "characters": { "least": 1, "most": 1 },
             "goals": [{ "type": "task", "task": "endure", "label": "Endure" }],
             "empties_after": 300.0,
             "closes_after": 30.0,

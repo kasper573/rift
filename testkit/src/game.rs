@@ -222,7 +222,7 @@ impl Game {
             )
             .asset("icons/hero.png", png(1, 1))
             .row(
-                "player",
+                "character",
                 "hero",
                 json!({
                     "class": path("class", "hero"),
@@ -232,7 +232,7 @@ impl Game {
             .settings(json!({
                 "name": "Test",
                 "initial_spawn": { "area": path("area", area), "x": x, "y": y },
-                "player": path("player", "hero"),
+                "character": path("character", "hero"),
                 "sight": 24.0,
                 "map_reaches": [16.0, 32.0, 64.0],
                 "chase_pace": 2.0,
@@ -881,7 +881,7 @@ impl Game {
     }
 
     /// Holds the game to everything a whole game must provide besides what it declares: every file
-    /// the engine itself requires, and every quest and shop within a player's reach.
+    /// the engine itself requires, and every quest and shop within a character's reach.
     pub fn whole(mut self) -> Game {
         self.whole = true;
         self
@@ -1007,7 +1007,7 @@ fn words() -> GameWords {
         locked: "You can't do that yet.".to_owned(),
         no_longer: "You can't do that any more.".to_owned(),
         quest_log_full: "Your quest log is full.".to_owned(),
-        needs_more: "Needs {count} more {item}".to_owned(),
+        needs_more: "Needs {items} more".to_owned(),
         needs_a_slot: "Needs 1 free slot".to_owned(),
         needs_slots: "Needs {slots} free slots".to_owned(),
         needs_tool: "Needs a {tool}".to_owned(),
@@ -1068,6 +1068,8 @@ fn words() -> GameWords {
         sent_in_a_message: "It was sent to you in a message".to_owned(),
         party_invite_asks: "{name} invites you to their party".to_owned(),
         party_invite_asked: "You invited {name} to your party".to_owned(),
+        instance_call_sent: "Party called into {area}".to_owned(),
+        party_invite_sent: "Party invite sent to {name}".to_owned(),
         party_invite_denied: "{name} denied your invitation".to_owned(),
         party_invite_lapsed: "{name} did not answer your invitation".to_owned(),
         party_full: "The party is full".to_owned(),
@@ -1093,7 +1095,7 @@ fn words() -> GameWords {
         instance_go_alone: "Go alone".to_owned(),
         instance_gather: "Gather the party".to_owned(),
         instance_leader_only: "Only {leader} can take the party in.".to_owned(),
-        instance_needs_players: "{area} needs at least {least} players.".to_owned(),
+        instance_needs_characters: "{area} needs at least {least} characters.".to_owned(),
         instance_form_party: "Form a party of {least} or more, and its leader can take it in."
             .to_owned(),
         instance_already_inside:
@@ -1124,6 +1126,7 @@ fn words() -> GameWords {
         given_items_text: "Your bag had no room for these.".to_owned(),
         trade_asks: "{name} wants to trade with you.".to_owned(),
         trade_asked: "You asked {name} to trade.".to_owned(),
+        trade_sent: "Trade request sent to {name}".to_owned(),
         trade_denied: "{name} doesn't want to trade.".to_owned(),
         trade_busy: "{name} is busy trading.".to_owned(),
         trade_too_far: "You stand too far apart to trade.".to_owned(),
@@ -1135,20 +1138,26 @@ fn words() -> GameWords {
         trade_why_mounted: "{who} got on a mount".to_owned(),
         trade_why_offer_gone: "an offered item left {who}'s bag".to_owned(),
         trade_offer_changed: "{name} changed their offer.".to_owned(),
-        trade_done: "You traded with {name}. You got {got} and gave {gave}.".to_owned(),
-        trade_gave: "You gave {name} {gave}.".to_owned(),
-        trade_got: "{name} gave you {got}.".to_owned(),
         trade_overflow_title: "Items from your trade with {name}".to_owned(),
         trade_overflow_text: "Your bag had no room for these.".to_owned(),
-        auction_listed: "You listed {item} on the auction house.".to_owned(),
-        auction_bought: "Bought {item} for {price}".to_owned(),
-        auction_sold: "Sold {item} for {price}".to_owned(),
-        auction_expired: "{item} didn't sell".to_owned(),
-        auction_cancelled: "{item} came back from the auction house".to_owned(),
-        auction_gone: "Someone bought {item} just before you.".to_owned(),
-        auction_too_many: "You already have {listings} auctions running.".to_owned(),
-        auction_message: "From the auction house.".to_owned(),
-        auction_no_price: "Set a price above zero.".to_owned(),
+        item_bound: "{item} is bound.".to_owned(),
+        market_listed: "Listing for {offer} created".to_owned(),
+        market_bought: "You got {offer} for {price}.".to_owned(),
+        market_sold: "Your listing of {offer} was bought. You got {price}.".to_owned(),
+        market_expired: "Your listing of {offer} ended unbought.".to_owned(),
+        market_cancelled: "{offer} came back from the market.".to_owned(),
+        market_gone: "Someone bought the listing of {offer} just before you.".to_owned(),
+        market_too_many: "You already have {listings} listings up.".to_owned(),
+        market_message: "From the market.".to_owned(),
+        market_bought_title: "Bought on the market".to_owned(),
+        market_sold_title: "Sold on the market".to_owned(),
+        market_returned_title: "Back from the market".to_owned(),
+        market_no_offer: "Offer something.".to_owned(),
+        market_no_price: "Set a price.".to_owned(),
+        market_offer_too_many: "An offer has at most {items} items.".to_owned(),
+        market_price_too_many: "A price has at most {items} items.".to_owned(),
+        market_named_twice: "Name each item once.".to_owned(),
+        market_needs_amount: "{item} needs an amount.".to_owned(),
     }
 }
 

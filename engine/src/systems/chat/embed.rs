@@ -15,6 +15,7 @@ use crate::systems::mention::{Mention, ShownMention};
 use crate::systems::movement::position;
 use crate::systems::quest::{QuestDef, QuestId};
 use crate::systems::skill::{SkillDef, SkillId};
+use crate::systems::text::LineText;
 
 /// What a player types before a kind's name to ask for a thing of it.
 pub const EMBED_ASK: char = '@';
@@ -191,6 +192,16 @@ impl ChatEmbed {
 
     /// How it shows in a line: a thing as the interface mentions it anywhere, and a location
     /// as its area is mentioned, with the spot after the area's name.
+    /// The thing as a line names it: an item as its inline item does.
+    pub fn line(self, content: &Content) -> LineText {
+        match self {
+            ChatEmbed::Item(item) => Mention::Item(item).line(content),
+            ChatEmbed::Quest(quest) => Mention::Quest(quest).line(content),
+            ChatEmbed::Skill(skill) => Mention::Skill(skill).line(content),
+            ChatEmbed::Location(_) => self.shown(content).span().into(),
+        }
+    }
+
     pub fn shown(self, content: &Content) -> ShownMention {
         match self {
             ChatEmbed::Item(item) => Mention::Item(item).shown(content),

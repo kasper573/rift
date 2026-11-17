@@ -343,7 +343,7 @@ fn dialogue_summary(editor: &Editor, dialogue: &DialogueNode) -> String {
             }
         }
         Speaker::Object => "the object".to_owned(),
-        Speaker::Narrator | Speaker::Player => "narrator".to_owned(),
+        Speaker::Narrator | Speaker::Character => "narrator".to_owned(),
     });
     let count = format!(
         "{} line{}",

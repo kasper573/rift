@@ -6,7 +6,7 @@ use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::chat::{self, ChatSpeaker};
-use engine::systems::friend::{self, AskFriendship, FindPlayers, PlayersFound, RemoveFriend};
+use engine::systems::friend::{self, AskFriendship, CharactersFound, FindCharacters, RemoveFriend};
 use engine::systems::history::HistoryNews;
 use engine::systems::inbox::{
     self, DeleteMessage, MessageAnswered, MessageText, OpenMessage, SendMessage, TakeAttached,
@@ -15,8 +15,8 @@ use engine::systems::party::{self, PartyRequest};
 use engine::systems::player::snapshot::JoinAs;
 use engine::systems::player::{self, ClientId, SpawnPolicy, SpawnRules};
 use engine::systems::social_request::{
-    self, AnswerSocialRequest, BlockPlayer, ChooseAcceptsRequests, RequestAnswer, SocialRequestAsk,
-    SocialRequestKind, SocialRequestSource,
+    self, AnswerSocialRequest, BlockCharacter, ChooseAcceptsRequests, RequestAnswer,
+    SocialRequestAsk, SocialRequestKind, SocialRequestSource,
 };
 use engine::systems::society::{
     self, AccountNumber, ServerSociety, Society, SocietyAsk, SocietyView,
@@ -172,7 +172,7 @@ impl Server {
 
     pub fn block(&mut self, client: u32, name: &str, blocked: bool) {
         let account = self.number(name);
-        self.send(client, BlockPlayer { account, blocked });
+        self.send(client, BlockCharacter { account, blocked });
     }
 
     pub fn view(&mut self, client: u32) -> SocietyView {
@@ -199,7 +199,7 @@ impl Server {
         let errors = sim.errors(client);
         sim.told(client)
             .into_iter()
-            .map(|told| told.text.plain_words())
+            .map(|told| told.text.plain_words(sim.content()))
             .filter(|said| !errors.contains(said))
             .collect()
     }
@@ -210,15 +210,15 @@ pub fn serving(content: &Content, area: &str) -> Sim {
     let mut sim = Sim::new(content.clone());
     sim.serve(area)
         .message::<ToClient<HistoryNews>>()
-        .message::<ToClient<PlayersFound>>()
+        .message::<ToClient<CharactersFound>>()
         .message::<ToClient<MessageText>>()
         .message::<ToClient<MessageAnswered>>()
         .accept::<AnswerSocialRequest>()
-        .accept::<BlockPlayer>()
+        .accept::<BlockCharacter>()
         .accept::<ChooseAcceptsRequests>()
         .accept::<AskFriendship>()
         .accept::<RemoveFriend>()
-        .accept::<FindPlayers>()
+        .accept::<FindCharacters>()
         .accept::<SendMessage>()
         .accept::<OpenMessage>()
         .accept::<TakeAttached>()

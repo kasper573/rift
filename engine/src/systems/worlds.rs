@@ -122,7 +122,7 @@ pub fn confer(
 ) -> Vec<Departure> {
     let heard = hear(views, above);
     for (asking, errand) in heard.errands {
-        let outcome = carry(views, errand.to, errand.deed);
+        let outcome = carry(views, &above.roster, errand.to, errand.deed);
         if let Some(world) = views[asking].as_deref_mut() {
             (errand.then)(world, outcome);
         }
@@ -148,15 +148,14 @@ struct Heard {
 fn hear(views: &mut [Option<&mut World>], above: &AboveWorlds) -> Heard {
     let (roster, society) = (&above.roster, &above.society);
     let saving = above.checkpoints.saving();
-    // A world lets its last enrollment go as it enrolls anew, which frees it there and then only
-    // once the roster no longer lists it: the roster is emptied first, or one core would free
-    // every world's.
-    roster.list(Vec::new());
+    roster.unlist();
     let said: Vec<(Enrollment, Heard)> = views
         .par_iter_mut()
         .enumerate()
-        .filter_map(|(asking, world)| Some((asking, world.as_deref_mut()?)))
         .map(|(asking, world)| {
+            let Some(world) = world.as_deref_mut() else {
+                return (Enrollment::default(), Heard::default());
+            };
             let errands = errand::take(world).into_iter();
             let heard = Heard {
                 errands: errands.map(|errand| (asking, errand)).collect(),
@@ -180,10 +179,12 @@ fn hear(views: &mut [Option<&mut World>], above: &AboveWorlds) -> Heard {
 
 fn carry(
     views: &mut [Option<&mut World>],
+    roster: &ServerRoster,
     to: ClientId,
     deed: impl FnOnce(&mut World, Entity) -> Result<(), LineText>,
 ) -> ErrandOutcome {
-    let found = views.iter_mut().flatten().find_map(|world| {
+    let found = roster.world_of(to).and_then(|slot| {
+        let world = views.get_mut(slot)?.as_deref_mut()?;
         let character = *world.get_resource::<Players>()?.0.get(&to)?;
         Some((world, character))
     });

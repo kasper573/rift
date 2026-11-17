@@ -9,7 +9,7 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{AreaInstanceEntry, PlayerCount, answer as answer_flow, open, step_in};
+use super::{AreaInstanceEntry, CharacterCount, answer as answer_flow, open, step_in};
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::script::{NEXT, REFUSED};
@@ -125,7 +125,7 @@ pub enum RosterRowShown {
 pub struct InstanceCallShown {
     pub leader: SocietyMember,
     pub area: AreaId,
-    pub players: PlayerCount,
+    pub characters: CharacterCount,
     pub ends: UnixMillis,
     /// Whether the player it is shown to leads it.
     pub leads: bool,
@@ -140,7 +140,7 @@ pub struct InstanceCallShown {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CallRowShown {
-    pub player: SocietyMember,
+    pub character: SocietyMember,
     pub shown: RosterRowShown,
     /// The leader's row reads as joined and picked.
     pub answer: CallAnswer,
@@ -210,14 +210,16 @@ impl InstanceCall {
             .find(|member| member.account == *account)
     }
 
-    fn players(&self, content: &Content) -> PlayerCount {
+    fn characters(&self, content: &Content) -> CharacterCount {
         self.entry
             .to
             .area
             .get(content)
             .instance
             .as_ref()
-            .map_or(PlayerCount { least: 1, most: 1 }, |rules| rules.players)
+            .map_or(CharacterCount { least: 1, most: 1 }, |rules| {
+                rules.characters
+            })
     }
 
     fn row(&self, member: &CallMember) -> RosterRowShown {
@@ -252,14 +254,14 @@ impl InstanceCallShown {
         let leads = leader == account;
         let row = |member: &CallMember| {
             Some(CallRowShown {
-                player: society.member(&member.account)?,
+                character: society.member(&member.account)?,
                 shown: call.row(member),
                 answer: member.answer,
             })
         };
         let rows = if leads {
             let leader_row = CallRowShown {
-                player: society.member(leader)?,
+                character: society.member(leader)?,
                 shown: if call.leader_fallen {
                     RosterRowShown::Fallen
                 } else {
@@ -276,7 +278,7 @@ impl InstanceCallShown {
         Some(InstanceCallShown {
             leader: society.member(leader)?,
             area: call.entry.to.area,
-            players: call.players(content),
+            characters: call.characters(content),
             ends: call.ends,
             leads,
             rows,
@@ -399,8 +401,15 @@ fn gather(
         leader_fallen: false,
         members: Vec::new(),
     };
+    let area = LineText::from(Mention::Area(call.entry.to.area).span(content)).plain_words(content);
     settling.society.instances.calls.0.insert(by.clone(), call);
     settling.society.changed(by);
+    let sent = content
+        .built::<GameSettings>()
+        .words
+        .instance_call_sent
+        .replace("{area}", &area);
+    settling.tell(by, Notification::feed(HistoryTopic::Notification, sent));
     follow(settling, content, by);
 }
 
@@ -417,7 +426,7 @@ fn ask_call(settling: &mut Settling, content: &Content, by: &AccountId, request:
     let Some(call) = settling.society.instances.calls.0.get_mut(by) else {
         return;
     };
-    let room = call.taken() < call.players(content).most;
+    let room = call.taken() < call.characters(content).most;
     let Some(asked) = call.member_mut(&member) else {
         return;
     };
@@ -446,7 +455,7 @@ fn answer(settling: &mut Settling, content: &Content, by: &AccountId, reply: Cal
     let Some(call) = settling.society.instances.calls.0.get_mut(&leader) else {
         return;
     };
-    let room = call.taken() < call.players(content).most;
+    let room = call.taken() < call.characters(content).most;
     let Some(member) = call.member_mut(by).filter(|member| member.called) else {
         return;
     };
@@ -475,20 +484,20 @@ fn enter(settling: &mut Settling, content: &Content, leader: &AccountId) {
     let Some(going) = call.going() else {
         return;
     };
-    let players = call.players(content);
+    let characters = call.characters(content);
     let area = Mention::Area(call.entry.to.area).span(content);
     let going: Vec<AccountId> = std::iter::once(leader.clone()).chain(going).collect();
-    if (going.len() as u32) < players.least {
-        let why = LineText::plain(words.instance_needs_players.as_str())
+    if (going.len() as u32) < characters.least {
+        let why = LineText::plain(words.instance_needs_characters.as_str())
             .filling("{area}", area)
-            .filling("{least}", players.least.to_string());
-        settling.refuse(leader, why.plain_words());
+            .filling("{least}", characters.least.to_string());
+        settling.refuse(leader, why.plain_words(content));
         return;
     }
     let run = match open(settling, content, &call.entry, going.clone()) {
         Ok(run) => run,
         Err(why) => {
-            settling.refuse(leader, why.plain_words());
+            settling.refuse(leader, why.plain_words(content));
             return;
         }
     };

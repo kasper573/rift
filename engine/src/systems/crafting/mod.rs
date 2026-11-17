@@ -23,7 +23,6 @@ use crate::systems::actor::playing::{self, Motion};
 use crate::systems::actor::skeleton::{self, Declared, MoveName};
 use crate::systems::attention::AttentionId;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
-use crate::systems::mention::Mention;
 use crate::systems::notification;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
@@ -313,29 +312,6 @@ fn scaled(stacks: &[ItemStack], times: u32) -> Vec<ItemStack> {
         .filter(|_| times > 0)
         .map(|stack| ItemStack::new(stack.item, stack.count.saturating_mul(times)))
         .collect()
-}
-
-/// `stacks` as a player reads them, with its count where a stack holds more than one: each item
-/// as the interface mentions one, but for the first `icons` stacks, whose items the line already
-/// stands behind the icons of.
-pub fn stacks_mentioned(content: &Content, stacks: &[ItemStack], icons: usize) -> LineText {
-    stacks
-        .iter()
-        .enumerate()
-        .fold(LineText::default(), |line, (place, stack)| {
-            let item = Mention::Item(stack.item);
-            let item = if place < icons {
-                item.name(content)
-            } else {
-                item.span(content)
-            };
-            let line = line.then(if place == 0 { "" } else { " + " }).then(item);
-            if stack.count > 1 {
-                line.then(format!(" ×{}", stack.count))
-            } else {
-                line
-            }
-        })
 }
 
 /// Where a crafting prompt reads the recipes it makes.

@@ -6,7 +6,7 @@ use ui::egui::{self, Pos2, Rect, Sense, Ui, UiBuilder, Vec2};
 use ui::keys::KeyCap;
 use ui::sheet::{self, Tab, TabSize};
 
-use super::panel::{self, WindowFrame};
+use super::panel::{self, Sizing, WindowFrame};
 use crate::core::content::{Content, Fixture};
 use crate::core::gui;
 use crate::systems::dialogue::stage;
@@ -144,7 +144,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context) {
             (screen.center() - SIZE / 2.0).max(Pos2::new(super::MARGIN, super::MARGIN)),
             SIZE,
         ),
-        min: SMALLEST,
+        sizing: Sizing::Resizable { min: SMALLEST },
     };
     let mut stays = open.is_some();
     panel::window(world, gui, frame, pose, &mut stays, |ui, world| {

@@ -255,7 +255,7 @@ fn a_craft_takes_its_recipes_time_at_the_crafters_speed_and_nothing_until_it_is_
     craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
     sim.take(player, "coal", 3);
     sim.run(2.5);
-    assert_eq!(sim.errors(1), ["Needs 1 more coal"]);
+    assert_eq!(sim.errors(1), ["Needs 1 coal more"]);
     assert_eq!(
         held(&sim),
         (6, 0, 1),
@@ -304,9 +304,11 @@ fn a_craft_that_fails_spends_its_materials_makes_nothing_and_says_so() {
             .notified(1)
             .into_iter()
             .filter_map(|sent| match sent.notification.kind {
-                NotificationKind::Pop { shader, .. } => {
-                    Some((sent.actor, sent.notification.text.plain_words(), shader))
-                }
+                NotificationKind::Pop { shader, .. } => Some((
+                    sent.actor,
+                    sent.notification.text.plain_words(sim.content()),
+                    shader,
+                )),
                 _ => None,
             })
             .collect();
@@ -472,7 +474,7 @@ fn a_recipe_that_requires_mastery_is_listed_to_all_and_made_only_by_one_who_mast
         JoinAs {
             snapshot: CharacterSnapshot {
                 recipe_masteries: vec![key(&sim, DAGGER)].into(),
-                ..CharacterSnapshot::of_player(&content, "Journeyman", player::def(&content))
+                ..CharacterSnapshot::of_def(&content, "Journeyman", player::def(&content))
             },
             start: content.built::<GameSettings>().initial_spawn,
             origin: JoinOrigin::Staged,

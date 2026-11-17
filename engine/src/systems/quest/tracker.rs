@@ -147,9 +147,15 @@ fn row(ui: &mut Ui, world: &World, at: Pos2, said: &LineText, tone: TrackerTone)
         .on(Ground::Dusk)
         .haloed(HALO);
     let mut within = ui.new_child(UiBuilder::new().max_rect(room));
-    text::show(&mut within, world, &said.styled(), look, None)
-        .rect
-        .bottom()
+    text::show(
+        &mut within,
+        world,
+        &said.styled(world.resource::<Content>()),
+        look,
+        None,
+    )
+    .rect
+    .bottom()
 }
 
 fn entries(world: &World) -> Vec<Entry> {

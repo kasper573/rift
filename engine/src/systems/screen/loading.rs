@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bevy::prelude::*;
@@ -61,7 +62,7 @@ struct Brought {
 /// The server's build being installed in place of this client's.
 #[derive(Resource)]
 struct Updating {
-    task: Task<Result<(), UpdateFailure>>,
+    task: Task<Result<PathBuf, UpdateFailure>>,
     step: Arc<Mutex<UpdateStep>>,
     to: String,
     retry: Retry,
@@ -288,12 +289,16 @@ fn begin_update(world: &mut World, source: ReleaseSource, to: String, retry: Ret
 fn updated(
     world: &mut World,
     updating: Updating,
-    outcome: Result<(), UpdateFailure>,
+    outcome: Result<PathBuf, UpdateFailure>,
     now: Seconds,
 ) {
     let to = &updating.to;
     let failure = match outcome {
-        Ok(()) => match update::restart(&ClientConfig::updated_from_var(), version::build()) {
+        Ok(installed) => match update::restart(
+            &installed,
+            &ClientConfig::updated_from_var(),
+            version::build(),
+        ) {
             Ok(()) => {
                 world.write_message(AppExit::Success);
                 world.insert_resource(Restarting { to: to.clone() });

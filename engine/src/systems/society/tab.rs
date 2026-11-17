@@ -6,7 +6,7 @@ use ui::egui::Ui;
 use super::SocietyMember;
 use crate::systems::friend::page::FriendsPage;
 use crate::systems::hud::menu::{self, MenuTab, MenuTabName, SubTabs};
-use crate::systems::inbox::draft::WriteToPlayer;
+use crate::systems::inbox::draft::WriteToCharacter;
 use crate::systems::inbox::page::MessagesPage;
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
@@ -27,7 +27,7 @@ pub trait SocialPage: Send + Sync {
 }
 
 /// Something a page offers to do with a player it lists, brought by the system that does it.
-pub trait PlayerAction: Send + Sync {
+pub trait CharacterAction: Send + Sync {
     fn label(&self) -> &'static str;
     /// Whether the game has the action's system on.
     fn on(&self, world: &World) -> bool;
@@ -35,7 +35,7 @@ pub trait PlayerAction: Send + Sync {
 }
 
 /// What the systems the game has on offer to do with a player.
-pub fn player_actions(world: &World) -> Vec<&'static dyn PlayerAction> {
+pub fn character_actions(world: &World) -> Vec<&'static dyn CharacterAction> {
     PLAYER_ACTIONS
         .iter()
         .copied()
@@ -120,7 +120,7 @@ struct LastPage(Option<&'static str>);
 // Their sub-tabs line up in this order.
 static PAGES: &[&dyn SocialPage] = &[&FriendsPage, &MessagesPage, &PartyPage];
 
-static PLAYER_ACTIONS: &[&dyn PlayerAction] = &[&WriteToPlayer, &InviteToParty];
+static PLAYER_ACTIONS: &[&dyn CharacterAction] = &[&WriteToCharacter, &InviteToParty];
 
 /// The pages of the systems the game has on.
 fn pages(world: &World) -> Vec<&'static dyn SocialPage> {

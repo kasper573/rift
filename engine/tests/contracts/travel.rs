@@ -1,6 +1,7 @@
 use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
+use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::time::WallClock;
 use engine::core::units::{MeterPos, Meters, Seconds};
@@ -18,7 +19,7 @@ use engine::systems::region;
 use engine::systems::script::{self, Place};
 use engine::systems::{notification, npc, stat};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, dialogue, labels, lines, locked};
+use testkit::{Game, Map, Sim, dialogue};
 
 const ROAD: Pos<Meters> = Pos::new(13.0, 6.0);
 
@@ -145,8 +146,8 @@ fn without_a_pass_the_road_is_ground_and_the_warden_halts_you_each_time_you_step
     assert_eq!(halt.with, Some(warden));
     assert!(position(&sim.world, player).is_some_and(|at| at.distance(ROAD) < Meters(0.5)));
     assert!(commands_locked(&sim.world, player));
-    assert!(!labels(&halt).contains(&"I have a pass.".to_owned()));
-    assert!(locked(&halt, "I'm ready for the road."));
+    assert!(!sim.labels(&halt).contains(&"I have a pass.".to_owned()));
+    assert!(sim.locked(&halt, "I'm ready for the road."));
     sim.pick(1, "I'm ready for the road.");
     assert_eq!(sim.errors(1), vec!["Needs Level 3".to_owned()]);
 
@@ -211,17 +212,20 @@ fn the_warden_trades_a_pass_for_a_fish_and_the_ferryman_only_looks_at_it() {
     sim.give(player, "fish", 1);
 
     let greeting = sim.talk(1, "warden");
-    assert!(!labels(&greeting).contains(&"The clan walks with me.".to_owned()));
+    assert!(
+        !sim.labels(&greeting)
+            .contains(&"The clan walks with me.".to_owned())
+    );
     let traded = sim
         .pick(1, "Would a fish change your mind?")
         .expect("talking");
-    assert_eq!(lines(&traded), vec!["Fine. Take the pass.".to_owned()]);
+    assert_eq!(sim.lines(&traded), vec!["Fine. Take the pass.".to_owned()]);
     assert_eq!(sim.count(player, "pass"), 1);
     assert_eq!(sim.count(player, "fish"), 0);
     sim.leave(1);
 
     let ferry = sim.talk(1, "ferryman");
-    assert!(!locked(&ferry, "The warden gave me this pass."));
+    assert!(!sim.locked(&ferry, "The warden gave me this pass."));
     sim.pick(1, "The warden gave me this pass.");
     let crossing = *sim
         .world
@@ -238,7 +242,10 @@ fn the_ferryman_sails_for_twenty_gold_and_the_crossing_is_narrated() {
     sim.give(player, "gold", 25);
 
     let ferry = sim.talk(1, "ferryman");
-    assert!(!labels(&ferry).contains(&"The warden gave me this pass.".to_owned()));
+    assert!(
+        !sim.labels(&ferry)
+            .contains(&"The warden gave me this pass.".to_owned())
+    );
     sim.pick(1, "Sail to the forest.");
 
     assert_eq!(sim.count(player, "gold"), 5);
@@ -261,7 +268,7 @@ fn the_warden_has_a_word_only_for_friends_of_the_clan() {
 
     sim.talk(1, "warden");
     let passed = sim.pick(1, "The clan walks with me.").expect("talking");
-    assert_eq!(lines(&passed), vec!["Then go.".to_owned()]);
+    assert_eq!(sim.lines(&passed), vec!["Then go.".to_owned()]);
     assert_eq!(sim.count(player, "pass"), 1);
 }
 
@@ -441,8 +448,14 @@ fn crossed(sim: &mut Sim, player: Entity, within: f32) -> bool {
 
 fn halted(sim: &mut Sim, player: Entity) -> bool {
     sim.run_until(15.0, |world| {
-        world
-            .get::<Conversation>(player)
-            .is_some_and(|now| lines(now) == ["Halt! Nobody takes the road without a pass."])
+        world.get::<Conversation>(player).is_some_and(|now| {
+            let content = world.resource::<Content>();
+            let said: Vec<String> = now
+                .lines
+                .iter()
+                .map(|line| line.text.plain_words(content))
+                .collect();
+            said == ["Halt! Nobody takes the road without a pass."]
+        })
     })
 }

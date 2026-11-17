@@ -498,7 +498,7 @@ pub fn speaker_name(world: &World, player: Entity, who: Speaker) -> Option<Strin
         Speaker::Object => counterpart_of(world, player)
             .and_then(|with| world.get::<Name>(with))
             .map(|name| name.name.clone()),
-        Speaker::Narrator | Speaker::Player => None,
+        Speaker::Narrator | Speaker::Character => None,
     }
 }
 

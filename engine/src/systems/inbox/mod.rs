@@ -1,6 +1,6 @@
 //! Messages: letters between players, each a title, a plain text and items attached, kept in
-//! its receiver's inbox until they delete it. The game writes them too, to hand over what a
-//! bag had no room for.
+//! its receiver's inbox until they delete it. The system writes them too, to hand over what a
+//! bag had no room for. Only a character receives one.
 
 pub mod draft;
 pub mod page;
@@ -48,7 +48,7 @@ pub fn register(app: &mut App) {
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageSettings {
-    /// How many messages from players an inbox holds. Messages from the game are not counted.
+    /// How many messages from players an inbox holds. Messages from the system are not counted.
     pub inbox: u32,
     /// How many stacks of items a message carries at the most.
     pub attachments: u32,
@@ -65,12 +65,15 @@ pub struct MessageSettings {
 )]
 pub struct MessageId(pub u64);
 
-/// Who wrote a message.
+/// Who wrote a message: the system, or a character, by the account that plays it. A message
+/// goes only to a character, so the system is never written to.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageSender {
-    Player(AccountId),
-    Game,
+    #[serde(alias = "game")]
+    System,
+    #[serde(alias = "player")]
+    Character(AccountId),
 }
 
 /// A message in its receiver's inbox.
@@ -141,7 +144,7 @@ impl Inboxes {
         };
         for message in saved {
             inboxes.dealt = inboxes.dealt.max(message.id.0);
-            if matches!(message.from, MessageSender::Player(_)) {
+            if matches!(message.from, MessageSender::Character(_)) {
                 *inboxes.held.entry(message.to).or_default() += 1;
             }
         }
@@ -166,7 +169,7 @@ impl Inboxes {
             id: MessageId(self.dealt),
             ..message
         };
-        if matches!(message.from, MessageSender::Player(_)) {
+        if matches!(message.from, MessageSender::Character(_)) {
             *self.held.entry(message.to.clone()).or_default() += 1;
         }
         if !self.open.contains_key(&message.to) {
@@ -211,7 +214,7 @@ impl Inboxes {
         };
         inbox.unwritten.insert(id);
         unwritten.remove::<InboxMessage>(record_id(id));
-        if matches!(message.from, MessageSender::Player(_))
+        if matches!(message.from, MessageSender::Character(_))
             && let Some(held) = self.held.get_mut(account)
         {
             *held = held.saturating_sub(1);
@@ -325,11 +328,18 @@ pub struct SendMessage {
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenMessage(pub MessageId);
 
-/// A player taking what is attached to a message: the stack at `stack`, or every stack.
+/// A player taking what is attached to a message: some of one stack, or every stack.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TakeAttached {
     pub message: MessageId,
-    pub stack: Option<u32>,
+    pub stack: Option<TakenStack>,
+}
+
+/// `count` of the stack at `index` of what is attached to a message.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TakenStack {
+    pub index: u32,
+    pub count: u32,
 }
 
 /// A player deleting a message nothing is attached to.
@@ -362,14 +372,20 @@ pub struct InboxView {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct InboxRow {
     pub id: MessageId,
-    /// The player who wrote it. A message from the game has none.
-    pub from: Option<SocietyMember>,
+    pub from: InboxSender,
     pub title: String,
     pub sent: UnixMillis,
     pub read: bool,
     pub attached: Vec<ItemStack>,
     /// How many more stacks are attached that name items the game no longer has.
     pub set_aside: u32,
+}
+
+/// Who wrote a message, as its receiver sees it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum InboxSender {
+    System,
+    Character(SocietyMember),
 }
 
 impl InboxView {
@@ -426,7 +442,9 @@ pub(crate) fn show(world: &mut World, character: Entity, account: &AccountId, so
     let view = match inboxes.of(account) {
         Some(messages) => InboxView {
             whole: true,
-            rows: messages.map(|message| row(society, message)).collect(),
+            rows: messages
+                .filter_map(|message| row(society, message))
+                .collect(),
             held: inboxes.held(account),
         },
         None => InboxView::default(),
@@ -436,8 +454,8 @@ pub(crate) fn show(world: &mut World, character: Entity, account: &AccountId, so
     }
 }
 
-/// Sends `to` a message from the game with `stacks` attached, whether they play or not.
-pub fn from_game(
+/// Sends `to` a message from the system with `stacks` attached, whether they play or not.
+pub fn from_system(
     society: &mut Society,
     unwritten: &mut Unwritten,
     now: UnixMillis,
@@ -448,7 +466,7 @@ pub fn from_game(
     let message = InboxMessage {
         id: MessageId(0),
         to: to.clone(),
-        from: MessageSender::Game,
+        from: MessageSender::System,
         title: said.0.to_owned(),
         text: said.1.to_owned(),
         attached: stacks.into(),
@@ -511,7 +529,7 @@ pub(crate) fn settle(
                 settings.words.did_not_fit_title.as_str(),
                 settings.words.did_not_fit_text.as_str(),
             );
-            from_game(
+            from_system(
                 settling.society,
                 settling.unwritten,
                 settling.now,
@@ -593,7 +611,7 @@ fn send(
     let letter = InboxMessage {
         id: MessageId(0),
         to: to.clone(),
-        from: MessageSender::Player(by.clone()),
+        from: MessageSender::Character(by.clone()),
         title: title.to_owned(),
         text: message.text,
         attached: message.attached.into(),
@@ -621,15 +639,17 @@ fn take(settling: &mut Settling, settings: &GameSettings, by: &AccountId, take: 
     let attached: Vec<ItemStack> = message.attached.to_vec();
     let (wanted, others): (Vec<ItemStack>, Vec<ItemStack>) = match take.stack {
         None => (attached, Vec::new()),
-        Some(index) => {
+        Some(part) => {
             let mut others = attached;
-            if index as usize >= others.len() {
+            let Some(stack) = others.get_mut(part.index as usize) else {
                 return;
-            }
-            (vec![others.remove(index as usize)], others)
+            };
+            let taken = part.count.min(stack.count);
+            stack.count -= taken;
+            (vec![ItemStack::new(stack.item, taken)], others)
         }
     };
-    if wanted.is_empty() {
+    if wanted.iter().all(|stack| stack.count == 0) {
         return;
     }
     let Some((world, character)) = settling.reach(by) else {
@@ -662,9 +682,12 @@ fn take(settling: &mut Settling, settings: &GameSettings, by: &AccountId, take: 
     }
     let mut still: Vec<ItemStack> = match take.stack {
         None => left,
-        Some(index) => {
+        Some(part) => {
             let mut still = others;
-            still.splice(index as usize..index as usize, left);
+            if let Some(stack) = still.get_mut(part.index as usize) {
+                stack.count += left.iter().map(|stack| stack.count).sum::<u32>();
+            }
+            still.retain(|stack| stack.count > 0);
             still
         }
     };
@@ -677,19 +700,20 @@ fn take(settling: &mut Settling, settings: &GameSettings, by: &AccountId, take: 
         });
 }
 
-fn row(society: &Society, message: &InboxMessage) -> InboxRow {
-    InboxRow {
+/// The row of `message`, where the society knows who wrote it.
+fn row(society: &Society, message: &InboxMessage) -> Option<InboxRow> {
+    Some(InboxRow {
         id: message.id,
         from: match &message.from {
-            MessageSender::Player(account) => society.member(account),
-            MessageSender::Game => None,
+            MessageSender::Character(account) => InboxSender::Character(society.member(account)?),
+            MessageSender::System => InboxSender::System,
         },
         title: message.title.clone(),
         sent: message.sent,
         read: message.read,
         attached: message.attached.to_vec(),
         set_aside: message.attached.set_aside().len() as u32,
-    }
+    })
 }
 
 /// `said`, with the key of `action` wherever it says `{key}`.

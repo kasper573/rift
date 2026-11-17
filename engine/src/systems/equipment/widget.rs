@@ -98,7 +98,7 @@ impl Place {
     }
 }
 
-/// Every hand of the player's body in its skeleton's order, a two-hander spanning the hands it
+/// Every hand of the character's body in its skeleton's order, a two-hander spanning the hands it
 /// takes, every slot of its skeleton, and the tool slot.
 fn places(world: &World) -> Vec<Place> {
     let Some(me) = session::me(world) else {
@@ -219,7 +219,7 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
                 input(InputAction::UseItem),
                 TextPiece::text(" to take it off · "),
                 input(InputAction::CarryItem),
-                TextPiece::text(" onto the bar"),
+                TextPiece::text(" onto the inventory or the bar"),
             ])
             .collect(),
     );
@@ -318,7 +318,7 @@ fn landing(content: &Content, hand: HandIndex) -> Option<String> {
     (!names.is_empty()).then(|| ui::words::join_and(&names))
 }
 
-/// Whether the player's stance has no set on its body, so it fights with the base set.
+/// Whether the character's stance has no set on its body, so it fights with the base set.
 fn fights_unarmed(world: &World) -> bool {
     let Some(me) = session::me(world) else {
         return false;

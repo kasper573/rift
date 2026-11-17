@@ -84,14 +84,14 @@ impl Sheet<'_> {
         let top = if self.title.is_some() {
             band.max.y
         } else {
-            rect.min.y + inset + 4.0
+            rect.min.y + inset + BODY_INSET
         };
         let body = if bleeds {
             rect.shrink(inset)
         } else {
             Rect::from_min_max(
-                Pos2::new(rect.min.x + inset + 4.0, top),
-                rect.max - Vec2::splat(inset + 4.0),
+                Pos2::new(rect.min.x + inset + BODY_INSET, top),
+                rect.max - Vec2::splat(inset + BODY_INSET),
             )
         };
         if tint != Color32::WHITE {
@@ -104,6 +104,13 @@ impl Sheet<'_> {
             body,
         }
     }
+}
+
+/// The size of a titled sheet whose body is `body`: the body with the title band above it and the
+/// rule and its margin round the rest.
+pub fn titled_size(body: Vec2) -> Vec2 {
+    let edge = RULE_INSET + BODY_INSET;
+    Vec2::new(body.x + 2.0 * edge, body.y + TITLE_BAND + edge)
 }
 
 pub const GUTTER: f32 = 16.0;
@@ -751,6 +758,107 @@ pub fn section_with<R>(ui: &mut Ui, text: &str, actions: impl FnOnce(&mut Ui) ->
     ui.add_space(4.0);
     made
 }
+
+/// Headings over a list's two columns, in the look of a section heading: `start` at the left
+/// edge, `end` ending where the right column ends, and the rule between them. It takes its room
+/// over the list, and is painted once the list has been drawn, which is when where its right
+/// column ends is known.
+pub struct ColumnHeads {
+    rect: Rect,
+    start: Arc<Galley>,
+    end: Arc<Galley>,
+}
+
+impl ColumnHeads {
+    pub fn new(ui: &Ui, start: &str, end: &str) -> ColumnHeads {
+        let painter = ui.painter();
+        ColumnHeads {
+            rect: Rect::NOTHING,
+            start: painter.layout_job(TextRole::Section.job(start, ink::RUBRIC)),
+            end: painter.layout_job(TextRole::Section.job(end, ink::RUBRIC)),
+        }
+    }
+
+    /// How tall the room it takes over the list is.
+    pub fn room(&self, ui: &Ui) -> f32 {
+        self.height() + COLUMN_HEADS_GAP + ui.spacing().item_spacing.y
+    }
+
+    /// Takes its room, where the list is about to start.
+    pub fn place(&mut self, ui: &mut Ui) {
+        let size = Vec2::new(ui.available_width(), self.height());
+        self.rect = ui.allocate_exact_size(size, Sense::hover()).0;
+        ui.add_space(COLUMN_HEADS_GAP);
+    }
+
+    fn height(&self) -> f32 {
+        self.start.size().y.max(self.end.size().y) + 2.0
+    }
+}
+
+const COLUMN_HEADS_GAP: f32 = 4.0;
+
+impl ColumnHeads {
+    /// Paints the headings, the right one ending at `end_x`.
+    pub fn paint(self, ui: &Ui, end_x: f32) {
+        let ColumnHeads { rect, start, end } = self;
+        let y = rect.center().y;
+        let start_at = Pos2::new(rect.min.x, y - start.size().y / 2.0);
+        let end_at = Pos2::new(end_x - end.size().x, y - end.size().y / 2.0);
+        for (at, galley) in [(start_at, &start), (end_at, &end)] {
+            let place = Rect::from_min_size(at, galley.size());
+            let text = galley.text().to_owned();
+            ui.interact(place, ui.id().with(("column head", &text)), Sense::hover())
+                .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &text));
+        }
+        let from = start_at.x + start.size().x + RULE_GAP;
+        let to = end_at.x - RULE_GAP;
+        if to > from {
+            let middle = Pos2::new((from + to) / 2.0, y + 0.5);
+            let painter = ui.painter();
+            fading_line(painter, Pos2::new(from, y + 0.5), middle, ink::RUBRIC, 1.0);
+            fading_line(painter, Pos2::new(to, y + 0.5), middle, ink::RUBRIC, 1.0);
+        }
+        ui.painter().galley(start_at, start, ink::RUBRIC);
+        ui.painter().galley(end_at, end, ink::RUBRIC);
+    }
+}
+
+/// A heading over a run of a list's rows: a short rule, `text`, and a rule fading out across the
+/// rest of the row.
+pub fn list_heading(ui: &mut Ui, text: &str) {
+    let galley = ui
+        .painter()
+        .layout_job(TextRole::Small.job(text, ink::RUBRIC));
+    let height = galley.size().y + 6.0;
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    let y = rect.center().y + 0.5;
+    let lead_end = rect.min.x + LIST_HEADING_LEAD;
+    let painter = ui.painter();
+    painter.line_segment(
+        [Pos2::new(rect.min.x, y), Pos2::new(lead_end, y)],
+        Stroke::new(1.0, ink::RUBRIC),
+    );
+    let at = Pos2::new(
+        lead_end + RULE_GAP / 2.0,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    let rule_start = at.x + galley.size().x + RULE_GAP / 2.0;
+    painter.galley(at, galley, ink::RUBRIC);
+    if rect.max.x > rule_start {
+        fading_line(
+            painter,
+            Pos2::new(rule_start, y),
+            Pos2::new(rect.max.x, y),
+            ink::RUBRIC,
+            1.0,
+        );
+    }
+}
+
+const LIST_HEADING_LEAD: f32 = 10.0;
 
 pub fn scroll<R>(
     ui: &mut Ui,

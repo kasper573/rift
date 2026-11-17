@@ -5,6 +5,7 @@ use engine::systems::interact::InteractRequest;
 use engine::systems::npc::{Npc, NpcDef};
 
 use crate::Sim;
+use engine::core::content::Content;
 
 impl Sim {
     /// The client's player asks to interact with `target`, and the world runs until a
@@ -40,7 +41,7 @@ impl Sim {
             conn,
             ConversationRequest::Pick {
                 step: now.step,
-                choice: choice(&now, label),
+                choice: self.choice(&now, label),
             },
         );
         self.tick();
@@ -84,30 +85,38 @@ impl Sim {
     }
 }
 
-pub fn lines(conversation: &Conversation) -> Vec<String> {
-    conversation
-        .lines
-        .iter()
-        .map(|line| line.text.plain_words())
-        .collect()
-}
+impl Sim {
+    /// The words of every line `conversation` shows.
+    pub fn lines(&self, conversation: &Conversation) -> Vec<String> {
+        let content = self.world.resource::<Content>();
+        conversation
+            .lines
+            .iter()
+            .map(|line| line.text.plain_words(content))
+            .collect()
+    }
 
-pub fn labels(conversation: &Conversation) -> Vec<String> {
-    conversation
-        .choices
-        .iter()
-        .map(|choice| choice.label.plain_words())
-        .collect()
-}
+    /// The words of every choice `conversation` offers.
+    pub fn labels(&self, conversation: &Conversation) -> Vec<String> {
+        let content = self.world.resource::<Content>();
+        conversation
+            .choices
+            .iter()
+            .map(|choice| choice.label.plain_words(content))
+            .collect()
+    }
 
-pub fn locked(conversation: &Conversation, label: &str) -> bool {
-    conversation.choices[choice(conversation, label) as usize].locked
-}
+    pub fn locked(&self, conversation: &Conversation, label: &str) -> bool {
+        conversation.choices[self.choice(conversation, label) as usize].locked
+    }
 
-fn choice(conversation: &Conversation, label: &str) -> u32 {
-    conversation
-        .choices
-        .iter()
-        .position(|choice| choice.label.plain_words() == label)
-        .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", labels(conversation))) as u32
+    fn choice(&self, conversation: &Conversation, label: &str) -> u32 {
+        let content = self.world.resource::<Content>();
+        conversation
+            .choices
+            .iter()
+            .position(|choice| choice.label.plain_words(content) == label)
+            .unwrap_or_else(|| panic!("no choice {label:?} in {:?}", self.labels(conversation)))
+            as u32
+    }
 }

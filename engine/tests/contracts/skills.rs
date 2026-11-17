@@ -416,7 +416,7 @@ fn yard() -> (Sim, Entity) {
         .area("yard", &Map::open(15, 9), json!([]))
         .hero("yard", 4.0, 4.0)
         .sword()
-        .edit("player", "hero", |hero| {
+        .edit("character", "hero", |hero| {
             hero["stats"]["mana"] = json!(4.0);
             hero["stats"]["max_mana"] = json!(6.0);
         })

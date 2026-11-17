@@ -247,3 +247,58 @@ fn kinds(sim: &mut Sim, npcs: &[Entity]) -> [bool; 2] {
             .any(|&npc| sim.world.get::<Npc>(npc).is_some_and(|npc| npc.def == def))
     })
 }
+
+#[test]
+fn an_entry_due_where_nobody_is_near_waits_until_a_player_brings_its_ground_back() {
+    const RESPAWN: f32 = 10.0;
+    let content = Game::new()
+        .npc("hawk", 5.0, json!([]))
+        .area(
+            "field",
+            &Map::open(600, 12),
+            json!([{
+                "type": "spawner",
+                "spawns": [{ "type": "npc", "npc": path("npc", "hawk") }],
+                "count": 1,
+                "respawn": RESPAWN,
+                "within": { "x": 540.0, "y": 2.0, "w": 20.0, "h": 8.0 },
+            }]),
+        )
+        .hero("field", 4.0, 6.0)
+        .load_to_play();
+    let mut sim = Sim::new(content.clone());
+    let field = area::load(&content, sim.id::<area::AreaDef>("field"));
+    sim.serve("field")
+        .add((sleep::settle, region::settle, spawner::tend).chain());
+    let hero = sim.join(1);
+    // The ground is held on a thread of its own, which takes real time, not the world's.
+    let go_to = |sim: &mut Sim, x: f32, until: &dyn Fn(&mut Sim) -> bool| {
+        sim.world
+            .entity_mut(hero)
+            .insert(movement::Position::at(Pos::new(x, 6.0)));
+        let mut waited = 0;
+        while !until(sim) && waited < 1000 {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            sim.tick();
+            waited += 1;
+        }
+    };
+
+    go_to(&mut sim, 545.0, &|sim| standing(sim).len() == 1);
+    let hawk = standing(&mut sim)[0];
+    go_to(&mut sim, 4.0, &|_| {
+        !field.mesh().walkable(Pos::new(550.0, 6.0))
+    });
+    sim.world.despawn(hawk);
+    sim.later(RESPAWN + 1.0);
+    assert!(
+        standing(&mut sim).is_empty(),
+        "an entry due on ground nobody holds stays empty"
+    );
+    go_to(&mut sim, 545.0, &|sim| standing(sim).len() == 1);
+    assert_eq!(
+        standing(&mut sim).len(),
+        1,
+        "the entry fills once a player brings its ground back"
+    );
+}

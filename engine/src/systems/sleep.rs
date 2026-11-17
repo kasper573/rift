@@ -1,6 +1,6 @@
-//! What no player is near stands still: every entity in a chunk out of every player's reach is
-//! disabled, so no mechanic's query finds it and no script of its runs, until a player comes near
-//! again. A land costs only what its players are near, however much of it there is.
+//! What no character is near stands still: every entity in a chunk out of every character's reach is
+//! disabled, so no mechanic's query finds it and no script of its runs, until a character comes near
+//! again. A land costs only what its characters are near, however much of it there is.
 
 use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
@@ -16,19 +16,19 @@ use crate::systems::script::RiftScripts;
 use crate::systems::script::event::RiftEvent;
 use crate::systems::skill::SkillDef;
 
-/// The chunks awake, and how far from a player they reach.
+/// The chunks awake, and how far from a character they reach.
 #[derive(Resource)]
 pub struct Sleep {
     reach: Meters,
     stood: Vec<Chunk>,
-    /// The chunks within reach of each player as of the last settle, sorted, each span once: they
+    /// The chunks within reach of each character as of the last settle, sorted, each span once: they
     /// alone decide what is awake.
     reached: Vec<ChunkSpan>,
     awake: HashSet<Chunk>,
 }
 
 impl Sleep {
-    /// The chunks players stood in as of the last settle, sorted, each once.
+    /// The chunks characters stood in as of the last settle, sorted, each once.
     pub fn stood(&self) -> &[Chunk] {
         &self.stood
     }
@@ -43,7 +43,7 @@ impl Sleep {
     }
 }
 
-/// Wakes the chunks a player came within reach of and puts to sleep those every player left, with
+/// Wakes the chunks a character came within reach of and puts to sleep those every character left, with
 /// whatever walked or was put into a chunk asleep.
 pub fn settle(world: &mut World, players: &mut PlayerPositions, filed: &mut Filed) {
     let reach = world.resource::<Sleep>().reach;

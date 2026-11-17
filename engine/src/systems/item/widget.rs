@@ -2,16 +2,19 @@ use bevy::prelude::*;
 use ui::drag;
 use ui::egui;
 use ui::egui::{Color32, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
-use ui::{controls, ink, paint, sheet};
+use ui::{controls, ink, sheet};
 
 use crate::core::content::Content;
 use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
 use crate::core::math::ColorGradient;
 use crate::core::text::StyledLine;
+use crate::systems::equipment::UnequipRequest;
 use crate::systems::hud::{self, AmountQuestion, Carried};
 use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::item::inline::{self, InlineItem};
 use crate::systems::item::rarity::ItemRarityId;
+use crate::systems::item::transfer;
 use crate::systems::item::{
     DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, JoinStacksRequest,
     SplitStackRequest, card,
@@ -92,7 +95,7 @@ impl CarriedInputs {
         };
         let content = world.resource::<Content>();
         let map = world.resource::<InputMap>();
-        let takeovers = active_slot_actions(world);
+        let takeovers = takeovers(world);
         let free = |action| !shadowed(map, &takeovers, action);
         let carried = || inventory.slots.iter().map(|stack| stack.item.get(content));
         CarriedInputs {
@@ -104,7 +107,7 @@ impl CarriedInputs {
     }
 }
 
-pub fn pane_width(columns: u32) -> f32 {
+pub const fn pane_width(columns: u32) -> f32 {
     columns as f32 * SLOT + columns.saturating_sub(1) as f32 * SLOT_GAP
 }
 
@@ -112,31 +115,6 @@ pub struct InventoryPane<'a> {
     pub width: f32,
     /// A window that says how full the inventory is elsewhere leaves the heading out.
     pub heading: Option<&'a str>,
-}
-
-/// Stacks kept apart from the bag, shown slot by slot as the bag shows its own, and split as
-/// the bag's are.
-pub struct StackPane<'a> {
-    pub width: f32,
-    pub stacks: &'a [ItemStack],
-    /// How many slots it shows, filled or not.
-    pub slots: u32,
-    /// How a slot is named to whoever reads the interface.
-    pub named: &'a str,
-    /// What picking a stack does, as its hint says it: none where the pane is only to read.
-    pub pick: Option<&'static str>,
-    /// Splits this many off the stack at this index, into a stack of its own beside it, where the
-    /// pane's stacks split.
-    pub split: Option<fn(&mut World, usize, u32)>,
-}
-
-/// What the player did to the slots of a stack pane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StackPaneDone {
-    /// Picked the stack at this index.
-    Picked(usize),
-    /// Dropped what they carried from this slot of the bag onto the pane.
-    Dropped(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,7 +131,7 @@ impl InventoryRoom {
 
 pub fn inventory_pane(ui: &mut Ui, world: &mut World, pane: InventoryPane) {
     let cells = inventory_cells(world);
-    ui.allocate_ui_with_layout(
+    let shown = ui.allocate_ui_with_layout(
         Vec2::new(pane.width, 0.0),
         egui::Layout::top_down(egui::Align::Min),
         |ui| {
@@ -170,34 +148,25 @@ pub fn inventory_pane(ui: &mut Ui, world: &mut World, pane: InventoryPane) {
             });
         },
     );
+    if let Some(carried) = drag::dropped::<Carried>(&shown.response) {
+        dropped_on_bag(world, carried);
+    }
 }
 
-pub fn stack_pane(ui: &mut Ui, world: &mut World, pane: StackPane) -> Option<StackPaneDone> {
-    let mut picked = None;
-    let shown = ui
-        .allocate_ui_with_layout(
-            Vec2::new(pane.width, 0.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.set_width(pane.width);
-                ui.spacing_mut().item_spacing = Vec2::splat(SLOT_GAP);
-                ui.horizontal_wrapped(|ui| {
-                    for index in 0..pane.slots as usize {
-                        if apart_slot(ui, world, &pane, index) {
-                            picked = Some(index);
-                        }
-                    }
-                });
-            },
-        )
-        .response;
-    if let Some(index) = picked {
-        return Some(StackPaneDone::Picked(index));
-    }
-    match drag::dropped::<Carried>(&shown) {
-        Some(Carried::BagSlot(slot)) => Some(StackPaneDone::Dropped(slot)),
-        _ => None,
-    }
+/// What is left of the stack in the bag's slot `slot`, of what the windows open hold of it.
+pub(crate) fn bag_slot_left(world: &World, slot: u32) -> Option<ItemStack> {
+    let stack = *session::my_character(world)?
+        .get::<Inventory>()?
+        .slots
+        .get(slot as usize)?;
+    let aside: u32 = slot_asides(world)
+        .iter()
+        .map(|source| source(world, slot, stack))
+        .sum();
+    Some(ItemStack::new(
+        stack.item,
+        stack.count.saturating_sub(aside),
+    ))
 }
 
 pub fn inventory_room(world: &World) -> InventoryRoom {
@@ -244,7 +213,136 @@ impl SlotLook<'_> {
     };
 }
 
+/// The item tile: an item as a grid shows it, its icon in a slot edged and marked as its rarity
+/// is, with how many it holds where that is more than one. Pointing at it shows the item's
+/// tooltip, with the item's name, which the tile doesn't show, and clicking it opens the item's
+/// card, unless the view it stands in or the row it leads takes that click.
+pub(crate) struct ItemTile {
+    pub stack: ItemStack,
+    pub wanted: bool,
+    pub faded: bool,
+    pub refused: bool,
+    pub selected: bool,
+    /// Said under what the item is, in its tooltip.
+    pub notes: Vec<LineText>,
+    pub clicks: TileClicks,
+}
+
+/// Whose a click on an item tile is.
+pub(crate) enum TileClicks {
+    /// The tile's: it opens the item's card, and adds the item to chat when asked.
+    Card,
+    /// The view's, which answers the inputs `hint` names at the foot of the tooltip. The tile
+    /// still adds the item to chat when asked.
+    View { sense: Sense, hint: StyledLine },
+    /// The row's the tile leads, beside the item's name: the row takes the click, and the
+    /// tooltip leaves the name out.
+    Row,
+}
+
+impl ItemTile {
+    pub(crate) fn of(stack: ItemStack) -> ItemTile {
+        ItemTile {
+            stack,
+            wanted: false,
+            faded: false,
+            refused: false,
+            selected: false,
+            notes: Vec::new(),
+            clicks: TileClicks::Card,
+        }
+    }
+}
+
+pub(crate) fn item_tile(ui: &mut Ui, world: &mut World, tile: ItemTile) -> Response {
+    let content = world.resource::<Content>().clone();
+    let item = tile.stack.item;
+    let look = SlotLook {
+        wanted: tile.wanted,
+        faded: tile.faded,
+        refused: tile.refused,
+        selected: tile.selected,
+        ..SlotLook::tile(&content, tile.stack)
+    };
+    match tile.clicks {
+        TileClicks::Card => {
+            let response = slot(ui, world, look, Sense::click());
+            answer_tile(world, &response, item, tile.notes);
+            response
+        }
+        TileClicks::View { sense, hint } => {
+            let response = slot(ui, world, look, sense);
+            card::chat_shortcut(world, &response, &[item]);
+            card::tooltip_noted(world, &response, item, tile.notes, Some(&hint));
+            response
+        }
+        TileClicks::Row => {
+            let response = slot(ui, world, look, Sense::hover());
+            card::tooltip_beside_name(world, &response, item, tile.notes, None);
+            response
+        }
+    }
+}
+
+/// An item drawn where the game isn't at hand, as on a card the editor previews, left to answer
+/// the pointer once the game is.
+pub enum DrawnItem {
+    Inline(Response, InlineItem),
+    /// An item tile whose clicks are its own.
+    Tile(Response, ItemId),
+}
+
+/// Has each of `drawn` answer the pointer as its kind does: its tooltip, and its card to a click.
+pub fn answer_drawn(world: &mut World, drawn: Vec<DrawnItem>) {
+    for drawn in drawn {
+        match drawn {
+            DrawnItem::Inline(response, item) => {
+                inline::inspect(world, response, item);
+            }
+            DrawnItem::Tile(response, item) => answer_tile(world, &response, item, []),
+        }
+    }
+}
+
+/// Draws `stack` as an item tile whose clicks are its own, where the game isn't at hand, from the
+/// icons of `images`.
+pub fn draw_tile(
+    ui: &mut Ui,
+    images: &mut (impl ImageSource + ?Sized),
+    content: &Content,
+    stack: ItemStack,
+) -> DrawnItem {
+    let response = slot(ui, images, SlotLook::tile(content, stack), Sense::click());
+    DrawnItem::Tile(response, stack.item)
+}
+
+/// What a tile whose clicks are its own does to a pointer: opens the item's card to a click, adds
+/// the item to chat when asked, and shows its tooltip.
+fn answer_tile(
+    world: &mut World,
+    response: &Response,
+    item: ItemId,
+    notes: impl IntoIterator<Item = LineText>,
+) {
+    if map::clicked(world, InputAction::InspectItem, response) {
+        card::open(world, item, Some(response.rect));
+    }
+    card::chat_shortcut(world, response, &[item]);
+    let hint = StyledLine::new(card::inspect_hint());
+    card::tooltip_noted(world, response, item, notes, Some(&hint));
+}
+
 impl<'a> SlotLook<'a> {
+    /// A slot as an item tile shows `stack` in it: the item's icon, edged and marked as its
+    /// rarity is, how many where more than one, and the mark of a quest's item.
+    pub(crate) fn tile(content: &'a Content, stack: ItemStack) -> SlotLook<'a> {
+        SlotLook {
+            count: stack.count,
+            quest: stack.item.get(content).has(ItemModuleKind::QuestItem),
+            ..SlotLook::of(content, stack.item)
+        }
+    }
+
     /// A slot holding `item`: its icon, edged and marked as its rarity is.
     pub(crate) fn of(content: &'a Content, item: ItemId) -> SlotLook<'a> {
         let def = item.get(content);
@@ -305,28 +403,6 @@ pub(crate) fn slot_pip(
         let tint = Color32::from_white_alpha((look.ghost() * 255.0) as u8);
         controls::slot_pip(ui.painter(), rect, pip.texture, tint);
     }
-}
-
-/// An item's icon where it is listed beside its name rather than held in a slot, `size` across
-/// and edged in its rarity's colours as a slot that size would be.
-pub(crate) fn listed_icon(
-    ui: &mut Ui,
-    images: &mut (impl ImageSource + ?Sized),
-    content: &Content,
-    item: ItemId,
-    size: f32,
-) -> Response {
-    let response = hud::icon(ui, images, &item.get(content).icon, size);
-    let scale = size / controls::SLOT_ICON;
-    paint::gradient_edge(
-        ui.painter(),
-        response
-            .rect
-            .expand((SLOT - controls::SLOT_ICON) / 2.0 * scale),
-        controls::SLOT_EDGE * scale,
-        SlotRarity::of(content, item.get(content).rarity).colors(),
-    );
-    response
 }
 
 /// A slot as the bag draws one of an item of `rarity`, edged and marked as the rarity is, and
@@ -423,6 +499,12 @@ struct Filled {
     verdict: Option<SlotVerdict>,
 }
 
+const TRANSFERS: [InputAction; 3] = [
+    InputAction::PlaceStack,
+    InputAction::PlaceItem,
+    InputAction::SplitStack,
+];
+
 const BUILT_IN: [InputAction; 4] = [
     InputAction::DropItem,
     InputAction::SplitStack,
@@ -444,25 +526,40 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
     };
     let carried = drag::carried::<Carried>(ui.ctx()) == Some(Carried::BagSlot(cell.slot));
     let left = filled.stack.count.saturating_sub(filled.aside);
-    let look = SlotLook {
-        count: left,
+    let notes = filled
+        .notes
+        .iter()
+        .cloned()
+        .map(LineText::from)
+        .chain(verdict)
+        .collect();
+    let tile = ItemTile {
         wanted,
         faded: refused || carried || left == 0,
-        quest: def.has(ItemModuleKind::QuestItem),
-        ..SlotLook::of(&content, filled.stack.item)
+        notes,
+        clicks: TileClicks::View {
+            sense: Sense::click_and_drag(),
+            hint: StyledLine::new(map::hints(filled.hints.iter().cloned())),
+        },
+        ..ItemTile::of(ItemStack::new(filled.stack.item, left))
     };
-    let response = slot(ui, world, look, Sense::click_and_drag());
+    let response = item_tile(ui, world, tile);
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
             true,
-            format!("Inventory slot {}: {left} {}", cell.slot + 1, def.name),
+            format!(
+                "Inventory slot {}: {}",
+                cell.slot + 1,
+                described(left, filled.aside, &def.name)
+            ),
         )
     });
     let candidates: Vec<InputAction> = world
         .get_resource::<SlotActions>()
         .into_iter()
         .flat_map(|actions| actions.0.iter().map(|action| action.action))
+        .chain(TRANSFERS)
         .chain(BUILT_IN)
         .collect();
     let matched: Vec<InputAction> = candidates
@@ -476,73 +573,16 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
     if map::drag_started(world, InputAction::CarryItem, &response) {
         drag::carry(ui.ctx(), Carried::BagSlot(cell.slot));
     }
-    if let Some(Carried::BagSlot(from)) = drag::dropped::<Carried>(&response)
-        && from != cell.slot
-    {
-        world.write_message(JoinStacksRequest {
-            from,
-            onto: cell.slot,
-        });
+    match drag::dropped::<Carried>(&response) {
+        Some(Carried::BagSlot(from)) if from != cell.slot => {
+            world.write_message(JoinStacksRequest {
+                from,
+                onto: cell.slot,
+            });
+        }
+        Some(carried) => dropped_on_bag(world, carried),
+        None => {}
     }
-    let notes = filled
-        .notes
-        .iter()
-        .cloned()
-        .map(LineText::from)
-        .chain(verdict);
-    let hint = StyledLine::new(map::hints(filled.hints.iter().cloned()));
-    card::chat_shortcut(world, &response, &[filled.stack.item]);
-    card::tooltip_noted(world, &response, filled.stack.item, notes, Some(&hint));
-}
-
-/// The slot at `index` of a stack pane. Whether its stack was picked.
-fn apart_slot(ui: &mut Ui, world: &mut World, pane: &StackPane, index: usize) -> bool {
-    let Some(&stack) = pane.stacks.get(index) else {
-        slot(ui, world, SlotLook::EMPTY, Sense::hover())
-            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Empty slot"));
-        return false;
-    };
-    let content = world.resource::<Content>().clone();
-    let def = stack.item.get(&content);
-    let look = SlotLook {
-        count: stack.count,
-        quest: def.has(ItemModuleKind::QuestItem),
-        ..SlotLook::of(&content, stack.item)
-    };
-    let response = slot(ui, world, look, Sense::click());
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            true,
-            format!("{}: {} {}", pane.named, stack.count, def.name),
-        )
-    });
-    let split = pane.split.filter(|_| stack.count > 1);
-    if let Some(split) = split
-        && map::clicked(world, InputAction::SplitStack, &response)
-    {
-        ask_split(world, stack, move |world, count| split(world, index, count));
-    } else if map::clicked(world, InputAction::InspectItem, &response) {
-        card::open(world, stack.item, Some(response.rect));
-    }
-    let picks = pane
-        .pick
-        .map(|pick| (InputAction::Select, format!(" to {pick}")));
-    let splits = split.map(|_| (InputAction::SplitStack, SPLITS.to_owned()));
-    let hints = picks.into_iter().chain(splits).chain([
-        (InputAction::InspectItem, INSPECTS.to_owned()),
-        (InputAction::AddToChat, CHATS.to_owned()),
-    ]);
-    let hint = StyledLine::new(map::hints(hints));
-    card::chat_shortcut(world, &response, &[stack.item]);
-    card::tooltip_noted(
-        world,
-        &response,
-        stack.item,
-        slot_notes(world, stack).into_iter().map(LineText::from),
-        Some(&hint),
-    );
-    pane.pick.is_some() && map::clicked(world, InputAction::Select, &response)
 }
 
 /// Asks how many of `stack` to split off, and hands `split` the answer.
@@ -584,11 +624,8 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
         .get_resource::<SlotVerdicts>()
         .map(|verdicts| verdicts.0.as_slice())
         .unwrap_or_default();
-    let asides = world
-        .get_resource::<SlotAsides>()
-        .map(|asides| asides.0.as_slice())
-        .unwrap_or_default();
-    let takeovers = active_slot_actions(world);
+    let asides = slot_asides(world);
+    let takeovers = takeovers(world);
     let map = world.resource::<InputMap>();
     (0..max)
         .map(|slot| CellData {
@@ -610,6 +647,24 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
         .collect()
 }
 
+/// Takes back into the bag what was carried onto it from elsewhere: what is worn, and what was
+/// moved into a window.
+fn dropped_on_bag(world: &mut World, carried: Carried) {
+    match carried {
+        Carried::Worn(slot) => {
+            world.write_message(UnequipRequest { slot });
+        }
+        carried => transfer::dropped_on_bag(world, &carried),
+    }
+}
+
+fn slot_asides(world: &World) -> &[SlotAsideSource] {
+    world
+        .get_resource::<SlotAsides>()
+        .map(|asides| asides.0.as_slice())
+        .unwrap_or_default()
+}
+
 fn bound_note(def: &ItemDef) -> Option<String> {
     def.has(ItemModuleKind::Bound)
         .then(|| "bound · can't be sold or dropped".to_owned())
@@ -618,6 +673,12 @@ fn bound_note(def: &ItemDef) -> Option<String> {
 /// Does what the inputs `matched` ask of the bag's slot `slot`, where `held` is what is left
 /// in it of what is set aside elsewhere: nothing but a look at the item, when that is none.
 fn act(world: &mut World, slot: u32, held: ItemStack, matched: &[InputAction], at: Rect) {
+    if let Some(open) = transfer::open(world)
+        && let Some(&action) = matched.iter().find(|action| TRANSFERS.contains(action))
+        && transfer::from_bag(world, open, slot, held, action)
+    {
+        return;
+    }
     let takeover = active_slot_actions(world)
         .into_iter()
         .find(|takeover| matched.contains(&takeover.action));
@@ -655,11 +716,24 @@ fn active_slot_actions(world: &World) -> Vec<SlotAction> {
         .unwrap_or_default()
 }
 
+/// The inputs something takes inventory slots over for right now, each with what it does: the
+/// window items move into, and what else asks for the slots.
+fn takeovers(world: &World) -> Vec<(InputAction, String)> {
+    let moves = transfer::open(world)
+        .map(|open| transfer::bag_moves(&open))
+        .into_iter()
+        .flatten();
+    let others = active_slot_actions(world)
+        .into_iter()
+        .map(|takeover| (takeover.action, format!(" to {}", takeover.verb)));
+    moves.chain(others).collect()
+}
+
 /// Whether something that takes inventory slots over right now answers a binding of `action`,
 /// which then does nothing of its own.
-fn shadowed(map: &InputMap, takeovers: &[SlotAction], action: InputAction) -> bool {
-    takeovers.iter().any(|takeover| {
-        map.bindings(takeover.action)
+fn shadowed(map: &InputMap, takeovers: &[(InputAction, String)], action: InputAction) -> bool {
+    takeovers.iter().any(|(takeover, _)| {
+        map.bindings(*takeover)
             .iter()
             .any(|binding| map.bindings(action).contains(binding))
     })
@@ -667,7 +741,7 @@ fn shadowed(map: &InputMap, takeovers: &[SlotAction], action: InputAction) -> bo
 
 fn hints(
     map: &InputMap,
-    takeovers: &[SlotAction],
+    takeovers: &[(InputAction, String)],
     def: &ItemDef,
     held: u32,
 ) -> Vec<(InputAction, String)> {
@@ -680,7 +754,7 @@ fn hints(
         .then(|| (InputAction::SplitStack, SPLITS.to_owned()));
     takeovers
         .iter()
-        .map(|takeover| (takeover.action, format!(" to {}", takeover.verb)))
+        .cloned()
         .chain(inspect)
         .chain(usage)
         .chain(splits)
@@ -691,3 +765,13 @@ fn hints(
 const INSPECTS: &str = " for more information";
 const SPLITS: &str = " to split the stack";
 const CHATS: &str = " to add it to chat";
+
+/// What a slot holds as its label tells it: the count still in the bag, and how much of the stack
+/// the window it shows in has set aside.
+fn described(left: u32, aside: u32, name: &str) -> String {
+    match (left, aside) {
+        (_, 0) => format!("{left} {name}"),
+        (0, _) => format!("{name}, all set aside"),
+        _ => format!("{left} {name}, {aside} more set aside"),
+    }
+}

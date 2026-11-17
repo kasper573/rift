@@ -4,166 +4,70 @@
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::controls::{self, Pill};
-use ui::egui::{self, Align, Layout, Pos2, Rect, Ui};
+use ui::controls;
+use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, UiBuilder, Vec2};
 use ui::face::TextRole;
-use ui::{dialog, face, ink, sheet};
+use ui::{ink, sheet};
 
 use super::{TradeRequest, TradeView};
 use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
-use crate::systems::actor::Name;
-use crate::systems::hud::{self, AmountQuestion, HudWidget};
-use crate::systems::input::map::{InputAction, InputMap};
+use crate::systems::hud::{self, Sizing, WindowFrame};
+use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, item_transfer};
+use crate::systems::item::tray;
 use crate::systems::item::widget::{
-    InventoryPane, SlotAction, SlotVerdict, StackPane, StackPaneDone, inventory_pane, pane_width,
-    slot_action, slot_aside_source, slot_verdict_source, stack_pane,
+    InventoryPane, SlotVerdict, inventory_pane, pane_width, slot_verdict_source,
 };
 use crate::systems::item::{Inventory, ItemId, ItemStack};
-use crate::systems::mention::Mention;
 use crate::systems::player::session;
+use crate::systems::settings::Placed;
 use crate::systems::text::LineText;
 
-pub const TRADE_WINDOW: &str = "trade_window";
+pub const WINDOW_KEY: &str = "trade_window";
 
 pub(crate) fn plugin(app: &mut App) {
     slot_verdict_source(app, verdict);
-    slot_aside_source(app, aside);
-    slot_action(
-        app,
-        SlotAction {
-            action: InputAction::Select,
-            active: trading,
-            act: offer_all,
-            verb: "offer it",
-        },
-    );
-    slot_action(
-        app,
-        SlotAction {
-            action: InputAction::SplitStack,
-            active: trading,
-            act: offer_some,
-            verb: "offer some of it",
-        },
-    );
+    item_transfer(app, TRANSFER);
 }
 
-/// The trade window, open while the player trades.
-pub struct TradeWindowWidget;
-
-impl HudWidget for TradeWindowWidget {
-    fn fallback(&self, _: &World, screen: Rect) -> Pos2 {
-        Pos2::new(screen.center().x - width() / 2.0, screen.top() + 120.0)
-    }
-
-    fn hidden(&self, world: &World) -> bool {
-        view(world).is_none()
-    }
-
-    fn show(&self, ui: &mut Ui, world: &mut World) -> Option<Rect> {
-        let shown = view(world)?.clone();
-        let now = time::server_now(world)?;
-        let content = world.resource::<Content>().clone();
-        let mut asked = None;
-        dialog::note(ui, width(), |ui| {
-            ui.label(face::bold(format!("Trading with {}", shown.with)));
-            if let Some(changed) = &shown.changed {
-                ui.add_space(4.0);
-                ui.horizontal_wrapped(|ui| {
-                    controls::pill(ui, "Changed", Pill::Gold);
-                    let cleared = if changed.cleared {
-                        " Both accepts were cleared."
-                    } else {
-                        ""
-                    };
-                    let said = format!("{} changed the offer.{cleared}", shown.with);
-                    ui.label(face::body(said));
-                });
-            }
-            ui.add_space(4.0);
-            ui.horizontal_top(|ui| {
-                ui.vertical(|ui| {
-                    ui.set_width(pane());
-                    sheet::section(ui, "Inventory");
-                    egui::ScrollArea::vertical()
-                        .id_salt("trade bag")
-                        .max_height(pane_width(BAG_ROWS))
-                        .show(ui, |ui| {
-                            let pane = InventoryPane {
-                                width: pane(),
-                                heading: None,
-                            };
-                            inventory_pane(ui, world, pane);
-                        });
-                });
-                ui.add_space(GUTTER);
-                ui.vertical(|ui| {
-                    ui.set_width(pane());
-                    sheet::section(ui, "You give");
-                    let pane = StackPane {
-                        width: pane(),
-                        stacks: &shown.mine,
-                        slots: slots(world),
-                        named: "You give",
-                        pick: Some("take it back"),
-                        split: None,
-                    };
-                    match stack_pane(ui, world, pane) {
-                        Some(StackPaneDone::Picked(index)) => {
-                            asked = shown.mine.get(index).copied().map(TradeRequest::Withdraw);
-                        }
-                        Some(StackPaneDone::Dropped(slot)) => asked = offer_of(world, slot),
-                        None => {}
-                    }
-                    listed(ui, &content, &shown.mine, &[], &[]);
-                });
-                ui.add_space(GUTTER);
-                ui.vertical(|ui| {
-                    ui.set_width(pane());
-                    sheet::section(ui, &format!("{} gives", shown.with));
-                    let pane = StackPane {
-                        width: pane(),
-                        stacks: &shown.theirs,
-                        slots: slots(world),
-                        named: "They give",
-                        pick: None,
-                        split: None,
-                    };
-                    stack_pane(ui, world, pane);
-                    let (added, removed) = shown
-                        .changed
-                        .as_ref()
-                        .map(|changed| (changed.added.as_slice(), changed.removed.as_slice()))
-                        .unwrap_or_default();
-                    listed(ui, &content, &shown.theirs, added, removed);
-                });
-            });
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if let Some(request) = accept_button(ui, &shown, now) {
-                        asked = Some(request);
-                    }
-                    let keys = world.resource::<InputMap>();
-                    let esc = keys.cap(InputAction::Dismiss);
-                    if controls::keyed(ui, "Cancel", esc.as_ref(), true).clicked() {
-                        asked = Some(TradeRequest::Cancel);
-                    }
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        let me = my_name(world);
-                        accepts(ui, &me, shown.i_accept);
-                        ui.label(face::body("·").color(ink::INK3));
-                        accepts(ui, &shown.with, shown.they_accept);
-                    });
-                });
-            });
-        });
-        if let Some(asked) = asked {
-            world.write_message(asked);
+/// The trade window: a sheet that is up while the player trades. Closing it cancels the trade.
+pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
+    let trading = view(world).cloned();
+    let Some(pose) = hud::sheet_pose(world, gui, WINDOW_KEY, trading.is_some()) else {
+        return;
+    };
+    let Some(shown) = hud::lifting(world, trading.clone()) else {
+        return;
+    };
+    let Some(now) = time::server_now(world) else {
+        return;
+    };
+    let title = format!("Trading with {}", shown.with);
+    let screen = gui.content_rect();
+    let size = sheet::titled_size(Vec2::new(width() + 2.0 * sheet::PANE_PAD.x, BODY_HEIGHT));
+    let frame = WindowFrame {
+        key: WINDOW_KEY,
+        of: Placed::Trade,
+        title: Some(&title),
+        start: Rect::from_min_size(
+            Pos2::new(screen.center().x - size.x / 2.0, screen.top() + 120.0),
+            size,
+        ),
+        sizing: Sizing::Fixed,
+    };
+    let mut stays = trading.is_some();
+    let mut asked = None;
+    hud::window(world, gui, frame, pose, &mut stays, |ui, world| {
+        if trading.is_none() {
+            ui.disable();
         }
-        None
+        asked = body(ui, world, &shown, now);
+    });
+    if trading.is_some() && !stays {
+        asked = Some(TradeRequest::Cancel);
+    }
+    if let Some(asked) = asked {
+        world.write_message(asked);
     }
 }
 
@@ -182,61 +86,133 @@ pub struct ShownTrade {
     pub with: String,
     pub mine: Vec<ShownTradeStack>,
     pub theirs: Vec<ShownTradeStack>,
-    /// What the other player gave before of each item they now give less of.
-    pub removed: Vec<ShownTradeStack>,
     pub i_accept: bool,
     pub they_accept: bool,
     /// Whether Accept is open now.
     pub accept_open: bool,
+    /// The sentence above Accept that says where the trade stands.
+    pub status: String,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ShownTradeStack {
     pub item: ItemId,
     pub count: u32,
-    /// Whether the other player's latest change gave more of it.
-    pub new: bool,
 }
 
 pub fn shown(world: &World) -> Option<ShownTrade> {
     let view = view(world)?;
     let now = time::server_now(world)?;
-    let (added, removed) = view
-        .changed
-        .as_ref()
-        .map(|changed| (changed.added.clone(), changed.removed.clone()))
-        .unwrap_or_default();
-    let stacks = |stacks: &[ItemStack], new: &[ItemId]| {
+    let stacks = |stacks: &[ItemStack]| {
         stacks
             .iter()
             .map(|stack| ShownTradeStack {
                 item: stack.item,
                 count: stack.count,
-                new: new.contains(&stack.item),
             })
             .collect()
     };
     Some(ShownTrade {
         with: view.with.clone(),
-        mine: stacks(&view.mine, &[]),
-        theirs: stacks(&view.theirs, &added),
-        removed: stacks(&removed, &[]),
+        mine: stacks(&view.mine),
+        theirs: stacks(&view.theirs),
         i_accept: view.i_accept,
         they_accept: view.they_accept,
         accept_open: !view.i_accept && view.open_at(now),
+        status: status(view, now),
     })
 }
 
+/// What the trade window holds: the bag and both offers side by side, and under them where the
+/// trade stands and the button that accepts it.
+fn body(
+    ui: &mut Ui,
+    world: &mut World,
+    shown: &TradeView,
+    now: UnixMillis,
+) -> Option<TradeRequest> {
+    let mut asked = None;
+    let room = ui.available_rect_before_wrap().shrink2(sheet::PANE_PAD);
+    let bar = Rect::from_min_max(Pos2::new(room.min.x, room.max.y - BAR_HEIGHT), room.max);
+    let panes = Rect::from_min_max(room.min, Pos2::new(room.max.x, bar.min.y));
+    let ([bag_at, mine_at], theirs_at) = sheet::spaced_columns(panes, [pane(), pane()]);
+    ui.scope_builder(column(bag_at), |ui| {
+        sheet::section(ui, "Inventory");
+        let room = ui.available_rect_before_wrap();
+        sheet::scroll_pane(
+            ui,
+            sheet::Pane::bare(room),
+            egui::ScrollArea::vertical().id_salt("trade bag"),
+            |ui| {
+                let pane = InventoryPane {
+                    width: ui.available_width(),
+                    heading: None,
+                };
+                inventory_pane(ui, world, pane);
+            },
+        );
+    });
+    ui.scope_builder(column(mine_at), |ui| {
+        sheet::section(ui, "You give");
+        let mine = placed(&shown.mine);
+        let pane = TransferPane {
+            placed: &mine,
+            slots: slots(world),
+            named: "You give",
+            transfer: Some(TRANSFER),
+        };
+        transfer::transfer_pane(ui, world, pane);
+    });
+    ui.scope_builder(column(theirs_at), |ui| {
+        sheet::section(ui, &format!("{} gives", shown.with));
+        let theirs = placed(&shown.theirs);
+        let pane = TransferPane {
+            placed: &theirs,
+            slots: slots(world),
+            named: "They give",
+            transfer: None,
+        };
+        transfer::transfer_pane(ui, world, pane);
+    });
+    ui.painter()
+        .hline(bar.x_range(), bar.min.y, sheet::rule_stroke());
+    let centered = UiBuilder::new()
+        .max_rect(bar.shrink2(Vec2::new(0.0, BAR_GAP)))
+        .layout(Layout::top_down(Align::Center));
+    ui.scope_builder(centered, |ui| {
+        sheet::label(ui, TextRole::Body, &status(shown, now), ink::INK2);
+        ui.add_space(BAR_GAP);
+        if let Some(request) = accept_button(ui, shown, now) {
+            asked = Some(request);
+        }
+    });
+    ui.advance_cursor_after_rect(room);
+    asked
+}
+
+fn column(rect: Rect) -> UiBuilder {
+    UiBuilder::new()
+        .max_rect(rect)
+        .layout(Layout::top_down(Align::Min))
+}
+
 const COLUMNS: u32 = 4;
+/// The room under the panes: a line of where the trade stands and Accept, each as tall as a
+/// control, with gaps around them.
+const BAR_HEIGHT: f32 = 3.0 * BAR_GAP + 2.0 * controls::CONTROL_HEIGHT;
+const BAR_GAP: f32 = 8.0;
+/// The most room a section heading takes: the space above it and a control's height.
+const HEADING: f32 = 6.0 + controls::CONTROL_HEIGHT;
+/// How many rows of the bag show before it scrolls.
 const BAG_ROWS: u32 = 3;
-const GUTTER: f32 = 24.0;
+const BODY_HEIGHT: f32 = 2.0 * sheet::PANE_PAD.y + HEADING + pane_width(BAG_ROWS) + BAR_HEIGHT;
 
 fn pane() -> f32 {
     pane_width(COLUMNS)
 }
 
 fn width() -> f32 {
-    3.0 * pane() + 2.0 * GUTTER
+    3.0 * pane() + 2.0 * sheet::GUTTER
 }
 
 fn view(world: &World) -> Option<&TradeView> {
@@ -254,46 +230,21 @@ fn slots(world: &World) -> u32 {
         .map_or(0, |settings| settings.slots)
 }
 
-fn my_name(world: &World) -> String {
-    session::my_character(world)
-        .and_then(|me| me.get::<Name>())
-        .map(|name| name.name.clone())
-        .unwrap_or_default()
-}
-
-/// The stacks a side gives, each with its count written out: those the latest change gave more
-/// of marked new, and what it took away struck through.
-fn listed(
-    ui: &mut Ui,
-    content: &Content,
-    stacks: &[ItemStack],
-    new: &[ItemId],
-    gone: &[ItemStack],
-) {
-    ui.add_space(4.0);
-    for stack in stacks {
-        ui.horizontal(|ui| {
-            ui.label(face::body(stack.describe(content)));
-            if new.contains(&stack.item) {
-                controls::pill(ui, "New", Pill::Azure);
-            }
-        });
+/// Where the trade stands, in one sentence.
+fn status(shown: &TradeView, now: UnixMillis) -> String {
+    let with = &shown.with;
+    if shown.mine.is_empty() && shown.theirs.is_empty() {
+        return "Neither of you offers anything yet.".to_owned();
     }
-    for stack in gone {
-        ui.label(
-            face::body(stack.describe(content))
-                .strikethrough()
-                .color(ink::INK3),
-        );
+    if now < shown.opens {
+        let left = shown.opens.since(now).0.ceil().max(1.0);
+        return format!("The offer just changed, so Accept opens in {left} s.");
     }
-}
-
-fn accepts(ui: &mut Ui, name: &str, accepted: bool) {
-    ui.label(face::body(format!("{name}:")));
-    if accepted {
-        ui.label(face::bold("Accepted").color(ink::VERDIGRIS));
-    } else {
-        ui.label(face::bold("Not yet"));
+    match (shown.i_accept, shown.they_accept) {
+        (false, false) => "Neither of you has accepted the trade yet.".to_owned(),
+        (false, true) => format!("{with} has accepted the trade. Awaiting your approval."),
+        (true, false) => format!("You have accepted the trade. Awaiting {with}'s approval."),
+        (true, true) => "You have both accepted the trade.".to_owned(),
     }
 }
 
@@ -310,92 +261,63 @@ fn accept_button(ui: &mut Ui, shown: &TradeView, now: UnixMillis) -> Option<Trad
             .clicked()
             .then_some(TradeRequest::Accept(shown.version));
     }
-    let offered = !shown.mine.is_empty() || !shown.theirs.is_empty();
-    let label = if offered && now < shown.opens {
-        let left = shown.opens.since(now).0.ceil().max(1.0);
-        format!("Accept in {left}")
-    } else {
-        "Accept".to_owned()
-    };
-    controls::faded(ui, label);
-    if !offered {
-        sheet::label(ui, TextRole::Small, "Offer something to trade.", ink::INK3);
-    }
+    controls::faded(ui, "Accept");
     None
 }
 
-/// What the player offers of the bag's slot `slot`: all of it that is not offered yet.
-fn offer_of(world: &World, slot: u32) -> Option<TradeRequest> {
-    let held = session::my_character(world)?
-        .get::<Inventory>()?
-        .slots
-        .get(slot as usize)
-        .copied()?;
-    let left = held.count.saturating_sub(aside(world, slot, held));
-    (left > 0).then(|| TradeRequest::Offer(ItemStack::new(held.item, left)))
-}
+/// The player's side of the trade as a window items move into.
+const TRANSFER: ItemTransfer = ItemTransfer {
+    key: "trade",
+    open: trading,
+    verb: "offer",
+    put: offer,
+    take: withdraw,
+    aside,
+};
 
-fn offer_all(world: &mut World, slot: u32) {
-    if let Some(offer) = offer_of(world, slot) {
-        world.write_message(offer);
+/// Offers `count` of the bag's slot `slot`.
+fn offer(world: &mut World, slot: u32, count: u32) -> bool {
+    let Some(held) = session::my_character(world)
+        .and_then(|me| me.get::<Inventory>())
+        .and_then(|bag| bag.slots.get(slot as usize).copied())
+    else {
+        return false;
+    };
+    if held.item.get(world.resource::<Content>()).bound() {
+        return false;
     }
+    world.write_message(TradeRequest::Offer(ItemStack::new(held.item, count)));
+    true
 }
 
-/// Asks how many of what is left in the bag's slot `slot` to offer, and offers that many.
-fn offer_some(world: &mut World, slot: u32) {
-    let Some(TradeRequest::Offer(left)) = offer_of(world, slot) else {
-        return;
+/// Takes `count` of the stack at `index` of the player's offer back.
+fn withdraw(world: &mut World, index: usize, count: u32) -> bool {
+    let Some(offered) = view(world).and_then(|view| view.mine.get(index).copied()) else {
+        return false;
     };
-    if left.count < 2 {
-        world.write_message(TradeRequest::Offer(left));
-        return;
-    }
-    let named = Mention::Item(left.item).span(world.resource::<Content>());
-    hud::ask_amount(
-        world,
-        AmountQuestion {
-            title: LineText::plain("Offer how many ").then(named),
-            amounts: 1..=left.count,
-            suggested: left.count / 2,
-            says: Box::new(move |count| format!("{count} of {}", left.count)),
-            answer: Box::new(move |world, count| {
-                if let Some(count) = count {
-                    world.write_message(TradeRequest::Offer(ItemStack::new(left.item, count)));
-                }
-            }),
-        },
-    );
+    world.write_message(TradeRequest::Withdraw(ItemStack::new(offered.item, count)));
+    true
 }
 
-/// How many of the stack in the bag's slot `slot` are offered: an item's offer is counted out of
-/// its slots in the bag's order.
-fn aside(world: &World, slot: u32, _: ItemStack) -> u32 {
-    let Some(view) = view(world) else {
-        return 0;
-    };
-    let Some(bag) = session::my_character(world).and_then(|me| me.get::<Inventory>()) else {
-        return 0;
-    };
-    let Some(held) = bag.slots.get(slot as usize) else {
-        return 0;
-    };
-    let mut left: u32 = view
-        .mine
+fn placed(stacks: &[ItemStack]) -> Vec<tray::Placed> {
+    stacks
         .iter()
-        .filter(|offered| offered.item == held.item)
-        .map(|offered| offered.count)
-        .sum();
-    for (index, stack) in bag.slots.iter().enumerate() {
-        if stack.item != held.item {
-            continue;
-        }
-        let taken = left.min(stack.count);
-        if index == slot as usize {
-            return taken;
-        }
-        left -= taken;
-    }
-    0
+        .map(|&stack| tray::Placed {
+            stack,
+            short: false,
+        })
+        .collect()
+}
+
+/// How many of the stack in the bag's slot `slot` are offered.
+fn aside(world: &World, slot: u32, _: ItemStack) -> u32 {
+    let (Some(view), Some(bag)) = (
+        view(world),
+        session::my_character(world).and_then(|me| me.get::<Inventory>()),
+    ) else {
+        return 0;
+    };
+    bag.taken_from(slot, &view.mine)
 }
 
 fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
