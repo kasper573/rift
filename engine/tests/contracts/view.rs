@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::iter;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
@@ -597,11 +597,7 @@ fn a_body_wears_the_paint_its_material_bakes_from_the_games_images() {
                 })
             })
     };
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !worn(&app) && Instant::now() < deadline {
-        app.update();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    testkit::until(&mut app, |app| worn(app));
     assert!(worn(&app), "the body's texture is painted in its cloth");
 }
 
@@ -631,11 +627,7 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
     app.world_mut()
         .run_system_cached(render::dress)
         .expect("dressed");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while joint(&mut app, "hand.r").is_none() && Instant::now() < deadline {
-        app.update();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    testkit::until(&mut app, |app| joint(app, "hand.r").is_some());
     app.world_mut()
         .run_system_cached(render::hang)
         .expect("hung");
@@ -693,22 +685,17 @@ fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
 
     let held = testkit::rig().nodes[1].rest.translation.y + PLACEHOLDER_LIFT.0;
     let mut shown = None;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        app.update();
+    testkit::until(&mut app, |app| {
         app.world_mut()
             .run_system_cached(render::pose)
             .expect("posed");
-        shown = joint(&mut app, "body").and_then(|body| {
+        shown = joint(app, "body").and_then(|body| {
             app.world()
                 .get::<Transform>(body)
                 .map(|at| at.translation.y)
         });
-        if shown.is_some_and(|y| (y - held).abs() < 1e-3) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
+        shown.is_some_and(|y| (y - held).abs() < 1e-3)
+    });
     assert_eq!(
         shown.map(|y| (y * 1000.0).round() / 1000.0),
         Some(held),
@@ -761,11 +748,7 @@ fn a_body_holding_an_item_closes_its_hand_as_the_clasp_poses_it_and_carries_it_a
     app.world_mut()
         .run_system_cached(render::dress)
         .expect("dressed");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while joint(&mut app, "finger.r").is_none() && Instant::now() < deadline {
-        app.update();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    testkit::until(&mut app, |app| joint(app, "finger.r").is_some());
     let finger = joint(&mut app, "finger.r").expect("the rig stands");
     let arm = joint(&mut app, "hand.l").expect("the rig stands");
     let held_as = |app: &mut App, held: Held, fingers: Quat, carried: Quat| {
@@ -773,26 +756,21 @@ fn a_body_holding_an_item_closes_its_hand_as_the_clasp_poses_it_and_carries_it_a
         app.world_mut()
             .run_system_cached(render::hang)
             .expect("hung");
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
+        let mut shown = (Quat::IDENTITY, Quat::IDENTITY);
+        testkit::until(app, |app| {
             app.world_mut()
                 .run_system_cached(render::pose)
                 .expect("posed");
-            app.update();
             let turn = |joint| {
                 app.world()
                     .get::<Transform>(joint)
                     .map(|at| at.rotation)
                     .expect("a joint")
             };
-            let shown = (turn(finger), turn(arm));
-            let there =
-                shown.0.angle_between(fingers) < 0.01 && shown.1.angle_between(carried) < 0.01;
-            if there || Instant::now() > deadline {
-                return shown;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
+            shown = (turn(finger), turn(arm));
+            shown.0.angle_between(fingers) < 0.01 && shown.1.angle_between(carried) < 0.01
+        });
+        shown
     };
     let holding = |item| Held {
         hands: BTreeMap::from([(HandIndex::MAIN, item)]),
@@ -931,11 +909,7 @@ fn a_prop_strapped_to_the_arm_turns_with_the_arm_and_the_hand_holding_it_as_its_
         app.world_mut()
             .run_system_cached(render::dress)
             .expect("dressed");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while joint(&mut app, "body").is_none() && Instant::now() < deadline {
-            app.update();
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        testkit::until(&mut app, |app| joint(app, "body").is_some());
         let arm = joint(&mut app, "body").expect("the rig stands");
         let mut held_as = |item, on_the_arm: Mat4| {
             app.world_mut().entity_mut(body).insert(Held {
@@ -944,19 +918,17 @@ fn a_prop_strapped_to_the_arm_turns_with_the_arm_and_the_hand_holding_it_as_its_
             app.world_mut()
                 .run_system_cached(render::hang)
                 .expect("hung");
-            let deadline = Instant::now() + Duration::from_secs(3);
-            loop {
+            let mut shown = None;
+            testkit::until(&mut app, |app| {
                 app.world_mut()
                     .run_system_cached(render::pose)
                     .expect("posed");
-                app.update();
-                let (placed, in_hand) = prop_under(&mut app, arm).expect("a prop in the hand");
+                let (placed, in_hand) = prop_under(app, arm).expect("a prop in the hand");
                 let wanted = on_the_arm * in_hand;
-                if placed.abs_diff_eq(wanted, 1.0e-2) || Instant::now() > deadline {
-                    return (placed, wanted);
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
+                shown = Some((placed, wanted));
+                placed.abs_diff_eq(wanted, 1.0e-2)
+            });
+            shown.expect("a prop in the hand")
         };
 
         let (placed, wanted) = held_as(sword, on_the_arm(&gripped));
@@ -1333,11 +1305,7 @@ fn bodies_begin_a_loop_in_step_or_each_anywhere_in_it_as_their_skeleton_has_them
                 })
                 .collect()
         };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while frame(&mut app).is_none() {
-            assert!(Instant::now() < deadline, "every body shows its idle");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        testkit::until(&mut app, |app| frame(app).is_some());
         let frames = 2 * CLIP.0 as usize / 10;
         let apart = (0..frames).any(|_| {
             let picks = frame(&mut app).expect("every body shows its idle");

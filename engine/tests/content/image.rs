@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use bevy::asset::{AssetPlugin, AssetServer, LoadState};
 use bevy::image::{Image, ImageLoaderSettings};
 use bevy::prelude::*;
@@ -28,8 +26,7 @@ fn a_png_loads_as_an_rgba_image_of_its_size_in_srgb_unless_asked_for_linear_ligh
         .load_builder()
         .with_settings(|settings: &mut ImageLoaderSettings| settings.is_srgb = false)
         .load("mask.png");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while app.world().resource::<Assets<Image>>().len() < 2 && Instant::now() < deadline {
+    testkit::until(&mut app, |app| {
         let assets = app.world().resource::<AssetServer>();
         for handle in [&face, &mask] {
             assert!(
@@ -38,9 +35,8 @@ fn a_png_loads_as_an_rgba_image_of_its_size_in_srgb_unless_asked_for_linear_ligh
                 assets.load_state(handle)
             );
         }
-        app.update();
-        std::thread::sleep(Duration::from_millis(5));
-    }
+        app.world().resource::<Assets<Image>>().len() >= 2
+    });
     let images = app.world().resource::<Assets<Image>>();
     for (handle, format) in [
         (&face, TextureFormat::Rgba8UnormSrgb),

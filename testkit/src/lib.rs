@@ -12,6 +12,7 @@ mod players;
 mod script;
 mod sim;
 mod talk;
+mod wait;
 
 pub use art::{
     box_glb, glb, glb_naming_image, glb_of, glb_with_image_inside, library_glb, png, pose_glb, rig,
@@ -25,3 +26,4 @@ pub use game::{
 pub use players::confer;
 pub use script::{dialogue, hunting, said};
 pub use sim::{Sim, drawn_seed, sent};
+pub use wait::until;

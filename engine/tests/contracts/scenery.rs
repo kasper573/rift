@@ -2,7 +2,6 @@ use engine::systems::area::stages::COVER;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
@@ -118,13 +117,10 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
     .insert_resource(content);
     app.finish();
     app.cleanup();
-    assert!(
-        settle(&mut app, |app| {
-            let world = app.world();
-            scenery::shaders_ready(world, world.resource::<Content>(), &area)
-        }),
-        "the shaders compile"
-    );
+    settle(&mut app, |app| {
+        let world = app.world();
+        scenery::shaders_ready(world, world.resource::<Content>(), &area)
+    });
     (app, area)
 }
 
@@ -141,40 +137,23 @@ fn stand(app: &mut App, area: &Arc<Area>) -> scenery::Scenery {
             10.0,
         ),
     );
-    assert!(
-        settle(app, |app| {
-            !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-        }),
-        "the scenery stands whole"
-    );
+    settle(app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    });
     stood
 }
 
 fn clear(app: &mut App, stood: scenery::Scenery, to: &Held) {
     scenery::despawn(app.world_mut(), stood);
-    assert!(
-        settle(app, |app| held(app) == *to),
-        "clearing the scenery leaves {:?} where {to:?} was",
-        held(app)
-    );
+    settle(app, |app| held(app) == *to);
 }
 
-/// Steps the world until `done`, then a few frames more for what follows from it; false when it
-/// never is.
-fn settle(app: &mut App, done: impl Fn(&mut App) -> bool) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    app.update();
-    while !done(app) {
-        if Instant::now() > deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-        app.update();
-    }
+/// Steps the world until `done`, then a few frames more for what follows from it.
+fn settle(app: &mut App, done: impl FnMut(&mut App) -> bool) {
+    testkit::until(app, done);
     for _ in 0..4 {
         app.update();
     }
-    true
 }
 
 /// What stands of an area follows the view: its props and the copies its covers strew stand in
@@ -198,9 +177,9 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     let reach = Meters(64.0);
     let view = |app: &mut App, sight: Sight| {
         scenery::view_from(app.world_mut(), stood, sight);
-        assert!(settle(app, |app| {
+        settle(app, |app| {
             !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-        }));
+        });
         assert_eq!(
             scenery::missing(app.world()),
             0,
@@ -281,13 +260,13 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         stood,
         overhead(Pos::new(496.0, 8.0), reach, 10.0),
     );
-    assert!(settle(&mut app, |app| {
+    settle(&mut app, |app| {
         assert!(
             scenery::arena_copies(app.world(), stood) >= thinned,
             "coming near, the thinned pebbles stand until all of them do"
         );
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-    }));
+    });
     assert_eq!(
         scenery::arena_copies(app.world(), stood),
         east_pebbles,
@@ -329,9 +308,9 @@ fn a_scenery_takes_in_its_area_edited_standing_anew_only_what_the_edit_changed()
     }
     let (content, edited) = picture(field(edited_scene), edited_folder.path());
     assert!(scenery::restand(app.world_mut(), stood, &content, &edited));
-    assert!(settle(&mut app, |app| {
+    settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-    }));
+    });
     assert_eq!(
         (
             scenery::arena_props(app.world(), stood),
