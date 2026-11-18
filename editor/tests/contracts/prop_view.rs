@@ -38,8 +38,11 @@ fn a_fitted_footprint_follows_its_model_when_the_model_is_replaced() {
     assert!(prop::fit_to_mesh(&mut editor, &key));
     let fitted = model_hash(&mut editor, &key);
     match prop_of(&editor, &key).footprint {
-        Footprint::Polygon { points, fitted_to } => {
-            assert!(points.len() >= 3, "a polygon round the model's base");
+        Footprint::Polygon { parts, fitted_to } => {
+            assert!(
+                !parts.is_empty() && parts.iter().all(|points| points.len() >= 3),
+                "polygons round the model's base"
+            );
             assert_eq!(
                 fitted_to.as_ref().map(|hash| hash.0.as_str()),
                 Some(fitted.as_str())

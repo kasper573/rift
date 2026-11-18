@@ -7,8 +7,8 @@ use bevy_terminal::{TerminalCompletionRequest, TerminalCompletions, TerminalOpti
 
 use super::input::{self, TypedCommand};
 use crate::core::content::Content;
-use crate::systems::GameSettings;
 use crate::systems::player;
+use crate::systems::{GameSettings, messages};
 
 /// Answers every connection that asked how the command it is typing may go on.
 pub fn answer(world: &mut World) {
@@ -35,7 +35,9 @@ pub fn completions(
         return none;
     };
     let content = world.resource::<Content>();
-    let most = content.built::<GameSettings>().suggestions as usize;
+    let settings = content.built::<GameSettings>();
+    let messages = messages::of(content);
+    let most = settings.suggestions as usize;
     let typed = TypedCommand::of(line);
     let commands = super::allowed(world, conn);
     let keeping = |typing: &str| (asked.text.chars().count() - typing.chars().count()) as u32;
@@ -55,11 +57,9 @@ pub fn completions(
                         command.name(content).to_owned()
                     },
                     detail: match cooling {
-                        Some(left) => format!(
-                            "{} · ready in {}",
-                            command.usage(content),
-                            super::cooldown::worded(left)
-                        ),
+                        Some(left) => messages
+                            .command
+                            .ready_in(messages.time.rough(left), command.usage(content)),
                         None => command.usage(content),
                     },
                     muted: cooling.is_some(),
@@ -102,7 +102,7 @@ pub fn completions(
             muted: false,
         })
         .collect(),
-        usage: format!("{}: {usage}", slot.name()),
+        usage: messages.command.input_usage(slot.name(), &usage),
         ..none
     }
 }

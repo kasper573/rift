@@ -1,16 +1,23 @@
 use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, LETTERS};
+use engine::systems::skill::SKILL_RUNNER;
 use std::collections::BTreeMap;
 
 use engine::core::content::files::name_of;
 use engine::core::content::gltf::placeholder_rig;
 use engine::core::content::{ContentFile, FolderReader, Nearby};
 use engine::core::script::Arrow;
+use engine::core::script::Node;
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptDef;
+use engine::core::script::ScriptEvent;
+use engine::core::script::ScriptId;
+use engine::core::script::ScriptModule;
 use engine::core::vfx::VfxShaderDef;
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::area::prop::{PROP_GLB, PropDef};
+use engine::systems::item::Used;
 use engine::systems::item::{ItemDef, ItemKind, ItemModule};
-use engine::systems::script::{Node, RiftEvent, RunnerKind, ScriptDef, ScriptId, ScriptModule};
 use engine::systems::skill::{SkillDef, SkillModule};
 use include_dir::{Dir, include_dir};
 
@@ -47,7 +54,7 @@ pub fn content_file(
 }
 
 fn used_script(edit: &mut ContentEdit, project: &Project, skill: &str) -> Result<(), String> {
-    let (reader, script) = answering_used(edit, project, skill, RunnerKind::Skill)?;
+    let (reader, script) = answering_used(edit, project, skill, SKILL_RUNNER)?;
     let mut row = SkillDef::fresh(&Nearby::new(&reader, skill))?;
     row.modules.push(SkillModule::Script(ScriptModule {
         script,
@@ -66,7 +73,7 @@ pub(crate) fn answering_used(
     runs_on: RunnerKind,
 ) -> Result<(FolderReader, ScriptId), String> {
     let used = Node::On {
-        event: RiftEvent::Used,
+        event: ScriptEvent::new(Used {}),
         next: Arrow::default(),
     };
     let (_, reader, script) = rows::new_script(
@@ -94,15 +101,10 @@ pub(crate) fn usable_without_used(
             .path_of(module.script)
             .and_then(|path| project.read::<ScriptDef>(path).ok())
             .is_some_and(|script| {
-                script.nodes.values().any(|node| {
-                    matches!(
-                        node,
-                        Node::On {
-                            event: RiftEvent::Used,
-                            ..
-                        }
-                    )
-                })
+                script
+                    .nodes
+                    .values()
+                    .any(|node| matches!(node, Node::On { event, .. } if event.is::<Used>()))
             })
     };
     matches!(item.kind, ItemKind::Usable { casts: None }) && !item.modules.iter().any(answers_used)

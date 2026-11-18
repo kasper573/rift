@@ -4,7 +4,9 @@ use engine::systems::area::prop::{
     Footprint, MAX_PROP_BYTES, MAX_PROP_MATERIALS, MAX_PROP_TRIANGLES, PropDef,
 };
 use engine::systems::movement::Bodies;
+use ui::controls;
 use ui::egui::{self, Ui, Vec2};
+use ui::menu;
 use ui::{form, panel, theme};
 
 use super::footprint::FootprintKind;
@@ -44,7 +46,7 @@ fn model_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
     let flat_shaded = super::geometry(editor, key).map(|geometry| geometry.flat_shaded);
     panel::tile_across(ui, false, |ui| {
         panel::header(ui, "Model", "", |ui| {
-            if ui.button("Replace model…").clicked() {
+            if menu::entry(ui, "Replace model…").clicked() {
                 browse(editor, key);
                 ui.close();
             }
@@ -124,15 +126,20 @@ fn footprint_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
     panel::tile_across(ui, false, |ui| {
         panel::subtitled(ui, "Footprint", FootprintKind::of(&row.footprint).label());
         ui.add_space(4.0);
-        if let Footprint::Polygon { points, fitted_to } = &row.footprint {
-            form::kv_text(ui, "corners", points.len().to_string());
+        if let Footprint::Polygon { parts, fitted_to } = &row.footprint {
+            form::kv_text(ui, "parts", parts.len().to_string());
+            form::kv_text(
+                ui,
+                "corners",
+                parts.iter().map(Vec::len).sum::<usize>().to_string(),
+            );
             form::kv(ui, "fitted", |ui| match fitted_to {
                 Some(hash) if Some(&hash.0) == current.as_ref() => {
                     ui.colored_label(theme::OK, "to this model");
                 }
                 Some(_) => {
                     ui.colored_label(theme::DANGER, "to an older model");
-                    refit = ui.button("Refit").clicked();
+                    refit = controls::button(ui, "Refit").clicked();
                 }
                 None => {
                     ui.label(theme::muted("shaped by hand"));

@@ -5,6 +5,14 @@ pub mod summon;
 pub use absence::{Absence, AbsenceNotice, AbsenceSign, AbsenceSpan, AbsenceSpanAt};
 pub use summon::{Despawn, SetAttitude, ShownFor, SpawnNear, SpawnNpcs, Summoned, dismiss, summon};
 
+use crate::core::script::EventDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::Vocabulary;
+use crate::systems::area::AREA_RUNNER;
+use crate::systems::area::Started;
+use crate::systems::area::object::Who;
+use crate::systems::area::script::area_owner;
+use crate::systems::npc::summon::TurnsHostile;
 use bevy_app::App;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::message::{MessageCursor, Messages};
@@ -23,29 +31,29 @@ use crate::core::content::{
     Nearby, RowCheck, SchemaMark,
 };
 use crate::core::math::{Pos, Rect};
+use crate::core::script::condition::CompiledCondition;
+use crate::core::script::{
+    EventKind, Instances, Owner, OwnerRow, RunnerKind, ScriptModule, ScriptedRow, Scripts,
+};
 use crate::core::tick::Planner;
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
-use crate::systems::GameSettings;
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::{
     self, Action, Actor, ActorModel, Appearance, Hitbox, Pose, appearance,
 };
 use crate::systems::area::{Area, AreaId, AreaTag, Resident};
-use crate::systems::combat::{Attitude, Dead, Died};
+use crate::systems::combat::{self, Attitude, Dead, Died};
 use crate::systems::identity::{GlobalId, Names};
 use crate::systems::interact::Interactive;
-use crate::systems::item::{DropRow, ItemId, Wear};
+use crate::systems::item::{ItemId, Wear};
 use crate::systems::movement::{self, Position, Spot, position};
-use crate::systems::script::condition::CompiledCondition;
-use crate::systems::script::query::{Among, TickRoster};
-use crate::systems::script::{
-    EffectReach, EventKind, Owner, OwnerRow, RiftEvent, RiftInstances, RiftScripts, RunnerKind,
-    ScriptModule, ScriptedRow, area_owner,
-};
+use crate::systems::reward::Reward;
+use crate::systems::roster::{Among, TickRoster};
 use crate::systems::skill::{self, Rank, SkillId};
 use crate::systems::stat::Stats;
 use crate::systems::visibility::{self, Presence};
+use crate::systems::{GameSettings, messages};
 use crate::systems::{dialogue, stat};
 
 pub type NpcId = ContentId<NpcDef>;
@@ -58,7 +66,7 @@ pub fn register(app: &mut App) {
 /// The ranks an npc holds its skills at lie within those skills' ranks.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
-    let scripts = content.built::<RiftScripts>().clone();
+    let scripts = content.built::<Scripts>().clone();
     for (id, def) in loading.rows::<NpcDef>(&content) {
         let mut check = RowCheck::default();
         for (index, listed) in def.skills.iter().enumerate() {
@@ -135,12 +143,11 @@ fn check_held(
     let left_out = held::listed(content, hands, &def.held).returned;
     if !left_out.is_empty() {
         let names = |items: &[ItemId]| {
-            ui::words::join_and(
-                &items
-                    .iter()
-                    .map(|item| item.name(content).to_owned())
-                    .collect::<Vec<_>>(),
-            )
+            items
+                .iter()
+                .map(|item| item.name(content))
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         check.error(
             "/held",
@@ -159,14 +166,15 @@ fn check_held(
 
 /// What a goal of defeating `npc` reads as.
 pub fn defeat_label(content: &Content, npc: NpcId) -> String {
-    format!("Defeat the {}", npc.get(content).name)
+    messages::of(content).quest.defeat(&npc.get(content).name)
 }
 
-pub fn can_be_fought(scripts: &RiftScripts, npc: NpcId) -> bool {
+pub fn can_be_fought(scripts: &Scripts, npc: NpcId) -> bool {
     scripts
         .may_do(OwnerRow::of_row(npc))
-        .reaches
-        .contains(&EffectReach::Hostile)
+        .reaching::<TurnsHostile>()
+        .next()
+        .is_some()
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -329,7 +337,7 @@ impl ModuleSet for NpcDef {
 }
 
 impl ScriptedRow for NpcDef {
-    const OWNER: RunnerKind = RunnerKind::Npc;
+    const OWNER: RunnerKind = NPC_RUNNER;
 
     fn script(module: &NpcModule) -> Option<&ScriptModule> {
         match module {
@@ -344,7 +352,7 @@ impl ScriptedRow for NpcDef {
 pub enum NpcModule {
     Nameplate,
     Voice(Voice),
-    Loot(Loot),
+    Loot(Reward),
     Script(ScriptModule),
     Absence(Absence),
 }
@@ -352,13 +360,6 @@ pub enum NpcModule {
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 pub struct Voice {
     pub babble: BabbleId,
-}
-
-#[derive(JsonSchema, Clone, Serialize, Deserialize)]
-pub struct Loot {
-    pub xp: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub items: Vec<DropRow>,
 }
 
 impl NpcDef {
@@ -375,7 +376,7 @@ impl NpcDef {
         })
     }
 
-    pub fn loot(&self) -> Option<&Loot> {
+    pub fn loot(&self) -> Option<&Reward> {
         self.modules.iter().find_map(|module| match module {
             NpcModule::Loot(loot) => Some(loot),
             _ => None,
@@ -448,8 +449,8 @@ pub fn spawn(
 
 pub fn despawn(world: &mut World, npc: Entity) {
     world
-        .resource_mut::<RiftInstances>()
-        .remove_owner(Owner::Entity(RunnerKind::Npc, npc));
+        .resource_mut::<Instances>()
+        .remove_owner(Owner::Entity(NPC_RUNNER, npc));
     world.despawn(npc);
 }
 
@@ -457,9 +458,9 @@ pub fn attacked(world: &mut World, target: Entity, attacker: Entity) {
     if world.get::<Npc>(target).is_none() {
         return;
     }
-    world.resource_mut::<RiftInstances>().raise(
-        Owner::Entity(RunnerKind::Npc, target),
-        EventKind::Attacked,
+    world.resource_mut::<Instances>().raise(
+        Owner::Entity(NPC_RUNNER, target),
+        EventKind::of::<Attacked>(),
         Some(attacker),
         Vec::new(),
         |_| true,
@@ -467,7 +468,6 @@ pub fn attacked(world: &mut World, target: Entity, attacker: Entity) {
 }
 
 pub fn defeated(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
-    let now = time::uptime(world);
     let deaths: Vec<Died> = deaths
         .read(world.resource::<Messages<Died>>())
         .cloned()
@@ -475,23 +475,24 @@ pub fn defeated(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
     for died in deaths {
         let is_npc = world.get::<Npc>(died.entity).is_some();
         let owner = area_owner(world);
-        world.resource_mut::<RiftInstances>().raise(
+        world.resource_mut::<Instances>().raise(
             owner,
-            EventKind::Died,
+            EventKind::of::<DiedHere>(),
             Some(died.entity),
             Vec::new(),
-            move |event| match event {
-                RiftEvent::Died { by } => by.admits(is_npc),
-                _ => false,
+            move |event| {
+                event
+                    .downcast_ref::<DiedHere>()
+                    .is_some_and(|died| died.by.admits(is_npc))
             },
         );
         if !is_npc {
             continue;
         }
-        let credited = crate::systems::item::credited(world, died.entity, now);
-        world.resource_mut::<RiftInstances>().raise(
-            Owner::Entity(RunnerKind::Npc, died.entity),
-            EventKind::Defeated,
+        let credited = combat::credit::credited(world, died.entity);
+        world.resource_mut::<Instances>().raise(
+            Owner::Entity(NPC_RUNNER, died.entity),
+            EventKind::of::<Defeated>(),
             credited,
             Vec::new(),
             |_| true,
@@ -519,12 +520,12 @@ impl Planner for ApproachWatchers {
         let Some(roster) = world.get_resource::<TickRoster>() else {
             return;
         };
-        let instances = world.resource::<RiftInstances>();
+        let instances = world.resource::<Instances>();
         let watchers: Vec<Watcher> = instances
-            .owners_answering(EventKind::CameNear)
+            .owners_answering(EventKind::of::<CameNear>())
             .iter()
             .filter_map(|&owner| {
-                let Owner::Entity(RunnerKind::Npc, npc) = owner else {
+                let Owner::Entity(NPC_RUNNER, npc) = owner else {
                     return None;
                 };
                 if stat::is_dead(world, npc) {
@@ -533,11 +534,8 @@ impl Planner for ApproachWatchers {
                 let at = position(world, npc)?;
                 let area = world.get::<AreaTag>(npc)?.area;
                 let reach = instances
-                    .entries(owner, EventKind::CameNear)
-                    .filter_map(|event| match event {
-                        RiftEvent::CameNear { within, .. } => Some(*within),
-                        _ => None,
-                    })
+                    .entries(owner, EventKind::of::<CameNear>())
+                    .filter_map(|event| event.downcast_ref::<CameNear>().map(|near| near.within))
                     .max_by(|a, b| a.0.total_cmp(&b.0))
                     .unwrap_or(Meters(0.0));
                 Some(Watcher {
@@ -582,18 +580,17 @@ impl Planner for ApproachWatchers {
                 let is_npc = world.get::<Npc>(other).is_some();
                 let def = world.get::<Npc>(other).map(|npc| npc.def);
                 let distance = position(world, other).map(|there| there.distance(at));
-                world.resource_mut::<RiftInstances>().raise(
-                    Owner::Entity(RunnerKind::Npc, npc),
-                    EventKind::CameNear,
+                world.resource_mut::<Instances>().raise(
+                    Owner::Entity(NPC_RUNNER, npc),
+                    EventKind::of::<CameNear>(),
                     Some(other),
                     Vec::new(),
-                    move |event| match event {
-                        RiftEvent::CameNear { within, by, npc } => {
-                            distance.is_some_and(|distance| distance <= *within)
-                                && by.admits(is_npc)
-                                && npc.is_none_or(|npc| Some(npc) == def)
-                        }
-                        _ => false,
+                    move |event| {
+                        event.downcast_ref::<CameNear>().is_some_and(|near| {
+                            distance.is_some_and(|distance| distance <= near.within)
+                                && near.by.admits(is_npc)
+                                && near.npc.is_none_or(|npc| Some(npc) == def)
+                        })
                     },
                 );
             }
@@ -628,10 +625,10 @@ fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) 
 
 fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {
     let procedures = world
-        .resource::<RiftScripts>()
+        .resource::<Scripts>()
         .of(OwnerRow::of_row(def))
         .to_vec();
-    let owner = Owner::Entity(RunnerKind::Npc, entity);
+    let owner = Owner::Entity(NPC_RUNNER, entity);
     let interactive = Interactive::of(&procedures);
     match interactive {
         Some(interactive) => {
@@ -641,9 +638,11 @@ fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {
             world.entity_mut(entity).remove::<Interactive>();
         }
     }
-    let mut instances = world.resource_mut::<RiftInstances>();
+    let mut instances = world.resource_mut::<Instances>();
     instances.spawn_owner(owner, procedures);
-    instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
+    instances.raise(owner, EventKind::of::<Started>(), None, Vec::new(), |_| {
+        true
+    });
 }
 
 type FallenNpcs = QueryState<(Entity, &'static Dead), With<Npc>>;
@@ -656,10 +655,71 @@ pub fn clear_fallen(world: &mut World, fallen: &mut FallenNpcs) {
     let ids: Vec<(Entity, Seconds)> = fallen.iter(world).map(|(id, dead)| (id, dead.at)).collect();
     for (id, since) in ids {
         world
-            .resource_mut::<RiftInstances>()
-            .remove_owner(Owner::Entity(RunnerKind::Npc, id));
+            .resource_mut::<Instances>()
+            .remove_owner(Owner::Entity(NPC_RUNNER, id));
         if time - since >= linger {
             world.despawn(id);
         }
     }
+}
+
+pub const NPC_RUNNER: RunnerKind = RunnerKind::new("npc");
+
+/// Someone died in the area the script's owner is in.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct DiedHere {
+    pub by: Who,
+}
+
+/// Someone came within `within` of the npc.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct CameNear {
+    pub within: Meters,
+    pub by: Who,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub npc: Option<NpcId>,
+}
+
+/// The npc was attacked.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Attacked {}
+
+/// The npc was defeated.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Defeated {}
+
+impl EventDef for DiedHere {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[AREA_RUNNER]
+    }
+}
+
+impl EventDef for CameNear {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[NPC_RUNNER]
+    }
+}
+
+impl EventDef for Attacked {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[NPC_RUNNER]
+    }
+}
+
+impl EventDef for Defeated {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[NPC_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .runner(NPC_RUNNER, RunnerSpec::named_row::<NpcDef>())
+        .binder(absence::bind)
+        .event::<DiedHere>("died")
+        .event::<CameNear>("came_near")
+        .event::<Attacked>("attacked")
+        .event::<Defeated>("defeated");
+    body::scripting(vocabulary);
+    summon::scripting(vocabulary);
 }

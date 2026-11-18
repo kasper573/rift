@@ -64,13 +64,13 @@ use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::{PropDef, PropId, PropPlacement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::scenery::prop_transform;
+use engine::systems::area::sky::Sky;
 use engine::systems::area::{
     self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured, Weather,
 };
 use engine::systems::npc::{NpcDef, absence};
 use engine::systems::resource::ResourceDef;
-use engine::systems::script::Sky;
-use engine::systems::spawner::{Spawner, Spawns};
+use engine::systems::spawner::{Population, Spawner, Spawns};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Ui, Vec2};
@@ -685,7 +685,7 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
                     .size(13.0)
                     .color(theme::TEXT),
             );
-            if ui.button("Show the rest").clicked() {
+            if controls::button(ui, "Show the rest").clicked() {
                 back = true;
             }
             controls::key_hint(ui, &EditorKey::Cancel.cap());
@@ -1120,14 +1120,17 @@ impl BySky {
                 .doc
                 .of_kind(AreaModuleKind::Spawner)
                 .filter_map(|node| match node.module() {
-                    AreaModule::Spawner(spawner) if spawner.follows_sky() => Some((
-                        node.pointer.to_owned(),
-                        spawner
-                            .spawns
-                            .iter()
-                            .map(|share| sky.spawns(&frame.reader, share))
-                            .collect(),
-                    )),
+                    AreaModule::Spawner(spawner)
+                        if spawner.populations.iter().any(Population::follows_sky) =>
+                    {
+                        Some((
+                            node.pointer.to_owned(),
+                            spawner
+                                .shares()
+                                .map(|share| sky.spawns(&frame.reader, share))
+                                .collect(),
+                        ))
+                    }
                     _ => None,
                 })
                 .collect(),

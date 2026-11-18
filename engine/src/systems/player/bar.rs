@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use ui::egui::{self, Align, Align2, Id, Order, Pos2, Rect, Sense, Ui, UiBuilder, Vec2};
 use ui::face::{Face, TextRole};
 use ui::glyph::{self, Halo};
-use ui::{controls, globe, ink, paint, slip, words};
+use ui::{controls, globe, ink, paint, slip};
 
 use crate::core::content::Content;
 use crate::core::gui::{self, Tier};
@@ -10,11 +10,12 @@ use crate::core::stage::globe::{self as lit_globe, Globe};
 use crate::systems::dialogue::stage;
 use crate::systems::hud::menu::{self, MenuTabName};
 use crate::systems::hud::{self, HudWidget};
+use crate::systems::player::PlayerMessages;
 use crate::systems::player::session;
 use crate::systems::settings::UserSettings;
 use crate::systems::skill::bar::{self, BarSlots};
 use crate::systems::stat::{self, Vital};
-use crate::systems::{class, status};
+use crate::systems::{class, messages, status};
 
 pub const PLAYER_BAR: &str = "player_bar";
 
@@ -57,8 +58,10 @@ impl HudWidget for PlayerBarWidget {
         }
         let outside = RowOutside::of(ui.ctx(), &layout);
         if let Some(gain) = sheet.gain {
+            let content = world.resource::<Content>().clone();
             gain_float(
                 ui,
+                &messages::of(&content).player,
                 gain,
                 layout.experience.center_top().x,
                 layout.paper.min.y,
@@ -293,14 +296,21 @@ fn vital_globe(ui: &mut Ui, world: &mut World, center: Pos2, vital: Vital, held:
     } else {
         0.0
     };
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).player;
     let (name, liquid, warns) = match vital {
-        Vital::Health => ("Health", ink::WAX, full > 0.0 && full < LOW_HEALTH),
-        Vital::Mana => ("Mana", ink::AZURE, false),
+        Vital::Health => (words.health(), ink::WAX, full > 0.0 && full < LOW_HEALTH),
+        Vital::Mana => (words.mana(), ink::AZURE, false),
     };
-    let amount = format!("{:.0}/{:.0}", held.now.max(0.0).ceil(), held.most);
+    let (now_held, most_held) = (held.now.max(0.0).ceil(), held.most.round());
+    let amount = words.vital_figures(now_held, most_held);
     let rect = Rect::from_center_size(center, Vec2::splat(globe::SIZE));
-    let response = ui.interact(rect, ui.id().with(name), Sense::hover());
-    let said = format!("{name} {amount}");
+    let response = ui.interact(
+        rect,
+        ui.id().with(("vital", vital.is_health())),
+        Sense::hover(),
+    );
+    let said = words.vital_amount(name, now_held, most_held);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
     let painter = ui.painter();
     globe::socket(painter, center);
@@ -326,18 +336,15 @@ fn vital_globe(ui: &mut Ui, world: &mut World, center: Pos2, vital: Vital, held:
 }
 
 fn experience_row(ui: &mut Ui, world: &World, row: Rect, experience: &Experience) {
-    let level = format!("Level {}", experience.level);
+    let content = world.resource::<Content>();
+    let words = &messages::of(content).player;
+    let level = words.level_of(experience.level);
     let (share, toward) = match experience.next {
         Some(next) => (
             next.had as f32 / next.needed.max(1) as f32,
-            format!(
-                "{} of {} to level {}",
-                next.had,
-                next.needed,
-                experience.level + 1
-            ),
+            words.toward(next.had, next.needed, experience.level + 1),
         ),
-        None => (1.0, "The last level".to_owned()),
+        None => (1.0, words.last_level().to_owned()),
     };
     let response = ui.interact(row, ui.id().with("experience"), Sense::hover());
     let said = format!("{level} · {toward}");
@@ -357,10 +364,10 @@ fn experience_row(ui: &mut Ui, world: &World, row: Rect, experience: &Experience
         Pos2::new(row.max.x, row.center().y + EXPERIENCE_BAR / 2.0),
     );
     paint::ticked_bar(ui.painter(), bar, share, ink::GOLD, TENTHS);
-    hud::tooltip(&response, world, "Experience", &[toward.into()], None);
+    hud::tooltip(&response, world, words.experience(), &[toward.into()], None);
 }
 
-fn gain_float(ui: &Ui, gain: Gain, x: f32, paper_top: f32, now: f64) {
+fn gain_float(ui: &Ui, words: &PlayerMessages, gain: Gain, x: f32, paper_top: f32, now: f64) {
     let age = ((now - gain.at) / GAIN_SECONDS) as f32;
     if !(0.0..1.0).contains(&age) {
         return;
@@ -370,7 +377,7 @@ fn gain_float(ui: &Ui, gain: Gain, x: f32, paper_top: f32, now: f64) {
         ui.painter(),
         Pos2::new(x, paper_top - 2.0 - GAIN_RISE * age),
         Align2::CENTER_BOTTOM,
-        &format!("+{} xp", gain.amount),
+        &words.experience_gained(gain.amount),
         Face::BookBold.id(TextRole::Small.size()),
         ink::GOLD2.gamma_multiply(fade),
         Halo {
@@ -390,11 +397,11 @@ fn points_button(
     if points == 0 {
         return None;
     }
+    let content = world.resource::<Content>().clone();
+    let said = messages::of(&content).player.points_to_spend(points);
     let shown = outside
         .area(gui, "player bar points", Align::Min)
-        .show(gui, |ui| {
-            controls::notice(ui, &format!("{} to spend", words::counted(points, "point")))
-        });
+        .show(gui, |ui| controls::notice(ui, &said));
     if shown.inner.clicked() {
         menu::open_on(world, MenuTabName::Skills);
     }

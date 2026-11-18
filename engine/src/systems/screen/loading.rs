@@ -4,9 +4,13 @@ use std::sync::{Arc, Mutex, PoisonError};
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_egui::EguiPrimaryContextPass;
+use ui::egui::RichText;
+use ui::glyph::{Icon, phosphor};
 use ui::ink;
 
-use super::{ClientScreen, Notice, Retry, frame_as_before, frame_slowly, notice_screen};
+use super::{
+    ClientScreen, Notice, Retry, ScreenMessages, frame_as_before, frame_slowly, notice_screen,
+};
 use crate::core::content::sync::{
     ContentSource, SyncError, SyncPhase, SyncPolicy, SyncProgress, SyncStatus, SyncedContent, sync,
 };
@@ -20,9 +24,9 @@ use crate::core::time;
 use crate::core::units::Seconds;
 use crate::core::update::{self, OtherBuildAnswer, ReleaseSource, UpdateFailure, UpdateStep};
 use crate::systems::launch::ClientConfig;
+use crate::systems::messages::Messages;
 use crate::systems::{install_content, load_content};
 use futures_util::future::BoxFuture;
-use ui::words;
 
 pub struct LoadingPlugin;
 
@@ -74,12 +78,46 @@ struct Restarting {
     to: String,
 }
 
-/// What stopped the load, said in lines. A failure whose retry is due tries again; one whose
-/// retry waits for nothing can only be closed.
+/// What stopped the load. A failure whose retry is due tries again; one whose retry waits for
+/// nothing can only be closed.
 #[derive(Resource, Clone, PartialEq)]
 struct LoadingFailure {
-    lines: Vec<String>,
+    cause: Cause,
     retry: Retry,
+}
+
+#[derive(Clone, PartialEq)]
+enum Cause {
+    DownloadFailed { reason: String },
+    ServerRunsNewer { build: String },
+    ServerRunsOther { build: String },
+    UpdateDidNotRestart { build: String, reason: String },
+    UpdateStopped { build: String, reason: String },
+    UpdateUnsigned { build: String },
+    UpdateGone { build: String },
+    UpdateUnwritable { folder: String },
+    UpdateMalformed { build: String, reason: String },
+}
+
+impl Cause {
+    fn lines(&self, words: &ScreenMessages) -> Vec<String> {
+        let line = match self {
+            Cause::DownloadFailed { reason } => {
+                return vec![words.download_failed().to_owned(), reason.clone()];
+            }
+            Cause::ServerRunsNewer { build } => words.server_runs_newer(build),
+            Cause::ServerRunsOther { build } => words.server_runs_other(build),
+            Cause::UpdateDidNotRestart { build, reason } => {
+                words.update_did_not_restart(build, reason)
+            }
+            Cause::UpdateStopped { build, reason } => words.update_stopped(build, reason),
+            Cause::UpdateUnsigned { build } => words.update_unsigned(build),
+            Cause::UpdateGone { build } => words.update_gone(build),
+            Cause::UpdateUnwritable { folder } => words.update_unwritable(folder),
+            Cause::UpdateMalformed { build, reason } => words.update_malformed(build, reason),
+        };
+        vec![line]
+    }
 }
 
 #[derive(Resource, Default)]
@@ -223,42 +261,28 @@ fn poll(world: &mut World) {
                 OtherBuildAnswer::Update(source) => {
                     begin_update(world, source, server, syncing.retry)
                 }
-                OtherBuildAnswer::Updated { .. } => stop(
-                    world,
-                    format!(
-                        "The server now runs {server}, a build this update didn't install. \
-                         Start the game again to update to it."
-                    ),
-                ),
-                OtherBuildAnswer::ByHand => stop(
-                    world,
-                    format!(
-                        "The server runs build {server}. Start a game client of that build to play."
-                    ),
-                ),
+                OtherBuildAnswer::Updated { .. } => {
+                    stop(world, Cause::ServerRunsNewer { build: server })
+                }
+                OtherBuildAnswer::ByHand => stop(world, Cause::ServerRunsOther { build: server }),
             }
         }
         Err(SyncError::Failed(reason)) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
-            fail(
-                world,
-                vec!["Download failed".to_owned(), reason],
-                now,
-                syncing.retry,
-            );
+            fail(world, Cause::DownloadFailed { reason }, now, syncing.retry);
         }
     }
 }
 
-fn fail(world: &mut World, lines: Vec<String>, now: Seconds, retry: Retry) {
+fn fail(world: &mut World, cause: Cause, now: Seconds, retry: Retry) {
     let retry = retry.failed(now, &mut world.resource_mut::<Rng>());
-    world.insert_resource(LoadingFailure { lines, retry });
+    world.insert_resource(LoadingFailure { cause, retry });
 }
 
-/// Stops on `reason`, which no try can change.
-fn stop(world: &mut World, reason: String) {
+/// Stops on `cause`, which no try can change.
+fn stop(world: &mut World, cause: Cause) {
     world.insert_resource(LoadingFailure {
-        lines: vec![reason],
+        cause,
         retry: Retry::default().held(),
     });
 }
@@ -292,7 +316,7 @@ fn updated(
     outcome: Result<PathBuf, UpdateFailure>,
     now: Seconds,
 ) {
-    let to = &updating.to;
+    let to = updating.to.clone();
     let failure = match outcome {
         Ok(installed) => match update::restart(
             &installed,
@@ -301,34 +325,25 @@ fn updated(
         ) {
             Ok(()) => {
                 world.write_message(AppExit::Success);
-                world.insert_resource(Restarting { to: to.clone() });
+                world.insert_resource(Restarting { to });
                 return;
             }
-            Err(error) => format!(
-                "The game client is updated to {to}, but didn't start again: {error}. \
-                     Start the game again to play."
-            ),
+            Err(error) => Cause::UpdateDidNotRestart {
+                build: to,
+                reason: error.to_string(),
+            },
         },
         Err(UpdateFailure::Download(reason)) => {
-            let lines = vec![format!("The download of {to} stopped: {reason}.")];
-            fail(world, lines, now, updating.retry);
+            let cause = Cause::UpdateStopped { build: to, reason };
+            fail(world, cause, now, updating.retry);
             return;
         }
-        Err(UpdateFailure::Unsigned) => {
-            format!("The download for {to} isn't signed by the release key. Nothing was installed.")
-        }
-        Err(UpdateFailure::Gone) => format!(
-            "The server runs {to}, which is no longer published. Ask the game's hosts to move \
-             to a newer release."
-        ),
-        Err(UpdateFailure::Unwritable { folder, .. }) => format!(
-            "The game client can't update itself in {}. Move the game's folder somewhere you \
-             can write to, or download the new client from the game's website.",
-            folder.display()
-        ),
-        Err(UpdateFailure::Malformed(reason)) => {
-            format!("The download for {to} holds no game client ({reason}). Nothing was installed.")
-        }
+        Err(UpdateFailure::Unsigned) => Cause::UpdateUnsigned { build: to },
+        Err(UpdateFailure::Gone) => Cause::UpdateGone { build: to },
+        Err(UpdateFailure::Unwritable { folder, .. }) => Cause::UpdateUnwritable {
+            folder: folder.display().to_string(),
+        },
+        Err(UpdateFailure::Malformed(reason)) => Cause::UpdateMalformed { build: to, reason },
     };
     stop(world, failure);
 }
@@ -356,9 +371,14 @@ fn show(world: &mut World) {
         }),
         (None, None) => None,
     };
+    let content = world.get_resource::<Content>().cloned();
+    let messages = content
+        .as_ref()
+        .and_then(|content| content.try_built::<Messages>());
     let model = {
         let shown = world.resource::<Shown>();
         card_model(
+            messages,
             &shown.progress,
             failure.as_ref(),
             update.as_ref(),
@@ -373,6 +393,7 @@ fn show(world: &mut World) {
     if let Ok(mut window) = world
         .query_filtered::<&mut Window, With<bevy::window::PrimaryWindow>>()
         .single_mut(world)
+        && !model.title.is_empty()
         && window.title != model.title
     {
         window.title = model.title.clone();
@@ -381,6 +402,7 @@ fn show(world: &mut World) {
 }
 
 fn card_model(
+    messages: Option<&Messages>,
     progress: &SyncProgress,
     failure: Option<&LoadingFailure>,
     update: Option<&UpdateShown>,
@@ -388,137 +410,110 @@ fn card_model(
     veiled: bool,
     signed_in: bool,
 ) -> CardModel {
+    let (actions, done) = card_actions(failure, update);
+    let Some(messages) = messages else {
+        return CardModel {
+            title: progress.name.clone().unwrap_or_default(),
+            lines: Vec::new(),
+            notes: Vec::new(),
+            retry_in: None,
+            done,
+            actions,
+            veiled,
+        };
+    };
+    let screen = &messages.screen;
     let title = progress
         .name
         .clone()
-        .unwrap_or_else(|| "Loading".to_owned());
+        .unwrap_or_else(|| screen.loading().to_owned());
     let mut lines = Vec::new();
     let mut notes = Vec::new();
     match &progress.phase {
-        SyncPhase::Checking => lines.push("Checking content…".to_owned()),
+        SyncPhase::Checking => lines.push(screen.checking().to_owned()),
         SyncPhase::Reading => {
-            lines.push("Content checked".to_owned());
-            lines.push("Read from this device".to_owned());
-            lines.push(format!(
-                "{} of {} MB",
-                megabytes(progress.read.bytes),
-                megabytes(progress.read.bytes_total)
+            lines.push(screen.content_checked().to_owned());
+            lines.push(screen.read_from_device().to_owned());
+            lines.push(megabytes_of(
+                screen,
+                progress.read.bytes,
+                progress.read.bytes_total,
             ));
         }
         SyncPhase::Downloading { updating } => {
-            lines.push("Content checked".to_owned());
+            lines.push(screen.content_checked().to_owned());
             let fetched = progress.fetched;
             if fetched.files_total == 0 && !progress.rows_changed {
-                lines.push("Up to date".to_owned());
-                lines.push(format!(
-                    "Read from this device {} MB",
-                    megabytes(progress.read.bytes_total)
-                ));
+                lines.push(screen.up_to_date().to_owned());
+                lines.push(screen.read_from_device_size(megabytes(progress.read.bytes_total)));
             } else if *updating {
-                lines.push("Downloading changes".to_owned());
-                lines.push(format!(
-                    "{} of {} MB",
-                    megabytes(fetched.bytes),
-                    megabytes(fetched.bytes_total)
-                ));
-                lines.push(format!(
-                    "{} of {} files changed{}",
-                    words::thousands(fetched.files_total),
-                    words::thousands(progress.files_in_index),
-                    if progress.rows_changed {
-                        ", and the rows"
-                    } else {
-                        ""
-                    }
-                ));
+                lines.push(screen.downloading_changes().to_owned());
+                lines.push(megabytes_of(screen, fetched.bytes, fetched.bytes_total));
+                let (done, total) = (fetched.files_total, progress.files_in_index);
+                lines.push(if progress.rows_changed {
+                    screen.files_and_rows_changed(done, total)
+                } else {
+                    screen.files_changed(done, total)
+                });
             } else {
-                lines.push("Downloading".to_owned());
-                lines.push(format!(
-                    "{} of {} MB",
-                    megabytes(fetched.bytes),
-                    megabytes(fetched.bytes_total)
-                ));
-                lines.push(format!(
-                    "{} of {} files",
-                    words::thousands(fetched.files),
-                    words::thousands(fetched.files_total)
-                ));
+                lines.push(screen.downloading().to_owned());
+                lines.push(megabytes_of(screen, fetched.bytes, fetched.bytes_total));
+                lines.push(screen.files_of(fetched.files, fetched.files_total));
             }
         }
         SyncPhase::Done | SyncPhase::Building => {
-            lines.push("Content checked".to_owned());
+            lines.push(screen.content_checked().to_owned());
             lines.push(
                 if progress.fetched.files_total == 0 && !progress.rows_changed {
-                    "Up to date".to_owned()
+                    screen.up_to_date().to_owned()
                 } else {
-                    "Downloaded".to_owned()
+                    screen.downloaded().to_owned()
                 },
             );
             if progress.phase == SyncPhase::Building {
-                lines.push("Building the game…".to_owned());
+                lines.push(screen.building().to_owned());
             } else if signed_in {
-                lines.push("Joining".to_owned());
+                lines.push(screen.joining().to_owned());
             }
         }
     }
     if progress.retrying > 0 {
-        notes.push(format!(
-            "Retrying {} {}",
-            progress.retrying,
-            if progress.retrying == 1 {
-                "file"
-            } else {
-                "files"
-            }
-        ));
+        notes.push(screen.retrying_files(progress.retrying));
     }
     if progress.memory_only {
-        notes.push("Files won't be kept on this device".to_owned());
+        notes.push(screen.not_kept().to_owned());
     }
     let mut retry_in = None;
-    let mut done = None;
-    let mut actions = Vec::new();
     if let Some(update) = update {
-        lines = vec![format!(
-            "The server runs another build of the game client. Updating from {} to {}.",
-            version::build(),
-            update.to
-        )];
+        lines = vec![screen.updating(version::build(), &update.to)];
         notes.clear();
         match update.step {
             UpdateStep::Downloading { got, of } => {
-                done = Some(of.map_or(0.0, |of| got as f32 / of.max(1) as f32));
                 lines.push(match of {
-                    Some(of) => format!("Downloading · {} of {} MB", megabytes(got), megabytes(of)),
-                    None => format!("Downloading · {} MB", megabytes(got)),
+                    Some(of) => screen.updating_of(megabytes(got), megabytes(of)),
+                    None => screen.updating_of_unknown(megabytes(got)),
                 });
-                actions.push(CardAction::Cancel);
             }
             UpdateStep::Verifying => {
-                lines.push("Downloaded".to_owned());
-                lines.push("Checking the signature…".to_owned());
-                actions.push(CardAction::Cancel);
+                lines.push(screen.downloaded().to_owned());
+                lines.push(screen.checking_signature().to_owned());
             }
             UpdateStep::Replacing => {
-                lines.push("Signature checked".to_owned());
-                lines.push("Installing…".to_owned());
+                lines.push(screen.signature_checked().to_owned());
+                lines.push(screen.installing().to_owned());
             }
             UpdateStep::Restarting => {
-                lines.push("Installed".to_owned());
-                lines.push("Restarting…".to_owned());
+                lines.push(screen.installed().to_owned());
+                lines.push(screen.restarting().to_owned());
             }
         }
     }
     if let Some(failure) = failure {
-        lines = failure.lines.clone();
+        lines = failure.cause.lines(screen);
         retry_in = failure
             .retry
             .due()
-            .map(|at| format!("Retrying in {}", (at - now).in_words()));
-        if retry_in.is_some() {
-            actions.push(CardAction::Retry);
-        }
-        actions.push(CardAction::Close);
+            .map(|at| screen.retrying_in(messages.time.rough(at - now)));
     }
     CardModel {
         title,
@@ -540,7 +535,15 @@ fn loading_card(world: &mut World) {
     };
     let backdrop = (!model.veiled).then_some(ink::VEIL);
     let notes: Vec<String> = model.notes.iter().chain(&model.retry_in).cloned().collect();
-    let labels: Vec<&str> = model.actions.iter().map(|action| action.label()).collect();
+    let content = world.get_resource::<Content>().cloned();
+    let messages = content
+        .as_ref()
+        .and_then(|content| content.try_built::<Messages>());
+    let labels: Vec<RichText> = model
+        .actions
+        .iter()
+        .map(|action| action.label(messages))
+        .collect();
     let notice = Notice {
         title: &model.title,
         lines: &model.lines,
@@ -567,16 +570,53 @@ fn loading_card(world: &mut World) {
     }
 }
 
+/// What the card lets the player do, and how far along an update is: the same whether or not the
+/// game's words have loaded yet.
+fn card_actions(
+    failure: Option<&LoadingFailure>,
+    update: Option<&UpdateShown>,
+) -> (Vec<CardAction>, Option<f32>) {
+    let mut actions = Vec::new();
+    let mut done = None;
+    match update.map(|update| update.step) {
+        Some(UpdateStep::Downloading { got, of }) => {
+            done = Some(of.map_or(0.0, |of| got as f32 / of.max(1) as f32));
+            actions.push(CardAction::Cancel);
+        }
+        Some(UpdateStep::Verifying) => actions.push(CardAction::Cancel),
+        Some(UpdateStep::Replacing | UpdateStep::Restarting) | None => {}
+    }
+    if let Some(failure) = failure {
+        if failure.retry.due().is_some() {
+            actions.push(CardAction::Retry);
+        }
+        actions.push(CardAction::Close);
+    }
+    (actions, done)
+}
+
 impl CardAction {
-    fn label(self) -> &'static str {
-        match self {
-            CardAction::Retry => "Retry now",
-            CardAction::Cancel => "Cancel",
-            CardAction::Close => "Close",
+    /// What the action's button says: its words, or a picture of it before the game's words have
+    /// loaded.
+    fn label(self, messages: Option<&Messages>) -> RichText {
+        match (self, messages) {
+            (CardAction::Retry, Some(messages)) => RichText::new(messages.screen.retry_now()),
+            (CardAction::Cancel, Some(messages)) => RichText::new(messages.interface.cancel()),
+            (CardAction::Close, Some(messages)) => RichText::new(messages.interface.close()),
+            (CardAction::Retry, None) => Icon::regular(phosphor::ARROW_CLOCKWISE).text(ICON_SIZE),
+            (CardAction::Cancel | CardAction::Close, None) => {
+                Icon::regular(phosphor::X).text(ICON_SIZE)
+            }
         }
     }
 }
 
-fn megabytes(bytes: u64) -> String {
-    format!("{:.1}", bytes as f64 / 1_000_000.0)
+fn megabytes_of(messages: &ScreenMessages, done: u64, total: u64) -> String {
+    messages.megabytes_of(megabytes(done), megabytes(total))
 }
+
+fn megabytes(bytes: u64) -> f64 {
+    (bytes as f64 / 100_000.0).round() / 10.0
+}
+
+const ICON_SIZE: f32 = 18.0;

@@ -19,6 +19,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use ui::egui::{self, Align, Layout, Rangef, Rect, Sense, Ui, Vec2};
 use ui::face;
+use ui::input::NumberField;
 use ui::{chip, controls, form, sheet, theme};
 
 use crate::app::Editor;
@@ -779,15 +780,17 @@ fn recipe_row(
     }
     bottom = bottom.max(cell(ui, "takes", columns.takes, (top, ROW), |ui| {
         let mut seconds = row.takes.0;
-        let changed = ui
-            .add(
-                egui::DragValue::new(&mut seconds)
-                    .range(0.0..=f32::MAX)
-                    .speed(0.1)
-                    .suffix(" s"),
-            )
-            .on_hover_text("How long one craft takes at a crafting speed of 100%")
-            .changed();
+        let field = ui.scope(|ui| {
+            NumberField::new(&mut seconds)
+                .range(0.0..=f32::MAX)
+                .unit("s")
+                .width(NUMBER_WIDTH)
+                .show(ui)
+        });
+        field
+            .response
+            .on_hover_text("How long one craft takes at a crafting speed of 100%");
+        let changed = field.inner;
         if changed {
             set_takes(editor, key, index, Seconds(seconds));
         }
@@ -1118,10 +1121,16 @@ fn inspect_side(
                     set_item(editor, key, index, (side, nth), &picked);
                 }
                 let mut count = *amount;
-                let changed = ui
-                    .add(egui::DragValue::new(&mut count).range(1..=u32::MAX))
-                    .on_hover_text(format!("How many one craft {}", side.verb()))
-                    .changed();
+                let field = ui.scope(|ui| {
+                    NumberField::new(&mut count)
+                        .range(1..=u32::MAX)
+                        .width(NUMBER_WIDTH)
+                        .show(ui)
+                });
+                field
+                    .response
+                    .on_hover_text(format!("How many one craft {}", side.verb()));
+                let changed = field.inner;
                 if changed {
                     set_amount(editor, key, index, (side, nth), count);
                 }
@@ -1213,11 +1222,12 @@ fn jump(editor: &mut Editor, ui: &mut Ui, key: &str, index: usize, line: &str) {
 }
 
 fn open_item(editor: &mut Editor, ui: &mut Ui, path: &str) {
-    if ui
-        .button(format!("{} →", shown_path(path)))
+    if controls::button(ui, format!("{} →", shown_path(path)))
         .on_hover_text("Open the item's file")
         .clicked()
     {
         editor.open_row(ItemDef::TABLE, path);
     }
 }
+
+const NUMBER_WIDTH: f32 = 64.0;

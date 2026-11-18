@@ -1,9 +1,9 @@
 use engine::core::content::table_of;
 use engine::core::math::{Offset, Pos, Rect};
+use engine::core::script::Variable;
 use engine::core::units::Meters;
 use engine::systems::area::scene::SceneNode;
 use engine::systems::area::{AreaModule, sixteenth};
-use engine::systems::script::Variable;
 use std::collections::BTreeMap;
 use ui::egui;
 use ui::egui::{Pos2, Ui};

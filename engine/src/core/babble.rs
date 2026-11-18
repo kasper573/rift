@@ -458,8 +458,10 @@ fn spoken(text: &StyledLine) -> Vec<Spoken> {
                 voice: None,
             }],
             TextPiece::Pause(_)
-            | TextPiece::LinkStart(_)
+            | TextPiece::LinkStart { .. }
             | TextPiece::LinkEnd
+            | TextPiece::TypingStart
+            | TextPiece::TypingEnd
             | TextPiece::Room(_) => Vec::new(),
         })
         .collect()

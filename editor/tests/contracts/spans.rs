@@ -1,13 +1,14 @@
 use editor::spans;
 use engine::core::content::serial::json_of;
-use engine::systems::text::{Fx, Ink, Span};
+use engine::core::text::{TextFx, TextInk};
+use engine::systems::dialogue::span::ScriptSpan;
 use serde_json::{Value, json};
 
-fn line_of(json: Value) -> Vec<Span> {
+fn line_of(json: Value) -> Vec<ScriptSpan> {
     serde_json::from_value(json).expect("a line of spans")
 }
 
-fn json(spans: Option<Vec<Span>>) -> Option<Value> {
+fn json(spans: Option<Vec<ScriptSpan>>) -> Option<Value> {
     spans.map(|spans| json_of(&spans).expect("spans write"))
 }
 
@@ -74,7 +75,9 @@ fn text_typed_beside_or_between_values_keeps_each_value_whole() {
 #[test]
 fn restyling_a_selection_splits_the_span_around_it() {
     let line = line_of(json!(["a red key"]));
-    let styled = spans::restyle(&line, (2, 5), |style| style.push(Fx::Ink(Ink::Danger)));
+    let styled = spans::restyle(&line, (2, 5), |style| {
+        style.push(TextFx::Ink(TextInk::Danger))
+    });
     assert_eq!(
         json(Some(styled)),
         Some(json!(["a ", { "text": "red", "ink": "danger" }, " key"]))
@@ -86,7 +89,7 @@ fn restyling_leaves_values_as_they_are() {
     let line = line_of(json!(["a ", { "value": 3 }, " b"]));
     let shown = spans::plain(&line);
     let styled = spans::restyle(&line, (0, shown.chars().count()), |style| {
-        style.push(Fx::Slow)
+        style.push(TextFx::Slow)
     });
     assert_eq!(
         json(Some(styled)),

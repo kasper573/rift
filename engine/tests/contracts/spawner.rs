@@ -7,7 +7,7 @@ use engine::core::units::HourOfDay;
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::spawner::{self, Spawned};
-use engine::systems::{actor, area, combat, region, script, sleep, stat};
+use engine::systems::{actor, area, combat, region, sleep, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -83,12 +83,14 @@ fn a_spawner_turns_with_the_sky_from_one_share_to_the_next_out_of_sight_and_over
         LONG,
         json!({
             "type": "spawner",
-            "spawns": [
-                { "type": "npc", "npc": path("npc", "boar"), "when": during("Day") },
-                { "type": "npc", "npc": path("npc", "wolf"), "when": during("Night") },
-            ],
-            "count": COUNT,
-            "respawn": WAIT,
+            "populations": [{
+                "spawns": [
+                    { "type": "npc", "npc": path("npc", "boar"), "when": during("Day") },
+                    { "type": "npc", "npc": path("npc", "wolf"), "when": during("Night") },
+                ],
+                "max_spawned_at_once": COUNT,
+                "respawn": WAIT,
+            }],
         }),
         NOON,
     );
@@ -173,29 +175,32 @@ fn hold(sim: &mut Sim, hour: f32) {
         .insert_resource(DayClock(Some(TimeCourse::Held(HourOfDay(hour)))));
 }
 
-/// A field whose one spawner keeps wolves and boars, three wolves to a boar, with `more` of its
-/// fields.
+/// A field whose one spawner keeps one endless population of wolves and boars, three wolves to a
+/// boar, with `more` of the population's fields.
 fn wilds(more: Value) -> Sim {
-    let mut pack = json!({
-        "type": "spawner",
+    let mut population = json!({
         "spawns": [
             { "type": "npc", "npc": path("npc", "wolf"), "weight": 3 },
             { "type": "npc", "npc": path("npc", "boar") },
         ],
-        "count": COUNT,
+        "max_spawned_at_once": COUNT,
+    });
+    population
+        .as_object_mut()
+        .expect("the population")
+        .extend(more.as_object().expect("fields").clone());
+    let pack = json!({
+        "type": "spawner",
+        "populations": [population],
         "within": { "x": 2.0, "y": 2.0, "w": 36.0, "h": 26.0 },
     });
-    pack.as_object_mut()
-        .expect("the spawner")
-        .extend(more.as_object().expect("fields").clone());
     field(40, pack, NOON)
 }
 
 /// A field `width` metres wide of wolves and boars that `pack` keeps, its day held at `hour`.
 fn field(width: usize, pack: Value, hour: f32) -> Sim {
     let time = |name: &str, from: f32| json!({ "name": name, "from": from, "eases": 0.0, "color": [0, 0, 0], "icon": "icons/time.png" });
-    let content = Game::new()
-        .area("wilds", &Map::open(width, 30), json!([pack]))
+    let game = beasts(Game::new().area("wilds", &Map::open(width, 30), json!([pack])))
         .hero("wilds", 1.0, 1.0)
         .asset("icons/time.png", testkit::png(1, 1))
         .edit_settings(|settings| {
@@ -204,26 +209,39 @@ fn field(width: usize, pack: Value, hour: f32) -> Sim {
                 "start": NOON,
                 "times": [time("Day", 6.0), time("Dusk", 18.0), time("Night", 21.0)],
             });
-        })
-        .npc("wolf", 20.0, json!([]))
+        });
+    served(game, "wilds", hour)
+}
+
+/// Wolves, boars and hawks, and what their falls show.
+fn beasts(game: Game) -> Game {
+    game.npc("wolf", 20.0, json!([]))
         .npc("boar", 30.0, json!([]))
+        .npc("hawk", 5.0, json!([]))
         .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
-        .load();
-    let mut sim = Sim::new(content);
-    sim.serve("wilds")
+}
+
+/// The server of `area` in `game`, its spawners kept and its scripts running, its day held at
+/// `hour`.
+fn served(game: Game, area: &str, hour: f32) -> Sim {
+    let mut sim = Sim::new(game.load());
+    sim.serve(area)
         .plan(stat::SettleVitals::default())
         .add((
             area::weather::turn_sky,
             combat::defeats,
             (npc::clear_fallen, spawner::tend).chain(),
         ))
-        .plan(actor::SettleActions::default());
+        .plan((
+            actor::SettleActions::default(),
+            engine::core::script::run::FlowRunner::default(),
+        ));
     hold(&mut sim, hour);
     area::weather::turn_sky(&mut sim.world);
     region::hold_whole(&mut sim.world);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 
@@ -258,9 +276,11 @@ fn an_entry_due_where_nobody_is_near_waits_until_a_player_brings_its_ground_back
             &Map::open(600, 12),
             json!([{
                 "type": "spawner",
-                "spawns": [{ "type": "npc", "npc": path("npc", "hawk") }],
-                "count": 1,
-                "respawn": RESPAWN,
+                "populations": [{
+                    "spawns": [{ "type": "npc", "npc": path("npc", "hawk") }],
+                    "max_spawned_at_once": 1,
+                    "respawn": RESPAWN,
+                }],
                 "within": { "x": 540.0, "y": 2.0, "w": 20.0, "h": 8.0 },
             }]),
         )
@@ -301,4 +321,121 @@ fn an_entry_due_where_nobody_is_near_waits_until_a_player_brings_its_ground_back
         1,
         "the entry fills once a player brings its ground back"
     );
+}
+
+#[test]
+fn a_spawners_populations_take_their_turns_one_after_another_and_its_area_hears_of_each() {
+    const DELAY: f32 = 8.0;
+    let wave = |npc: &str, size: u32| json!({ "spawns": [{ "type": "npc", "npc": path("npc", npc) }], "size": size, "max_spawned_at_once": size });
+    let game = |more: Value| {
+        let mut waves = json!({
+            "type": "spawner",
+            "name": "waves",
+            "delay_between": DELAY,
+            "populations": [wave("wolf", 2), wave("boar", 1)],
+        });
+        waves
+            .as_object_mut()
+            .expect("the spawner")
+            .extend(more.as_object().expect("fields").clone());
+        beasts(Game::new().area(
+            "vault",
+            &Map::open(20, 20),
+            json!([
+                { "type": "script", "script": "vault_waves.script.json" },
+                waves,
+                {
+                    "type": "spawner",
+                    "name": "reward",
+                    "dormant": true,
+                    "populations": [wave("hawk", 1)],
+                },
+            ]),
+        ))
+        .script(
+            "vault_waves",
+            "area",
+            json!({
+                "done": { "type": "on", "event": "spawner_exhausted", "spawner": "waves", "next": "reward" },
+                "reward": { "type": "wake_spawner", "spawner": "reward" },
+            }),
+        )
+        .hero("vault", 1.0, 1.0)
+    };
+    let fell = |sim: &mut Sim| {
+        for npc in standing(sim) {
+            stat::apply_damage(&mut sim.world, npc, 10_000.0);
+        }
+        sim.run(0.5);
+    };
+
+    let mut sim = served(game(json!({ "dormant": true })), "vault", NOON);
+    sim.run(2.0);
+    assert_eq!(named(&mut sim), [""; 0], "a dormant spawner spawns nothing");
+    spawner::wake(&mut sim.world, "waves");
+    sim.run(0.5);
+    assert_eq!(
+        named(&mut sim),
+        ["wolf", "wolf"],
+        "woken, its first population takes its turn"
+    );
+    fell(&mut sim);
+    sim.run(DELAY - 1.0);
+    assert_eq!(
+        named(&mut sim),
+        [""; 0],
+        "the next waits out the delay between them"
+    );
+    sim.run(1.5);
+    assert_eq!(
+        named(&mut sim),
+        ["boar"],
+        "then the next population takes its turn"
+    );
+    fell(&mut sim);
+    sim.run(0.5);
+    assert_eq!(
+        named(&mut sim),
+        ["hawk"],
+        "the area's script heard the spawner exhausted and woke the next one"
+    );
+    sim.run(DELAY * 3.0);
+    assert_eq!(
+        named(&mut sim),
+        ["hawk"],
+        "a spawner that does not repopulate is spent"
+    );
+
+    let mut sim = served(game(json!({ "repopulate": true })), "vault", NOON);
+    sim.run(0.5);
+    assert_eq!(
+        named(&mut sim),
+        ["wolf", "wolf"],
+        "a spawner awake from the start begins at once"
+    );
+    fell(&mut sim);
+    sim.run(DELAY + 0.5);
+    fell(&mut sim);
+    sim.run(DELAY + 0.5);
+    assert_eq!(
+        named(&mut sim),
+        ["wolf", "wolf"],
+        "a spawner that repopulates goes round its populations again"
+    );
+}
+
+/// The kind of every living npc a spawner keeps, in order.
+fn named(sim: &mut Sim) -> Vec<&'static str> {
+    let npcs = standing(sim);
+    let mut names: Vec<&'static str> = npcs
+        .iter()
+        .filter_map(|&npc| {
+            let def = sim.world.get::<Npc>(npc)?.def;
+            ["wolf", "boar", "hawk"]
+                .into_iter()
+                .find(|kind| sim.id::<NpcDef>(kind) == def)
+        })
+        .collect();
+    names.sort_unstable();
+    names
 }

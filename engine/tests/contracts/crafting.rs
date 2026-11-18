@@ -16,7 +16,7 @@ use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::prompt::{self, PromptRequest, PromptView};
 use engine::systems::skill::{self, Rank};
 use engine::systems::stat::{StatKind, Stats};
-use engine::systems::{GameSettings, movement, player, region, script};
+use engine::systems::{GameSettings, movement, player, region, window};
 use serde_json::{Value, json};
 use testkit::{APEX, BODY, Game, Map, Sim, path, rig_clips, said, sent};
 
@@ -57,7 +57,7 @@ fn a_crafting_prompt_makes_what_its_books_and_subsets_allow_and_nothing_else() {
     );
     let (again, after) = shown(&sim, player).expect("it stays open");
     assert_ne!(again.step, asked.step);
-    assert_eq!(after.crafted, 1);
+    assert_eq!(after.answered.0, 1);
     assert_eq!(sim.count(player, "token"), 1, "the book heard of it");
 
     craft(&mut sim, 1, &[("log", 3)], PLANK);
@@ -250,7 +250,7 @@ fn a_craft_takes_its_recipes_time_at_the_crafters_speed_and_nothing_until_it_is_
     assert_eq!(held(&sim), (8, 4, 0), "twice as fast is still two seconds");
     sim.run(1.0);
     assert_eq!(held(&sim), (6, 3, 1));
-    assert_eq!(shown(&sim, player).expect("open").1.crafted, 1);
+    assert_eq!(shown(&sim, player).expect("open").1.answered.0, 1);
 
     craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
     sim.take(player, "coal", 3);
@@ -796,7 +796,7 @@ fn forge(game: Game) -> Sim {
             crafting::moves,
         ))
         .plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
             actor::SettleActions::default(),
         ))
@@ -804,11 +804,11 @@ fn forge(game: Game) -> Sim {
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
-            prompt::hold,
-            crafting::hold,
+            window::hold::<prompt::PromptSession>,
+            window::hold::<crafting::CraftingSession>,
             crafting::work,
         ));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }
@@ -888,7 +888,7 @@ fn craft(sim: &mut Sim, client: u32, offer: &[(&str, u32)], recipe: (&str, &str)
     let step = shown(sim, player).expect("a crafting prompt").0.step;
     let request = CraftingRequest::Craft {
         step,
-        offer: stacks(sim, offer),
+        placed: stacks(sim, offer),
         recipe: key(sim, recipe),
     };
     sim.send(conn, request);

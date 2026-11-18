@@ -7,6 +7,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
 use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
+use super::shown_weather::ShownWeather;
 use super::{AreaId, AreaObject, AreaTag, PropDef};
 use crate::core::assets;
 use crate::core::content::Content;
@@ -18,14 +19,13 @@ use crate::core::render::{CameraFraming, CameraRig, Look, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::stage::{SkyLampLight, StageSkyLight};
 use crate::core::units::{MeterSize, Meters};
-use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::render::SiteExtent;
 use crate::core::vfx::standing::StandingVfx;
 use crate::systems::area::rain::RainHeard;
+use crate::systems::area::sky::{self, Sky};
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
-use crate::systems::script::sky::{self, Sky};
 
 pub struct AreaRenderPlugin;
 

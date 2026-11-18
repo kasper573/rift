@@ -5,45 +5,41 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::controls;
-use ui::egui::{self, Align, Color32, Layout, Pos2, Rect, Response, Ui, Vec2};
+use ui::egui::{self, Align, Color32, Layout, Response, Ui, Vec2};
 use ui::face::TextRole;
 use ui::input::InputField;
 use ui::sheet::{self, Tab, TabSize};
-use ui::suggest::{self, Suggestion};
 use ui::{face, form, ink, panel};
 
 use super::{
-    ListingId, ListingRow, ListingSide, ListingSort, MOST_ROWS, MarketAsk, MarketQuery,
-    MarketRequest, MarketResults, MarketSettings, MarketView, SortBy,
+    ListingId, ListingRow, ListingSort, MarketAsk, MarketQuery, MarketRequest, MarketResults,
+    MarketSettings, MarketView, SortBy,
 };
-use crate::core::content::{Content, ContentFile};
+use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
-use crate::systems::command::search;
-use crate::systems::hud::{self, Sizing, WindowFrame};
-use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::hud::{self, Centred, WindowKey};
+use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::card;
+use crate::systems::item::grid::scrolled;
 use crate::systems::item::inline::{self, InlineItem};
-use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, item_transfer};
+use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, TrayWindow, tray_window};
 use crate::systems::item::tray::ItemTray;
-use crate::systems::item::widget::{
-    InventoryPane, SlotVerdict, inventory_pane, slot_verdict_source,
-};
-use crate::systems::item::{Inventory, ItemDef, ItemId, ItemStack};
-use crate::systems::mention::{self, Mention, SuggestedMention};
+use crate::systems::item::widget::{InventoryPane, inventory_pane};
+use crate::systems::item::{self, Inventory, ItemDef, ItemId, ItemStack};
+use crate::systems::mention::{self, Mention};
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::Placed;
 use crate::systems::society::SocietyView;
-use crate::systems::text::LineText;
-
-pub const WINDOW_KEY: &str = "market";
+use crate::systems::window::AnswerCount;
 
 pub(crate) fn plugin(app: &mut App) {
-    slot_verdict_source(app, verdict);
-    item_transfer(app, TRANSFER);
+    tray_window::<NewListing>(app);
     app.init_resource::<Browse>()
         .add_systems(Update, notice.run_if(in_state(ClientScreen::Area)))
         .add_systems(OnExit(ClientScreen::Area), forget);
@@ -53,46 +49,33 @@ pub(crate) fn plugin(app: &mut App) {
 pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
     tell_created(world);
     let open = view(world).cloned();
-    let Some(pose) = hud::sheet_pose(world, gui, WINDOW_KEY, open.is_some()) else {
-        return;
-    };
-    let Some(shown) = hud::lifting(world, open.clone()) else {
-        return;
-    };
     let (Some(settings), Some(now)) = (
         world.resource::<GameSettings>().market.clone(),
         time::server_now(world),
     ) else {
         return;
     };
-    let screen = gui.content_rect();
-    let size = sheet::titled_size(Vec2::new(WIDTH + 2.0 * sheet::PANE_PAD.x, BODY_HEIGHT));
-    let frame = WindowFrame {
-        key: WINDOW_KEY,
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
+    let window = Centred {
+        key: WindowKey::Market,
         of: Placed::Market,
-        title: Some("Market"),
-        start: Rect::from_min_size(
-            Pos2::new(screen.center().x - size.x / 2.0, screen.top() + 80.0),
-            size,
-        ),
-        sizing: Sizing::Fixed,
+        body: Vec2::new(WIDTH, BODY_HEIGHT),
+        top: 80.0,
     };
-    let mut stays = open.is_some();
-    hud::window(world, gui, frame, pose, &mut stays, |ui, world| {
-        if open.is_none() {
-            ui.disable();
-        }
+    let title = |_: &MarketView| words.market.title().to_owned();
+    let drawn = hud::centred(world, gui, window, open, title, |ui, world, shown| {
         let pad = sheet::PANE_PAD;
         let mine = my_listings(world);
         let tabs = [
-            Tab::new(MarketTab::Browse, "Browse"),
-            Tab::new(MarketTab::List, "New listing"),
-            Tab::new(MarketTab::Mine, format!("My listings · {}", mine.len())),
+            Tab::new(MarketTab::Browse, words.market.browse()),
+            Tab::new(MarketTab::List, words.market.new_listing()),
+            Tab::new(MarketTab::Mine, words.market.my_listings(mine.len())),
         ];
         let mut tab = world.resource::<Browse>().tab;
         ui.add_space(pad.y);
         let room = ui.available_width() - 2.0 * pad.x;
-        sheet::tabs_inset(ui, TabSize::Sub, &tabs, &mut tab, room, pad.x);
+        hud::tabs(ui, world, TabSize::Sub, &tabs, &mut tab, room, pad.x);
         world.resource_mut::<Browse>().tab = tab;
         let padding = egui::Margin {
             left: pad.x as i8,
@@ -104,46 +87,53 @@ pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
             ui.allocate_ui(Vec2::new(WIDTH, PAGE_HEIGHT), |ui| {
                 ui.set_min_height(PAGE_HEIGHT);
                 match tab {
-                    MarketTab::Browse => browse(ui, world, &shown, now),
+                    MarketTab::Browse => browse(ui, world, shown, now),
                     MarketTab::List => new_listing(ui, world, &settings),
                     MarketTab::Mine => own(ui, world, &mine, &settings, now),
                 }
             });
         });
     });
-    if open.is_some() && !stays {
+    if drawn.is_some_and(|drawn| drawn.closed) {
         close(world);
     }
 }
 
 /// Tells the player the listing they created is up, once it shows among their listings.
 fn tell_created(world: &mut World) {
-    let Some((offer, before)) = world.resource::<Browse>().created.clone() else {
+    let Some((goods, before)) = world.resource::<Browse>().created.clone() else {
         return;
     };
     let up = my_listings(world)
         .iter()
-        .any(|row| !before.contains(&row.id) && row.offer == offer);
+        .any(|row| !before.contains(&row.id) && row.goods == goods);
     if !up {
         return;
     }
     world.resource_mut::<Browse>().created = None;
-    let words = &world.resource::<GameSettings>().words;
-    let title =
-        LineText::plain(words.market_listed.as_str()).filling("{offer}", ItemStack::listed(&offer));
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
+    let title = words
+        .market
+        .listed(ItemStack::listed(&words.interface, &goods));
+    let dismiss = words.interface.ok().to_owned();
     hud::tell(
         world,
         hud::Tell {
             title,
             body: Vec::new(),
-            dismiss: "OK".to_owned(),
+            dismiss,
         },
     );
 }
 
 /// Closes the market, if it is open: what stepping out does while it is.
+pub fn is_open(world: &World) -> bool {
+    view(world).is_some()
+}
+
 pub fn close(world: &mut World) -> bool {
-    if view(world).is_none() {
+    if !is_open(world) {
         return false;
     }
     world.write_message(MarketRequest::Close);
@@ -167,15 +157,15 @@ pub struct ShownMarket {
     pub found: u32,
     /// The listings the player has up.
     pub mine: Vec<ShownListing>,
-    /// What the new listing offers so far.
-    pub offer: Vec<ShownMarketStack>,
+    /// The goods of the new listing so far.
+    pub goods: Vec<ShownMarketStack>,
     pub waiting: bool,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ShownListing {
     pub id: ListingId,
-    pub offer: Vec<ShownMarketStack>,
+    pub goods: Vec<ShownMarketStack>,
     pub price: Vec<ShownMarketStack>,
     pub left: Seconds,
     pub mine: bool,
@@ -204,7 +194,7 @@ pub fn shown(world: &World) -> Option<ShownMarket> {
     let browse = world.resource::<Browse>();
     let row = |row: &ListingRow| ShownListing {
         id: row.id,
-        offer: shown_stacks(&row.offer),
+        goods: shown_stacks(&row.goods),
         price: shown_stacks(&row.price),
         left: row.ends.since(now),
         mine: row.mine,
@@ -230,7 +220,7 @@ pub fn shown(world: &World) -> Option<ShownMarket> {
             .map(|results| results.sorts.clone())
             .unwrap_or_default(),
         mine: my_listings(world).iter().map(row).collect(),
-        offer: shown_stacks(&browse.offer.covered()),
+        goods: shown_stacks(&browse.goods.covered()),
         waiting: browse.waiting_on == Some(view.answered),
     })
 }
@@ -247,9 +237,6 @@ const PAGER_GAP: f32 = 6.0;
 const BAG_WIDTH: f32 = 320.0;
 /// The room above a line that says the list is empty.
 const NOTHING_ROOM: f32 = 24.0;
-const BUY: &str = "Buy";
-const OFFER: &str = "Offer";
-const PRICE: &str = "Price";
 /// The room between the tabs and the page under them.
 const TABS_GAP: f32 = 14.0;
 /// The room on a card of the player's own listing for how long it has left and Cancel.
@@ -261,10 +248,6 @@ const AMOUNT_WIDTH: f32 = 96.0;
 #[derive(Resource, Default)]
 struct Browse {
     tab: MarketTab,
-    /// What is typed in the Item field.
-    typed: String,
-    /// The suggestion lit among the items that match what is typed.
-    selected: usize,
     /// The item whose listings show, none until one is chosen.
     item: Option<ItemId>,
     /// How the listings are sorted, as the market sorts them while none is chosen.
@@ -272,14 +255,14 @@ struct Browse {
     page: u32,
     /// How many listings a page has room for.
     rows: u32,
-    /// What the new listing offers, still in the bag: at most one stack of each item.
-    offer: ItemTray,
+    /// The goods of the new listing, still in the bag: at most one stack of each item.
+    goods: ItemTray,
     /// The new listing's price, as the seller is setting it.
     price: Vec<PriceRow>,
     duration: usize,
     /// While the market owes an answer, the count of answers it had given when asked.
-    waiting_on: Option<u32>,
-    /// The listing the player created and is yet to be told is up: what it offers, and the
+    waiting_on: Option<AnswerCount>,
+    /// The listing the player created and is yet to be told is up: its goods, and the
     /// listings they had up before it.
     created: Option<(Vec<ItemStack>, Vec<ListingId>)>,
     open: bool,
@@ -297,7 +280,7 @@ impl Browse {
     /// The search the window shows once an item is chosen, within what the market's last answer
     /// for the item allows: a sort the listings still allow, the market's own until one is
     /// chosen, and a page there is.
-    fn query(&self, shown: &MarketView) -> Option<MarketQuery> {
+    fn query(&self, shown: &MarketView, page_rows: u32) -> Option<MarketQuery> {
         let item = self.item?;
         let answered = shown
             .results
@@ -316,7 +299,7 @@ impl Browse {
             item,
             sort,
             page,
-            rows: self.rows.clamp(1, MOST_ROWS),
+            rows: self.rows.clamp(1, page_rows),
         })
     }
 }
@@ -325,8 +308,8 @@ fn forget(mut browse: ResMut<Browse>) {
     *browse = Browse::default();
 }
 
-/// Starts the window afresh each time the market opens, and offers no more of an item than the
-/// bag still holds.
+/// Starts the window afresh each time the market opens, and keeps the goods of the new listing
+/// within what the bag still holds.
 fn notice(world: &mut World) {
     let open = view(world).is_some();
     if world.resource::<Browse>().open != open {
@@ -342,23 +325,19 @@ fn notice(world: &mut World) {
             ..Browse::default()
         };
     }
-    let Some(bag) = bag(world).cloned() else {
+    let Some(bag) = item::my_bag(world).cloned() else {
         return;
     };
-    let mut offer = world.resource::<Browse>().offer.clone();
-    offer.keep_within(&bag);
-    offer.drop_short();
-    if world.resource::<Browse>().offer != offer {
-        world.resource_mut::<Browse>().offer = offer;
+    let mut goods = world.resource::<Browse>().goods.clone();
+    goods.keep_within(&bag);
+    goods.drop_short();
+    if world.resource::<Browse>().goods != goods {
+        world.resource_mut::<Browse>().goods = goods;
     }
 }
 
 fn view(world: &World) -> Option<&MarketView> {
     session::my_character(world)?.get::<MarketView>()
-}
-
-fn bag(world: &World) -> Option<&Inventory> {
-    session::my_character(world)?.get::<Inventory>()
 }
 
 fn my_listings(world: &World) -> Vec<ListingRow> {
@@ -403,6 +382,7 @@ fn waiting(world: &World) -> bool {
 /// the listings that match.
 fn browse(ui: &mut Ui, world: &mut World, shown: &MarketView, now: UnixMillis) {
     let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     let chosen = world.resource::<Browse>().item;
     let results = shown
         .results
@@ -416,7 +396,7 @@ fn browse(ui: &mut Ui, world: &mut World, shown: &MarketView, now: UnixMillis) {
         }
     });
     ui.add_space(8.0);
-    let heads = sheet::ColumnHeads::new(ui, OFFER, PRICE);
+    let heads = sheet::ColumnHeads::new(ui, words.market.goods(), words.market.price());
     let room = ui.available_height() - PAGER - heads.room(ui) + ui.spacing().item_spacing.y;
     let fit = chosen.map_or(1, |item| {
         (room / row_pitch(ui, world, item)).floor().max(1.0) as u32
@@ -424,13 +404,13 @@ fn browse(ui: &mut Ui, world: &mut World, shown: &MarketView, now: UnixMillis) {
     world.resource_mut::<Browse>().rows = fit;
     match results {
         None if chosen.is_none() => {
-            form::nothing_selected(ui, "Choose an item to see its listings.");
+            form::nothing_selected(ui, words.market.choose_item());
         }
         None => {}
         Some(results) if results.rows.is_empty() => {
-            let said = LineText::plain("No listing offers ")
-                .then(Mention::Item(results.query.item).span(&content))
-                .then(LineText::plain("."));
+            let said = words
+                .market
+                .no_listings_of(Mention::Item(results.query.item).span(&content));
             ui.add_space(NOTHING_ROOM);
             ui.vertical_centered(|ui| {
                 line(ui, world, &said, TextRole::Small, ink::INK2, false);
@@ -438,7 +418,11 @@ fn browse(ui: &mut Ui, world: &mut World, shown: &MarketView, now: UnixMillis) {
         }
         Some(results) => listings(ui, world, shown, results, heads, now),
     }
-    let asked = world.resource::<Browse>().query(shown);
+    let asked = content
+        .built::<GameSettings>()
+        .market
+        .as_ref()
+        .and_then(|market| world.resource::<Browse>().query(shown, market.page_rows));
     if let Some(asked) = asked
         && results.map(|results| results.query) != Some(asked)
         && !waiting(world)
@@ -447,122 +431,75 @@ fn browse(ui: &mut Ui, world: &mut World, shown: &MarketView, now: UnixMillis) {
     }
 }
 
-/// The Item field: typing part of an item's name lists the items that match, and picking one
-/// shows the listings that offer it.
+/// The Item field: a combo box of every item that can change hands, narrowed by typing, whose
+/// pick shows the listings with it among their goods.
 fn item_field(ui: &mut Ui, world: &mut World, content: &Content) {
-    let id = ui.id().with("market item");
-    let browse = world.resource::<Browse>();
-    let chosen = browse.item.map(|item| item.get(content).name.clone());
-    let mut typed = browse.typed.clone();
-    let mut selected = browse.selected;
-    let found_id = id.with("found");
-    let focused = ui.memory(|memory| memory.has_focus(id));
-    // A click on a suggestion takes the keyboard from the field as it is pressed, so the list
-    // stays while the pointer is on it.
-    let over_found = ui
-        .ctx()
-        .pointer_latest_pos()
-        .and_then(|at| ui.ctx().layer_id_at(at))
-        .is_some_and(|layer| layer.id == found_id);
-    let looking =
-        (focused || over_found) && !typed.trim().is_empty() && Some(&typed) != chosen.as_ref();
-    let found: Vec<(ItemId, String)> = if looking {
-        search::matching(world, <ItemDef as ContentFile>::TABLE, &typed)
-            .into_iter()
-            .filter_map(|option| {
-                let item = content.table::<ItemDef>().id_of(option.file()?)?;
-                (!item.get(content).bound()).then_some((item, option.text))
-            })
-            .collect()
-    } else {
-        Vec::new()
+    let words = &messages::of(content).market;
+    let label = ui.label(face::small(words.item()).color(ink::INK3));
+    let mut chosen = world.resource::<Browse>().item;
+    let search = controls::SearchWords {
+        hint: words.item_hint(),
+        none_found: words.no_such_item(),
     };
-    let keyed = if looking {
-        search::keyed(
-            ui,
-            world.resource::<InputMap>(),
-            found.len(),
-            &mut selected,
-            true,
-        )
-    } else {
-        None
-    };
-    let label = ui.label(face::small("Item").color(ink::INK3));
-    let field = InputField::new(&mut typed)
-        .id(id)
-        .width(ITEM_WIDTH)
-        .show(ui)
-        .labelled_by(label.id);
-    if field.changed() {
-        selected = 0;
+    let tradeable = tradeable(content);
+    mention::search_dropdown(
+        ui,
+        world,
+        "market item",
+        &mut chosen,
+        &tradeable,
+        search,
+        ITEM_WIDTH,
+    )
+    .labelled_by(label.id);
+    if chosen != world.resource::<Browse>().item {
+        world.resource_mut::<Browse>().choose(chosen);
     }
-    let drawn: Vec<SuggestedMention> = found
-        .iter()
-        .map(|&(item, _)| SuggestedMention::new(world, ui.ctx(), &InlineItem::of(item).into()))
-        .collect();
-    let listed: Vec<Suggestion> = found
-        .iter()
-        .zip(&drawn)
-        .map(|((_, name), drawn)| Suggestion {
-            text: name,
-            detail: "",
-            muted: false,
-            drawn: Some(drawn),
-        })
-        .collect();
-    let suggested = (!listed.is_empty())
-        .then(|| suggest::suggestions(ui.ctx(), found_id, field.rect, "", &listed, selected));
-    let (clicked, pointed) = suggested.map_or((None, None), |shown| (shown.clicked, shown.pointed));
-    if let Some((place, row)) = pointed
-        && let Some(&(item, _)) = found.get(place)
-    {
-        inline::tooltip(world, &row, InlineItem::of(item));
-    }
-    let mut browse = world.resource_mut::<Browse>();
-    match keyed.or(clicked).and_then(|place| found.get(place)) {
-        Some((item, name)) => {
-            browse.choose(Some(*item));
-            typed = name.clone();
-            ui.memory_mut(|memory| memory.surrender_focus(id));
-        }
-        None if typed.trim().is_empty() && browse.item.is_some() => browse.choose(None),
-        None if !looking && !focused => typed = chosen.unwrap_or_default(),
-        None => {}
-    }
-    browse.typed = typed;
-    browse.selected = selected;
 }
 
-/// What the listings are sorted by, among the items they offer and those of their prices, and
+/// What the listings are sorted by, among the items in their goods and those of their prices, and
 /// which way.
 fn sort_fields(ui: &mut Ui, world: &mut World, results: &MarketResults) {
     let Some(sorted) = results.query.sort else {
         return;
     };
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).market;
     let mut sort = sorted;
-    let side = |heading: &'static str, of: fn(SortBy) -> Option<ItemId>| {
-        let choices = results
+    let side = |of: fn(SortBy) -> Option<ItemId>| -> Vec<(SortBy, Mention)> {
+        results
             .sorts
             .iter()
             .filter_map(|&by| Some((by, Mention::Item(of(by)?))))
-            .collect();
-        (heading, choices)
+            .collect()
     };
     let groups = [
-        side(OFFER, |by| match by {
-            SortBy::Offer(item) => Some(item),
-            SortBy::Price(_) => None,
-        }),
-        side(PRICE, |by| match by {
-            SortBy::Price(item) => Some(item),
-            SortBy::Offer(_) => None,
-        }),
+        (
+            words.goods(),
+            side(|by| match by {
+                SortBy::Goods(item) => Some(item),
+                SortBy::Price(_) => None,
+            }),
+        ),
+        (
+            words.price(),
+            side(|by| match by {
+                SortBy::Price(item) => Some(item),
+                SortBy::Goods(_) => None,
+            }),
+        ),
     ];
-    let label = ui.label(face::small("Sort by").color(ink::INK3));
+    let label = ui.label(face::small(words.sort_by()).color(ink::INK3));
     mention::grouped_dropdown(ui, world, "market sort", &mut sort.by, &groups)
         .labelled_by(label.id);
-    let label = ui.label(face::small("Order").color(ink::INK3));
+    let label = ui.label(face::small(words.order()).color(ink::INK3));
+    let order = |descending: bool| {
+        if descending {
+            words.high_to_low()
+        } else {
+            words.low_to_high()
+        }
+    };
     controls::combo("market order")
         .selected_text(order(sort.descending))
         .show_ui(ui, |ui| {
@@ -579,14 +516,6 @@ fn sort_fields(ui: &mut Ui, world: &mut World, results: &MarketResults) {
     }
 }
 
-fn order(descending: bool) -> &'static str {
-    if descending {
-        "High to low"
-    } else {
-        "Low to high"
-    }
-}
-
 /// A page of the listings that match under the heads of their columns, and the buttons that turn
 /// the page.
 fn listings(
@@ -597,6 +526,8 @@ fn listings(
     mut heads: sheet::ColumnHeads,
     now: UnixMillis,
 ) {
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     heads.place(ui);
     let mut price_end = ui.max_rect().right();
     for row in &results.rows {
@@ -609,16 +540,12 @@ fn listings(
     ui.horizontal(|ui| {
         let page = results.query.page;
         let back = page > 0
-            && (controls::button(ui, "‹ Back").clicked()
+            && (controls::button(ui, words.interface.back()).clicked()
                 || map::just_pressed(world, InputAction::PageBack));
-        ui.label(face::small(format!(
-            "Page {} of {} · {} listings",
-            page + 1,
-            results.pages,
-            results.found
-        )));
+        let said = words.market.page(results.found, page + 1, results.pages);
+        ui.label(face::small(said));
         let on = page + 1 < results.pages
-            && (controls::button(ui, "Next ›").clicked()
+            && (controls::button(ui, words.interface.next()).clicked()
                 || map::just_pressed(world, InputAction::PageForward));
         let mut browse = world.resource_mut::<Browse>();
         if back {
@@ -629,7 +556,7 @@ fn listings(
     });
 }
 
-/// One listing of a page: its offer and how long it has left, its price and, where `each`
+/// One listing of a page: its goods and how long it has left, its price and, where `each`
 /// says, its price per one in the item sorted by, and Buy. Answers where its price ends.
 fn listing_row(
     ui: &mut Ui,
@@ -645,8 +572,10 @@ fn listing_row(
         ..controls::RowLook::default()
     };
     let ink = if gone { ink::INK3 } else { ink::INK };
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     let lines = row
-        .offer
+        .goods
         .first()
         .map_or(0.0, |stack| row_lines(ui, world, stack.item));
     let mut price_end = 0.0;
@@ -668,22 +597,22 @@ fn listing_row(
                         gone,
                     );
                     if let Some((each, by)) = each {
-                        let said =
-                            LineText::from(InlineItem::of(by).share(each).nameless()).then(" each");
+                        let said = words.market.each(InlineItem::of(by).share(each).nameless());
                         line(ui, world, &said, TextRole::Small, ink::INK3, false);
                     }
                 });
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = LINE_GAP;
-                        let offer = ItemStack::listed(&row.offer);
-                        line(ui, world, &offer, TextRole::Body, ink, gone);
+                        let goods = ItemStack::listed(&words.interface, &row.goods);
+                        line(ui, world, &goods, TextRole::Body, ink, gone);
+                        let left = words.time.remaining(row.ends.since(now));
                         let note = if gone {
-                            "Bought".to_owned()
+                            words.market.taken().to_owned()
                         } else if row.mine {
-                            format!("Yours · {}", left(row.ends, now))
+                            words.market.yours(left)
                         } else {
-                            left(row.ends, now)
+                            left
                         };
                         ui.label(face::small(note).color(ink::INK3));
                     });
@@ -692,57 +621,61 @@ fn listing_row(
         });
     })
     .response;
-    let items: Vec<ItemId> = row.offer.iter().map(|stack| stack.item).collect();
+    let items: Vec<ItemId> = row.goods.iter().map(|stack| stack.item).collect();
     card::chat_shortcut(world, &response, &items);
     price_end
 }
 
-/// Buy, which pays `row`'s price for its offer: shut, with the reason on hover,
+/// Buy, which pays `row`'s price for its goods: shut, with the reason on hover,
 /// while the listing is gone, the player's own, or more than the player holds.
 fn buy_button(ui: &mut Ui, world: &mut World, row: &ListingRow, gone: bool) {
-    let affords = bag(world).is_some_and(|bag| {
+    let affords = item::my_bag(world).is_some_and(|bag| {
         row.price
             .iter()
             .all(|stack| bag.count(stack.item) >= stack.count)
     });
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).market;
     let shut = if gone {
-        Some("Someone bought it first.")
+        Some(words.bought_first())
     } else if row.mine {
-        Some("This is your own listing.")
+        Some(words.own_listing())
     } else if !affords {
-        Some("You can't pay its price.")
+        Some(words.cannot_pay())
     } else {
         None
     };
+    let buy = words.buy();
     let pressed = match (waiting(world), shut) {
-        (true, _) => controls::waiting(ui, BUY),
-        (false, Some(why)) => controls::faded(ui, BUY).on_hover_text(why),
-        (false, None) => controls::primary(ui, BUY),
+        (true, _) => controls::waiting(ui, buy),
+        (false, Some(why)) => controls::faded(ui, buy).on_hover_text(why),
+        (false, None) => controls::primary(ui, buy),
     };
     if pressed.clicked() && shut.is_none() {
         confirm_buy(world, row);
     }
 }
 
-/// Asks the player whether to pay `row`'s price for its offer, and buys it once they confirm.
+/// Asks the player whether to pay `row`'s price for its goods, and buys it once they confirm.
 fn confirm_buy(world: &mut World, row: &ListingRow) {
-    let title = LineText::plain("Are you sure you want to buy ")
-        .then(ItemStack::listed(&row.offer))
-        .then(LineText::plain(" for "))
-        .then(ItemStack::summed(&row.price))
-        .then(LineText::plain("?"));
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
+    let title = words.market.confirm_buy(
+        ItemStack::listed(&words.interface, &row.goods),
+        ItemStack::summed(&row.price),
+    );
     let buy = MarketAsk::Buy {
         listing: row.id,
-        offer: row.offer.clone(),
+        goods: row.goods.clone(),
         price: row.price.clone(),
     };
     hud::confirm(
         world,
         hud::Confirm {
             title,
-            body: vec!["This transaction cannot be undone.".into()],
-            confirm: BUY.to_owned(),
-            cancel: "Cancel".to_owned(),
+            body: vec![LineText::from(words.market.cannot_undo())],
+            confirm: words.market.buy().to_owned(),
+            cancel: words.interface.cancel().to_owned(),
             answer: Box::new(move |world, bought| {
                 if bought {
                     send(world, buy);
@@ -753,132 +686,111 @@ fn confirm_buy(world: &mut World, row: &ListingRow) {
 }
 
 fn new_listing(ui: &mut Ui, world: &mut World, settings: &MarketSettings) {
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(BAG_WIDTH);
-            sheet::section(ui, "Inventory");
-            let pane = InventoryPane {
-                width: ui.available_width(),
-                heading: None,
-            };
-            inventory_pane(ui, world, pane);
+            sheet::section(ui, words.interface.inventory());
+            scrolled(ui, "listing bag", |ui| {
+                let pane = InventoryPane {
+                    width: ui.available_width(),
+                    heading: None,
+                };
+                inventory_pane(ui, world, pane);
+            });
         });
         ui.add_space(sheet::GUTTER);
         ui.vertical(|ui| {
-            sheet::section(ui, "You offer");
-            let tray = world.resource::<Browse>().offer.clone();
-            let pane = TransferPane {
-                placed: tray.placed(),
-                slots: settings.max_offer_items,
-                named: "You offer",
-                transfer: Some(TRANSFER),
-            };
-            transfer::transfer_pane(ui, world, pane);
-            let offer = tray.covered();
-            ui.add_space(8.0);
-            sheet::section(ui, "Your price");
-            let mut price = world.resource::<Browse>().price.clone();
-            price_rows(ui, world, settings, &mut price);
-            let priced: Vec<ItemStack> = price.iter().map(PriceRow::stack).collect();
-            world.resource_mut::<Browse>().price = price;
-            ui.add_space(6.0);
-            let mut duration = world
-                .resource::<Browse>()
-                .duration
-                .min(settings.durations.len() - 1);
-            ui.horizontal(|ui| {
-                ui.label("For");
-                for (index, length) in settings.durations.iter().enumerate() {
-                    let hours = length.0 / 3600.0;
-                    let label = if hours >= 1.0 {
-                        format!("{} h", hours.round())
-                    } else {
-                        format!("{} min", (length.0 / 60.0).round())
-                    };
-                    if ui.selectable_label(duration == index, label).clicked() {
-                        duration = index;
-                    }
-                }
-            });
-            world.resource_mut::<Browse>().duration = duration;
-            ui.add_space(6.0);
-            let deposit = LineText::plain("Deposit ")
-                .then(settings.deposit().named())
-                .then(LineText::plain(
-                    ", given back only if the listing is bought.",
-                ));
-            line(ui, world, &deposit, TextRole::Small, ink::INK2, false);
-            ui.add_space(6.0);
-            let refusal = listing_refusal(world, settings, &offer, &priced);
-            let pressed = match (waiting(world), &refusal) {
-                (true, _) => controls::waiting(ui, "Create listing"),
-                (false, Some(_)) => controls::faded(ui, "Create listing"),
-                (false, None) => controls::primary(ui, "Create listing"),
-            };
-            if let Some(why) = &refusal {
-                line(ui, world, why, TextRole::Small, ink::RUBRIC, false);
-            }
-            if pressed.clicked() && refusal.is_none() {
-                let before = my_listings(world).iter().map(|row| row.id).collect();
-                world.resource_mut::<Browse>().created = Some((offer.clone(), before));
-                let ask = MarketAsk::List {
-                    offer,
-                    price: priced,
-                    duration: settings.durations[duration],
+            scrolled(ui, "listing goods", |ui| {
+                sheet::section(ui, words.market.your_goods());
+                let tray = world.resource::<Browse>().goods.clone();
+                let pane = TransferPane {
+                    placed: tray.placed(),
+                    slots: settings.max_goods_items,
+                    named: words.market.your_goods(),
+                    transfer: Some(ItemTransfer::of_tray::<NewListing>()),
                 };
-                send(world, ask);
-                world.resource_mut::<Browse>().offer.clear();
-            }
+                transfer::transfer_pane(ui, world, pane);
+                let goods = tray.covered();
+                ui.add_space(8.0);
+                sheet::section(ui, words.market.your_price());
+                let mut price = world.resource::<Browse>().price.clone();
+                price_rows(ui, world, settings, &mut price);
+                let priced: Vec<ItemStack> = price.iter().map(PriceRow::stack).collect();
+                world.resource_mut::<Browse>().price = price;
+                ui.add_space(6.0);
+                let mut duration = world
+                    .resource::<Browse>()
+                    .duration
+                    .min(settings.durations.len() - 1);
+                ui.horizontal(|ui| {
+                    ui.label(words.market.lasts());
+                    for (index, &length) in settings.durations.iter().enumerate() {
+                        let label = words.time.exact(length);
+                        if ui.selectable_label(duration == index, label).clicked() {
+                            duration = index;
+                        }
+                    }
+                });
+                world.resource_mut::<Browse>().duration = duration;
+                ui.add_space(6.0);
+                let deposit = words.market.deposit(settings.deposit().named());
+                line(ui, world, &deposit, TextRole::Small, ink::INK2, false);
+                ui.add_space(6.0);
+                let refusal = listing_refusal(world, settings, &goods, &priced);
+                let create = words.market.create();
+                let pressed = match (waiting(world), &refusal) {
+                    (true, _) => controls::waiting(ui, create),
+                    (false, Some(_)) => controls::faded(ui, create),
+                    (false, None) => controls::primary(ui, create),
+                };
+                if let Some(why) = &refusal {
+                    line(ui, world, why, TextRole::Small, ink::RUBRIC, false);
+                }
+                if pressed.clicked() && refusal.is_none() {
+                    let before = my_listings(world).iter().map(|row| row.id).collect();
+                    world.resource_mut::<Browse>().created = Some((goods.clone(), before));
+                    let ask = MarketAsk::List {
+                        goods,
+                        price: priced,
+                        duration: settings.durations[duration],
+                    };
+                    send(world, ask);
+                    world.resource_mut::<Browse>().goods.clear();
+                }
+            })
         });
     });
 }
 
-/// What stands in the way of listing `offer` for `price`, as the market would refuse it.
+/// What stands in the way of listing `goods` for `price`, as the market would refuse it.
 fn listing_refusal(
     world: &World,
     settings: &MarketSettings,
-    offer: &[ItemStack],
+    goods: &[ItemStack],
     price: &[ItemStack],
 ) -> Option<LineText> {
     let content = world.resource::<Content>();
-    let words = &world.resource::<GameSettings>().words;
-    let refusal = settings
-        .refusal(content, ListingSide::Offer, offer)
-        .or_else(|| settings.refusal(content, ListingSide::Price, price));
-    if let Some(refusal) = refusal {
-        return Some(refusal.describe(content));
-    }
-    if my_listings(world).len() as u32 >= settings.max_listings {
-        return Some(LineText::plain(
-            words
-                .market_too_many
-                .replace("{listings}", &settings.max_listings.to_string()),
-        ));
-    }
-    let deposit = settings.deposit();
-    let held = bag(world).map_or(0, |bag| bag.count(deposit.item));
-    let offering: u32 = offer
-        .iter()
-        .filter(|stack| stack.item == deposit.item)
-        .map(|stack| stack.count)
-        .sum();
-    (held < deposit.count.saturating_add(offering)).then(|| {
-        LineText::plain("You can't pay the ")
-            .then(deposit.named())
-            .then(LineText::plain(" deposit."))
-    })
+    let bag = Inventory::of(world, session::me(world));
+    let listed = my_listings(world).len() as u32;
+    settings
+        .refusal(content, &bag, listed, goods, price)
+        .map(|refusal| refusal.describe(content))
 }
 
 /// The rows of a listing's price: an item and how many of it on each, and a way to add
 /// another item while the listing has room for it.
 fn price_rows(ui: &mut Ui, world: &mut World, settings: &MarketSettings, rows: &mut Vec<PriceRow>) {
-    let tradeable = tradeable(&world.resource::<Content>().clone());
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
+    let tradeable = tradeable(&content);
     let mut removed = None;
     egui::Grid::new("market price")
         .num_columns(3)
         .show(ui, |ui| {
-            let item_heading = ui.label(face::small("Item").color(ink::INK3));
-            let amount_heading = ui.label(face::small("Amount").color(ink::INK3));
+            let item_heading = ui.label(face::small(words.market.item()).color(ink::INK3));
+            let amount_heading = ui.label(face::small(words.market.amount()).color(ink::INK3));
             ui.end_row();
             for index in 0..rows.len() {
                 let taken: Vec<ItemId> = rows.iter().map(|row| row.item).collect();
@@ -888,20 +800,30 @@ fn price_rows(ui: &mut Ui, world: &mut World, settings: &MarketSettings, rows: &
                     .copied()
                     .filter(|&item| item == row.item || !taken.contains(&item))
                     .collect();
-                mention::dropdown(
+                let mut picked = Some(row.item);
+                let search = controls::SearchWords {
+                    hint: words.market.item_hint(),
+                    none_found: words.market.no_such_item(),
+                };
+                mention::search_dropdown(
                     ui,
                     world,
                     ("market price item", index),
-                    &mut row.item,
+                    &mut picked,
                     &choices,
+                    search,
+                    ITEM_WIDTH,
                 )
                 .labelled_by(item_heading.id);
+                if let Some(picked) = picked {
+                    row.item = picked;
+                }
                 InputField::new(&mut row.amount)
                     .char_limit(AMOUNT_DIGITS)
                     .width(AMOUNT_WIDTH)
                     .show(ui)
                     .labelled_by(amount_heading.id);
-                if index > 0 && controls::button(ui, "Remove").clicked() {
+                if index > 0 && controls::button(ui, words.interface.remove()).clicked() {
                     removed = Some(index);
                 }
                 ui.end_row();
@@ -916,7 +838,7 @@ fn price_rows(ui: &mut Ui, world: &mut World, settings: &MarketSettings, rows: &
         .find(|item| rows.iter().all(|row| row.item != *item));
     if (rows.len() as u32) < settings.max_price_items
         && let Some(item) = free
-        && controls::button(ui, "Add an item").clicked()
+        && controls::button(ui, words.market.add_item()).clicked()
     {
         rows.push(PriceRow::of(item));
     }
@@ -950,19 +872,14 @@ fn own(
     settings: &MarketSettings,
     now: UnixMillis,
 ) {
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).market;
     if mine.is_empty() {
-        form::nothing_selected(ui, "You have no listings up.");
+        form::nothing_selected(ui, words.none_up());
         return;
     }
-    form::caption(
-        ui,
-        format!(
-            "{} of {} listings. Cancelling gives back what a listing offers, but not the deposit.",
-            mine.len(),
-            settings.max_listings
-        ),
-        ink::INK3,
-    );
+    let said = words.up_of(mine.len(), settings.max_listings);
+    form::caption(ui, said, ink::INK3);
     ui.add_space(8.0);
     let card = (ui.available_width() - sheet::GUTTER) / 2.0;
     egui::ScrollArea::vertical()
@@ -982,24 +899,29 @@ fn own(
         });
 }
 
-/// One of the player's listings as a card `width` wide: its offer and price, how long it has
+/// One of the player's listings as a card `width` wide: its goods and price, how long it has
 /// left, and Cancel.
 fn own_card(ui: &mut Ui, world: &mut World, row: &ListingRow, width: f32, now: UnixMillis) {
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     panel::tile(false).show(ui, |ui| {
         let inner = width - panel::tile(false).total_margin().sum().x;
         ui.set_width(inner);
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(inner - CARD_SIDE);
-                let offer = LineText::plain("Offer: ").then(ItemStack::listed(&row.offer));
-                line(ui, world, &offer, TextRole::Body, ink::INK, false);
-                let price = LineText::plain("Price: ").then(ItemStack::summed_by_icon(&row.price));
+                let goods = words
+                    .market
+                    .holds(ItemStack::listed(&words.interface, &row.goods));
+                line(ui, world, &goods, TextRole::Body, ink::INK, false);
+                let price = words.market.costs(ItemStack::summed_by_icon(&row.price));
                 line(ui, world, &price, TextRole::Body, ink::INK, false);
             });
             ui.with_layout(Layout::top_down(Align::Max), |ui| {
-                ui.label(face::small(exact_left(row.ends, now)).color(ink::INK3));
+                let left = words.time.left(words.time.exact(row.ends.since(now)));
+                ui.label(face::small(left).color(ink::INK3));
                 ui.add_space(4.0);
-                if controls::button(ui, "Cancel").clicked() {
+                if controls::button(ui, words.interface.cancel()).clicked() {
                     send(world, MarketAsk::Cancel(row.id));
                 }
             });
@@ -1018,13 +940,13 @@ fn tradeable(content: &Content) -> Vec<ItemId> {
 }
 
 /// `row`'s price per one of the item searched for, in the item its search is sorted by, where its
-/// price has that item and it offers more than one.
+/// price has that item and its goods hold more than one.
 fn each(row: &ListingRow, query: &MarketQuery) -> Option<(f32, ItemId)> {
     let SortBy::Price(by) = query.sort?.by else {
         return None;
     };
     let per = row
-        .offer
+        .goods
         .iter()
         .find(|stack| stack.item == query.item)?
         .count;
@@ -1032,82 +954,29 @@ fn each(row: &ListingRow, query: &MarketQuery) -> Option<(f32, ItemId)> {
     (per > 1).then(|| (amount as f32 / per as f32, by))
 }
 
-/// How long until `ends`, roughly: the hours, or the minutes in the last hour.
-fn left(ends: UnixMillis, now: UnixMillis) -> String {
-    let seconds = ends.since(now).0.max(0.0) as u64;
-    match seconds {
-        0..60 => "Ending".to_owned(),
-        60..3600 => format!("{} min left", seconds / 60),
-        _ => format!("{} h left", seconds / 3600),
+/// The new listing's goods as a window items move into.
+struct NewListing;
+
+impl TrayWindow for NewListing {
+    fn open(world: &World) -> bool {
+        listing(world)
     }
-}
 
-/// How long until `ends`, to the minute.
-fn exact_left(ends: UnixMillis, now: UnixMillis) -> String {
-    let minutes = (ends.since(now).0.max(0.0) / 60.0).ceil() as u64;
-    match minutes {
-        0..60 => format!("{minutes} min left"),
-        _ => format!("{} h {} min left", minutes / 60, minutes % 60),
+    fn tray(world: &World) -> &ItemTray {
+        &world.resource::<Browse>().goods
     }
-}
 
-/// The new listing's offer as a window items move into.
-const TRANSFER: ItemTransfer = ItemTransfer {
-    key: "market offer",
-    open: listing,
-    verb: "offer",
-    put: offer,
-    take: take_back,
-    aside,
-};
-
-/// Offers `count` of the bag's slot `slot`, while the offer has room for another item.
-fn offer(world: &mut World, slot: u32, count: u32) -> bool {
-    let most = world
-        .resource::<GameSettings>()
-        .market
-        .as_ref()
-        .map_or(0, |settings| settings.max_offer_items as usize);
-    let Some(bag) = bag(world).cloned() else {
-        return false;
-    };
-    let content = world.resource::<Content>();
-    if bag
-        .slots
-        .get(slot as usize)
-        .is_none_or(|held| held.item.get(content).bound())
-    {
-        return false;
+    fn tray_mut(world: &mut World) -> Option<&mut ItemTray> {
+        Some(&mut world.resource_mut::<Browse>().into_inner().goods)
     }
-    world
-        .resource_mut::<Browse>()
-        .offer
-        .place(&bag, slot, count, most)
-}
 
-fn take_back(world: &mut World, index: usize, count: u32) -> bool {
-    world.resource_mut::<Browse>().offer.take_back(index, count)
-}
-
-/// How many of the stack in the bag's slot `slot` the new listing offers.
-fn aside(world: &World, slot: u32, stack: ItemStack) -> u32 {
-    if view(world).is_none() {
-        return 0;
+    fn slots(world: &World) -> usize {
+        world
+            .resource::<GameSettings>()
+            .market
+            .as_ref()
+            .map_or(0, |settings| settings.max_goods_items as usize)
     }
-    bag(world).map_or(0, |bag| {
-        world.resource::<Browse>().offer.aside(bag, slot, stack)
-    })
-}
-
-fn verdict(world: &World, stack: ItemStack) -> Option<SlotVerdict> {
-    if !listing(world) {
-        return None;
-    }
-    stack
-        .item
-        .get(world.resource::<Content>())
-        .bound()
-        .then(|| SlotVerdict::Refused(LineText::plain("Bound · can't be listed")))
 }
 
 /// Draws `line` as every window draws a line that names things, its items as inline items. Struck
@@ -1138,7 +1007,7 @@ fn row_pitch(ui: &Ui, world: &World, item: ItemId) -> f32 {
         + ui.spacing().item_spacing.y
 }
 
-/// How tall a listing's two lines are: its offer or price, and under it how long it has
+/// How tall a listing's two lines are: its goods or price, and under it how long it has
 /// left or its price per one, each naming `item`.
 fn row_lines(ui: &Ui, world: &World, item: ItemId) -> f32 {
     let content = world.resource::<Content>();

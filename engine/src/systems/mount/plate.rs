@@ -11,8 +11,11 @@ use ui::{controls, dialog, face, sheet};
 use super::seat::MountRequest;
 use super::{MountId, MountKind, Riding, Travels};
 use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::input::scope;
+use crate::systems::messages;
 use crate::systems::notification;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -42,7 +45,7 @@ pub fn shown(world: &mut World) -> Option<ShownMount> {
     Some(ShownMount {
         mount: riding.mount,
         kind: MountKind::from(def.travels),
-        step_off_shut: shut(world, me),
+        step_off_shut: shut(world, me).map(|why| why.plain_words(world.resource::<Content>())),
     })
 }
 
@@ -63,16 +66,21 @@ impl HudWidget for MountPlateWidget {
         let me = session::me(world)?;
         let riding = riding(world)?;
         let content = world.resource::<Content>().clone();
+        let words = &messages::of(&content).mount;
         let title = riding.mount.get(&content).name.clone();
         let shut = shut(world, me);
-        let key = world.resource::<InputMap>().cap(InputAction::StepOff);
+        let key = (shut.is_none() && scope::reads(world, InputAction::StepOff))
+            .then(|| world.resource::<InputMap>().cap(InputAction::StepOff))
+            .flatten();
         let mut leaves = false;
         sheet::note(ui, Margin::same(dialog::PADDING), |ui| {
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new(face::bold(title.as_str())).extend());
-                let leave = controls::keyed(ui, "Step off", key.as_ref(), shut.is_none());
+                let leave = controls::keyed(ui, words.step_off(), key.as_ref(), shut.is_none());
                 let leave = match &shut {
-                    Some(why) => leave.on_hover_text(why.as_str()),
+                    Some(why) => leave.on_hover_text(
+                        why.words(&content, &world.resource::<InputMap>().key_names()),
+                    ),
                     None => leave,
                 };
                 leaves = leave.clicked();
@@ -124,7 +132,7 @@ fn afloat(world: &World, rider: Entity) -> bool {
 
 /// Why `rider` cannot step off where they are, in the game's words: nothing afloat, where the
 /// ground is theirs to pick.
-fn shut(world: &World, rider: Entity) -> Option<String> {
+fn shut(world: &World, rider: Entity) -> Option<LineText> {
     if afloat(world, rider) {
         return None;
     }

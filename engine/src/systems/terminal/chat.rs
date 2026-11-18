@@ -25,12 +25,14 @@ use ui::panel::GripCorner;
 use ui::suggest::{self, Suggestion};
 use ui::{dusk, input};
 
+use super::TerminalMessages;
 use super::draft::ChatDraft;
 use super::{ChatSpeakers, LoggedLineId, TerminalLog};
 use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band, Tier};
 use crate::core::math::Rgb;
-use crate::core::text::{self, StyledLine, StyledSpan, TextLook, TextPiece};
+use crate::core::text::SpanDef;
+use crate::core::text::{self, LinkKey, StyledLine, StyledSpan, TextLook, TextPiece};
 use crate::systems::actor::portrait::ActorPortraits;
 use crate::systems::area_map::{self, MapPin, MapSight};
 use crate::systems::chat::{
@@ -40,9 +42,11 @@ use crate::systems::command::search;
 use crate::systems::hud::{self, SizedPiece};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::input::scope;
+use crate::systems::interface::InterfaceSound;
 use crate::systems::item::ItemId;
 use crate::systems::item::inline::{self, InlineItem};
 use crate::systems::mention::{Mention, SuggestedMention};
+use crate::systems::messages::{self, MessagePart};
 use crate::systems::player::{ClientId, session};
 use crate::systems::settings::{Placed, UserSettings};
 
@@ -136,14 +140,16 @@ pub fn add(world: &mut World, embed: ChatEmbed) {
     }
 }
 
-/// What a view calls its offer to set something it shows in chat.
-pub const ADD_TO_CHAT: &str = "Add to chat";
+/// Whether chat takes what the player sets in it: only while it shows.
+pub fn takes_embeds(world: &World) -> bool {
+    world.resource::<UserSettings>().chat_shown()
+}
 
 /// The offer a card makes in its band to set what it shows in chat.
-pub fn card_action() -> CardAction<'static> {
+pub fn card_action(words: &TerminalMessages) -> CardAction<'_> {
     CardAction {
         mark: Mark::Chat,
-        label: ADD_TO_CHAT,
+        label: words.add_to_chat(),
     }
 }
 
@@ -153,7 +159,9 @@ pub fn offered(world: &mut World, shown: &CardResponse, embed: ChatEmbed) {
     let Some(offer) = &shown.action else {
         return;
     };
-    hud::tooltip(offer, world, ADD_TO_CHAT, &[], None);
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).terminal;
+    hud::tooltip(offer, world, words.add_to_chat(), &[], None);
     if offer.clicked() {
         add(world, embed);
     }
@@ -166,19 +174,11 @@ pub fn shortcut(
     response: &egui::Response,
     embeds: impl IntoIterator<Item = ChatEmbed>,
 ) {
-    if map::clicked(world, InputAction::AddToChat, response) {
+    if takes_embeds(world) && map::clicked(world, InputAction::AddToChat, response) {
         for embed in embeds {
             add(world, embed);
         }
     }
-}
-
-/// What a tooltip says of the shortcut, after what else it says.
-pub fn shortcut_hint() -> Vec<TextPiece> {
-    vec![
-        map::input(InputAction::AddToChat),
-        TextPiece::text(" to add it to chat"),
-    ]
 }
 
 /// Gives the keyboard back from chat: from the search for a thing to the line it is set in
@@ -310,6 +310,8 @@ pub(super) fn draw(world: &mut World) {
             .map(|&channel| ChannelLook::of(world, channel))
             .collect(),
     };
+    let content = world.resource::<Content>().clone();
+    let terminal = &messages::of(&content).terminal;
     let screen = gui.content_rect();
     let piece = SizedPiece {
         key: CHAT,
@@ -347,7 +349,7 @@ pub(super) fn draw(world: &mut World) {
         .show(&gui, |ui| {
             let (rect, _) = ui.allocate_exact_size(rect.size(), Sense::hover());
             plate(ui, rect, typing, look.background);
-            let handles = typing.then(|| handles(ui, rect));
+            let handles = typing.then(|| handles(ui, rect, terminal));
             let row = Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - ROW), rect.max);
             let strip = Rect::from_min_max(
                 Pos2::new(rect.left(), rect.top() + BAR),
@@ -361,7 +363,11 @@ pub(super) fn draw(world: &mut World) {
                 Pos2::new(rect.right(), row.top() - ROW_GAP),
             );
             if typing {
+                let was = view.shown;
                 tabs(ui, world, &mut view, strip, &look);
+                if view.shown != was {
+                    InterfaceSound::UiPage.play(world);
+                }
             }
             if let Some(asked) = lines(ui, world, &mut view, log, &look) {
                 inspect(world, asked);
@@ -538,7 +544,8 @@ fn tabs(ui: &mut Ui, world: &World, view: &mut ChatView, strip: Rect, look: &Cha
             Pos2::new(left, strip.top()),
             Vec2::new(name.size().x + 2.0 * TAB_PAD, strip.height()),
         );
-        let label = format!("{} chat", channel_look.name);
+        let words = &messages::of(world.resource::<Content>()).terminal;
+        let label = words.chat_tab(&channel_look.name);
         let response = ui
             .interact(rect, Id::new(("chat tab", channel)), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
@@ -585,13 +592,13 @@ fn plate(ui: &Ui, rect: Rect, typing: bool, background: f32) {
     );
 }
 
-fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
+fn handles(ui: &mut Ui, rect: Rect, words: &TerminalMessages) -> (egui::Response, egui::Response) {
     let id = Id::new(("hud piece", CHAT));
     let bar = Rect::from_min_max(rect.min, Pos2::new(rect.right(), rect.top() + BAR));
     let mover = ui
         .interact(bar, id.with("bar"), Sense::drag())
         .on_hover_cursor(CursorIcon::Grab);
-    mover.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, "Move chat"));
+    mover.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, words.move_chat()));
     let faint = dusk::TEXT.gamma_multiply(0.45);
     ui.painter()
         .rect_filled(Rect::from_center_size(bar.center(), HANDLE), 1.0, faint);
@@ -604,7 +611,7 @@ fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
     let sizer = ui
         .interact(corner, id.with("grip"), Sense::drag())
         .on_hover_cursor(CursorIcon::ResizeNeSw);
-    sizer.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, "Resize chat"));
+    sizer.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, words.resize_chat()));
     let ink = if sizer.hovered() || sizer.dragged() {
         dusk::TEXT
     } else {
@@ -749,8 +756,8 @@ fn lines(
                             let rows: Vec<Rect> = drawn
                                 .links
                                 .iter()
-                                .filter(|(link, _)| *link == key)
-                                .map(|(_, row)| *row)
+                                .filter(|link| link.key == key)
+                                .map(|link| link.row)
                                 .collect();
                             let id = ui.id().with(("embed", line.id, place));
                             match embed {
@@ -812,7 +819,7 @@ fn lines(
         .take(usize::try_from(since).unwrap_or(usize::MAX))
         .filter(|line| !typed_by(line, me))
         .count();
-    if unread > 0 && unread_pill(ui, room, unread).clicked() {
+    if unread > 0 && unread_pill(ui, room, unread, &messages::of(&content).terminal).clicked() {
         view.catching_up = true;
     }
     asked_for
@@ -854,6 +861,20 @@ fn typist(line: &TerminalLine) -> Option<ClientId> {
 }
 
 /// Whether `line` is what this client's own player typed, which is never news to them.
+fn key_hints(hints: &[(InputAction, &str)]) -> Vec<TextPiece> {
+    hints
+        .iter()
+        .enumerate()
+        .flat_map(|(place, (action, does))| {
+            let gap = if place + 1 < hints.len() { "  " } else { "" };
+            [
+                map::input(*action),
+                TextPiece::text(format!(" {does}{gap}")),
+            ]
+        })
+        .collect()
+}
+
 fn typed_by(line: &TerminalLine, me: Option<u64>) -> bool {
     match &line.kind {
         LineKind::Said(speaker) => speaker.typist.is_some() && speaker.typist == me,
@@ -861,12 +882,12 @@ fn typed_by(line: &TerminalLine, me: Option<u64>) -> bool {
     }
 }
 
-fn unread_pill(ui: &mut Ui, room: Rect, unread: usize) -> egui::Response {
+fn unread_pill(ui: &mut Ui, room: Rect, unread: usize, words: &TerminalMessages) -> egui::Response {
     let rect = Rect::from_center_size(
         Pos2::new(room.center().x, room.bottom() - PILL.y / 2.0 - 4.0),
         PILL,
     );
-    let label = format!("{unread} new");
+    let label = words.unread(unread);
     let response = ui
         .interact(rect, Id::new("chat unread"), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand);
@@ -875,7 +896,7 @@ fn unread_pill(ui: &mut Ui, room: Rect, unread: usize) -> egui::Response {
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
-        format!("↓ {label}"),
+        &label,
         TextRole::Small.font_id(),
         dusk::FILL,
     );
@@ -905,6 +926,7 @@ fn said_line(
     content: &Content,
     covers: &dyn Fn(usize, ChatEmbedKind) -> bool,
 ) -> (StyledLine, Vec<(usize, LineEmbed)>) {
+    let terminal = &messages::of(content).terminal;
     let mut styled = StyledLine::default();
     let mut embeds = Vec::new();
     let words = |styled: &mut StyledLine, text: &str, color: Color32| {
@@ -923,19 +945,35 @@ fn said_line(
             if let Some(wide) = said.portrait {
                 styled.pieces.push(TextPiece::Room(wide + PORTRAIT_GAP));
             }
-            if let Some(said_on) = said.on {
-                words(&mut styled, &format!("[{}] ", said_on.name), said_on.color);
+            let parts = match said.on {
+                Some(on) => terminal.said_on_by((on.name.as_str(), on.color), (&speaker.name, ink)),
+                None => terminal.said_by((speaker.name.as_str(), ink)),
+            };
+            let mut color = parts.iter().find_map(|part| match part {
+                MessagePart::Argument((_, color)) => Some(*color),
+                MessagePart::Words(_) => None,
+            });
+            for part in parts {
+                match part {
+                    MessagePart::Words(said) => {
+                        words(&mut styled, &said, color.unwrap_or(dusk::TEXT))
+                    }
+                    MessagePart::Argument((name, ink)) => {
+                        color = Some(ink);
+                        words(&mut styled, name, ink);
+                    }
+                }
             }
-            words(&mut styled, &format!("{}: ", speaker.name), ink);
             let mut held = line.embeds.iter();
             for (place, said_words) in line.text.split(EMBED).enumerate() {
                 if let Some(place) = place.checked_sub(1) {
                     match held.next().and_then(|sent| ChatEmbed::read(content, sent)) {
                         Some(embed) if covers(place, embed.kind()) => {
-                            styled
-                                .pieces
-                                .push(TextPiece::LinkStart(embed_key(place).into()));
-                            words(&mut styled, COVERED, Color32::TRANSPARENT);
+                            styled.pieces.push(TextPiece::LinkStart {
+                                key: embed_key(place),
+                                name: terminal.covered().to_owned(),
+                            });
+                            words(&mut styled, terminal.covered(), Color32::TRANSPARENT);
                             styled.pieces.push(TextPiece::LinkEnd);
                             embeds.push((place, LineEmbed::Covered));
                         }
@@ -944,12 +982,12 @@ fn said_line(
                             embeds.push((place, LineEmbed::Item));
                         }
                         Some(embed) => {
-                            styled
-                                .pieces
-                                .push(TextPiece::LinkStart(embed_key(place).into()));
-                            styled
-                                .pieces
-                                .extend(embed.line(content).styled(content).pieces);
+                            let shown = embed.line(content);
+                            styled.pieces.push(TextPiece::LinkStart {
+                                key: embed_key(place),
+                                name: shown.plain_words(content),
+                            });
+                            styled.pieces.extend(shown.styled(content).pieces);
                             styled.pieces.push(TextPiece::LinkEnd);
                             embeds.push((
                                 place,
@@ -973,8 +1011,9 @@ fn said_line(
 }
 
 /// The link a line's `place`th thing stands in.
-fn embed_key(place: usize) -> String {
-    format!("chat embed {place}")
+fn embed_key(place: usize) -> LinkKey {
+    struct Embed;
+    LinkKey::new::<Embed>(place as u64)
 }
 
 /// A line of the log ready to draw.
@@ -1001,22 +1040,21 @@ enum LineEmbed {
     },
 }
 
-/// What a line reads where chat covers a thing it holds.
-const COVERED: &str = "[hidden]";
-const COVERED_HINT: &str = "Embedded content hidden. Click to reveal";
-
 /// Draws the black bars over a thing chat covers, one for each row of the line its room runs
 /// over. Whether the player asked to see the thing.
 fn cover_bars(ui: &mut Ui, world: &World, key: Id, bars: &[Rect]) -> bool {
     let mut asked = false;
+    let hint = messages::of(world.resource::<Content>())
+        .terminal
+        .covered_hint();
     for (row, bar) in bars.iter().enumerate() {
         let bar = bar.shrink2(Vec2::new(0.0, bar.height() * COVER_INSET));
         let response = ui
             .interact(bar, key.with(row), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, COVERED_HINT));
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, hint));
         ui.painter().rect_filled(bar, 2.0, Color32::BLACK);
-        hud::tooltip(&response, world, COVERED_HINT, &[], None);
+        hud::tooltip(&response, world, hint, &[], None);
         asked |= response.clicked();
     }
     asked
@@ -1044,6 +1082,9 @@ const COVER_INSET: f32 = 0.12;
 // Focus is asked for after the field draws, so the key that gave chat the keyboard is never
 // read by the field as its own.
 fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, look: &ChatLook) {
+    let content = world.resource::<Content>().clone();
+    let messages = messages::of(&content);
+    let (terminal, chat_words) = (&messages.terminal, &messages.chat);
     let send = world
         .resource::<InputMap>()
         .shortcut(InputAction::SubmitText);
@@ -1090,36 +1131,36 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         dusk::TEXT
     };
     let faint = TextLook::new(TextRole::Small.size(), hint_ink).on(Ground::Dusk);
+    let sends = !view.draft.text().trim().is_empty();
+    let only = |hints: &[(InputAction, &str, bool)]| -> Vec<TextPiece> {
+        let kept: Vec<(InputAction, &str)> = hints
+            .iter()
+            .filter(|(.., works)| *works)
+            .map(|&(action, does, _)| (action, does))
+            .collect();
+        key_hints(&kept)
+    };
     let hints = StyledLine::new(if found.is_some() {
-        vec![
-            map::input(InputAction::CompleteText),
-            TextPiece::text(" pick  "),
-            map::input(InputAction::Dismiss),
-            TextPiece::text(" back"),
-        ]
-    } else if typing && view.channels.len() > 1 {
-        vec![
-            map::input(InputAction::SubmitText),
-            TextPiece::text(" send  "),
-            map::input(InputAction::NextChatTab),
-            TextPiece::text(" next tab  "),
-            map::input(InputAction::Dismiss),
-            TextPiece::text(" cancel"),
-        ]
+        only(&[
+            (InputAction::CompleteText, terminal.hint_pick(), options > 0),
+            (InputAction::Dismiss, terminal.hint_back(), true),
+        ])
     } else if typing {
-        vec![
-            map::input(InputAction::SubmitText),
-            TextPiece::text(" send  "),
-            map::input(InputAction::Dismiss),
-            TextPiece::text(" cancel"),
-        ]
+        only(&[
+            (InputAction::SubmitText, terminal.hint_send(), sends),
+            (
+                InputAction::NextChatTab,
+                terminal.hint_next_tab(),
+                view.channels.len() > 1,
+            ),
+            (InputAction::Dismiss, terminal.hint_cancel(), true),
+        ])
+    } else if session::is_dead(world) {
+        Vec::new()
     } else if scope::reads(world, InputAction::FocusChat) {
-        vec![
-            map::input(InputAction::FocusChat),
-            TextPiece::text(" to chat"),
-        ]
+        key_hints(&[(InputAction::FocusChat, terminal.hint_to_chat())])
     } else {
-        vec![TextPiece::text("Click to chat")]
+        vec![TextPiece::text(terminal.click_to_chat().to_owned())]
     });
     let hints_wide = text::measure(ui.ctx(), world, &hints, faint, f32::INFINITY).x;
     let hinted = !typing || inner.width() >= hints_wide + ROOM_TO_TYPE_BESIDE_HINTS;
@@ -1142,7 +1183,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 ui.spacing_mut().item_spacing.x = 6.0;
                 if let Some(typed_on) = typed_on.filter(|_| typing) {
                     ui.label(
-                        egui::RichText::new(format!("{}:", typed_on.name))
+                        egui::RichText::new(terminal.typing_on(&typed_on.name))
                             .font(look.font.clone())
                             .color(dusk::TEXT.gamma_multiply(0.75)),
                     );
@@ -1191,7 +1232,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
             let kind = view
                 .seeking
                 .as_ref()
-                .map_or("", |seeking| seeking.kind.hint());
+                .map_or("", |seeking| seeking.kind.hint(chat_words));
             let listed = found
                 .iter()
                 .zip(&drawn)
@@ -1202,7 +1243,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                     drawn: Some(drawn),
                 })
                 .collect();
-            (format!("Show {kind} in the message"), listed)
+            (terminal.show_kind(kind), listed)
         }
         (None, Some(_), _) => {
             let listed = kinds
@@ -1214,7 +1255,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                     drawn: None,
                 })
                 .collect();
-            ("Show in the message".to_owned(), listed)
+            (terminal.show_in_message().to_owned(), listed)
         }
         (None, None, Some(suggested)) if focused => {
             let listed = suggested
@@ -1240,14 +1281,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
             &listed,
             view.selected,
         );
-        let pointed = suggested.pointed.and_then(|(place, row)| {
-            let found = found.as_ref()?.get(place)?;
-            Some((row, found.embed))
-        });
-        if let Some((row, ChatEmbed::Item(item))) = pointed {
-            inline::tooltip(world, &row, InlineItem::of(item));
-        }
-        taken = taken.or(suggested.clicked);
+        taken = taken.or(suggested);
     }
     match (taken, found, asked) {
         (Some(place), Some(found), _) => {

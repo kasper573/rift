@@ -3,6 +3,8 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::Content;
+use crate::systems::GameSettings;
 use crate::systems::society::{Society, SocietyMember};
 
 /// A player asking for the players whose names start with this.
@@ -20,20 +22,27 @@ pub struct CharactersFound {
     pub in_all: u32,
 }
 
-/// The fewest letters a search goes by.
-pub const LEAST_LETTERS: usize = 2;
+/// Whether `typed` is enough of a name to search by in the game `content` is of.
+pub fn searches(content: &Content, typed: &str) -> bool {
+    goes_by(typed, least_letters(content))
+}
 
-/// Whether `typed` is enough of a name to search by.
-pub fn searches(typed: &str) -> bool {
-    typed.trim().chars().count() >= LEAST_LETTERS
+/// The fewest letters of a name a search for a player goes by.
+pub fn least_letters(content: &Content) -> u32 {
+    content.built::<GameSettings>().search_letters
 }
 
 /// The accounts whose names start with `starts`, whatever its case, the asker's own among them:
 /// the first `most` by name, of however many there are.
-pub(crate) fn find(society: &Society, starts: &str, most: usize) -> CharactersFound {
+pub(crate) fn find(
+    society: &Society,
+    starts: &str,
+    most: usize,
+    search_letters: u32,
+) -> CharactersFound {
     let wanted = starts.trim().to_lowercase();
     let mut found: Vec<SocietyMember> = Vec::new();
-    if searches(&wanted) {
+    if goes_by(&wanted, search_letters) {
         found = society
             .accounts()
             .iter()
@@ -51,4 +60,8 @@ pub(crate) fn find(society: &Society, starts: &str, most: usize) -> CharactersFo
         characters: found,
         in_all,
     }
+}
+
+fn goes_by(typed: &str, search_letters: u32) -> bool {
+    typed.trim().chars().count() >= search_letters as usize
 }

@@ -1,9 +1,9 @@
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
+use engine::systems::movement;
 use engine::systems::player::commands_locked;
 use engine::systems::region;
-use engine::systems::{movement, script};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, dialogue, path};
 
@@ -134,11 +134,11 @@ fn beach() -> Sim {
         .accept::<ConversationRequest>()
         .add((interact::interact_request, dialogue::requests))
         .plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((interact::interactions, dialogue::hold, dialogue::refresh));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }

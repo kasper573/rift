@@ -5,14 +5,17 @@
 use std::sync::Arc;
 
 use engine::core::content::{Content, FolderReader};
+use engine::core::script::Expr;
 use engine::core::units::{HourOfDay, Seconds};
 use engine::systems::GameSettings;
 use engine::systems::area::prop::PropId;
+use engine::systems::area::sky::Sky;
+use engine::systems::area::sky::SkyCondition;
+use engine::systems::area::sky::SkyNow;
 use engine::systems::area::{AreaModule, DayCycle, TimeOfDay, Weather};
+use engine::systems::messages;
 use engine::systems::npc::{AbsenceSpanAt, NpcDef, NpcId, absence};
-use engine::systems::script::{
-    Condition, Sky, SkyCondition, SkyNow, condition as script_condition, sky,
-};
+use engine::systems::requirement as script_condition;
 use engine::systems::spawner::{SpawnShare, Spawns};
 use strum::VariantArray;
 use ui::egui::{self, Align, Layout, Rect as ERect, Ui, Vec2};
@@ -265,9 +268,7 @@ impl ShownSky {
                     && whens.iter().all(|(_, when)| self.share(Some(when)) <= 0.0);
                 let mut words: Vec<String> = whens
                     .iter()
-                    .map(|(_, when)| {
-                        script_condition::describe(&self.content, when.condition()).to_string()
-                    })
+                    .map(|(_, when)| describe(&self.content, when.condition()))
                     .collect();
                 words.dedup();
                 Some(SkyFollowing {
@@ -281,8 +282,8 @@ impl ShownSky {
 
     /// Whether `shown`, a condition of who sees something, holds under the sky shown; none when
     /// it reads who asks, so no hour answers it.
-    fn holds(&self, shown: &Condition) -> Option<bool> {
-        if sky::unshared_read(shown).is_some() {
+    fn holds(&self, shown: &Expr) -> Option<bool> {
+        if engine::core::script::condition::unshared_read(shown).is_some() {
             return None;
         }
         let shares = SkyCondition::from(shown.clone())
@@ -291,11 +292,8 @@ impl ShownSky {
         Some(shares.first().is_some_and(|share| *share > 0.0))
     }
 
-    fn shown_when(&self, shown: &Condition) -> String {
-        format!(
-            "shown when {}",
-            script_condition::describe(&self.content, shown)
-        )
+    fn shown_when(&self, shown: &Expr) -> String {
+        format!("shown when {}", describe(&self.content, shown))
     }
 }
 
@@ -329,7 +327,7 @@ pub(super) fn bar(editor: &mut Editor, ui: &mut Ui, canvas: ERect) {
             .layout(Layout::bottom_up(Align::Max)),
     );
     let shown = ui::slip::show(&mut child, |ui| {
-        let boxed = input::row_height(ui) + input::frame().total_margin().sum().y;
+        let boxed = input::ROW_HEIGHT + input::frame().total_margin().sum().y;
         let row = Vec2::new(ui.available_width(), boxed);
         let across = Layout::right_to_left(Align::Center);
         ui.allocate_ui_with_layout(row, across, |ui| hour_row(ui, day));
@@ -440,3 +438,7 @@ fn cycle(content: &Content) -> Option<&DayCycle> {
 
 const HOUR_WIDTH: f32 = 64.0;
 const MIN_SLIDER: f32 = 60.0;
+
+fn describe(content: &Content, condition: &Expr) -> String {
+    script_condition::describe(content, messages::of(content), condition).plain_words(content)
+}

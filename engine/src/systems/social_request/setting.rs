@@ -6,7 +6,7 @@ use ui::egui::{self, Ui};
 use ui::float::Hinted;
 use ui::{controls, form, ink};
 
-use super::{AcceptsRequestsFrom, BlockCharacter, ChooseAcceptsRequests};
+use super::{AcceptsRequestsFrom, BlockCharacter, ChooseAcceptsRequests, RequestMessages};
 use crate::systems::society::{AccountNumber, SocietyView};
 
 /// What the player chose in the section.
@@ -35,17 +35,22 @@ impl SocialChoice {
 
 /// The Social section of the settings, for an account that stands in society as `view` shows.
 /// The players it keeps away are listed with `blocked`, for a game that lists them nowhere else.
-pub(crate) fn section(ui: &mut Ui, view: &SocietyView, blocked: bool) -> Option<SocialChoice> {
+pub(crate) fn section(
+    ui: &mut Ui,
+    words: &RequestMessages,
+    view: &SocietyView,
+    blocked: bool,
+) -> Option<SocialChoice> {
     let mut choice = None;
     controls::form(ui, ("settings", "social"), |ui| {
-        let label = ui.label("Accept requests from");
+        let label = ui.label(words.accept_from());
         let mut picked = view.accepts;
         controls::combo("accept requests from")
-            .selected_text(name(view.accepts))
+            .selected_text(name(words, view.accepts))
             .show_ui(ui, |ui| {
                 for &from in AcceptsRequestsFrom::VARIANTS {
-                    ui.selectable_value(&mut picked, from, name(from))
-                        .hinted(admits(from));
+                    ui.selectable_value(&mut picked, from, name(words, from))
+                        .hinted(admits(words, from));
                 }
             })
             .response
@@ -55,20 +60,16 @@ pub(crate) fn section(ui: &mut Ui, view: &SocietyView, blocked: bool) -> Option<
         }
         ui.end_row();
     });
-    form::caption(ui, admits(view.accepts), ink::INK2);
-    form::caption(
-        ui,
-        "Kept with your account, on every device you play from. It covers every kind of request.",
-        ink::INK2,
-    );
+    form::caption(ui, admits(words, view.accepts), ink::INK2);
+    form::caption(ui, words.kept_with_account(), ink::INK2);
     if blocked && !view.blocked.is_empty() {
         ui.add_space(6.0);
-        form::section_count(ui, "Blocked", view.blocked.len());
+        form::section_count(ui, words.blocked_heading(), view.blocked.len());
         for player in &view.blocked {
             ui.horizontal(|ui| {
                 ui.label(&player.name);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if controls::button(ui, "Unblock").clicked() {
+                    if controls::button(ui, words.unblock()).clicked() {
                         choice = Some(SocialChoice::Unblock(player.account));
                     }
                 });
@@ -78,16 +79,21 @@ pub(crate) fn section(ui: &mut Ui, view: &SocietyView, blocked: bool) -> Option<
     choice
 }
 
-fn name(from: AcceptsRequestsFrom) -> &'static str {
-    from.into()
+fn name(words: &RequestMessages, from: AcceptsRequestsFrom) -> &str {
+    match from {
+        AcceptsRequestsFrom::Everyone => words.from_everyone(),
+        AcceptsRequestsFrom::Friends => words.from_friends(),
+        AcceptsRequestsFrom::Party => words.from_party(),
+        AcceptsRequestsFrom::Nobody => words.from_nobody(),
+    }
 }
 
 /// Who may send a request to a player who chose `from`.
-fn admits(from: AcceptsRequestsFrom) -> &'static str {
+fn admits(words: &RequestMessages, from: AcceptsRequestsFrom) -> &str {
     match from {
-        AcceptsRequestsFrom::Everyone => "Any character you have not blocked.",
-        AcceptsRequestsFrom::Friends => "Only your friends.",
-        AcceptsRequestsFrom::Party => "Only members of your party.",
-        AcceptsRequestsFrom::Nobody => "No one. You can still ask others.",
+        AcceptsRequestsFrom::Everyone => words.admits_everyone(),
+        AcceptsRequestsFrom::Friends => words.admits_friends(),
+        AcceptsRequestsFrom::Party => words.admits_party(),
+        AcceptsRequestsFrom::Nobody => words.admits_nobody(),
     }
 }

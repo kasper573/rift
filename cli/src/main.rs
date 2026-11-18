@@ -2,6 +2,7 @@ mod ask;
 mod bench;
 mod binaries;
 mod check;
+mod dialogue;
 mod fit;
 mod folder;
 mod loadtest;
@@ -130,6 +131,16 @@ enum Render {
         #[arg(long)]
         profile: Option<PathBuf>,
     },
+    /// Draws the dialogue of GAME once for every style a line is set in and every state a choice
+    /// shows, over grounds from the lightest to the darkest and the busiest, as the pictures of the
+    /// folder OUT.
+    Dialogue {
+        game: PathBuf,
+        out: PathBuf,
+        /// Pictures to draw the dialogue over too, such as frames of the game.
+        #[arg(long)]
+        over: Vec<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -167,6 +178,7 @@ fn main() {
                 render::area(&game, &shot, &out, profile.as_deref());
             }
         }
+        Command::Render(Render::Dialogue { game, out, over }) => dialogue::run(&game, &out, &over),
         Command::Bench {
             game,
             spread,

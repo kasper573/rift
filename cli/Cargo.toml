@@ -14,8 +14,10 @@ engine = { path = "../engine" }
 editor = { path = "../editor" }
 testkit = { path = "../testkit" }
 service = { path = "../service" }
+ui = { path = "../ui" }
 bevy.workspace = true
 bevy_app.workspace = true
+bevy_egui.workspace = true
 bevy_ecs.workspace = true
 bevy_replication.workspace = true
 bevy_time = { workspace = true, features = ["std"] }

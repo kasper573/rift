@@ -8,12 +8,13 @@ use bevy_platform::collections::HashSet;
 
 use crate::core::chunk::{Chunk, ChunkIndex, ChunkSpan, InChunk};
 use crate::core::content::Content;
+use crate::core::script::Scripts;
 use crate::core::units::Meters;
 use crate::systems::GameSettings;
+use crate::systems::chat::Heard;
 use crate::systems::movement::Position;
+use crate::systems::npc::CameNear;
 use crate::systems::player::PlayedBy;
-use crate::systems::script::RiftScripts;
-use crate::systems::script::event::RiftEvent;
 use crate::systems::skill::SkillDef;
 
 /// The chunks awake, and how far from a character they reach.
@@ -120,15 +121,19 @@ fn acting_reach(content: &Content) -> Meters {
             + skill.area.as_ref().map_or(0.0, |area| area.reach().0);
         reach = Meters(reach.0.max(lands));
     }
-    for (_, procedures) in content.built::<RiftScripts>().owners() {
-        for procedure in procedures {
-            for (_, event) in &procedure.entries {
-                if let RiftEvent::CameNear { within, .. } | RiftEvent::Heard { within, .. } = event
-                {
-                    reach = Meters(reach.0.max(within.0));
-                }
-            }
-        }
+    let scripts = content.built::<Scripts>();
+    let listening = scripts
+        .hearing::<CameNear>()
+        .into_iter()
+        .map(|heard| heard.event.within)
+        .chain(
+            scripts
+                .hearing::<Heard>()
+                .into_iter()
+                .map(|heard| heard.event.within),
+        );
+    for within in listening {
+        reach = Meters(reach.0.max(within.0));
     }
     reach
 }

@@ -187,11 +187,11 @@ pub fn replace_model(editor: &mut Editor, key: &str, bytes: Vec<u8>) -> bool {
                 "{}'s new model has no ground to stand on: its footprint is now shaped by hand",
                 shown_path(key)
             ));
-            let Footprint::Polygon { points, .. } = &row.footprint else {
+            let Footprint::Polygon { parts, .. } = &row.footprint else {
                 unreachable!("matched a polygon above")
             };
             Footprint::Polygon {
-                points: points.clone(),
+                parts: parts.clone(),
                 fitted_to: None,
             }
         });

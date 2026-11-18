@@ -1,13 +1,25 @@
 pub mod card;
+pub mod deliver;
 pub mod effects;
+pub mod grid;
 pub mod inline;
 pub mod plates;
+pub mod query;
 pub mod rarity;
 pub mod render;
 pub mod transfer;
 pub mod tray;
 pub mod widget;
 
+use crate::core::content::ContentProblem;
+use crate::core::script::EventDef;
+use crate::core::script::OwnerRow;
+use crate::core::script::RunnerSpec;
+use crate::core::script::Scripts;
+use crate::core::script::Value;
+use crate::core::script::ValueType;
+use crate::core::script::Vocabulary;
+use crate::systems::skill::SKILL_RUNNER;
 use std::borrow::Cow;
 
 use bevy_app::App;
@@ -30,6 +42,10 @@ use crate::core::content::{
     RowCheck, serial,
 };
 use crate::core::math::{Offset, Pos, Rng};
+use crate::core::script::{
+    EventKind, Expr, Instances, Owner, RunnerKind, ScriptModule, ScriptedRow,
+};
+use crate::core::text::LineText;
 use crate::core::time::{self, UnixMillis, WallClock};
 use crate::core::units::{MeterPos, Meters, Percent, Seconds};
 use crate::systems::GameSettings;
@@ -40,22 +56,157 @@ use crate::systems::actor::skeleton::{
 use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
-use crate::systems::interface::CursorId;
+use crate::systems::interface::{CursorId, InterfaceMessages};
+use crate::systems::item::deliver::Delivered;
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::mention::Mention;
+use crate::systems::messages::{self, messages};
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::party;
 use crate::systems::player::RequestNeeds;
-use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
+use crate::systems::player::{ClientId, PlayedBy, player_requests};
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
-use crate::systems::script::{
-    Condition, EventKind, Owner, RiftInstances, RunnerKind, ScriptModule, ScriptedRow,
-};
 use crate::systems::skill::{self, CastAim, SkillId};
-use crate::systems::text::LineText;
 use crate::systems::visibility::{self, Presence, seen_by};
+
+messages! {
+    /// What the game says of items changing hands and bags.
+    pub struct ItemMessages {
+        /// What an exchange asking for items a player lacks says: `{items}`, how many more of which item.
+        needs_more[items: Line],
+        /// What an exchange says that a player's bag has no room for, `{slots}` slots short.
+        needs_slots(slots: Number),
+        /// What a player is told whose item, `{item}`, can't change hands.
+        bound[item: Line],
+        /// What a slot says of an item that may not leave the bag for the window items move into.
+        bound_slot,
+        /// What moves a whole stack between the bag and a window.
+        move_stack,
+        /// What moves one of a stack between the bag and a window.
+        move_one,
+        /// What moves as many of a stack as the player says between the bag and a window.
+        move_some,
+        /// What the player is asked moving some of a stack of `{item}`.
+        move_how_many[item: Line],
+        /// How many of a stack the player is moving: `{count}` of its `{all}`.
+        some_of(all: Number, count: Number),
+        /// How items move between the bag and a window, with the inputs `{stack}`, `{one}` and
+        /// `{some}` where the player presses them.
+        moves_how[one: Line, some: Line, stack: Line],
+        /// How a screen reader names a slot of the bag: slot `{slot}` holding `{item}`.
+        slot_named(slot: Number, item: Text),
+        /// How a screen reader names a slot of the window `{window}` holding `{stack}`.
+        slot_placed(window: Text, stack: Text),
+        /// How a screen reader names an empty slot of a window items move into.
+        empty_slot,
+        /// `{count}` of the item `{item}`, as a slot or a line names them.
+        counted(count: Number, item: Text),
+        /// How many of an item there are, `{count}`, shown beside its icon and name.
+        amount(count: Number),
+        /// What a slot holds whose whole stack of `{item}` a window has set aside.
+        all_set_aside(item: Text),
+        /// What a slot holds of `{item}` with `{aside}` more of it set aside in a window.
+        some_set_aside(aside: Number, item: Text),
+        /// How full a bag is: `{taken}` of its `{slots}` slots taken.
+        room(slots: Number, taken: Number),
+        /// What the player is asked splitting a stack of `{item}`.
+        split_how_many[item: Line],
+        /// How a split stack divides: `{count}` in the new stack, `{left}` left in the one split.
+        split_says(count: Number, left: Number),
+        /// What the player is asked taking some of a stack of `{item}` back out of a window.
+        take_back_how_many[item: Line],
+        /// What a window's slot says of an item set aside in it that the bag no longer holds.
+        no_longer_carried,
+        /// What the input that opens an item's card does, as a hint names it.
+        inspect,
+        /// What the input that splits a stack does, as a hint names it.
+        split,
+        /// What the input that puts an item into chat does, as a hint names it.
+        add_to_chat,
+        /// What the input that uses an item does, as a hint names it.
+        use_item,
+        /// What the input that puts an item on does, as a hint names it.
+        wear,
+        /// What takes a whole stack back out of a window, as a hint names it.
+        take_back_stack,
+        /// What takes one of a stack back out of a window, as a hint names it.
+        take_back_one,
+        /// What takes some of a stack back out of a window, as a hint names it.
+        take_back_some,
+        /// What the input that puts an item on the bar does, as a hint names it.
+        pin_to_bar,
+        /// How many of an item the player holds, `{count}`, as its card tallies them.
+        held(count: Number),
+        /// How an item held in the hand is worn.
+        held_in_hand,
+        /// How a tool is worn.
+        kept_as_tool,
+        /// How an item worn in the slot `{slot}` is worn.
+        worn_on(slot: Text),
+        /// What an item held in the hand is, beside its category.
+        hand,
+        /// What a tool is, beside its category.
+        tool,
+        /// The mark of an item a quest needs.
+        quest_item,
+        /// The heading over the skills an item grants while it is worn.
+        grants,
+        /// What a card says of an item whose granted skill is a basic attack.
+        lends_basic_attack,
+        /// How a granted skill is used, the inputs `{carry}` and `{pin}` where they stand.
+        grant_hint[carry: Line, pin: Line],
+        /// What an item requires of its wearer, `{requirement}`.
+        requires[requirement: Line],
+        /// The skill `{skill}` an item casts as it is used.
+        casts[skill: Line],
+        /// What an item does to the stat `{stat}` while it is in the bag: `{by}`, raising it or
+        /// lowering it as `{direction}` is `up` or `down`.
+        carried_boost_by(by: Number, direction: Text, stat: Text),
+        /// What an item does to the stat `{stat}` without a fixed amount while it is in the bag.
+        carried_boosts(stat: Text),
+        /// What a card says of an item that stacks without limit.
+        stacks_without_limit,
+        /// How many of an item, `{count}`, stack in one slot.
+        stacks_up_to(count: Number),
+        /// What an item does to the stat `{stat}` without a fixed amount.
+        boosts(stat: Text),
+        /// What an item does to the stat `{stat}`: `{by}`, raising it or lowering it as
+        /// `{direction}` is `up` or `down`.
+        boost_by(by: Number, direction: Text, stat: Text),
+        /// What a player is told of `{item}`, which their bag does not hold.
+        not_in_bag[item: Line],
+        /// What a player is told using an empty slot of the bag.
+        nothing_there,
+        /// What a player or a script is told moving items for someone who has no bag.
+        no_bag,
+        /// What a script is told moving no items.
+        nothing_to_move,
+        /// Whose a dropped item is while it is kept for them: `{name}`'s.
+        reserved_for(name: Text),
+        /// Whose a dropped item is while it is kept for the party `{name}` is in.
+        reserved_for_party(name: Text),
+        /// How many more kinds of items, `{count}`, lie where a pile's plate can't name them all.
+        more_kinds(count: Number),
+        /// The name of each category of items.
+        category(category: Text),
+        /// The name of each category of items, of many of them.
+        category_plural(category: Text),
+        /// What a player is told as a script trades items with nobody to trade with.
+        nobody_to_trade,
+        /// What a player is told as a script uses an item with nobody to use it.
+        nobody_to_use,
+        /// What a player is told as a script equips an item with nobody to equip.
+        nobody_to_equip,
+        /// What a player is told as a script unequips an item with nobody to unequip.
+        nobody_to_unequip,
+        /// What a player is told as a script drops items with nobody to drop them.
+        nobody_to_drop,
+        /// What a player is told as a script moves items between two with one of them missing.
+        nobody_to_trade_between,
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -73,6 +224,11 @@ pub fn register(app: &mut App) {
         .add_server_message::<ItemShown>()
         .add_mapped_server_message::<ItemConsumed>()
         .add_mapped_server_message::<ItemsDropped>();
+}
+
+/// The bag of the player's character, on a client.
+pub fn my_bag(world: &World) -> Option<&Inventory> {
+    crate::systems::player::session::my_character(world)?.get::<Inventory>()
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -147,11 +303,25 @@ impl ItemStack {
         self.named().plain_words(content)
     }
 
+    /// Whether the item is one that can't change hands.
+    pub fn bound(self, content: &Content) -> bool {
+        self.item.get(content).bound()
+    }
+
     /// What a player is told whose stack can't change hands, in the game's words.
     pub fn bound_line(item: ItemId, content: &Content) -> LineText {
-        let words = &content.built::<GameSettings>().words;
-        LineText::plain(words.item_bound.as_str())
-            .filling("{item}", Mention::Item(item).span(content))
+        messages::of(content)
+            .item
+            .bound(Mention::Item(item).span(content))
+    }
+
+    /// Whether every one of `stacks` can change hands, and if not, what the player is told of
+    /// the first that can't.
+    pub fn refuse_bound(stacks: &[ItemStack], content: &Content) -> Result<(), LineText> {
+        match stacks.iter().find(|stack| stack.bound(content)) {
+            Some(bound) => Err(ItemStack::bound_line(bound.item, content)),
+            None => Ok(()),
+        }
     }
 
     /// The stack as a line names it: how many, beside the item's icon and name.
@@ -160,8 +330,8 @@ impl ItemStack {
     }
 
     /// `stacks` as a sentence names them, one after another.
-    pub fn listed(stacks: &[ItemStack]) -> LineText {
-        LineText::listed(stacks.iter().map(|stack| stack.named()).collect())
+    pub fn listed(messages: &InterfaceMessages, stacks: &[ItemStack]) -> LineText {
+        messages.listed(stacks.iter().map(|stack| stack.named()).collect())
     }
 
     /// `stacks` added up, as a cost or a recipe reads them.
@@ -187,25 +357,13 @@ pub enum ExchangeRefusal {
 }
 
 impl ExchangeRefusal {
-    pub fn describe(self, content: &Content) -> String {
-        let words = &content.built::<GameSettings>().words;
-        match self {
-            ExchangeRefusal::Missing(_) => self.line(content).plain_words(content),
-            ExchangeRefusal::NoRoom { slots: 1 } => words.needs_a_slot.clone(),
-            ExchangeRefusal::NoRoom { slots } => {
-                words.needs_slots.replace("{slots}", &slots.to_string())
-            }
-        }
-    }
-
-    /// The refusal as a line tells it: the item it is short of as the interface mentions one.
+    /// What the refusal tells the player: the item it is short of as the interface mentions one.
     pub fn line(self, content: &Content) -> LineText {
         match self {
-            ExchangeRefusal::Missing(stack) => {
-                let words = &content.built::<GameSettings>().words;
-                LineText::plain(words.needs_more.as_str()).filling("{items}", stack.named())
+            ExchangeRefusal::Missing(stack) => messages::of(content).item.needs_more(stack.named()),
+            ExchangeRefusal::NoRoom { slots } => {
+                messages::of(content).item.needs_slots(slots).into()
             }
-            ExchangeRefusal::NoRoom { .. } => self.describe(content).into(),
         }
     }
 }
@@ -217,6 +375,15 @@ impl Inventory {
             slots: Vec::new(),
             max: 0,
         }
+    }
+
+    /// The bag `owner` carries, or an empty one when they carry none.
+    pub fn of(world: &World, owner: impl Into<Option<Entity>>) -> Inventory {
+        owner
+            .into()
+            .and_then(|owner| world.get::<Inventory>(owner))
+            .cloned()
+            .unwrap_or_else(Inventory::empty)
     }
 
     pub fn count(&self, item: ItemId) -> u32 {
@@ -254,8 +421,16 @@ impl Inventory {
         self.slots.iter().position(|stack| stack.item == item)
     }
 
+    pub fn taken_slots(&self) -> u32 {
+        self.slots.len() as u32
+    }
+
     pub fn free_slots(&self) -> u32 {
-        self.max.saturating_sub(self.slots.len() as u32)
+        self.max.saturating_sub(self.taken_slots())
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.free_slots() == 0
     }
 
     /// Splits `count` off the stack in `slot` into a stack of its own, right after it. A split
@@ -266,7 +441,7 @@ impl Inventory {
             Some(stack) if (1..stack.count).contains(&count) => *stack,
             _ => return Ok(()),
         };
-        if self.free_slots() == 0 {
+        if self.is_full() {
             return Err(ExchangeRefusal::NoRoom { slots: 1 });
         }
         self.slots[slot].count = whole.count - count;
@@ -355,13 +530,16 @@ impl Inventory {
     }
 
     /// Gives each of `stacks` that fits, tried on its own and in order, so one that finds no
-    /// room never holds back the others: the stacks that did not fit.
-    pub fn give_what_fits(&mut self, content: &Content, stacks: &[ItemStack]) -> Vec<ItemStack> {
-        stacks
-            .iter()
-            .copied()
-            .filter(|&stack| self.exchange(content, &[], &[stack]).is_err())
-            .collect()
+    /// room never holds back the others.
+    pub fn give_what_fits(&mut self, content: &Content, stacks: &[ItemStack]) -> Delivered {
+        let mut delivered = Delivered::default();
+        for &stack in stacks {
+            match self.exchange(content, &[], &[stack]) {
+                Ok(()) => delivered.kept.push(stack),
+                Err(_) => delivered.sent.push(stack),
+            }
+        }
+        delivered
     }
 
     pub fn take_up_to(&mut self, stacks: &[ItemStack]) {
@@ -403,7 +581,7 @@ impl Inventory {
     }
 }
 
-fn merged(stacks: &[ItemStack]) -> Vec<ItemStack> {
+pub fn merged(stacks: &[ItemStack]) -> Vec<ItemStack> {
     let mut merged: Vec<ItemStack> = Vec::new();
     for stack in stacks {
         match merged
@@ -578,6 +756,29 @@ impl ContentFile for ItemDef {
 }
 
 /// Every item's icon and card art are the size their slots and cards draw.
+/// Checks that every usable item that casts no skill has a script answering its use.
+pub fn check_used(loading: &mut Loading) {
+    let content = loading.content();
+    let scripts = content.built::<Scripts>();
+    for (id, def) in loading.rows::<ItemDef>(&content) {
+        let usable = matches!(def.kind, ItemKind::Usable { casts: None });
+        let answers = scripts
+            .may_do(OwnerRow::of_row(id))
+            .answers(EventKind::of::<Used>());
+        if usable && !answers {
+            loading.row_error(
+                id,
+                "/modules",
+                ContentProblem::new(
+                    "usable without used",
+                    format!("item/{}", id.path(&content)),
+                    "a script answering used on every usable item that casts no skill",
+                ),
+            );
+        }
+    }
+}
+
 pub fn check_pictures(loading: &mut Loading) {
     let content = loading.content();
     let sizes = content.built::<ImageSizes>();
@@ -688,7 +889,7 @@ impl ModuleSet for ItemDef {
 }
 
 impl ScriptedRow for ItemDef {
-    const OWNER: RunnerKind = RunnerKind::Item;
+    const OWNER: RunnerKind = ITEM_RUNNER;
 
     fn script(module: &ItemModule) -> Option<&ScriptModule> {
         match module {
@@ -741,17 +942,9 @@ pub enum ItemCategory {
 }
 
 impl ItemCategory {
-    pub fn label(self) -> &'static str {
-        self.into()
-    }
-
-    pub fn plural(self) -> &'static str {
-        match self {
-            ItemCategory::Consumable => "consumables",
-            ItemCategory::Equipment => "equipment",
-            ItemCategory::Material => "materials",
-            ItemCategory::Currency => "currency",
-        }
+    /// Its name, as the game's messages give it.
+    pub fn named(self, messages: &ItemMessages) -> String {
+        messages.category(<&'static str>::from(self))
     }
 }
 
@@ -810,7 +1003,7 @@ pub enum ItemKind {
         #[serde(flatten)]
         wear: Wear,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        requires: Option<Condition>,
+        requires: Option<Expr>,
         #[schemars(transform = SchemaMark::Usage.with("known while worn"))]
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         grants: Vec<SkillId>,
@@ -932,11 +1125,12 @@ pub enum PropAxis {
 }
 
 impl Wear {
-    pub fn label(&self) -> &str {
+    /// What it is worn as: in a hand, as a tool, or on its slot by the slot's name.
+    pub fn named<'w>(&'w self, messages: &'w ItemMessages) -> &'w str {
         match self {
-            Wear::Held { .. } => "held",
+            Wear::Held { .. } => messages.hand(),
             Wear::Worn { slot, .. } => slot.as_str(),
-            Wear::Tool { .. } => "tool",
+            Wear::Tool { .. } => messages.tool(),
         }
     }
 
@@ -994,6 +1188,15 @@ pub struct DropRow {
 }
 
 impl DropRow {
+    /// A row that gives `stack` every time.
+    pub fn certain(stack: ItemStack) -> DropRow {
+        DropRow {
+            item: stack.item,
+            amount: stack.count,
+            chance: None,
+        }
+    }
+
     pub fn of(item: ItemId) -> DropRow {
         DropRow {
             item,
@@ -1109,8 +1312,10 @@ pub fn bag_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, Lin
         .get::<Inventory>(actor)
         .and_then(|inventory| inventory.slot_of(item))
         .ok_or_else(|| {
-            LineText::from(Mention::Item(item).span(world.resource::<Content>()))
-                .then(" is not in your inventory")
+            let content = world.resource::<Content>();
+            messages::of(content)
+                .item
+                .not_in_bag(Mention::Item(item).span(content))
         })
 }
 
@@ -1119,7 +1324,7 @@ fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), LineTex
     let item = world
         .get::<Inventory>(actor)
         .and_then(|inventory| inventory.slots.get(slot).map(|slot| slot.item))
-        .ok_or_else(|| "Nothing there".to_owned())?;
+        .ok_or_else(|| LineText::from(messages::of(&content).item.nothing_there()))?;
     match item.get(&content).kind {
         ItemKind::Equipment { .. } => equipment::equip(world, actor, slot, None),
         ItemKind::Usable { casts: Some(skill) } => {
@@ -1127,7 +1332,7 @@ fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), LineTex
         }
         ItemKind::Usable { casts: None } => {
             announce_consumed(world, actor, item);
-            raise(world, item, EventKind::Used, actor);
+            raise(world, item, EventKind::of::<Used>(), actor);
             Ok(())
         }
         ItemKind::Resource => Ok(()),
@@ -1135,8 +1340,8 @@ fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), LineTex
 }
 
 pub fn raise(world: &mut World, item: ItemId, kind: EventKind, actor: Entity) {
-    world.resource_mut::<RiftInstances>().raise(
-        Owner::Row(RunnerKind::Item, item.raw()),
+    world.resource_mut::<Instances>().raise(
+        Owner::Row(ITEM_RUNNER, item.raw()),
         kind,
         Some(actor),
         Vec::new(),
@@ -1153,7 +1358,7 @@ pub fn drop_item(world: &mut World) {
                 if inventory
                     .slots
                     .get(slot)
-                    .is_some_and(|stack| !stack.item.get(&content).bound()) =>
+                    .is_some_and(|stack| !stack.bound(&content)) =>
             {
                 Some(inventory.slots.remove(slot))
             }
@@ -1174,7 +1379,7 @@ pub fn arrange_stacks(world: &mut World) {
         match world.get_mut::<Inventory>(player) {
             Some(mut inventory) => inventory
                 .split(request.slot as usize, request.count)
-                .map_err(|refusal| refusal.describe(&content).into()),
+                .map_err(|refusal| refusal.line(&content)),
             None => Ok(()),
         }
     });
@@ -1284,13 +1489,6 @@ pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
     }
 }
 
-/// The character credited with the victim's fall: the one that held it.
-pub fn credited(world: &World, victim: Entity, now: Seconds) -> Option<Entity> {
-    let lasts = world.resource::<GameSettings>().claims_last;
-    let client = world.get::<Reservation>(victim)?.holder(now, lasts)?;
-    world.resource::<Players>().0.get(&client).copied()
-}
-
 pub fn scatter_drop(
     world: &mut World,
     source: Entity,
@@ -1390,7 +1588,7 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
         });
     if collected {
         world.entity_mut(item).despawn();
-        raise(world, drop.item, EventKind::PickedUp, player);
+        raise(world, drop.item, EventKind::of::<PickedUp>(), player);
     }
 }
 
@@ -1416,4 +1614,64 @@ fn added(items: impl Iterator<Item = inline::InlineItem>) -> LineText {
         .fold(LineText::default(), |line, (place, item)| {
             line.then(if place == 0 { "" } else { " + " }).then(item)
         })
+}
+
+pub const ITEM_RUNNER: RunnerKind = RunnerKind::new("item");
+
+/// What a use hands its script: the aimed actor, the aimed point and the rank used at. An item
+/// raises it with none of them.
+const USED_FIELDS: &[(&str, ValueType)] = &[
+    ("target", ValueType::Actor),
+    ("point", ValueType::Point),
+    ("rank", ValueType::Integer),
+];
+
+/// The aimed actor, the aimed point and the rank an item or a skill was used at, in the order
+/// the event hands them to its script.
+pub fn used_payload(target: Option<Entity>, point: Option<Pos<Meters>>, rank: i64) -> Vec<Value> {
+    vec![Value::Actor(target), Value::Point(point), Value::Int(rank)]
+}
+
+/// Where a script finds what a use hands it.
+pub const USED_TARGET: usize = 0;
+pub const USED_POINT: usize = 1;
+pub const USED_RANK: usize = 2;
+
+/// An item or a skill was used.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Used {}
+
+impl EventDef for Used {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[ITEM_RUNNER, SKILL_RUNNER]
+    }
+
+    fn fields(&self) -> &'static [(&'static str, ValueType)] {
+        USED_FIELDS
+    }
+}
+
+/// An item was picked up off the ground.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct PickedUp {}
+
+impl EventDef for PickedUp {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[ITEM_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .runner(
+            ITEM_RUNNER,
+            RunnerSpec::named_row::<ItemDef>()
+                .stateless()
+                .starting_with_world(),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<ItemDef>(loading, content))
+        .event::<Used>("used")
+        .event::<PickedUp>("picked_up");
+    effects::scripting(vocabulary);
 }

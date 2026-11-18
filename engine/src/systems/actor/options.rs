@@ -6,15 +6,16 @@ use bevy_egui::EguiPrimaryContextPass;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui::{self, Pos2};
-use ui::face;
+use ui::{face, menu};
 
+use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::render;
 use crate::core::units::MeterPos;
 use crate::systems::actor::{self, Name};
 use crate::systems::friend::AskFriendship;
-use crate::systems::inbox::draft::{self, WriteToCharacter};
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::mail::draft::{self, WriteToCharacter};
 use crate::systems::party::page::InviteToParty;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -22,8 +23,8 @@ use crate::systems::social_request::card;
 use crate::systems::society::tab::CharacterAction;
 use crate::systems::society::view::CharacterAccountNumber;
 use crate::systems::society::{SocietyMember, SocietyView};
-use crate::systems::trade::TradeRequest;
-use crate::systems::{GameSettings, class, movement};
+use crate::systems::trade::TradeAsk;
+use crate::systems::{GameSettings, class, messages, movement};
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<ActorOptions>()
@@ -38,6 +39,10 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// Closes the options, if they are open: what stepping out does first while they are.
+pub fn is_open(world: &World) -> bool {
+    world.resource::<ActorOptions>().open.is_some()
+}
+
 pub fn close(world: &mut World) -> bool {
     let open = world.resource::<ActorOptions>().open.is_some();
     world.resource_mut::<ActorOptions>().open = None;
@@ -87,6 +92,8 @@ enum ActorOption {
 
 impl ActorOption {
     fn label(self, world: &World, player: Entity) -> String {
+        let all = messages::of(world.resource::<Content>());
+        let words = &all.actor;
         match self {
             ActorOption::Trade => {
                 let reach = world
@@ -107,21 +114,21 @@ impl ActorOption {
                     _ => false,
                 };
                 match reach.filter(|_| far) {
-                    Some(reach) => format!("Trade · walks within {} m first", reach.0.round()),
-                    None => "Trade".to_owned(),
+                    Some(reach) => words.trade_walks(reach.0.round()),
+                    None => words.trade().to_owned(),
                 }
             }
-            ActorOption::Invite => InviteToParty.label().to_owned(),
-            ActorOption::Befriend => "Add friend".to_owned(),
-            ActorOption::Write => WriteToCharacter.label().to_owned(),
-            ActorOption::Block => "Block".to_owned(),
+            ActorOption::Invite => InviteToParty.label(all).to_owned(),
+            ActorOption::Befriend => words.add_friend().to_owned(),
+            ActorOption::Write => WriteToCharacter.label(all).to_owned(),
+            ActorOption::Block => words.block().to_owned(),
         }
     }
 
     fn act(self, world: &mut World, player: Entity, member: SocietyMember) {
         match self {
             ActorOption::Trade => {
-                world.write_message(TradeRequest::Ask { with: player });
+                world.write_message(TradeAsk { with: player });
             }
             ActorOption::Invite => InviteToParty.act(world, &member),
             ActorOption::Befriend => {
@@ -175,29 +182,28 @@ fn show(world: &mut World) {
         return;
     };
     let level = class::level(world, open.player);
+    let heading = messages::of(world.resource::<Content>())
+        .actor
+        .name_and_level(level, &member.name);
     let mut picked = None;
-    let shown = egui::Area::new(egui::Id::new("actor options"))
-        .order(Band::System.order())
-        .fixed_pos(open.at)
-        .constrain(true)
-        .show(&gui, |ui| {
-            egui::Frame::menu(ui.style()).show(ui, |ui| {
-                ui.label(face::bold(format!("{} · level {level}", member.name)));
-                for option in options {
-                    if ui.button(option.label(world, open.player)).clicked() {
-                        picked = Some(option);
-                    }
+    let mut standing = true;
+    menu::at(
+        &gui,
+        egui::Id::new("actor options"),
+        egui::LayerId::new(Band::System.order(), egui::Id::new("actor options")),
+        open.at,
+        &mut standing,
+        |ui| {
+            ui.label(face::bold(heading));
+            for option in options {
+                if menu::entry(ui, option.label(world, open.player)).clicked() {
+                    picked = Some(option);
+                    ui.close();
                 }
-            });
-        });
-    let pressed_elsewhere = gui.input(|input| {
-        input.pointer.any_pressed()
-            && input
-                .pointer
-                .interact_pos()
-                .is_some_and(|at| !shown.response.rect.contains(at))
-    });
-    if picked.is_some() || pressed_elsewhere {
+            }
+        },
+    );
+    if picked.is_some() || !standing {
         world.resource_mut::<ActorOptions>().open = None;
     }
     if let Some(option) = picked {

@@ -26,6 +26,7 @@ use crate::systems::actor::{Action, Actor, plate};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::stage;
 use crate::systems::hud;
+use crate::systems::messages;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::npc::NpcId;
@@ -486,7 +487,7 @@ fn place(world: &mut World) {
             key: u64::MAX - edge as u64,
             header: None,
             lines: Vec::new(),
-            fold: Some(fold_text(count)),
+            fold: Some(messages::of(&content).notification.fold(count)),
             tail: None,
             tail_offset: 0.0,
             rect: egui::Rect::NOTHING,
@@ -620,9 +621,10 @@ fn paint_tail(ui: &egui::Ui, body: egui::Rect, tail: Tail, offset: f32) {
 
 fn speech(world: &World, content: &Content, speaking: &Speaking, folded: bool) -> BubbleDraw {
     let name = speaking.speaker.get(content).name.to_owned();
+    let words = &messages::of(content).notification;
     let header = match speaking.replaced {
         0 => name,
-        replaced => format!("{name} +{replaced}"),
+        replaced => words.replaced_header(name, replaced),
     };
     let typed = typed_lines(world, speaking);
     let now = speaking.clock.now();
@@ -643,17 +645,10 @@ fn speech(world: &World, content: &Content, speaking: &Speaking, folded: bool) -
         key: speaking.arrived,
         header: (!folded).then_some(header),
         lines: if folded { Vec::new() } else { lines },
-        fold: folded.then(|| fold_text(1)),
+        fold: folded.then(|| words.fold(1)),
         tail: None,
         tail_offset: 0.0,
         rect: egui::Rect::NOTHING,
-    }
-}
-
-fn fold_text(speakers: u32) -> String {
-    match speakers {
-        0 | 1 => "\u{2026}".to_owned(),
-        speakers => format!("\u{2026} {speakers}"),
     }
 }
 
@@ -782,7 +777,7 @@ impl Room {
     fn of(world: &World, window: Vec2) -> Room {
         let taken = hud::drawn_rects(world)
             .into_iter()
-            .chain(stage::rects(world))
+            .chain(stage::dialogue_rect(world))
             .map(|rect| Rect::new(rect.min.x, rect.min.y, rect.max.x, rect.max.y))
             .collect();
         Room {

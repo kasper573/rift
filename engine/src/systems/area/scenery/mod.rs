@@ -36,8 +36,11 @@ use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
 
+use super::heavens::{self, Heavens, RainMaterial, SkyMaterial, SkyWeather};
 use super::lighting::DomeLook;
 use super::prop::{PropDef, PropId, PropPlacement};
+use super::rain::RainField;
+use super::shown_weather::{ShownWeather, ShownWeatherPlugin};
 use super::terrain::PieceShape;
 use super::{Area, AreaModule, FogBank, Lighting, PointLightDef, Rainfall, Weather};
 use crate::core::content::{Content, ContentFile, FileHash, FileHashes};
@@ -64,12 +67,11 @@ use crate::core::render::world::{DRAWN_FRAMES_AFTER, frames_drawn, missing_drawn
 use crate::core::render::{CameraRig, Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
-use crate::core::vfx::cover::ShownWeather;
-use crate::core::vfx::rain::{self as rain_vfx, RainField, RainMaterial};
+use crate::core::vfx::board::ShaderBoardImage;
 use crate::core::vfx::render as vfx_render;
-use crate::core::vfx::sky::{self as sky_vfx, Heavens, SkyMaterial, SkyWeather};
-use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, WeatherImage};
-use crate::systems::script::{self, SkyCondition, SkyNow};
+use crate::core::vfx::uniform::{ParamsUniform, SiteUniform};
+use crate::systems::area::sky::SkyCondition;
+use crate::systems::area::sky::SkyNow;
 
 /// An area's scenery as it stands in a world: everything hangs under `root`, the terrain mesh is
 /// `terrain`, `sun` is the directional light when the area has one, the sun by day and the full
@@ -91,7 +93,8 @@ pub struct SceneryPlugin;
 
 impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<TakenDown>()
+        app.add_plugins(ShownWeatherPlugin)
+            .init_resource::<TakenDown>()
             .init_resource::<Streams>()
             .add_systems(
                 Update,
@@ -1282,7 +1285,12 @@ pub fn light(
         let mut banks: Vec<(&FogBank, f32)> = area
             .fogs
             .iter()
-            .map(|bank| (bank, script::sky::share(world, bank.when.as_ref())))
+            .map(|bank| {
+                (
+                    bank,
+                    crate::systems::area::sky::share(world, bank.when.as_ref()),
+                )
+            })
             .filter(|(_, share)| *share > 0.0)
             .collect();
         banks.sort_by(|(a, _), (b, _)| a.distance(eye.xz()).total_cmp(&b.distance(eye.xz())));
@@ -1435,13 +1443,13 @@ fn spawn_dome(
     let material = SkyMaterial {
         site: SiteUniform::default(),
         params,
-        weather: world.resource::<WeatherImage>().0.clone(),
+        weather: world.resource::<ShaderBoardImage>().image.clone(),
         heavens: Heavens::clear(world.resource::<CloudSheet>().look()),
         clouds: world.resource::<CloudSheet>().field(),
         shader,
     };
     let material = world.resource_mut::<Assets<SkyMaterial>>().add(material);
-    let dome = sky_vfx::dome(&mut world.resource_mut::<Assets<Mesh>>(), material);
+    let dome = heavens::dome(&mut world.resource_mut::<Assets<Mesh>>(), material);
     Some(world.spawn((dome, ChildOf(root))).id())
 }
 
@@ -1479,13 +1487,13 @@ fn spawn_rain(
     let material = RainMaterial {
         site: SiteUniform::default(),
         params,
-        weather: world.resource::<WeatherImage>().0.clone(),
+        weather: world.resource::<ShaderBoardImage>().image.clone(),
         heavens: Heavens::clear(world.resource::<CloudSheet>().look()),
         clouds: world.resource::<CloudSheet>().field(),
         shader,
     };
     let material = world.resource_mut::<Assets<RainMaterial>>().add(material);
-    let shells = rain_vfx::shells(
+    let shells = heavens::shells(
         &mut world.resource_mut::<Assets<Mesh>>(),
         &rainfall.shells,
         material,
@@ -1604,7 +1612,7 @@ fn spawn_terrain(
     root: Entity,
 ) -> Entity {
     let layers = ground_layers(content, area);
-    let weather = world.resource::<WeatherImage>().0.clone();
+    let weather = world.resource::<ShaderBoardImage>().image.clone();
     let (paint, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
         let assets = world.resource::<AssetServer>();
         terrain::ground_paint(&layers, &look.materials, weather, assets, &mut images)

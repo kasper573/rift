@@ -2,13 +2,13 @@ use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{MeterPos, Meters};
+use engine::systems::area::Place;
 use engine::systems::area::warp::warp;
 use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, moving, position};
 use engine::systems::npc::body::{self, Act, Priority};
 use engine::systems::npc::{self, Npc, NpcDef};
-use engine::systems::script::{self, Place};
 use engine::systems::stat::StatKind;
 use engine::systems::{actor, skill, stat};
 use serde_json::{Value, json};
@@ -339,12 +339,12 @@ fn a_wanderer_keeps_within_its_leash_of_home_however_far_the_ground_goes() {
         .load();
     let mut sim = Sim::new(content);
     sim.serve("plain").plan((
-        script::query::ListRoster::default(),
-        script::RunFlows::default(),
+        engine::systems::roster::ListRoster::default(),
+        engine::core::script::run::FlowRunner::default(),
         npc::body::DriveBodies::default(),
         movement::AdvanceWalks::default(),
     ));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim.join(1);
     sim.tick();
     let wanderers: Vec<Entity> = homes
@@ -653,15 +653,15 @@ fn field(wanderers: bool) -> Sim {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 

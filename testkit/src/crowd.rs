@@ -39,8 +39,8 @@ pub fn crowd() -> Game {
             CROWD_AREA,
             &Map::open(SIDE, SIDE),
             json!([
-                { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "raider") }], "count": RAIDERS },
-                { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "townsfolk") }], "count": TOWNSFOLK },
+                { "type": "spawner", "populations": [{ "spawns": [{ "type": "npc", "npc": path("npc", "raider") }], "max_spawned_at_once": RAIDERS }] },
+                { "type": "spawner", "populations": [{ "spawns": [{ "type": "npc", "npc": path("npc", "townsfolk") }], "max_spawned_at_once": TOWNSFOLK }] },
             ]),
         )
         .hero(CROWD_AREA, middle, middle)
@@ -74,17 +74,18 @@ pub fn crowd() -> Game {
             json!({ "name": "Gold", "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 100000 }] }),
         )
         .edit_settings(|settings| {
-            settings["messages"] = json!({
+            settings["mail"] = json!({
                 "inbox": 50, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 6
             });
             settings["market"] = json!({
                 "default_currency": path("item", "gold"),
                 "deposit_currency": path("item", "gold"),
-                "max_offer_items": 3,
+                "max_goods_items": 3,
                 "max_price_items": 3,
                 "durations": [43200.0, 86400.0, 172800.0],
                 "deposit": 5,
                 "max_listings": 20,
+                "page_rows": 50,
             });
         });
     for good in GOODS {

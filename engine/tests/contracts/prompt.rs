@@ -3,8 +3,9 @@ use engine::core::content::LoadReport;
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack};
-use engine::systems::prompt::{self, PromptRequest, PromptStep, PromptView};
-use engine::systems::{movement, region, script};
+use engine::systems::prompt::{self, PromptRequest, PromptView};
+use engine::systems::window::{self, WindowStep};
+use engine::systems::{movement, region};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, dialogue as asks, path, said, sent};
 
@@ -136,16 +137,16 @@ fn gate() -> Sim {
             prompt::requests,
         ))
         .plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
-            prompt::hold,
+            window::hold::<prompt::PromptSession>,
         ));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }
@@ -220,7 +221,7 @@ fn approach(sim: &mut Sim, client: u32) -> PromptView {
     shown(sim, player).expect("the lock asks")
 }
 
-fn submit(sim: &mut Sim, client: u32, step: PromptStep, offer: &[(&str, u32)]) {
+fn submit(sim: &mut Sim, client: u32, step: WindowStep, offer: &[(&str, u32)]) {
     let conn = sim.conn(client);
     let offer = offer
         .iter()

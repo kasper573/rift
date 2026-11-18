@@ -8,12 +8,11 @@ use serde::{Deserialize, Serialize};
 use super::{AccountNumber, ServerSociety, Society};
 use crate::core::content::Content;
 use crate::core::time::UnixMillis;
-use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::area_instance::AreaInstanceShown;
 use crate::systems::area_instance::roster::InstanceCallShown;
-use crate::systems::inbox;
+use crate::systems::mail;
 use crate::systems::market::{self, ListingRow};
 use crate::systems::party::PartyShown;
 use crate::systems::player::CharacterAccount;
@@ -21,6 +20,7 @@ use crate::systems::player::roster::ServerRoster;
 use crate::systems::social_request::{
     AcceptsRequestsFrom, SocialRequest, SocialRequestId, SocialRequestKind,
 };
+use crate::systems::{GameSettings, messages};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
@@ -108,7 +108,7 @@ pub fn greet(world: &mut World, arrived: &mut QueryState<Entity, Added<Character
                 .insert(CharacterAccountNumber(account));
         }
         if let Some(account) = world.get::<CharacterAccount>(character).cloned() {
-            inbox::show(world, character, &account.0, &society);
+            mail::show(world, character, &account.0, &society);
         }
     }
 }
@@ -118,14 +118,14 @@ pub(crate) fn show(world: &mut World, character: Entity, society: &Society) {
     let Some(account) = world.get::<CharacterAccount>(character) else {
         return;
     };
-    let settings = world.resource::<GameSettings>();
+    let content = world.resource::<Content>();
+    let settings = content.built::<GameSettings>();
     let roster = world.resource::<ServerRoster>();
     let client_of = |account: &AccountId| roster.account(account).map(|enrolled| enrolled.client);
-    let Some(mut view) = SocietyView::of(society, &account.0, settings) else {
+    let Some(mut view) = SocietyView::of(society, &account.0, content) else {
         return;
     };
     view.party = PartyShown::of(society, &account.0, settings, client_of);
-    let content = world.resource::<Content>();
     view.instance = AreaInstanceShown::of(society, &account.0, content);
     view.call = InstanceCallShown::of(society, &account.0, content);
     view.listings = market::mine(society, &account.0);
@@ -136,7 +136,9 @@ pub(crate) fn show(world: &mut World, character: Entity, society: &Society) {
 
 impl SocietyView {
     /// What `society` holds of `account`, for an account it knows.
-    fn of(society: &Society, account: &AccountId, settings: &GameSettings) -> Option<SocietyView> {
+    fn of(society: &Society, account: &AccountId, content: &Content) -> Option<SocietyView> {
+        let settings = content.built::<GameSettings>();
+        let messages = messages::of(content);
         let member = |account: &AccountId| society.member(account);
         let mut blocked: Vec<SocietyMember> = society
             .blocks()
@@ -150,10 +152,8 @@ impl SocietyView {
                 return None;
             }
             let other = member(if mine { &request.asked } else { &request.asker })?;
-            let words = (society.source(request.kind)?.words)(&settings.words);
-            let says = if mine { words.asked } else { words.asks }
-                .replace("{name}", &other.name)
-                .replace("{about}", request.about.as_deref().unwrap_or_default());
+            let words = society.source(request.kind)?.words;
+            let says = if mine { words.asked } else { words.asks }(messages, &other.name);
             Some(RequestCard {
                 id: request.id,
                 kind: request.kind,
@@ -172,8 +172,7 @@ impl SocietyView {
                     character: member(friend)?,
                     online_in: society.playing_in(friend),
                     last_seen: society.accounts().get(friend)?.last_seen,
-                    in_a_party: society.parties().of_account(friend).is_some()
-                        && !society.parties().together(friend, account),
+                    in_a_party: society.parties().in_another(friend, account),
                 })
             })
             .collect();

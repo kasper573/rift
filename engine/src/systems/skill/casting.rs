@@ -1,10 +1,16 @@
+use crate::core::script::Reach;
+use crate::core::script::Vocabulary;
+use crate::systems::item;
+use crate::systems::item::Used;
+use crate::systems::skill::Casts;
+use crate::systems::skill::SKILL_RUNNER;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{Cooldowns, Rank, SkillId, Targeting};
+use super::{Cooldowns, Rank, SkillId, SkillMessages, Targeting};
 use crate::core::content::Content;
 use crate::core::content::{SchemaMark, serial};
 use crate::core::math::Pos;
@@ -12,26 +18,26 @@ use crate::core::par;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, NEXT, REFUSED, ScriptFault, Value, ValueType,
 };
+use crate::core::script::{EffectCall, EventKind, Expr, Instances, Owner};
+use crate::core::text::LineText;
 use crate::core::tick::{Cached, Planner};
 use crate::core::time::WallClock;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::GameSettings;
 use crate::systems::actor::{self, playing};
+use crate::systems::aim::{self as effects};
 use crate::systems::combat::{self, Relation};
 use crate::systems::item::Inventory;
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{self, Berths};
+use crate::systems::notification::Audience;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, player_requests};
 use crate::systems::reach::{self, Pursuit, PursuitPlan, ReachAct, ReachIntent, ReachTarget};
-use crate::systems::script::effect::{self as effects, Audience};
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, EventKind, Owner, RiftInstances, RiftScripting, RunnerKind,
-    condition, event,
-};
+use crate::systems::requirement;
 use crate::systems::stat::{self, Vital};
-use crate::systems::text::LineText;
 use crate::systems::{notification, visibility};
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
@@ -67,11 +73,11 @@ pub enum CastWay {
 pub struct UseSkill {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub skill: SkillId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub at: Option<Condition>,
+    pub at: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
     /// Taken when the skill can't be cast, without telling anyone why.
@@ -88,7 +94,10 @@ pub fn request(world: &mut World) {
         if let CastAim::Actor(target) = request.aim
             && !visibility::in_sight(world, caster, target)
         {
-            return Err("Can't see them".into());
+            return Err(messages::of(world.resource::<Content>())
+                .skill
+                .cant_see()
+                .into());
         }
         if !mount::left_by(world, caster, request.skill) {
             let act = if super::carried_as_item(world, caster, request.skill) {
@@ -134,7 +143,7 @@ pub fn cast(
         if def.target != Targeting::Spot
             && let Some(refusal) = mount::uncallable(world, caster, mount, aim)
         {
-            return Err(refusal.into());
+            return Err(refusal);
         }
     }
     ready(world, caster, skill)?;
@@ -142,27 +151,27 @@ pub fn cast(
         (Targeting::Caster, _) => ReachTarget::Actor(caster),
         (Targeting::SingleAlly | Targeting::SingleEnemy, CastAim::Actor(target)) => {
             if !fits(world, caster, target, def.target) {
-                return Err(named(skill, &content).then(" can't target them"));
+                return Err(said(&content, SkillMessages::cant_target, skill));
             }
             ReachTarget::Actor(target)
         }
         (Targeting::SingleAlly | Targeting::SingleEnemy, _) => {
-            return Err(named(skill, &content).then(" needs a target"));
+            return Err(said(&content, SkillMessages::needs_target, skill));
         }
         (Targeting::AreaAlly | Targeting::AreaEnemy, CastAim::Point(point)) => {
             ReachTarget::Point(point)
         }
         (Targeting::AreaAlly | Targeting::AreaEnemy, _) => {
-            return Err(named(skill, &content).then(" needs a point to aim at"));
+            return Err(said(&content, SkillMessages::needs_point, skill));
         }
         (Targeting::Spot, CastAim::Point(spot)) => {
             if let Some(refusal) = spot_refused(world, caster, skill, spot) {
-                return Err(refusal.into());
+                return Err(refusal);
             }
             ReachTarget::Point(spot)
         }
         (Targeting::Spot, _) => {
-            return Err(named(skill, &content).then(" needs a spot to aim at"));
+            return Err(said(&content, SkillMessages::needs_spot, skill));
         }
     };
     reach::intend(world, caster, target, ReachAct::Cast { skill, way });
@@ -178,7 +187,7 @@ pub fn spot_refused(
     caster: Entity,
     skill: SkillId,
     spot: Pos<Meters>,
-) -> Option<String> {
+) -> Option<LineText> {
     let mount = mount::called_by(world, skill);
     if mount.is_some_and(|mount| mount::rides_on(world, caster, mount)) {
         return mount::landing(world, caster, Some(spot)).err();
@@ -186,7 +195,12 @@ pub fn spot_refused(
     let range = super::range_of(world, caster, skill, super::rank_of(world, caster, skill));
     let near = movement::position(world, caster).is_some_and(|from| from.distance(spot) <= range);
     if !near {
-        return Some(world.resource::<GameSettings>().words.spot_too_far.clone());
+        return Some(
+            messages::of(world.resource::<Content>())
+                .skill
+                .spot_too_far()
+                .into(),
+        );
     }
     mount.and_then(|mount| mount::uncallable(world, caster, mount, CastAim::Point(spot)))
 }
@@ -201,30 +215,44 @@ pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), LineTe
         .get::<Cooldowns>(caster)
         .is_some_and(|cooldowns| cooldowns.cooling(skill, now))
     {
-        return Err(named(skill, content).then(" is cooling down"));
+        return Err(said(content, SkillMessages::cooling_down, skill));
     }
-    if let Some(unmet) = condition::first_unmet(world, caster, def.requires.iter()) {
-        return Err(named(skill, content)
-            .then(" needs ")
-            .then(LineText::from(&unmet)));
+    if let Some(unmet) = requirement::first_unmet(world, caster, def.requires.iter()) {
+        return Err(needs(content, skill, unmet));
     }
     for stack in &def.cost {
         let held = world
             .get::<Inventory>(caster)
             .map_or(0, |inventory| inventory.count(stack.item));
         if held < stack.count {
-            return Err(named(skill, content).then(" needs ").then(stack.named()));
+            return Err(needs(content, skill, stack.named()));
         }
     }
     let mana = def.mana_at(super::rank_of(world, caster, skill));
     if stat::current(world, caster, Vital::Mana) < mana {
-        return Err(named(skill, content).then(format!(" needs {mana} mana")));
+        return Err(messages::of(content)
+            .skill
+            .needs_mana(mana, named(skill, content)));
     }
     Ok(())
 }
 
 fn named(skill: SkillId, content: &Content) -> LineText {
     Mention::Skill(skill).line(content)
+}
+
+fn said(
+    content: &Content,
+    message: fn(&SkillMessages, LineText) -> LineText,
+    skill: SkillId,
+) -> LineText {
+    message(&messages::of(content).skill, named(skill, content))
+}
+
+fn needs(content: &Content, skill: SkillId, need: LineText) -> LineText {
+    messages::of(content)
+        .skill
+        .needs_unmet(need, named(skill, content))
 }
 
 /// The one rule for whom a skill of a kind may land on: an actor the caster could reach, not held
@@ -398,24 +426,21 @@ fn perform(world: &mut World, caster: Entity, skill: SkillId, rank: Rank, target
     if let Some(sfx) = def.sfx {
         notification::play_sound(world, Some(caster), Some(caster), sfx, Audience::Everyone);
     }
-    world.resource_mut::<RiftInstances>().raise(
-        Owner::Row(RunnerKind::Skill, skill.raw()),
-        EventKind::Used,
+    world.resource_mut::<Instances>().raise(
+        Owner::Row(SKILL_RUNNER, skill.raw()),
+        EventKind::of::<Used>(),
         Some(caster),
-        event::used_payload(target.actor(), target.point(), i64::from(rank.0)),
+        item::used_payload(target.actor(), target.point(), i64::from(rank.0)),
         |_| true,
     );
 }
 
-impl EffectDef<RiftScripting> for UseSkill {
+impl EffectDef for UseSkill {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
         let skill = self.skill;
         let way = if self.lent {
@@ -454,7 +479,11 @@ impl EffectDef<RiftScripting> for UseSkill {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Casts(self.skill)]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Casts(self.skill))]
     }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary.effect::<UseSkill>("use_skill");
 }

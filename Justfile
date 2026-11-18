@@ -81,6 +81,10 @@ smoke binaries="":
 profile *args: (dist "target/dist" "profiling")
     target/dist/rift profile --out target/profile {{args}}
 
+[doc("Draws a piece of a game off screen with this build's `rift render`: the dialogue in every style it sets, or an area.")]
+render *args: dist
+    target/dist/rift render {{args}}
+
 [doc("The rift CLI, run from a binaries folder of this build.")]
 rift *args: dist
     target/dist/rift {{args}}

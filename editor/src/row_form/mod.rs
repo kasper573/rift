@@ -1,3 +1,4 @@
+use engine::systems::item::ITEM_RUNNER;
 use std::collections::BTreeMap;
 pub mod preview;
 pub mod quests;
@@ -12,13 +13,17 @@ use crate::widgets::Badge;
 use engine::core::audio::playback::SfxDef;
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{ContentFile, MODULES, ModuleRule, fields_file, name_of};
+use engine::core::script::ListedScriptModule;
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptDef;
+use engine::core::script::ScriptId;
+use engine::core::script::ScriptModule;
 use engine::core::vfx::VfxShaderDef;
 use engine::systems::actor::ModelDef;
 use engine::systems::class::ClassDef;
 use engine::systems::item::ItemDef;
 use engine::systems::quest::{ObjectiveKind, QuestDef};
 use engine::systems::registry;
-use engine::systems::script::{ListedScriptModule, RunnerKind, ScriptDef, ScriptId, ScriptModule};
 use engine::systems::skill::SkillDef;
 use serde_json::Value;
 use ui::controls;
@@ -302,7 +307,7 @@ fn row_card(
             |ui| open_folder = ui::panel::breadcrumb(ui, key, file_title(key)),
             if fixture { "fixture" } else { "" },
             |ui| {
-                if ui.button("Copy as JSON").clicked() {
+                if menu::entry(ui, "Copy as JSON").clicked() {
                     ui.ctx()
                         .copy_text(serde_json::to_string_pretty(&*value).unwrap_or_default());
                     ui.close();
@@ -396,8 +401,7 @@ fn modules_column(
                 ui.close();
             }
         });
-        if ui
-            .small_button("Paste")
+        if controls::button(ui, "Paste")
             .on_hover_text("Paste copied modules")
             .clicked()
         {
@@ -458,12 +462,11 @@ fn modules_column(
                     .horizontal(|ui| {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.menu_button(Mark::More.text(16.0).color(theme::FAINT), |ui| {
-                                if ui.button("Copy").clicked() {
+                                if menu::entry(ui, "Copy").clicked() {
                                     ops.push(ModuleOp::Copy(index));
                                     ui.close();
                                 }
-                                if ui
-                                    .add_enabled(!singles[index], egui::Button::new("Duplicate"))
+                                if menu::entry_if(ui, !singles[index], "Duplicate")
                                     .on_disabled_hover_text(format!(
                                         "A row holds at most one {} module",
                                         tag.replace('_', " ")
@@ -476,7 +479,7 @@ fn modules_column(
                                 ui.separator();
                                 swap = menu::move_entries(ui, index, count).or(swap);
                                 ui.separator();
-                                if ui.button("Remove").clicked() {
+                                if menu::entry(ui, "Remove").clicked() {
                                     remove = Some(index);
                                     ui.close();
                                 }
@@ -582,7 +585,7 @@ pub(super) fn card_body(
 /// The module `picked` as it is added: a script module names the nearest script run by rows of
 /// `table`'s kind, and is none when there is no such script, so one is made for it.
 fn fitting_module(cx: &FormCx, table: &str, picked: PickedModule) -> Option<Value> {
-    let (true, Ok(kind)) = (picked.script, table.parse::<RunnerKind>()) else {
+    let (true, Some(kind)) = (picked.script, RunnerKind::named(table)) else {
         return Some(picked.template);
     };
     let script = runnable_script(cx, kind)?;
@@ -853,7 +856,7 @@ fn with_used_script(
     key: &str,
     value: &Value,
 ) -> Result<Value, String> {
-    let (reader, script) = make::answering_used(edit, project, key, RunnerKind::Item)?;
+    let (reader, script) = make::answering_used(edit, project, key, ITEM_RUNNER)?;
     let module = reader
         .to_json(&ListedScriptModule::Script(ScriptModule {
             script,

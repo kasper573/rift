@@ -10,6 +10,10 @@ pub use intro::IntroAppearance;
 pub use pop::{pop, pop_as};
 pub use rows::{NotificationRow, NotificationRows};
 
+use crate::core::script::Fill;
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::Vocabulary;
 use std::borrow::Cow;
 
 use bevy::ecs::entity::MapEntities;
@@ -26,20 +30,23 @@ use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, Fixture, Loading, Nearby, RowCheck};
 use crate::core::gui::{self, Band};
 use crate::core::math::{Pos, Rgba};
-use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault, ValueType};
+use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
+use crate::core::script::{EffectCall, Expr, condition};
+use crate::core::text::LineText;
 use crate::core::text::TextMotion;
 use crate::core::time::WallClock;
 use crate::core::units::{Meters, Seconds};
 use crate::core::vfx::{VfxParams, VfxShaderId};
+use crate::systems::aim::is_character;
+use crate::systems::aim::{self as effects, AimedAll, Reaching};
+use crate::systems::dialogue::span::ScriptSpan;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
+use crate::systems::messages::messages;
 use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::player::ArrivalHold;
 use crate::systems::screen::ClientScreen;
-use crate::systems::script::effect::{self as effects, Aimed, Audience, Reaching};
-use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, condition};
-use crate::systems::text::{self, LineText, Span};
 use crate::systems::{GameSettings, visibility};
 
 pub type NotificationId = ContentId<NotificationDef>;
@@ -116,7 +123,7 @@ impl NotificationKind {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FeedRow {
     pub topic: HistoryTopic,
-    pub icon: Option<String>,
+    pub icon: Option<ImageRef>,
     pub tally: Option<RecordTally>,
     pub failure: bool,
     pub sfx: Option<SfxId>,
@@ -129,8 +136,8 @@ pub struct FeedLine {
 }
 
 impl FeedLine {
-    pub fn icon(mut self, path: String) -> FeedLine {
-        self.row.icon = Some(path);
+    pub fn icon(mut self, icon: ImageRef) -> FeedLine {
+        self.row.icon = Some(icon);
         self
     }
 
@@ -327,7 +334,7 @@ impl Notification {
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct NotificationDef {
     pub kind: NotificationDefKind,
-    pub text: Vec<Span>,
+    pub text: Vec<ScriptSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lasts: Option<Seconds>,
 }
@@ -422,54 +429,61 @@ impl From<&NotificationDefKind> for NotificationKind {
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("notification"))]
 pub struct Notify {
+    /// Who is shown it: the characters this names, one or several. Defaults to the subject.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub notification: NotificationId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for Notify {
+impl EffectDef for Notify {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim_anywhere(cx, &self.who)?;
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
+        let who = effects::aim_all_anywhere(cx, &self.who)?;
         let row = self.notification.get(cx.content);
-        let values = text::values(&row.text)
+        let values = ScriptSpan::values(&row.text)
             .into_iter()
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
         let def = row.clone();
         Ok(Box::new(move |world, flow, cx| {
-            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let aimed = effects::aimed_all_anywhere(world, cx, &who);
             let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
-            let notification = def.notification(LineText::spoken(&def.text, &spoken));
-            // Whoever speaks it is an entity of this world, and stays behind when it is carried.
-            let speaker = match aimed {
-                Aimed::Here(_) => cx.owner,
-                _ => None,
-            };
-            effects::reach(
-                world,
-                flow,
-                cx,
-                aimed,
-                Reaching::quietly(NEXT),
-                move |world, player| {
-                    notify(world, player, speaker, notification);
-                    Ok(())
-                },
-            )
+            let notification = def.notification(ScriptSpan::said(&def.text, &spoken));
+            match aimed {
+                AimedAll::Here(actors) => {
+                    // Whoever speaks it is an entity of this world.
+                    let speaker = cx.owner;
+                    let characters: Vec<Entity> = actors
+                        .into_iter()
+                        .filter(|&actor| is_character(world, actor))
+                        .collect();
+                    for actor in characters {
+                        notify(world, actor, speaker, notification.clone());
+                    }
+                    EffectStep::Done
+                }
+                AimedAll::Elsewhere(client) => effects::carry(
+                    world,
+                    flow,
+                    cx,
+                    client,
+                    Reaching::quietly(NEXT),
+                    move |world, player| {
+                        notify(world, player, None, notification);
+                        Ok(())
+                    },
+                ),
+            }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Notifies(self.notification)]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Notifies(self.notification))]
     }
 }
 
@@ -511,7 +525,7 @@ pub fn check_all(loading: &mut Loading) {
     for (id, def) in loading.rows::<NotificationDef>(&content) {
         let mut check = RowCheck::default();
         for (index, span) in def.text.iter().enumerate() {
-            if let Span::Value { value, .. } = span
+            if let ScriptSpan::Value { value, .. } = span
                 && let Err(fault) = condition::check_value(&content, value)
             {
                 check.error(
@@ -526,8 +540,8 @@ pub fn check_all(loading: &mut Loading) {
             .text
             .iter()
             .map(|span| match span {
-                Span::Text { text, .. } => text.split_whitespace().count(),
-                Span::Input(_) | Span::Value { .. } => 1,
+                ScriptSpan::Text { text, .. } => text.split_whitespace().count(),
+                ScriptSpan::Input(_) | ScriptSpan::Value { .. } => 1,
             })
             .sum();
         if words > LONGEST_ROW_WORDS {
@@ -660,4 +674,76 @@ fn show(world: &mut World, notification_sent: NotificationSent) {
 /// goes with the area by itself.
 fn forget<R: Resource + Default>(world: &mut World) {
     world.insert_resource(R::default());
+}
+
+messages! {
+    /// What the game says in its notifications.
+    pub struct NotificationMessages {
+        /// What the chip under a column of notifications says of those waiting out of sight: their number `{count}`, and the key `{key}` that opens the history.
+        more_keyed[count: Number, key: Line],
+        /// What the chip under a column of notifications says of those waiting out of sight, their number `{count}`, while the key that opens the history isn't read.
+        more(count: Number),
+        /// The header of a bubble or a notice, `{name}`, that `{replaced}` others gave way to.
+        replaced_header(name: Text, replaced: Number),
+        /// What a folded bubble says: the number of speakers `{count}` it stands for.
+        fold(count: Number),
+    }
+}
+
+#[derive(JsonSchema, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Audience {
+    Everyone,
+    Subject,
+}
+
+/// Plays a sound at the owner or the subject.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = SchemaMark::System.with("audio"))]
+pub struct PlaySound {
+    pub sfx: Fill<SfxId>,
+    #[serde(rename = "for")]
+    pub audience: Audience,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+/// A script that may play the sound.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Plays(pub SfxId);
+
+impl ReachDef for Plays {}
+
+impl EffectDef for PlaySound {
+    fn needs_subject(&self) -> bool {
+        self.audience == Audience::Subject
+    }
+    crate::outputs!(NEXT => next);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
+        let sfx = cx.audio(&self.sfx)?;
+        let audience = self.audience;
+        Ok(Box::new(move |world, _, cx| {
+            play_sound(world, cx.owner, cx.subject, sfx, audience);
+            EffectStep::Done
+        }))
+    }
+    fn reach(&self, cx: &Compiler) -> Vec<Reach> {
+        cx.peek_audio(&self.sfx)
+            .map(|sfx| Reach::new(Plays(sfx)))
+            .into_iter()
+            .collect()
+    }
+}
+
+/// A script that may send the notification.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Notifies(pub NotificationId);
+
+impl ReachDef for Notifies {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .effect::<Notify>("notify")
+        .effect::<PlaySound>("play_sound");
 }

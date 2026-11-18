@@ -1,3 +1,5 @@
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,13 +13,12 @@ use crate::core::content::SchemaMark;
 use crate::core::content::{Content, serial};
 use crate::core::math::Rng;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
+use crate::core::script::{EffectCall, Expr, FlowKey, Instances, RunnerKind};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{Millis, PlaybackRate, Radians};
-use crate::systems::script::effect::{self as effects, Audience};
-use crate::systems::script::event::NPC;
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, RunnerKind,
-};
+use crate::systems::aim::{self as effects};
+use crate::systems::notification::Audience;
+use crate::systems::npc::NPC_RUNNER;
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{movement, notification};
 
@@ -124,7 +125,7 @@ pub enum Wait {
 pub struct Animate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(flatten)]
     pub motion: Motion,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -141,7 +142,7 @@ pub struct Animate {
 
 const INTERRUPTED: &str = "interrupted";
 
-impl EffectDef<RiftScripting> for Animate {
+impl EffectDef for Animate {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
@@ -152,10 +153,7 @@ impl EffectDef<RiftScripting> for Animate {
     fn keeps_box(&self) -> bool {
         true
     }
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
         let declared = cx.content.built::<Declared>();
         let undeclared = match &self.motion {
@@ -201,8 +199,8 @@ impl EffectDef<RiftScripting> for Animate {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Animates]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Animates)]
     }
 }
 
@@ -270,7 +268,7 @@ pub fn play_at(
 pub struct SetStance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     /// None takes the actor out of the stance a script put it in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stance: Option<StanceId>,
@@ -278,15 +276,12 @@ pub struct SetStance {
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for SetStance {
+impl EffectDef for SetStance {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
         let stance = self.stance;
         Ok(Box::new(move |world, _, cx| {
@@ -304,8 +299,8 @@ impl EffectDef<RiftScripting> for SetStance {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Animates]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Animates)]
     }
 }
 
@@ -322,9 +317,9 @@ pub struct SetPose {
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for SetPose {
+impl EffectDef for SetPose {
     fn owners(&self) -> &'static [RunnerKind] {
-        NPC
+        &[NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
@@ -333,10 +328,7 @@ impl EffectDef<RiftScripting> for SetPose {
     fn pauses(&self) -> bool {
         self.wait
     }
-    fn compile<'c>(
-        &'c self,
-        _cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, _cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let (pose, wait) = (self.pose, self.wait);
         Ok(Box::new(move |world, flow, cx| {
             let Some(actor) = cx.owner else {
@@ -355,8 +347,8 @@ impl EffectDef<RiftScripting> for SetPose {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Animates]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Animates)]
     }
 }
 
@@ -468,6 +460,12 @@ fn settle_awaited(world: &mut World, actor: Entity, output: &'static str) {
 
 fn answer(world: &mut World, flow: FlowKey, output: &'static str) {
     world
-        .resource_mut::<RiftInstances>()
+        .resource_mut::<Instances>()
         .answer(flow, Answer::Output(output));
 }
+
+/// A script that may play an animation on an actor.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Animates;
+
+impl ReachDef for Animates {}

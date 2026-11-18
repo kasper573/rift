@@ -2,29 +2,32 @@ use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use ui::card::{self, Card, CardAction, CardResponse, CardTilt, Plate};
 use ui::controls::{self, Pill};
-use ui::egui::{Align, Label, Layout, Rect, Ui};
+use ui::egui::{self, Align, Label, Layout, Rect, Response, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::glyph::{self, CardKind, Mark};
 use ui::ink;
 use ui::motion;
 
 use super::{
-    ActiveQuest, ObjectiveProgress, Parties, QuestDef, QuestId, QuestLog, QuestResult, clock_label,
-    resets_label,
+    ActiveQuest, ObjectiveProgress, Parties, QuestDef, QuestId, QuestLog, QuestMessages,
+    QuestResult, resets_label, words,
 };
 use crate::core::card::CardStyleDef;
 use crate::core::content::Content;
-use crate::core::gui::{Band, ImageSource};
+use crate::core::gui::{self, Band, ImageSource, WidgetRects};
+use crate::core::script::ChoiceReveal;
 use crate::core::stage::card::{self as card_stage, HungCardLamp, StagedCard};
 use crate::core::time::UnixMillis;
 use crate::systems::chat::ChatEmbed;
-use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
-use crate::systems::dialogue::{ChoiceReveal, Conversation, ConversationPanel};
-use crate::systems::hud;
+use crate::systems::dialogue::windows;
+use crate::systems::dialogue::{Conversation, ConversationPanel};
+use crate::systems::hud::{self, WindowKey};
 use crate::systems::item::card::CardLook;
+use crate::systems::item::grid::item_grid;
 use crate::systems::item::inline::{self, InlineItem, InlineLook};
 use crate::systems::item::widget::{DrawnItem, answer_drawn, draw_tile};
 use crate::systems::item::{Inventory, ItemStack};
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
@@ -32,27 +35,19 @@ use crate::systems::terminal::chat;
 
 const MARK: f32 = 13.0;
 
-pub(crate) const WINDOW_KEY: &str = "Quest";
-
 pub struct QuestCardPlugin;
 
 impl Plugin for QuestCardPlugin {
     fn build(&self, app: &mut App) {
-        stage::dock(
-            app,
-            DockedPanel {
-                head: card_head,
-                show: show_docked,
-            },
-        );
         app.init_resource::<hud::Pinned<QuestId>>()
             .add_systems(
                 Update,
-                hud::raise_pinned::<QuestId>(WINDOW_KEY).run_if(in_state(ClientScreen::Area)),
+                hud::raise_pinned::<QuestId>(WindowKey::QuestCard)
+                    .run_if(in_state(ClientScreen::Area)),
             )
             .add_systems(
                 EguiPrimaryContextPass,
-                draw_card
+                (draw_card, draw_offer)
                     .in_set(Band::Hud)
                     .run_if(in_state(ClientScreen::Area)),
             )
@@ -65,18 +60,22 @@ pub fn open(world: &mut World, quest: QuestId, from: Option<Rect>) {
     hud::pin(world, quest, from);
 }
 
+pub fn showing(world: &World) -> bool {
+    hud::pinned::<QuestId>(world).is_some()
+}
+
 pub fn close(world: &mut World) -> bool {
     hud::unpin::<QuestId>(world)
 }
 
 /// How far the pinned card is turned toward the pointer.
 pub fn tilt(world: &World) -> CardTilt {
-    hud::pinned_tilt(world, WINDOW_KEY)
+    hud::pinned_tilt(world, WindowKey::QuestCard)
 }
 
 /// The lamp the pinned card is lit by, while it is on the stage.
 pub fn lamp(world: &World) -> Option<HungCardLamp> {
-    hud::pinned_lamp(world, WINDOW_KEY)
+    hud::pinned_lamp(world, WindowKey::QuestCard)
 }
 
 /// The quest whose card is pinned, and where the card is drawn.
@@ -110,23 +109,25 @@ pub fn show<I: ImageSource + ?Sized>(
         look,
     } = shown_as;
     let def = quest.get(content);
+    let words = words(content);
     let band = match moment {
-        Some(moment) => format!("{} · {}", moment.band(), def.category.to_lowercase()),
-        None => def.category.to_lowercase(),
+        Some(moment) => words.band(&def.category, moment.band(words)),
+        None => def.category.clone(),
     };
     let icon = images.image(def.icon(content)).map(|image| image.texture);
-    let mut shown = Card::new(CardKind::Quest, &def.title);
+    let mut shown = Card::new(CardKind::Quest, &band, &def.title);
     shown.dress = CardStyleDef::of(content, def.card_style).dress(images, None);
-    shown.band = &band;
     shown.picture = icon;
     shown.action = action;
-    shown.closable = look.closable;
+    shown.close = look
+        .closable
+        .then_some(messages::of(content).interface.close());
     shown.depth = look.depth;
     shown.show(ui, |ui, written| {
         if written.name_cut {
             card::full_name(ui, &def.title);
         }
-        card::overview(ui, &overview(def));
+        card::overview(ui, &def.kinds(content));
         plate(ui, images, written);
     })
 }
@@ -147,7 +148,7 @@ pub fn offer<I: ImageSource + ?Sized>(
         inventory,
     };
     let shown = terms(ui, images, content, parties, quest, reader, plate);
-    card::foot(ui, "Accept or decline in the conversation");
+    card::foot(ui, words(content).offer_foot());
     shown
 }
 
@@ -183,8 +184,9 @@ fn terms<I: ImageSource + ?Sized>(
         Some(QuestResult::Failed) => Standing::Failed,
         None => Standing::Open,
     };
-    card::overview(ui, &def.meta(parties, quest));
-    card::heading(ui, plate, "objectives");
+    let words = words(content);
+    card::overview(ui, &def.meta(content, parties, quest));
+    card::heading(ui, plate, words.card_objectives());
     let mut shown = Vec::new();
     for (index, mut progress) in progress.into_iter().enumerate() {
         progress.counted &= finished.is_none();
@@ -196,10 +198,10 @@ fn terms<I: ImageSource + ?Sized>(
         );
     }
     if def.reveals(ChoiceReveal::Gains) {
-        card::heading(ui, plate, "rewards");
+        card::heading(ui, plate, words.card_rewards());
         shown.extend(reward_chips(ui, images, content, def));
         if !def.pick_one().is_empty() && finished.is_none() {
-            card::heading(ui, plate, "pick one when you return");
+            card::heading(ui, plate, words.card_pick_one());
             shown.extend(picks(ui, images, content, def));
         }
     }
@@ -214,11 +216,11 @@ pub enum QuestMoment {
 }
 
 impl QuestMoment {
-    pub fn band(self) -> &'static str {
+    pub fn band(self, words: &QuestMessages) -> &str {
         match self {
-            QuestMoment::Offer => "quest offer",
-            QuestMoment::TurnIn => "quest complete",
-            QuestMoment::Decision => "a permanent choice",
+            QuestMoment::Offer => words.moment_offer(),
+            QuestMoment::TurnIn => words.moment_turn_in(),
+            QuestMoment::Decision => words.moment_decision(),
         }
     }
 }
@@ -233,29 +235,46 @@ fn moment(world: &World) -> Option<(QuestId, QuestMoment)> {
     })
 }
 
-fn card_head(world: &World) -> Option<PanelHead> {
-    moment(world)?;
-    Some(PanelHead {
-        width: card::WIDTH,
-        chrome: PanelChrome::Card,
-    })
-}
-
-fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
+/// The card of the quest a conversation puts to the player, which they move like any card.
+fn draw_offer(world: &mut World) {
+    let Some(gui) = gui::context(world) else {
+        return;
+    };
     let Some((quest, moment)) = moment(world) else {
         return;
     };
-    let inventory = session::me(world)
-        .and_then(|seen| world.get::<Inventory>(seen))
-        .cloned()
-        .unwrap_or_else(Inventory::empty);
+    let key = WindowKey::QuestOffer;
+    let size =
+        hud::drawn_rect(&gui, key).map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size());
+    let placed = world
+        .resource::<UserSettings>()
+        .widget_pos(key.name())
+        .is_some();
+    let start = windows::seat(world, &gui, key, size, !placed).min;
+    let rest = hud::placed_spot(world, &gui, key, start);
+    let shown = egui::Area::new(hud::panel_id(key))
+        .order(Band::Hud.order())
+        .fixed_pos(rest.min)
+        .constrain(false)
+        .fade_in(false)
+        .show(&gui, |ui| show_offer(ui, world, quest, moment));
+    hud::grab_spot(world, key.name(), &shown.inner, shown.response.rect);
+    hud::mark_drawn(world, key);
+    world
+        .resource_mut::<WidgetRects>()
+        .0
+        .insert(key.name().to_owned(), shown.response.rect);
+}
+
+fn show_offer(ui: &mut Ui, world: &mut World, quest: QuestId, moment: QuestMoment) -> Response {
+    let inventory = Inventory::of(world, session::me(world));
     let content = world.resource::<Content>().clone();
     let parties = world.resource::<Parties>().clone();
     let painted = ui.layer_id();
     let since = motion::mark(ui.ctx(), painted);
     let shown_as = QuestCardLook {
         moment: Some(moment),
-        action: Some(chat::card_action()),
+        action: Some(chat::card_action(&messages::of(&content).terminal)),
         look: CardLook::DOCKED,
     };
     let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
@@ -279,7 +298,7 @@ fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
     });
     chat::offered(world, &shown, ChatEmbed::Quest(quest));
     let staged = StagedCard {
-        key: ui.id().with("docked quest card"),
+        key: ui.id().with("quest offer card"),
         runs: motion::lifted(ui.ctx(), painted, since),
         flat: shown.rect,
         pose: None,
@@ -289,6 +308,7 @@ fn show_docked(ui: &mut Ui, world: &mut World, _: f32, _: f32) {
             .clone(),
     };
     card_stage::stage(world, ui.ctx(), staged, painted);
+    shown.band
 }
 
 fn draw_card(world: &mut World) {
@@ -298,35 +318,40 @@ fn draw_card(world: &mut World) {
             .material
             .clone()
     };
-    hud::draw_pinned::<QuestId>(world, WINDOW_KEY, material, |ui, world, quest, depth| {
-        let quest = *quest;
-        let content = world.resource::<Content>().clone();
-        let parties = world.resource::<Parties>().clone();
-        let me = session::me(world);
-        let log = me
-            .and_then(|me| world.get::<QuestLog>(me))
-            .cloned()
-            .unwrap_or_default();
-        let inventory = me.and_then(|me| world.get::<Inventory>(me)).cloned();
-        let shown_as = QuestCardLook {
-            moment: None,
-            action: Some(chat::card_action()),
-            look: CardLook {
-                depth,
-                ..CardLook::PINNED
-            },
-        };
-        let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
-            let reader = QuestReader {
-                log: &log,
-                inventory: inventory.as_ref(),
+    hud::draw_pinned::<QuestId>(
+        world,
+        WindowKey::QuestCard,
+        material,
+        |ui, world, quest, depth| {
+            let quest = *quest;
+            let content = world.resource::<Content>().clone();
+            let parties = world.resource::<Parties>().clone();
+            let me = session::me(world);
+            let log = me
+                .and_then(|me| world.get::<QuestLog>(me))
+                .cloned()
+                .unwrap_or_default();
+            let inventory = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+            let shown_as = QuestCardLook {
+                moment: None,
+                action: Some(chat::card_action(&messages::of(&content).terminal)),
+                look: CardLook {
+                    depth,
+                    ..CardLook::PINNED
+                },
             };
-            let shown = terms(ui, world, &content, &parties, quest, reader, plate);
-            answer_drawn(world, shown);
-        });
-        chat::offered(world, &shown, ChatEmbed::Quest(quest));
-        shown
-    });
+            let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
+                let reader = QuestReader {
+                    log: &log,
+                    inventory: inventory.as_ref(),
+                };
+                let shown = terms(ui, world, &content, &parties, quest, reader, plate);
+                answer_drawn(world, shown);
+            });
+            chat::offered(world, &shown, ChatEmbed::Quest(quest));
+            shown
+        },
+    );
 }
 
 fn turn_in(
@@ -338,9 +363,10 @@ fn turn_in(
     plate: Plate,
 ) -> Vec<DrawnItem> {
     let def = quest.get(content);
+    let words = words(content);
     let mut shown = Vec::new();
     if def.reveals(ChoiceReveal::Costs) {
-        card::heading(ui, plate, "hand in");
+        card::heading(ui, plate, words.card_hand_in());
         for (index, &stack) in def.hand_in().iter().enumerate() {
             let held = inventory.count(stack.item);
             shown.push(
@@ -354,10 +380,10 @@ fn turn_in(
     if !def.reveals(ChoiceReveal::Gains) {
         return shown;
     }
-    card::heading(ui, plate, "rewards");
+    card::heading(ui, plate, words.card_rewards());
     shown.extend(reward_chips(ui, images, content, def));
     if !def.pick_one().is_empty() {
-        card::foot(ui, "Your pick is offered in the conversation");
+        card::foot(ui, words.pick_foot());
     }
     shown
 }
@@ -389,11 +415,7 @@ fn hand_in_row(
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let color = if short { ink::RUBRIC } else { ink::INK3 };
-            ui.label(
-                TextRole::Small
-                    .rich(format!("{held} in your inventory"))
-                    .color(color),
-            );
+            ui.label(TextRole::Small.rich(words(content).held(held)).color(color));
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let item = InlineItem::from(stack);
                 let look = InlineLook::new(TextRole::CardBody, ink::INK);
@@ -434,7 +456,7 @@ pub(super) fn objective_row(
             if progress.counted {
                 ui.label(
                     TextRole::CardBody
-                        .rich(format!("{} / {}", progress.have, progress.need))
+                        .rich(words(content).progress(progress.have, progress.need))
                         .color(color),
                 );
             }
@@ -461,12 +483,12 @@ pub(super) fn reward_chips(
     def: &QuestDef,
 ) -> Vec<DrawnItem> {
     ui.horizontal_wrapped(|ui| {
-        if def.xp > 0 {
-            controls::pill(ui, &format!("{} XP", def.xp), Pill::Gold);
+        if def.xp() > 0 {
+            let xp = words(content).reward_xp(def.xp());
+            controls::pill(ui, &xp, Pill::Gold);
         }
         def.rewards()
-            .iter()
-            .map(|&stack| item_chip(ui, images, content, stack))
+            .map(|stack| item_chip(ui, images, content, stack))
             .collect()
     })
     .inner
@@ -478,30 +500,20 @@ pub(super) fn picks(
     content: &Content,
     def: &QuestDef,
 ) -> Vec<DrawnItem> {
-    ui.horizontal(|ui| {
-        def.pick_one()
-            .iter()
-            .enumerate()
-            .map(|(index, &stack)| {
-                ui.push_id(("pick", index), |ui| draw_tile(ui, images, content, stack))
-                    .inner
-            })
-            .collect()
-    })
-    .inner
+    let picks = def.pick_one();
+    let mut drawn = Vec::new();
+    item_grid(ui, picks.len() as u32, |ui, place| {
+        let stack = picks[place as usize];
+        drawn.push(
+            ui.push_id(("pick", place), |ui| draw_tile(ui, images, content, stack))
+                .inner,
+        );
+    });
+    drawn
 }
 
 pub(super) fn caption(ui: &mut Ui, text: impl Into<String>) {
     ui.add(Label::new(face::small_faint(text.into())).wrap());
-}
-
-pub(super) fn overview(def: &QuestDef) -> String {
-    let kinds = def.kinds();
-    let mut letters = kinds.chars();
-    letters
-        .next()
-        .map(|first| first.to_uppercase().chain(letters).collect())
-        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -514,18 +526,31 @@ pub(super) enum Countdown {
 }
 
 impl Countdown {
-    pub(super) fn label(self, log: &QuestLog, quest: QuestId, now: UnixMillis) -> Option<String> {
+    pub(super) fn label(
+        self,
+        content: &Content,
+        log: &QuestLog,
+        quest: QuestId,
+        now: UnixMillis,
+    ) -> Option<String> {
+        let words = words(content);
         match self {
-            Countdown::Left => log.active(quest)?.left(now).map(clock_label),
+            Countdown::Left => log
+                .active(quest)?
+                .left(now)
+                .map(|left| messages::of(content).time.countdown(left)),
             Countdown::LeftDetail => log
                 .active(quest)?
                 .left(now)
-                .map(|left| format!("{} left", clock_label(left))),
-            Countdown::Resets => log.finished(quest)?.resets_in(now).map(resets_label),
+                .map(|left| words.clock_left(messages::of(content).time.countdown(left))),
+            Countdown::Resets => log
+                .finished(quest)?
+                .resets_in(now)
+                .map(|left| resets_label(content, left)),
             Countdown::ResetsDetail => log
                 .finished(quest)?
                 .resets_in(now)
-                .map(|left| format!("Done for today · {}", resets_label(left))),
+                .map(|left| words.done_today_resets(resets_label(content, left))),
         }
     }
 }

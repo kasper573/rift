@@ -10,21 +10,24 @@ use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::Pos;
+use engine::core::script::Expr;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::core::vfx::VfxInstance;
 use engine::systems::actor::plate;
 use engine::systems::actor::{Action, Actor, Appearance, ModelId};
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::class::ClassDef;
 use engine::systems::combat::Attitude;
+use engine::systems::equipment::query::Equipped;
+use engine::systems::item::query::Holding;
 use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
 use engine::systems::launch::{ServerDay, ServerWeather};
 use engine::systems::movement::Position;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, SnapshotSkill};
 use engine::systems::player::{ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules};
-use engine::systems::script::{Condition, Place, RiftQuery};
 use engine::systems::skill::casting::{self, CastAim};
 use engine::systems::skill::{self, Rank, SkillDef, SkillId, Targeting};
 use engine::systems::stat::{self, StatKind, Stats};
@@ -493,11 +496,13 @@ fn required_items(def: &SkillDef) -> Vec<ItemId> {
     let mut items = Vec::new();
     if let Some(requires) = &def.requires {
         requires.visit(&mut |expr| {
-            if let Condition::Query(
-                RiftQuery::Equipped { item, .. } | RiftQuery::Holding { item, .. },
-            ) = expr
-            {
-                items.push(*item);
+            if let Expr::Query(query) = expr {
+                if let Some(Equipped { item, .. }) = query.downcast_ref::<Equipped>() {
+                    items.push(*item);
+                }
+                if let Some(Holding { item, .. }) = query.downcast_ref::<Holding>() {
+                    items.push(*item);
+                }
             }
         });
     }

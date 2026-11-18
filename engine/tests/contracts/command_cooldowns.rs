@@ -6,12 +6,12 @@ use engine::core::math::Pos;
 use engine::core::time::WallClock;
 use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::systems::area::AreaDef;
+use engine::systems::area::Place;
 use engine::systems::chat::ChatChannel;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::player::{self, AreaDrawn};
-use engine::systems::script::Place;
-use engine::systems::{actor, chat, combat, command, movement, script, skill, stat};
+use engine::systems::{actor, chat, combat, command, movement, skill, stat};
 use serde_json::json;
 use testkit::{Game, Map, Sim, path};
 
@@ -59,7 +59,7 @@ fn a_command_cools_down_for_its_sender_once_it_runs_and_not_when_it_is_refused()
         (
             true,
             Some((
-                "/rest can be used again in 10m.".to_owned(),
+                "/rest can be used again in 10 min.".to_owned(),
                 LineKind::Notice
             ))
         ),
@@ -67,7 +67,7 @@ fn a_command_cools_down_for_its_sender_once_it_runs_and_not_when_it_is_refused()
     );
 
     movement::relocate(&mut sim.world, me, AFIELD);
-    for (wait, left) in [(0.0, "10m"), (60.0, "9m"), (500.0, "38s")] {
+    for (wait, left) in [(0.0, "10 min"), (60.0, "9 min"), (500.0, "38 s")] {
         sim.later(wait);
         send(&mut sim, "/rest");
         assert_eq!(
@@ -88,7 +88,7 @@ fn a_command_cools_down_for_its_sender_once_it_runs_and_not_when_it_is_refused()
     assert!(
         listed
             .iter()
-            .any(|line| line == "/rest · every 10m · ready in 38s"),
+            .any(|line| line == "/rest · every 10 min · ready in 38 s"),
         "the list of commands says each one's cooldown and the time left: {listed:?}"
     );
 
@@ -119,7 +119,7 @@ fn a_command_cools_down_for_its_sender_once_it_runs_and_not_when_it_is_refused()
     let left = replies(&mut next).last().and_then(|(said, kind)| {
         let seconds = said
             .strip_prefix("/rest can be used again in ")?
-            .strip_suffix("s.")?;
+            .strip_suffix(" s.")?;
         (*kind == LineKind::Failed).then(|| seconds.parse::<u32>().ok())?
     });
     assert!(
@@ -220,14 +220,14 @@ fn camp(game: Game) -> Sim {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
         .plan(actor::SettleActions::default());
     chat::route_lines(&mut sim.world);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 

@@ -5,6 +5,7 @@ use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::time::WallClock;
 use engine::core::units::{MeterPos, Meters, Seconds};
+use engine::systems::area::Place;
 use engine::systems::area::transition::Crossing;
 use engine::systems::area::warp::warp;
 use engine::systems::area::{self, AreaDef};
@@ -16,7 +17,6 @@ use engine::systems::player::{
     self, ARRIVAL_PATIENCE, AreaDrawn, JoinRequest, Welcome, Xp, commands_locked,
 };
 use engine::systems::region;
-use engine::systems::script::{self, Place};
 use engine::systems::{notification, npc, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, dialogue};
@@ -335,16 +335,16 @@ fn harbour() -> Sim {
             dialogue::requests,
         ))
         .plan((
-            script::query::ListRoster::default(),
+            engine::systems::roster::ListRoster::default(),
             area::object::TrackUnderfoot::default(),
             npc::ApproachWatchers::default(),
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((interact::interactions, dialogue::hold, dialogue::refresh))
         .plan(stat::SettleVitals::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }

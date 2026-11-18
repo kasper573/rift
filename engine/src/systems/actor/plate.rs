@@ -16,15 +16,15 @@ use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::window_point;
 use crate::core::render::world::opacity::Opacity;
 use crate::core::units::Meters;
-use crate::systems::GameSettings;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
 use crate::systems::attention;
 use crate::systems::combat::Attitude;
+use crate::systems::messages;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::{Away, PlayedBy, session};
-use crate::systems::resource;
+use crate::systems::resource::{self, ResourceMessages};
 use crate::systems::screen::ClientScreen;
 use ui::paint;
 
@@ -85,10 +85,10 @@ impl PlateLabel {
         }
     }
 
-    pub fn resource(name: &str, working: u32, room: u32) -> PlateLabel {
+    pub fn resource(words: &ResourceMessages, name: &str, working: u32, room: u32) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            state: resource::render::plate_line(working, room),
+            state: resource::render::plate_line(words, working, room),
             color: Color32::WHITE,
         }
     }
@@ -316,10 +316,10 @@ fn label(
                 .then(|| PlateLabel::npc(&def.name, matches!(attitude, Some(Attitude::Hostile))))
         }
         (None, Some(_)) => {
-            let words = &content.built::<GameSettings>().words;
+            let party = &messages::of(content).party;
             Some(PlateLabel::character(
                 &name?.name,
-                away.then_some(words.away.as_str()),
+                away.then(|| party.away()),
             ))
         }
         (None, None) => None,

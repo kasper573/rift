@@ -1,18 +1,18 @@
+pub mod board;
 pub mod compile;
-pub mod cover;
 pub mod play;
-pub mod rain;
 pub mod render;
 pub mod shader;
-pub mod sky;
+pub mod stage;
 pub mod standing;
 pub mod uniform;
 
 pub use play::{LayerTime, sprite_cell};
 pub use shader::{
-    BodyShape, CompiledVfxShaders, ParamKind, ShaderError, ShaderParam, SiteKind, Stage,
-    VfxShaderDef, VfxShaderId, prelude_names, shader_file,
+    BodyShape, CompiledVfxShaders, ParamKind, ShaderError, ShaderParam, SiteKind, VfxShaderDef,
+    VfxShaderId, prelude_names, shader_file,
 };
+pub use stage::{ShaderPass, Stage, StageKind, StageSpec, Stages};
 
 use std::collections::BTreeMap;
 
@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::ImageRef;
 use crate::core::content::media::ImageSizes;
 use crate::core::content::{
-    Content, ContentFile, ContentId, ContentRegistry, LoadStep, Loading, NamedContent, Nearby,
-    RowCheck, serial,
+    Content, ContentFile, ContentId, ContentRegistry, Fixture, LoadStep, Loading, NamedContent,
+    Nearby, RowCheck, serial,
 };
 use crate::core::geometry::PlacedShape;
 use crate::core::math::{FrameSize, Pos, Rgb, Rgba};
@@ -497,7 +497,7 @@ impl VfxLayer {
     /// shader says.
     pub fn stage(&self, content: &Content) -> Stage {
         match self {
-            VfxLayer::Sprite { .. } | VfxLayer::Light { .. } => Stage::Billboard,
+            VfxLayer::Sprite { .. } | VfxLayer::Light { .. } => Stage::BILLBOARD,
             VfxLayer::Shader { shader, .. } => shader.get(content).stage,
         }
     }
@@ -530,6 +530,30 @@ impl VfxDef {
                     ),
                 );
             }
+        }
+    }
+}
+
+/// Refuses, on the vfx row, a layer on a stage that a site of `sites` the vfx is played on, `by`
+/// whom, cannot take.
+pub fn check_played(loading: &mut Loading, vfx: VfxId, sites: &[SiteKind], by: &str) {
+    let content = loading.content();
+    let mut check = RowCheck::default();
+    vfx.get(&content)
+        .check_sites(&content, sites, by, &mut check);
+    loading.row_errors(vfx, check);
+}
+
+/// Refuses, on the vfx row of each fixture of `F` that the game provides, a layer on a stage that
+/// a site of `sites`, where the engine plays them all, cannot take.
+pub fn check_fixtures_played<F: Fixture<Row = VfxDef>>(loading: &mut Loading, sites: &[SiteKind]) {
+    let content = loading.content();
+    for fixture in F::VARIANTS {
+        if let Some(vfx) = content.by_path::<VfxDef>(&fixture.path())
+            && content.table::<VfxDef>().get(vfx).is_some()
+        {
+            let by = format!("the engine, as the {} fixture", fixture.name());
+            check_played(loading, vfx, sites, &by);
         }
     }
 }

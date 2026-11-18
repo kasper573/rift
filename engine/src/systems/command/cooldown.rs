@@ -28,18 +28,3 @@ impl CommandCooldowns {
         self.0.insert(command, now.after(cooldown));
     }
 }
-
-/// `span` as a player reads a wait: to the minute above a minute, to the second below it, and
-/// never none while something still waits.
-pub fn worded(span: Seconds) -> String {
-    const MINUTE: f32 = 60.0;
-    if span.0 < MINUTE {
-        return format!("{}s", span.0.ceil().max(1.0) as u32);
-    }
-    let minutes = (span.0 / MINUTE).ceil() as u32;
-    match (minutes / 60, minutes % 60) {
-        (0, minutes) => format!("{minutes}m"),
-        (hours, 0) => format!("{hours}h"),
-        (hours, minutes) => format!("{hours}h {minutes}m"),
-    }
-}

@@ -2,8 +2,8 @@
 //! shows at its caret.
 
 use egui::{
-    Align, Align2, Area, Context, Id, Layout, Margin, Order, Rect, Response, Sense, Stroke, Ui,
-    UiBuilder, Vec2, WidgetInfo, WidgetType,
+    Align, Align2, Area, Context, Id, Layout, Margin, Order, Rect, Sense, Stroke, Ui, UiBuilder,
+    Vec2, WidgetInfo, WidgetType,
 };
 
 use crate::face::TextRole;
@@ -34,13 +34,6 @@ const APART: f32 = 24.0;
 /// Lists `suggestions` by the field at `field`: under it where the screen has the room, over it
 /// otherwise. `heading`, when there is one, says what is being typed; the `selected` suggestion
 /// is lit. Returns the place of the suggestion clicked.
-/// What a list of suggestions answers: the place of the one clicked, and the row the pointer is
-/// on, with its place.
-pub struct Suggested {
-    pub clicked: Option<usize>,
-    pub pointed: Option<(usize, Response)>,
-}
-
 pub fn suggestions(
     gui: &Context,
     id: Id,
@@ -48,7 +41,7 @@ pub fn suggestions(
     heading: &str,
     suggestions: &[Suggestion],
     selected: usize,
-) -> Suggested {
+) -> Option<usize> {
     let rows = suggestions.len() + usize::from(!heading.is_empty());
     let tall = rows as f32 * ROW + 2.0 * PAD;
     let under = field.bottom() + GAP + tall <= gui.content_rect().bottom();
@@ -96,7 +89,6 @@ pub fn suggestions(
                 }
             }
             let mut clicked = None;
-            let mut pointed = None;
             for (place, suggestion) in suggestions.iter().enumerate() {
                 let (rect, response) = ui.allocate_exact_size(Vec2::new(wide, ROW), Sense::click());
                 response
@@ -139,11 +131,8 @@ pub fn suggestions(
                 if response.clicked() {
                     clicked = Some(place);
                 }
-                if response.hovered() {
-                    pointed = Some((place, response));
-                }
             }
-            Suggested { clicked, pointed }
+            clicked
         })
         .inner
     })

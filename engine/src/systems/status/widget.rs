@@ -7,10 +7,11 @@ use ui::{ink, paint};
 use super::{StatusCategory, StatusInstance, Statuses};
 use crate::core::content::Content;
 use crate::core::gui;
+use crate::core::text::LineText;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::hud;
+use crate::systems::messages::{self, Messages};
 use crate::systems::player::session;
-use crate::systems::text::{LineText, duration};
 
 const ICON: f32 = 24.0;
 const GAP: f32 = 5.0;
@@ -25,6 +26,7 @@ pub fn row(ui: &mut Ui, world: &mut World, width: f32, first_row: Align) {
         return;
     }
     let content = world.resource::<Content>().clone();
+    let messages = messages::of(&content);
     let now = time::server_now(world);
     let pitch = ICON + GAP;
     let across = (((width + GAP) / pitch).floor() as usize).max(1);
@@ -50,12 +52,13 @@ pub fn row(ui: &mut Ui, world: &mut World, width: f32, first_row: Align) {
                 .paint_at(ui, rect);
         }
         ring(ui, rect.expand(RING), def.category);
-        let label = format!("Status {}: {}", def.name, def.category.label());
+        let category = def.category.named(&messages.status);
+        let label = messages.status.named(category, &def.name);
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label.clone())
         });
         let lines: Vec<LineText> = [
-            Some(format!("{} · {}", def.category.label(), time_left(status, now)).into()),
+            Some(format!("{category} · {}", time_left(messages, status, now)).into()),
             (!def.description.is_empty()).then(|| def.description.as_str().into()),
         ]
         .into_iter()
@@ -65,11 +68,11 @@ pub fn row(ui: &mut Ui, world: &mut World, width: f32, first_row: Align) {
     }
 }
 
-pub fn time_left(status: &StatusInstance, now: Option<UnixMillis>) -> String {
+fn time_left(messages: &Messages, status: &StatusInstance, now: Option<UnixMillis>) -> String {
     match (status.until, now) {
-        (Some(until), Some(now)) if until > now => format!("{} left", duration(until.since(now))),
-        (Some(_), _) => "Ending".to_owned(),
-        (None, _) => "Until removed".to_owned(),
+        (Some(until), Some(now)) => messages.time.remaining(until.since(now)),
+        (Some(_), None) => messages.time.ending().to_owned(),
+        (None, _) => messages.status.until_removed().to_owned(),
     }
 }
 

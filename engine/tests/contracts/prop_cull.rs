@@ -194,8 +194,7 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
         let Some(expected) = reference(record, &models, &table, &frustum) else {
             continue;
         };
-        let Some((expected_shown, around_eye)) = faded(record, &models, frustum_eye(), subject)
-        else {
+        let Some(expected_shown) = faded(record, &models, frustum_eye(), subject) else {
             continue;
         };
         judged += 1;
@@ -219,8 +218,8 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
                 got.scale
             );
             assert_eq!(
-                (got.shown, got.around_eye, got.faded_in),
-                (expected_shown, around_eye, 1.0),
+                (got.shown, got.faded_in),
+                (expected_shown, 1.0),
                 "instance {index} ({record:?}) shows as far as the reference says, by its model \
                  whole without an impostor (test seed {seed})"
             );
@@ -335,20 +334,15 @@ fn fades(prop: u32) -> bool {
     prop.is_multiple_of(2)
 }
 
-/// How far the reference shows `record` after one frame of clearing from all of it shown, and
-/// whether the eye stands inside it: none where the way from the eye to `subject` passes too near
-/// the edge of its box for the GPU's rounding to be sure to judge it alike.
-fn faded(
-    record: &InstanceRecord,
-    models: &[PlacedModel],
-    eye: Vec3,
-    subject: Vec3,
-) -> Option<(f32, bool)> {
+/// How far the reference shows `record` after one frame of clearing from all of it shown: none
+/// where the way from the eye to `subject` passes too near the edge of its box for the GPU's
+/// rounding to be sure to judge it alike.
+fn faded(record: &InstanceRecord, models: &[PlacedModel], eye: Vec3, subject: Vec3) -> Option<f32> {
     let Some(model) = models
         .get(record.prop as usize)
         .filter(|_| fades(record.prop))
     else {
-        return Some((1.0, false));
+        return Some(1.0);
     };
     let local_from_world = Transform::from_translation(Vec3::from_array(record.position))
         .with_rotation(Quat::from_rotation_y(record.yaw))
@@ -364,14 +358,14 @@ fn faded(
     let judged = |grown: f32| {
         let (low, high) = (middle - half - grown, middle + half + grown);
         let inside = from.cmpge(low).all() && from.cmple(high).all();
-        (inside, inside || segment_crosses(from, to, low, high))
+        inside || segment_crosses(from, to, low, high)
     };
     let margin = 1e-3 * (1.0 + half.max_element());
-    let (inside, crossed) = judged(0.0);
+    let crossed = judged(0.0);
     if judged(margin) != judged(-margin) {
         return None;
     }
-    Some((if crossed { 1.0 - STEP } else { 1.0 }, inside))
+    Some(if crossed { 1.0 - STEP } else { 1.0 })
 }
 
 /// Whether the segment from `a` to `b` passes through the box from `low` to `high`.

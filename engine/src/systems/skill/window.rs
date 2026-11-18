@@ -13,7 +13,7 @@ use ui::glyph::{self, Mark};
 use ui::ink;
 use ui::sheet::PANE_PAD;
 
-use super::{LearnSkillsRequest, Learned, Rank, SkillId, SkillKind, card};
+use super::{LearnSkillsRequest, Learned, Rank, SkillId, SkillKind, SkillMessages, card};
 use crate::core::content::Content;
 use crate::core::gui;
 use crate::core::text::StyledLine;
@@ -23,11 +23,11 @@ use crate::systems::hud::Carried;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
+use crate::systems::messages;
 use crate::systems::notification;
 use crate::systems::player::session;
 use crate::systems::skill::bar;
 use crate::systems::terminal::chat;
-use ui::words::counted;
 
 const NODE_RADIUS: f32 = 24.0;
 const NODE_ICON: f32 = 28.0;
@@ -45,11 +45,12 @@ impl MenuTab for SkillsMenuTab {
     fn opens(&self) -> InputAction {
         InputAction::OpenSkills
     }
-    fn hints(&self, world: &World) -> Vec<(InputAction, &'static str)> {
+    fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
         let Some(sheet) = Sheet::of(world) else {
             return Vec::new();
         };
         let content = world.resource::<Content>();
+        let words = &messages::of(content).skill;
         let def = sheet.class.get(content);
         let plan = world.resource::<SkillPlan>();
         let can: Vec<NodeInputs> = def
@@ -61,31 +62,37 @@ impl MenuTab for SkillsMenuTab {
         [
             (
                 InputAction::RaiseRank,
-                "raise",
+                words.raise(),
                 can.iter().any(|can| can.raise),
             ),
             (
                 InputAction::LowerRank,
-                "lower",
+                words.lower(),
                 can.iter().any(|can| can.lower),
             ),
             (
                 InputAction::CarryItem,
-                "to the bar",
+                words.to_the_bar(),
                 can.iter().any(|can| can.slot),
             ),
-            (InputAction::InspectSkill, "open the card", !can.is_empty()),
+            (
+                InputAction::InspectSkill,
+                words.open_the_card(),
+                !can.is_empty(),
+            ),
         ]
         .into_iter()
         .filter(|(_, _, does)| *does)
-        .map(|(action, does, _)| (action, does))
+        .map(|(action, does, _)| (action, does.to_owned()))
         .collect()
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let room = ui.available_rect_before_wrap();
         let Some(sheet) = Sheet::of(world) else {
+            let content = world.resource::<Content>().clone();
+            let said = messages::of(&content).skill.no_class();
             ui.scope_builder(UiBuilder::new().max_rect(room.shrink2(PANE_PAD)), |ui| {
-                ui.label(theme::faint("No class yet"));
+                ui.label(theme::faint(said));
             });
             return;
         };
@@ -188,13 +195,13 @@ enum NodeState {
 }
 
 impl NodeState {
-    fn label(self) -> String {
+    fn named(self, words: &SkillMessages) -> String {
         match self {
-            NodeState::Locked => "locked".to_owned(),
-            NodeState::Available => "available".to_owned(),
-            NodeState::Learned => "learned".to_owned(),
-            NodeState::Maxed => "maxed".to_owned(),
-            NodeState::Picked(rank) => format!("picked rank {}", rank.0),
+            NodeState::Locked => words.state_locked().to_owned(),
+            NodeState::Available => words.state_available().to_owned(),
+            NodeState::Learned => words.state_learned().to_owned(),
+            NodeState::Maxed => words.state_maxed().to_owned(),
+            NodeState::Picked(rank) => words.state_picked(rank.0),
         }
     }
 }
@@ -230,6 +237,7 @@ impl NodeInputs {
 /// its edges: the viewport is always full of canvas.
 fn tree(ui: &mut Ui, world: &mut World, sheet: &Sheet, viewport: Rect) -> TreeView {
     let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).skill;
     let def = sheet.class.get(&content);
     let canvas = def
         .canvas()
@@ -261,7 +269,7 @@ fn tree(ui: &mut Ui, world: &mut World, sheet: &Sheet, viewport: Rect) -> TreeVi
             let size = canvas.size().max(viewport.size());
             let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Skill tree")
+                egui::WidgetInfo::labeled(egui::WidgetType::Other, true, words.skill_tree())
             });
             let origin = rect.min + (size - canvas.size()) / 2.0 - canvas.min.to_vec2();
             draw_canvas(ui, world, sheet, def, Placement { origin });
@@ -276,6 +284,7 @@ fn tree(ui: &mut Ui, world: &mut World, sheet: &Sheet, viewport: Rect) -> TreeVi
 
 fn draw_canvas(ui: &mut Ui, world: &mut World, sheet: &Sheet, def: &ClassDef, place: Placement) {
     let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).skill;
     let tree = &def.tree;
     let plan = world.resource::<SkillPlan>().clone();
     let planned = sheet.planned_ranks(&plan);
@@ -332,7 +341,7 @@ fn draw_canvas(ui: &mut Ui, world: &mut World, sheet: &Sheet, def: &ClassDef, pl
             egui::WidgetInfo::labeled(
                 egui::WidgetType::Button,
                 true,
-                format!("{} node: {}", skill.name, state.label()),
+                words.node_named(&skill.name, state.named(words)),
             )
         });
         draw_node(
@@ -384,14 +393,20 @@ fn node_input(
         lower: world.resource::<SkillPlan>().0.contains_key(key),
         slot: held > Rank::NONE && !passive,
     };
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).skill;
     let hint = StyledLine::new(map::hints(
         [
-            (InputAction::RaiseRank, " picks a rank", can.raise),
-            (InputAction::LowerRank, " takes one back", can.lower),
-            (InputAction::InspectSkill, " shows its card", true),
-            (InputAction::PinToBar, " puts it on the bar", can.slot),
-            (InputAction::CarryItem, " carries it to a slot", can.slot),
-            (InputAction::AddToChat, " adds it to chat", true),
+            (InputAction::RaiseRank, words.hint_picks_rank(), can.raise),
+            (InputAction::LowerRank, words.hint_takes_back(), can.lower),
+            (InputAction::InspectSkill, words.hint_shows_card(), true),
+            (InputAction::PinToBar, words.hint_puts_on_bar(), can.slot),
+            (InputAction::CarryItem, words.hint_carries(), can.slot),
+            (
+                InputAction::AddToChat,
+                words.hint_adds_to_chat(),
+                chat::takes_embeds(world),
+            ),
         ]
         .into_iter()
         .filter(|(_, _, does)| *does)
@@ -504,8 +519,9 @@ fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
         Pos2::new(room.min.x, room.max.y - controls::CONTROL_HEIGHT),
         room.max,
     );
-    let to_spend = (left.0 > 0).then(|| format!("{} to spend", counted(left.0, "skill point")));
-    let picked_now = (picked.0 > 0).then(|| format!("{} picked", counted(picked.0, "point")));
+    let words = &messages::of(&content).skill;
+    let to_spend = (left.0 > 0).then(|| words.points_to_spend(left.0));
+    let picked_now = (picked.0 > 0).then(|| words.points_picked(picked.0));
     let text = to_spend
         .into_iter()
         .chain(picked_now)
@@ -532,13 +548,13 @@ fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
             let paper = [(); 2].map(|()| ui.painter().add(Shape::Noop));
             let (learn, reset) = ui
                 .add_enabled_ui(planned, |ui| {
-                    let learn = controls::primary(ui, "Learn");
+                    let learn = controls::primary(ui, words.learn());
                     float::tooltip(&learn, |ui| {
-                        ui.label("Spends the picked points for good");
+                        ui.label(words.learn_tooltip());
                     });
-                    let reset = controls::button(ui, "Reset plan");
+                    let reset = controls::button(ui, words.reset_plan());
                     float::tooltip(&reset, |ui| {
-                        ui.label("Takes every pick back; nothing is spent");
+                        ui.label(words.reset_plan_tooltip());
                     });
                     (learn, reset)
                 })

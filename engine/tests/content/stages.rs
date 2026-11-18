@@ -1,5 +1,6 @@
 use engine::core::content::ErrorPlace;
 use engine::core::vfx::Stage;
+use engine::systems::area::stages::COVER;
 use serde_json::{Value, json};
 use testkit::{Game, path};
 
@@ -61,33 +62,33 @@ fn a_vfx_layers_stage_fits_the_site_it_is_played_on() {
     let place = json!({ "type": "place" });
     let targets = json!({ "type": "skill_targets" });
     let cases = [
-        (Stage::Ground, json!({ "type": "screen" }), None, true),
+        (Stage::GROUND, json!({ "type": "screen" }), None, true),
         (
-            Stage::Surface,
+            Stage::SURFACE,
             json!({ "type": "widget", "name": "health" }),
             None,
             true,
         ),
-        (Stage::Surface, json!({ "type": "path" }), None, true),
-        (Stage::Surface, place.clone(), None, false),
-        (Stage::Surface, place.clone(), Some(targets.clone()), false),
+        (Stage::SURFACE, json!({ "type": "path" }), None, true),
+        (Stage::SURFACE, place.clone(), None, false),
+        (Stage::SURFACE, place.clone(), Some(targets.clone()), false),
         (
-            Stage::Billboard,
+            Stage::BILLBOARD,
             place.clone(),
             Some(json!({ "type": "aimed_point" })),
             false,
         ),
         (
-            Stage::Surface,
+            Stage::SURFACE,
             place.clone(),
             Some(json!({ "type": "aimed_point" })),
             true,
         ),
-        (Stage::Text, place.clone(), Some(targets), true),
-        (Stage::Screen, json!({ "type": "screen" }), None, false),
-        (Stage::Ground, json!({ "type": "path" }), None, false),
-        (Stage::Cover, place.clone(), None, true),
-        (Stage::Cover, json!({ "type": "screen" }), None, true),
+        (Stage::TEXT, place.clone(), Some(targets), true),
+        (Stage::SCREEN, json!({ "type": "screen" }), None, false),
+        (Stage::GROUND, json!({ "type": "path" }), None, false),
+        (COVER, place.clone(), None, true),
+        (COVER, json!({ "type": "screen" }), None, true),
     ];
     for (stage, site, on, refused) in cases {
         let case = format!("a {} layer on {site} of {on:?}", stage.label());
@@ -129,7 +130,7 @@ fn a_sprite_layer_is_a_billboard_and_the_engines_own_vfx_play_on_actors() {
     let screen_flash_when_hurt = game()
         .engine_rows()
         .whole()
-        .shader_on("glare", Stage::Screen)
+        .shader_on("glare", Stage::SCREEN)
         .row(
             "vfx",
             "damage_taken",

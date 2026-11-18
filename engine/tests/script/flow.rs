@@ -1,10 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
+use engine::core::script::EventKind;
+use engine::core::script::Instances;
+use engine::core::script::Owner;
 use engine::systems::dialogue::Conversation;
+use engine::systems::interact::Interacted;
 use engine::systems::movement;
 use engine::systems::notification::Notification;
+use engine::systems::npc::CameNear;
 use engine::systems::npc::body::{self, Act, Priority};
-use engine::systems::script::{EventKind, Owner, RiftInstances};
 use engine::systems::stat::{self, StatKind};
 use serde_json::{Value, json};
 use testkit::{Sim, dialogue, path};
@@ -16,7 +20,7 @@ fn a_wait_pauses_the_flow_and_an_effect_takes_the_output_it_earns() {
     let (mut sim, player) = field();
     let (_, owner) = scripted_npc(&mut sim, player, &[&module("flow_pay_later")]);
 
-    raise(&mut sim, owner, EventKind::Interacted, player);
+    raise(&mut sim, owner, EventKind::of::<Interacted>(), player);
     assert!(!sim.run_until(0.5, |world| world.get::<Conversation>(player).is_some()));
     assert!(sim.run_until(1.0, |world| world.get::<Conversation>(player).is_some()));
     assert_eq!(
@@ -29,7 +33,7 @@ fn a_wait_pauses_the_flow_and_an_effect_takes_the_output_it_earns() {
     sim.leave(1);
 
     sim.give(player, "gold", 5);
-    raise(&mut sim, owner, EventKind::Interacted, player);
+    raise(&mut sim, owner, EventKind::of::<Interacted>(), player);
     assert!(sim.run_until(2.0, |world| world.get::<Conversation>(player).is_some()));
     let paid = sim.pick(1, "Pay.").expect("talking");
     assert_eq!(sim.lines(&paid), vec!["Thanks.".to_owned()]);
@@ -43,15 +47,15 @@ fn flows_run_in_the_order_their_events_were_raised() {
     let (_, owner) = scripted_npc(&mut sim, player, &[&module("flow_notices")]);
     sim.forget_notified();
 
-    raise(&mut sim, owner, EventKind::Interacted, player);
-    raise(&mut sim, owner, EventKind::CameNear, player);
+    raise(&mut sim, owner, EventKind::of::<Interacted>(), player);
+    raise(&mut sim, owner, EventKind::of::<CameNear>(), player);
     sim.tick();
     assert_eq!(told(&mut sim, &[&gulls, &sails]), vec![&gulls, &sails]);
 
     sim.forget_notified();
     sim.later(61.0);
-    raise(&mut sim, owner, EventKind::CameNear, player);
-    raise(&mut sim, owner, EventKind::Interacted, player);
+    raise(&mut sim, owner, EventKind::of::<CameNear>(), player);
+    raise(&mut sim, owner, EventKind::of::<Interacted>(), player);
     sim.tick();
     assert_eq!(told(&mut sim, &[&gulls, &sails]), vec![&sails, &gulls]);
 }
@@ -62,7 +66,7 @@ fn a_lower_priority_act_waits_while_an_equal_one_interrupts() {
     let (npc, owner) = scripted_npc(&mut sim, player, &[&module("flow_interruptible")]);
     let full = health(&sim, player);
 
-    raise(&mut sim, owner, EventKind::Interacted, player);
+    raise(&mut sim, owner, EventKind::of::<Interacted>(), player);
     assert!(sim.run_until(5.0, |world| {
         stat::effective(world, player, StatKind::Health) < full
     }));
@@ -94,7 +98,7 @@ fn an_attack_loses_a_target_that_leaves_its_range() {
     let (mut sim, player) = field();
     let (npc, owner) = scripted_npc(&mut sim, player, &[&module("flow_leash")]);
 
-    raise(&mut sim, owner, EventKind::Interacted, player);
+    raise(&mut sim, owner, EventKind::of::<Interacted>(), player);
     assert!(sim.run_until(5.0, |world| body::target(world, npc) == Some(player)));
 
     movement::relocate(&mut sim.world, player, Pos::new(28.0, 28.0));
@@ -109,7 +113,7 @@ fn a_capability_aimed_at_nobody_takes_refused_or_tells_the_subject_why() {
     let (_, owner) = scripted_npc(&mut sim, player, &[&module("flow_nobody")]);
     stat::apply_damage(&mut sim.world, player, 1.0);
 
-    raise(&mut sim, owner, EventKind::Interacted, player);
+    raise(&mut sim, owner, EventKind::of::<Interacted>(), player);
     sim.tick();
 
     assert!(sim.remembers(player, "bribed"));
@@ -131,7 +135,7 @@ fn an_npc_can_be_the_subject_of_a_flow() {
     stat::apply_damage(&mut sim.world, patient, 3.0);
     assert!(health(&sim, patient) < full);
 
-    raise(&mut sim, healer, EventKind::CameNear, patient);
+    raise(&mut sim, healer, EventKind::of::<CameNear>(), patient);
     sim.tick();
 
     assert_eq!(health(&sim, patient), full);
@@ -142,7 +146,7 @@ fn a_choice_label_fills_its_values_like_a_line_does() {
     let (mut sim, player) = field();
     let (_, healer) = scripted_npc(&mut sim, player, &[&module("flow_label")]);
 
-    raise(&mut sim, healer, EventKind::Interacted, player);
+    raise(&mut sim, healer, EventKind::of::<Interacted>(), player);
     sim.tick();
 
     let conversation = sim.conversation(1).expect("in conversation");
@@ -162,7 +166,7 @@ fn remember(key: &str, next: Option<&str>) -> Value {
 
 fn raise(sim: &mut Sim, owner: Owner, kind: EventKind, subject: Entity) {
     sim.world
-        .resource_mut::<RiftInstances>()
+        .resource_mut::<Instances>()
         .raise(owner, kind, Some(subject), Vec::new(), |_| true);
 }
 
@@ -180,10 +184,10 @@ fn a_dialogue_behind_a_random_pick_is_found_before_it_is_heard() {
     let (_, owner) = scripted_npc(&mut sim, player, &[&module("flow_random")]);
 
     let world: &World = &sim.world;
-    let found = world.resource::<RiftInstances>().next_dialogue(
+    let found = world.resource::<Instances>().next_dialogue(
         world,
         owner,
-        EventKind::Interacted,
+        EventKind::of::<Interacted>(),
         player,
     );
 

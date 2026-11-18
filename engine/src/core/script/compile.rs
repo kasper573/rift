@@ -1,3 +1,5 @@
+use super::PlaceDef;
+use crate::core::script::EventDef;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,22 +14,23 @@ use super::node::{
 };
 use super::run::{FlowCx, FlowKey};
 use super::value::{Value, ValueType};
+use super::vocabulary::Vocabulary;
 use super::{
-    Arrow, EffectDef, EventDef, Fill, LineDef, QueryDef, RunnerKindDef, ScriptError, ScriptFault,
-    ScriptId, ScriptModule, TextDef, VarValue, Variable, VariableType, Vocabulary,
+    Arrow, DialogueCamera, EventKind, Fill, PlaceValue, Reach, ReachDef, Run, RunnerKind,
+    ScriptEffect, ScriptError, ScriptEvent, ScriptFault, ScriptId, ScriptModule, VarValue,
+    Variable, VariableType,
 };
+use crate::core::audio::playback::{SfxDef, SfxId};
 use crate::core::content::id::nearest;
 use crate::core::content::{Content, ContentFile, ContentId};
 use crate::core::units::Seconds;
 
 pub type Eval = Box<dyn Fn(&World, &FlowCx) -> Value + Send + Sync>;
-pub type EffectCall<V> =
-    Box<dyn Fn(&mut World, FlowKey<V>, &mut FlowCx) -> EffectStep + Send + Sync>;
+pub type EffectCall = Box<dyn Fn(&mut World, FlowKey, &mut FlowCx) -> EffectStep + Send + Sync>;
 
 /// A look at the world telling what an effect answers when it has nothing to do there, or `None`
 /// when it must act.
-pub type EffectLook<V> =
-    Box<dyn Fn(&World, FlowKey<V>, &FlowCx) -> Option<EffectStep> + Send + Sync>;
+pub type EffectLook = Box<dyn Fn(&World, FlowKey, &FlowCx) -> Option<EffectStep> + Send + Sync>;
 
 pub enum EffectStep {
     /// Along the effect's first output: its way on when all went as planned.
@@ -37,34 +40,110 @@ pub enum EffectStep {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct OwnerRow<V: Vocabulary> {
-    pub kind: V::RunnerKind,
+pub struct OwnerRow {
+    pub kind: RunnerKind,
     pub row: u32,
     pub object: Option<u32>,
 }
 
-impl<V: Vocabulary> OwnerRow<V> {
+/// A row of a table, as a script variable names it, whichever table it is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowValue {
+    pub table: &'static str,
+    pub raw: u32,
+}
+
+impl RowValue {
+    pub fn of(content: &Content, table: &str, key: &str) -> Option<RowValue> {
+        let table = content.table_named(table)?;
+        Some(RowValue {
+            table: table.name(),
+            raw: table.raw_of(key)?,
+        })
+    }
+}
+
+impl OwnerRow {
     pub fn id<Row: ContentFile>(&self) -> ContentId<Row> {
         ContentId::new(self.row)
     }
 }
 
+/// A reach of one owner's scripts, with the owner and what it is called in errors.
+pub struct Reached<'s, R> {
+    pub row: OwnerRow,
+    pub label: &'s str,
+    pub reach: R,
+}
+
+/// An event one owner's scripts answer, with the owner and what it is called in errors.
+pub struct Answered<'s, E> {
+    pub row: OwnerRow,
+    pub label: &'s str,
+    pub event: &'s E,
+}
+
 #[derive(Resource, Clone, Default)]
-pub struct Scripts<V: Vocabulary>(pub Arc<ByOwner<V>>);
+pub struct Scripts(pub Arc<ByOwner>);
 
-type ByOwner<V> = HashMap<OwnerRow<V>, Vec<Arc<Procedure<V>>>>;
+type ByOwner = HashMap<OwnerRow, Vec<Arc<Procedure>>>;
 
-impl<V: Vocabulary> Scripts<V> {
-    pub fn of(&self, owner: OwnerRow<V>) -> &[Arc<Procedure<V>>] {
+impl Scripts {
+    pub fn of(&self, owner: OwnerRow) -> &[Arc<Procedure>] {
         self.0.get(&owner).map_or(&[], Vec::as_slice)
     }
 
-    pub fn may_do(&self, owner: OwnerRow<V>) -> MayDo<V> {
+    pub fn may_do(&self, owner: OwnerRow) -> MayDo {
         MayDo::owned(self.of(owner).iter().map(|procedure| &procedure.may_do))
     }
 
-    pub fn owners(&self) -> impl Iterator<Item = (&OwnerRow<V>, &Vec<Arc<Procedure<V>>>)> {
+    pub fn owners(&self) -> impl Iterator<Item = (&OwnerRow, &Vec<Arc<Procedure>>)> {
         self.0.iter()
+    }
+
+    /// Every event of the kind `E` any owner's scripts answer.
+    pub fn hearing<E: EventDef>(&self) -> Vec<Answered<'_, E>> {
+        self.0
+            .iter()
+            .flat_map(|(row, procedures)| {
+                let label = procedures
+                    .first()
+                    .map_or("", |procedure| procedure.label.as_str());
+                procedures
+                    .iter()
+                    .flat_map(|procedure| procedure.entry(EventKind::of::<E>()))
+                    .filter_map(|(_, event)| event.downcast_ref::<E>())
+                    .map(|event| Answered {
+                        row: *row,
+                        label,
+                        event,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// Every reach of the kind `R` any owner's scripts may have.
+    pub fn reaching<R: ReachDef + Clone>(&self) -> Vec<Reached<'_, R>> {
+        self.0
+            .iter()
+            .flat_map(|(row, procedures)| {
+                let label = procedures
+                    .first()
+                    .map_or("", |procedure| procedure.label.as_str());
+                let may_do = MayDo::owned(procedures.iter().map(|procedure| &procedure.may_do));
+                may_do
+                    .reaches
+                    .iter()
+                    .filter_map(Reach::downcast_ref::<R>)
+                    .map(|reach| Reached {
+                        row: *row,
+                        label,
+                        reach: reach.clone(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 }
 
@@ -74,22 +153,22 @@ pub struct StepIndex(pub(super) usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ProcedureId(u64);
 
-pub struct Procedure<V: Vocabulary> {
+pub struct Procedure {
     pub id: ProcedureId,
-    pub owner: V::RunnerKind,
+    pub owner: RunnerKind,
     pub label: String,
-    pub camera: V::Camera,
+    pub camera: DialogueCamera,
     pub names: Vec<String>,
-    pub steps: Vec<Step<V>>,
-    pub entries: Vec<(StepIndex, V::Event)>,
+    pub steps: Vec<Step>,
+    pub entries: Vec<(StepIndex, ScriptEvent)>,
     pub state: Vec<(String, ValueType)>,
     pub locals: Vec<(String, ValueType)>,
-    pub may_do: MayDo<V>,
+    pub may_do: MayDo,
     pub returns: Vec<ValueType>,
     pub needs_subject: bool,
 }
 
-pub enum Step<V: Vocabulary> {
+pub enum Step {
     On {
         next: Option<StepIndex>,
     },
@@ -118,7 +197,7 @@ pub enum Step<V: Vocabulary> {
         next: Option<StepIndex>,
     },
     Run {
-        callee: Arc<Procedure<V>>,
+        callee: Arc<Procedure>,
         entry: StepIndex,
         into: Option<usize>,
         next: Option<StepIndex>,
@@ -127,7 +206,7 @@ pub enum Step<V: Vocabulary> {
         value: Option<Eval>,
     },
     Dialogue {
-        node: DialogueNode<V>,
+        node: DialogueNode,
         values: Vec<Vec<Eval>>,
         labels: Vec<Vec<Eval>>,
         requires: Vec<Option<Eval>>,
@@ -136,9 +215,9 @@ pub enum Step<V: Vocabulary> {
         left: Option<StepIndex>,
     },
     Effect {
-        def: V::Effect,
-        call: EffectCall<V>,
-        look: Option<EffectLook<V>>,
+        def: ScriptEffect,
+        call: EffectCall,
+        look: Option<EffectLook>,
         outputs: Vec<(&'static str, Option<StepIndex>)>,
         pauses: bool,
         keeps_box: bool,
@@ -151,8 +230,8 @@ pub enum Slot {
     State(usize),
 }
 
-impl<V: Vocabulary> Procedure<V> {
-    pub fn entry(&self, kind: <V::Event as EventDef<V>>::Kind) -> Vec<(StepIndex, &V::Event)> {
+impl Procedure {
+    pub fn entry(&self, kind: EventKind) -> Vec<(StepIndex, &ScriptEvent)> {
         self.entries
             .iter()
             .filter(|(_, event)| event.kind() == kind)
@@ -163,11 +242,11 @@ impl<V: Vocabulary> Procedure<V> {
     fn run_entry(&self) -> Option<StepIndex> {
         self.entries
             .iter()
-            .find(|(_, event)| event.is_run())
+            .find(|(_, event)| event.is::<Run>())
             .map(|(node, _)| *node)
     }
 
-    pub fn step(&self, at: StepIndex) -> &Step<V> {
+    pub fn step(&self, at: StepIndex) -> &Step {
         &self.steps[at.0]
     }
 
@@ -181,13 +260,13 @@ impl<V: Vocabulary> Procedure<V> {
 }
 
 #[derive(Clone, Copy)]
-pub struct Call<'c, V: Vocabulary> {
-    pub script: ScriptId<V>,
-    pub values: &'c BTreeMap<String, VarValue<V>>,
+pub struct Call<'c> {
+    pub script: ScriptId,
+    pub values: &'c BTreeMap<String, VarValue>,
 }
 
-impl<'c, V: Vocabulary> Call<'c, V> {
-    pub fn of(module: &'c ScriptModule<V>) -> Call<'c, V> {
+impl<'c> Call<'c> {
+    pub fn of(module: &'c ScriptModule) -> Call<'c> {
         Call {
             script: module.script,
             values: &module.values,
@@ -195,28 +274,28 @@ impl<'c, V: Vocabulary> Call<'c, V> {
     }
 }
 
-pub struct Binding<'c, V: Vocabulary> {
-    pub owner: V::RunnerKind,
-    pub row: Option<OwnerRow<V>>,
+pub struct Binding<'c> {
+    pub owner: RunnerKind,
+    pub row: Option<OwnerRow>,
     pub label: String,
-    pub call: Call<'c, V>,
+    pub call: Call<'c>,
 }
 
 #[derive(Clone)]
-pub enum Bound<'c, V: Vocabulary> {
+pub enum Bound<'c> {
     Integer(i64),
     Number(f64),
     Boolean(bool),
     Text(&'c str),
     Name(&'c str),
-    Place(V::Place),
-    Row(V::Row),
-    Audio(V::Audio),
-    Condition(&'c Expr<V>),
+    Place(PlaceValue),
+    Row(RowValue),
+    Audio(SfxId),
+    Condition(&'c Expr),
     LocalPlayer(&'c str),
-    Actor(&'c Expr<V>),
+    Actor(&'c Expr),
     GlobalPlayer(&'c str),
-    GlobalActor(&'c Expr<V>),
+    GlobalActor(&'c Expr),
 }
 
 /// Why one of a row's script modules, the one at `module` among them, did not compile.
@@ -226,35 +305,35 @@ pub struct ModuleError {
     pub error: ScriptError,
 }
 
-pub fn compile_owner<'c, V: Vocabulary>(
+pub fn compile_owner<'c>(
     content: &'c Content,
-    owner: V::RunnerKind,
+    owner: RunnerKind,
     label: &str,
-    modules: &[&'c ScriptModule<V>],
-) -> Result<Vec<Arc<Procedure<V>>>, Vec<ModuleError>> {
+    modules: &[&'c ScriptModule],
+) -> Result<Vec<Arc<Procedure>>, Vec<ModuleError>> {
     compile_modules(content, owner, None, label, modules)
 }
 
 /// The scripts of one row, which may then read which row they belong to.
-pub fn compile_row<'c, V: Vocabulary>(
+pub fn compile_row<'c>(
     content: &'c Content,
-    row: OwnerRow<V>,
+    row: OwnerRow,
     label: &str,
-    modules: &[&'c ScriptModule<V>],
-) -> Result<Vec<Arc<Procedure<V>>>, Vec<ModuleError>> {
+    modules: &[&'c ScriptModule],
+) -> Result<Vec<Arc<Procedure>>, Vec<ModuleError>> {
     compile_modules(content, row.kind, Some(row), label, modules)
 }
 
-fn compile_modules<'c, V: Vocabulary>(
+fn compile_modules<'c>(
     content: &'c Content,
-    owner: V::RunnerKind,
-    row: Option<OwnerRow<V>>,
+    owner: RunnerKind,
+    row: Option<OwnerRow>,
     label: &str,
-    modules: &[&'c ScriptModule<V>],
-) -> Result<Vec<Arc<Procedure<V>>>, Vec<ModuleError>> {
+    modules: &[&'c ScriptModule],
+) -> Result<Vec<Arc<Procedure>>, Vec<ModuleError>> {
     let mut procedures = Vec::new();
     let mut errors = Vec::new();
-    let mut answered: HashMap<<V::Event as EventDef<V>>::Kind, Vec<String>> = HashMap::new();
+    let mut answered: HashMap<EventKind, Vec<String>> = HashMap::new();
     for (index, module) in modules.iter().enumerate() {
         let procedure = match compile_binding(
             content,
@@ -302,10 +381,10 @@ fn compile_modules<'c, V: Vocabulary>(
     }
 }
 
-fn compile_binding<'c, V: Vocabulary>(
+fn compile_binding<'c>(
     content: &'c Content,
-    binding: &Binding<'c, V>,
-) -> Result<Arc<Procedure<V>>, ScriptError> {
+    binding: &Binding<'c>,
+) -> Result<Arc<Procedure>, ScriptError> {
     compile_source(content, binding, &[])
 }
 
@@ -316,12 +395,12 @@ fn slots(declared: &BTreeMap<String, ValueType>) -> Vec<(&str, ValueType)> {
         .collect()
 }
 
-fn resolve_value<'c, V: Vocabulary>(
+fn resolve_value<'c>(
     content: &Content,
     name: &str,
-    declared: &'c Variable<V>,
-    value: &'c VarValue<V>,
-) -> Result<Bound<'c, V>, ScriptFault> {
+    declared: &'c Variable,
+    value: &'c VarValue,
+) -> Result<Bound<'c>, ScriptFault> {
     let mismatch = || {
         ScriptFault::new(
             "wrong type",
@@ -343,7 +422,7 @@ fn resolve_value<'c, V: Vocabulary>(
                     format!("{name} is a row variable that names no table"),
                 )
             })?;
-            Bound::Row(V::row_value(content, table, key).ok_or_else(|| {
+            Bound::Row(RowValue::of(content, table, key).ok_or_else(|| {
                 ScriptFault::new(
                     "unknown row",
                     format!("{key:?} is not the key of a {table} row"),
@@ -351,7 +430,7 @@ fn resolve_value<'c, V: Vocabulary>(
             })?)
         }
         (VariableType::Audio, VarValue::Str(key)) => {
-            Bound::Audio(V::audio_value(content, key).ok_or_else(|| {
+            Bound::Audio(content.by_path::<SfxDef>(key).ok_or_else(|| {
                 ScriptFault::new("unknown row", format!("{key:?} is not the key of a sound"))
             })?)
         }
@@ -365,11 +444,11 @@ fn resolve_value<'c, V: Vocabulary>(
     })
 }
 
-fn compile_source<'c, V: Vocabulary>(
+fn compile_source<'c>(
     content: &'c Content,
-    binding: &Binding<'c, V>,
-    stack: &[ScriptId<V>],
-) -> Result<Arc<Procedure<V>>, ScriptError> {
+    binding: &Binding<'c>,
+    stack: &[ScriptId],
+) -> Result<Arc<Procedure>, ScriptError> {
     let Call { script, values } = binding.call;
     let at_call = |rule: &'static str, expected: String| ScriptError {
         rule,
@@ -380,7 +459,7 @@ fn compile_source<'c, V: Vocabulary>(
     };
     let def = script.get(content);
     if !stack.is_empty() {
-        if def.runs_on != V::RunnerKind::ANY && def.runs_on != binding.owner {
+        if def.runs_on != RunnerKind::ANY && def.runs_on != binding.owner {
             return Err(at_call(
                 "run by another kind",
                 format!(
@@ -420,12 +499,12 @@ fn compile_source<'c, V: Vocabulary>(
 
 /// Compiles `nodes` the engine wrote itself for `row`, as it compiles a script file's: what a
 /// row says through the scripting it would otherwise need a file for.
-pub fn compile_nodes<'c, V: Vocabulary>(
+pub fn compile_nodes<'c>(
     content: &'c Content,
-    row: OwnerRow<V>,
+    row: OwnerRow,
     label: &str,
-    nodes: &'c BTreeMap<String, Node<V>>,
-) -> Result<Arc<Procedure<V>>, ScriptError> {
+    nodes: &'c BTreeMap<String, Node>,
+) -> Result<Arc<Procedure>, ScriptError> {
     compile_written(
         content,
         row.kind,
@@ -437,7 +516,7 @@ pub fn compile_nodes<'c, V: Vocabulary>(
                 locals: Vec::new(),
                 nodes,
                 label: label.to_owned(),
-                camera: V::Camera::default(),
+                camera: DialogueCamera::default(),
             },
             file: None,
             values: None,
@@ -449,21 +528,21 @@ pub fn compile_nodes<'c, V: Vocabulary>(
 
 /// Nodes to compile, with the file they were written in and the variables it declares and is
 /// called with, when they come from one.
-struct Written<'c, V: Vocabulary> {
-    source: Source<'c, V>,
+struct Written<'c> {
+    source: Source<'c>,
     file: Option<String>,
-    values: Option<&'c BTreeMap<String, VarValue<V>>>,
-    declared: Option<&'c BTreeMap<String, Variable<V>>>,
+    values: Option<&'c BTreeMap<String, VarValue>>,
+    declared: Option<&'c BTreeMap<String, Variable>>,
 }
 
-fn compile_written<'c, V: Vocabulary>(
+fn compile_written<'c>(
     content: &'c Content,
-    owner: V::RunnerKind,
-    row: Option<OwnerRow<V>>,
+    owner: RunnerKind,
+    row: Option<OwnerRow>,
     label: &str,
-    written: Written<'c, V>,
-    stack: &[ScriptId<V>],
-) -> Result<Arc<Procedure<V>>, ScriptError> {
+    written: Written<'c>,
+    stack: &[ScriptId],
+) -> Result<Arc<Procedure>, ScriptError> {
     let Written {
         source,
         file,
@@ -515,7 +594,7 @@ fn compile_written<'c, V: Vocabulary>(
             ),
         ));
     }
-    let mut variables: HashMap<&'c str, (VariableType, Option<Bound<'c, V>>)> = HashMap::new();
+    let mut variables: HashMap<&'c str, (VariableType, Option<Bound<'c>>)> = HashMap::new();
     if let Some(declared) = declared {
         for (name, variable) in declared {
             let default = match &variable.default {
@@ -617,17 +696,21 @@ fn compile_written<'c, V: Vocabulary>(
         let step = match node {
             Node::On { event, next } => {
                 let function =
-                    event.is_run() && (owner == V::RunnerKind::ANY || !cx.stack.is_empty());
+                    event.is::<Run>() && (owner == RunnerKind::ANY || !cx.stack.is_empty());
                 if !event.owners().contains(&owner) && !function {
                     return Err(node_fail(
                         "event not raised here",
-                        format!("{:?} is never raised for {}", event.kind(), owner.name()),
+                        format!(
+                            "{} is never raised for {}",
+                            event.kind().name(),
+                            owner.name()
+                        ),
                     ));
                 }
                 if let Err(fault) = event.check() {
                     return Err(node_fail(fault.rule, fault.expected));
                 }
-                if cx.stack.is_empty() && event.is_run() && owner != V::RunnerKind::ANY {
+                if cx.stack.is_empty() && event.is::<Run>() && owner != RunnerKind::ANY {
                     return Err(node_fail(
                         "event not raised here",
                         "run starts only a script another runs".to_owned(),
@@ -906,7 +989,8 @@ fn compile_written<'c, V: Vocabulary>(
                 }
             }
             Node::Effect(effect) => {
-                if !effect.owners().contains(&owner) && owner != V::RunnerKind::ANY {
+                let owners = effect.owners();
+                if !owners.is_empty() && !owners.contains(&owner) && owner != RunnerKind::ANY {
                     return Err(node_fail(
                         "not for this owner",
                         format!("not for {} owners", owner.name()),
@@ -953,7 +1037,7 @@ fn compile_written<'c, V: Vocabulary>(
         .reaches
         .extend(cx.reached.iter().map(|(_, reach)| reach.clone()));
     for (node, reach) in &cx.reached {
-        if let Some(fault) = V::unmet(reach, &may_do.reaches) {
+        if let Some(fault) = reach.unmet(&may_do.reaches) {
             return Err(fail(fault.rule, *node, fault.expected));
         }
     }
@@ -1022,12 +1106,12 @@ fn compile_written<'c, V: Vocabulary>(
 
 static NEXT_PROCEDURE: AtomicU64 = AtomicU64::new(1);
 
-struct Source<'c, V: Vocabulary> {
+struct Source<'c> {
     state: Vec<(&'c str, ValueType)>,
     locals: Vec<(&'c str, ValueType)>,
-    nodes: &'c BTreeMap<String, Node<V>>,
+    nodes: &'c BTreeMap<String, Node>,
     label: String,
-    camera: V::Camera,
+    camera: DialogueCamera,
 }
 
 fn owned_slots(slots: &[(&str, ValueType)]) -> Vec<(String, ValueType)> {
@@ -1040,8 +1124,8 @@ fn owned_slots(slots: &[(&str, ValueType)]) -> Vec<(String, ValueType)> {
 /// The event fields a node can read: those of the event every entry reaching it raises. A node
 /// reached by entries that raise different fields reads none, since a flow carries only the fields
 /// of the entry that started it.
-fn event_fields_by_node<V: Vocabulary>(
-    nodes: &BTreeMap<String, Node<V>>,
+fn event_fields_by_node(
+    nodes: &BTreeMap<String, Node>,
 ) -> HashMap<&str, &'static [(&'static str, ValueType)]> {
     let mut fields: HashMap<&str, Option<&'static [(&'static str, ValueType)]>> = HashMap::new();
     for (entry, node) in nodes {
@@ -1070,14 +1154,14 @@ fn event_fields_by_node<V: Vocabulary>(
         .collect()
 }
 
-fn node_arrows<V: Vocabulary>(node: &Node<V>) -> Vec<&str> {
+fn node_arrows(node: &Node) -> Vec<&str> {
     node.exits()
         .into_iter()
         .filter_map(|(_, arrow)| arrow.to())
         .collect()
 }
 
-fn step_successors<V: Vocabulary>(step: &Step<V>) -> Vec<StepIndex> {
+fn step_successors(step: &Step) -> Vec<StepIndex> {
     let arrows: Vec<Option<StepIndex>> = match step {
         Step::On { next } | Step::Wait { next, .. } | Step::Set { next, .. } => vec![*next],
         Step::If { yes, no, .. } => vec![*yes, *no],
@@ -1101,12 +1185,12 @@ fn step_successors<V: Vocabulary>(step: &Step<V>) -> Vec<StepIndex> {
     arrows.into_iter().flatten().collect()
 }
 
-fn bound_steps<V: Vocabulary>(
-    steps: &[Step<V>],
+fn bound_steps(
+    steps: &[Step],
     pauses: &[bool],
     names: &[&str],
     successors: &[Vec<StepIndex>],
-    entries: &[(StepIndex, V::Event)],
+    entries: &[(StepIndex, ScriptEvent)],
     fail: &impl Fn(&'static str, Option<&str>, String) -> ScriptError,
 ) -> Result<(), ScriptError> {
     let mut walk = Walk {
@@ -1133,8 +1217,8 @@ fn bound_steps<V: Vocabulary>(
     Ok(())
 }
 
-struct Walk<'a, V: Vocabulary, F> {
-    steps: &'a [Step<V>],
+struct Walk<'a, F> {
+    steps: &'a [Step],
     pauses: &'a [bool],
     names: &'a [&'a str],
     successors: &'a [Vec<StepIndex>],
@@ -1143,7 +1227,7 @@ struct Walk<'a, V: Vocabulary, F> {
     fail: &'a F,
 }
 
-impl<V: Vocabulary, F: Fn(&'static str, Option<&str>, String) -> ScriptError> Walk<'_, V, F> {
+impl<F: Fn(&'static str, Option<&str>, String) -> ScriptError> Walk<'_, F> {
     fn longest(&mut self, node: StepIndex) -> Result<usize, ScriptError> {
         if self.pauses[node.0] {
             return Ok(1);
@@ -1204,30 +1288,30 @@ impl<V: Vocabulary, F: Fn(&'static str, Option<&str>, String) -> ScriptError> Wa
     }
 }
 
-pub struct Compiler<'c, V: Vocabulary> {
+pub struct Compiler<'c> {
     pub content: &'c Content,
-    owner: V::RunnerKind,
-    row: Option<OwnerRow<V>>,
+    owner: RunnerKind,
+    row: Option<OwnerRow>,
     label: String,
-    variables: HashMap<&'c str, (VariableType, Option<Bound<'c, V>>)>,
+    variables: HashMap<&'c str, (VariableType, Option<Bound<'c>>)>,
     state: Vec<(&'c str, ValueType)>,
     locals: Vec<(&'c str, ValueType)>,
     node: Option<&'c str>,
     used_vars: HashSet<&'c str>,
-    stack: Vec<ScriptId<V>>,
+    stack: Vec<ScriptId>,
     subject_read: bool,
-    reached: Vec<(Option<&'c str>, V::Reach)>,
+    reached: Vec<(Option<&'c str>, Reach)>,
     event_fields: &'static [(&'static str, ValueType)],
-    camera: V::Camera,
+    camera: DialogueCamera,
 }
 
 type Arithmetic = (fn(i64, i64) -> i64, fn(f64, f64) -> f64);
 
-impl<'c, V: Vocabulary> Compiler<'c, V> {
-    pub fn standalone(content: &'c Content) -> Compiler<'c, V> {
+impl<'c> Compiler<'c> {
+    pub fn standalone(content: &'c Content) -> Compiler<'c> {
         Compiler {
             content,
-            owner: V::RunnerKind::ANY,
+            owner: RunnerKind::ANY,
             row: None,
             label: "condition".to_owned(),
             variables: HashMap::new(),
@@ -1239,16 +1323,16 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
             subject_read: false,
             reached: Vec::new(),
             event_fields: &[],
-            camera: V::Camera::default(),
+            camera: DialogueCamera::default(),
         }
     }
 
-    pub fn owner(&self) -> V::RunnerKind {
+    pub fn owner(&self) -> RunnerKind {
         self.owner
     }
 
     /// The row whose script this is, when it is a row's own.
-    pub fn owner_row(&self) -> Option<OwnerRow<V>> {
+    pub fn owner_row(&self) -> Option<OwnerRow> {
         self.row
     }
 
@@ -1257,7 +1341,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
     }
 
     /// How the dialogue of the script being compiled is seen.
-    pub fn camera(&self) -> V::Camera {
+    pub fn camera(&self) -> DialogueCamera {
         self.camera
     }
 
@@ -1267,24 +1351,24 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
 
     /// Notes that what is being compiled reaches `reach`, for what only reads to tell the
     /// loader's checks what its script depends on.
-    pub fn reaching(&mut self, reach: V::Reach) {
+    pub fn reaching(&mut self, reach: Reach) {
         self.reached.push((self.node, reach));
     }
 
-    pub fn expr(&mut self, expr: &'c Expr<V>, want: ValueType) -> Result<Eval, ScriptFault> {
+    pub fn expr(&mut self, expr: &'c Expr, want: ValueType) -> Result<Eval, ScriptFault> {
         let (eval, ty) = self.typed(expr)?;
         fitted(expr, eval, ty, want)
     }
 
     pub fn opt_expr(
         &mut self,
-        expr: Option<&'c Expr<V>>,
+        expr: Option<&'c Expr>,
         want: ValueType,
     ) -> Result<Option<Eval>, ScriptFault> {
         expr.map(|expr| self.expr(expr, want)).transpose()
     }
 
-    pub fn actor(&mut self, expr: Option<&'c Expr<V>>) -> Result<Eval, ScriptFault> {
+    pub fn actor(&mut self, expr: Option<&'c Expr>) -> Result<Eval, ScriptFault> {
         match expr {
             Some(expr) => self.expr(expr, ValueType::Actor),
             None => {
@@ -1295,7 +1379,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
     }
 
     /// One actor or a set of them; the subject alone when nothing is named.
-    pub fn actors(&mut self, expr: Option<&'c Expr<V>>) -> Result<Eval, ScriptFault> {
+    pub fn actors(&mut self, expr: Option<&'c Expr>) -> Result<Eval, ScriptFault> {
         match expr {
             Some(expr) => self.expr(expr, ValueType::Actors),
             None => {
@@ -1308,7 +1392,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
     }
 
     /// An actor here or a player wherever they play; the subject when nothing is named.
-    pub fn actor_anywhere(&mut self, expr: Option<&'c Expr<V>>) -> Result<Eval, ScriptFault> {
+    pub fn actor_anywhere(&mut self, expr: Option<&'c Expr>) -> Result<Eval, ScriptFault> {
         match expr {
             Some(expr) => self.anywhere(expr, ValueType::Actor),
             None => self.actor(None),
@@ -1316,14 +1400,14 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
     }
 
     /// Actors here or a player wherever they play; the subject alone when nothing is named.
-    pub fn actors_anywhere(&mut self, expr: Option<&'c Expr<V>>) -> Result<Eval, ScriptFault> {
+    pub fn actors_anywhere(&mut self, expr: Option<&'c Expr>) -> Result<Eval, ScriptFault> {
         match expr {
             Some(expr) => self.anywhere(expr, ValueType::Actors),
             None => self.actors(None),
         }
     }
 
-    fn anywhere(&mut self, expr: &'c Expr<V>, here: ValueType) -> Result<Eval, ScriptFault> {
+    fn anywhere(&mut self, expr: &'c Expr, here: ValueType) -> Result<Eval, ScriptFault> {
         let (eval, ty) = self.typed(expr)?;
         if ty == ValueType::GlobalPlayer {
             Ok(eval)
@@ -1336,7 +1420,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
         &mut self,
         fill: &Fill<T>,
         ty: VariableType,
-        extract: impl Fn(&Bound<V>) -> Option<T>,
+        extract: impl Fn(&Bound) -> Option<T>,
     ) -> Result<T, ScriptFault> {
         match fill {
             Fill::Const(value) => Ok(value.clone()),
@@ -1351,7 +1435,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
     pub fn peek<T: Clone>(
         &self,
         fill: &Fill<T>,
-        extract: impl Fn(&Bound<V>) -> Option<T>,
+        extract: impl Fn(&Bound) -> Option<T>,
     ) -> Option<T> {
         match fill {
             Fill::Const(value) => Some(value.clone()),
@@ -1362,42 +1446,46 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
         }
     }
 
-    pub fn peek_place(&self, fill: &Fill<V::Place>) -> Option<V::Place> {
+    /// The place a place variable holds, when `fill` is one and it has a value already.
+    pub fn peek_place<P: PlaceDef + Clone>(&self, fill: &Fill<P>) -> Option<P> {
         self.peek(fill, |value| match value {
-            Bound::Place(place) => Some(place.clone()),
+            Bound::Place(place) => place.downcast_ref::<P>().cloned(),
             _ => None,
         })
     }
 
-    pub fn peek_audio(&self, fill: &Fill<V::Audio>) -> Option<V::Audio> {
+    pub fn peek_audio(&self, fill: &Fill<SfxId>) -> Option<SfxId> {
         self.peek(fill, |value| match value {
-            Bound::Audio(audio) => Some(audio.clone()),
+            Bound::Audio(audio) => Some(*audio),
             _ => None,
         })
     }
 
-    pub fn place(&mut self, fill: &Fill<V::Place>) -> Result<V::Place, ScriptFault> {
+    pub fn place<P: PlaceDef + Clone>(&mut self, fill: &Fill<P>) -> Result<P, ScriptFault> {
         self.fill(fill, VariableType::Place, |value| match value {
-            Bound::Place(place) => Some(place.clone()),
+            Bound::Place(place) => place.downcast_ref::<P>().cloned(),
             _ => None,
         })
     }
 
-    pub fn row(&mut self, fill: &Fill<V::Row>) -> Result<V::Row, ScriptFault> {
+    pub fn row<Row: ContentFile>(
+        &mut self,
+        fill: &Fill<ContentId<Row>>,
+    ) -> Result<ContentId<Row>, ScriptFault> {
         self.fill(fill, VariableType::Row, |value| match value {
-            Bound::Row(row) => Some(row.clone()),
+            Bound::Row(row) if row.table == Row::TABLE => Some(ContentId::new(row.raw)),
             _ => None,
         })
     }
 
-    pub fn audio(&mut self, fill: &Fill<V::Audio>) -> Result<V::Audio, ScriptFault> {
+    pub fn audio(&mut self, fill: &Fill<SfxId>) -> Result<SfxId, ScriptFault> {
         self.fill(fill, VariableType::Audio, |value| match value {
-            Bound::Audio(audio) => Some(audio.clone()),
+            Bound::Audio(audio) => Some(*audio),
             _ => None,
         })
     }
 
-    pub fn var(&mut self, name: &str) -> Result<&Bound<'c, V>, ScriptFault> {
+    pub fn var(&mut self, name: &str) -> Result<&Bound<'c>, ScriptFault> {
         let Some((name, _)) = self.variables.get_key_value(name) else {
             return Err(ScriptFault::new(
                 "unknown variable",
@@ -1417,7 +1505,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
 
     fn expr_tracking(
         &mut self,
-        expr: &'c Expr<V>,
+        expr: &'c Expr,
         want: ValueType,
     ) -> Result<(Eval, bool), ScriptFault> {
         self.subject_read = false;
@@ -1425,10 +1513,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
         Ok((eval, self.subject_read))
     }
 
-    fn typed_tracking(
-        &mut self,
-        expr: &'c Expr<V>,
-    ) -> Result<(Eval, ValueType, bool), ScriptFault> {
+    fn typed_tracking(&mut self, expr: &'c Expr) -> Result<(Eval, ValueType, bool), ScriptFault> {
         self.subject_read = false;
         let (eval, ty) = self.typed(expr)?;
         Ok((eval, ty, self.subject_read))
@@ -1455,7 +1540,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
             .map(|index| (index, self.state[index].1))
     }
 
-    pub fn typed(&mut self, expr: &'c Expr<V>) -> Result<(Eval, ValueType), ScriptFault> {
+    pub fn typed(&mut self, expr: &'c Expr) -> Result<(Eval, ValueType), ScriptFault> {
         if expr.depth() > expr::MAX_DEPTH {
             return Err(ScriptFault::new(
                 "out of range",
@@ -1471,7 +1556,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
         self.typed_inner(expr)
     }
 
-    fn typed_inner(&mut self, expr: &'c Expr<V>) -> Result<(Eval, ValueType), ScriptFault> {
+    fn typed_inner(&mut self, expr: &'c Expr) -> Result<(Eval, ValueType), ScriptFault> {
         Ok(match expr {
             Expr::Bool(value) => (constant(Value::Bool(*value)), ValueType::Boolean),
             Expr::Int(value) => (constant(Value::Int(*value)), ValueType::Integer),
@@ -1489,7 +1574,9 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                 Bound::LocalPlayer(named) => {
                     let named = named.to_owned();
                     (
-                        Box::new(move |world, _| Value::Actor(V::local_player(world, &named))),
+                        Box::new(move |world, _| {
+                            Value::Actor((Vocabulary::get().players_host().local)(world, &named))
+                        }),
                         ValueType::Actor,
                     )
                 }
@@ -1498,7 +1585,9 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                     let named = named.to_owned();
                     (
                         Box::new(move |world, _| {
-                            Value::GlobalPlayer(V::global_player(world, &named))
+                            Value::GlobalPlayer((Vocabulary::get().players_host().global)(
+                                world, &named,
+                            ))
                         }),
                         ValueType::GlobalPlayer,
                     )
@@ -1507,11 +1596,9 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                     let found = self.actor(Some(found))?;
                     (
                         Box::new(move |world, cx| {
-                            Value::GlobalPlayer(
-                                found(world, cx)
-                                    .as_actor()
-                                    .and_then(|actor| V::global_player_of(world, actor)),
-                            )
+                            Value::GlobalPlayer(found(world, cx).as_actor().and_then(|actor| {
+                                (Vocabulary::get().players_host().global_of)(world, actor)
+                            }))
                         }),
                         ValueType::GlobalPlayer,
                     )
@@ -1694,7 +1781,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
         })
     }
 
-    fn list(&mut self, list: &'c [Expr<V>], want: ValueType) -> Result<Vec<Eval>, ScriptFault> {
+    fn list(&mut self, list: &'c [Expr], want: ValueType) -> Result<Vec<Eval>, ScriptFault> {
         if list.len() > expr::MAX_LIST {
             return Err(ScriptFault::new(
                 "out of range",
@@ -1704,11 +1791,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
         list.iter().map(|part| self.expr(part, want)).collect()
     }
 
-    fn numeric(
-        &mut self,
-        a: &'c Expr<V>,
-        b: &'c Expr<V>,
-    ) -> Result<(Eval, Eval, bool), ScriptFault> {
+    fn numeric(&mut self, a: &'c Expr, b: &'c Expr) -> Result<(Eval, Eval, bool), ScriptFault> {
         let (a, ta) = self.typed_inner(a)?;
         let (b, tb) = self.typed_inner(b)?;
         for ty in [ta, tb] {
@@ -1735,12 +1818,7 @@ fn nearest_note<'a>(wanted: &str, known: impl Iterator<Item = &'a str>) -> Strin
 }
 
 /// `eval` as a value of the type `want`, when what `expr` gives can stand for one.
-fn fitted<V: Vocabulary>(
-    expr: &Expr<V>,
-    eval: Eval,
-    ty: ValueType,
-    want: ValueType,
-) -> Result<Eval, ScriptFault> {
+fn fitted(expr: &Expr, eval: Eval, ty: ValueType, want: ValueType) -> Result<Eval, ScriptFault> {
     if !want.accepts(ty) {
         return Err(ScriptFault::new(
             "wrong type",

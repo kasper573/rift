@@ -18,7 +18,6 @@ use engine::field;
 use engine::systems::class::{AccessRequirement, ClassDef, NodeKey, SkillNode, SkillTree};
 use engine::systems::skill::{Rank, SkillDef};
 use ui::egui::{Sense, Stroke, Ui, Vec2};
-use ui::glyph::{self, Mark};
 
 use super::tree::{self, CarriedNode, NodeSkill};
 use super::{edit, node_of, select_node};
@@ -149,7 +148,7 @@ fn requirements(
                 widgets::badge(ui, Badge::of_tag(&kind, Some(ClassDef::TABLE)));
                 ui.label(theme::strong(schema::title(&kind)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                    if controls::remove(ui, "Remove")
                         .on_hover_text("Remove this requirement")
                         .clicked()
                     {
@@ -174,8 +173,7 @@ fn requirements(
     let fresh = templates(around, requires);
     menu::button(ui, "+ add requirement", |ui| {
         for (kind, template) in fresh {
-            let button = ui
-                .add_enabled(template.is_some(), egui::Button::new(schema::title(kind)))
+            let button = controls::button_if(ui, template.is_some(), schema::title(kind))
                 .on_disabled_hover_text("No other node of the tree can be required here");
             if button.clicked()
                 && let Some(template) = template

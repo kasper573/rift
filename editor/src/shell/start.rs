@@ -24,6 +24,7 @@ use crate::widgets;
 use crate::tabs::shown_path;
 use crate::templates;
 use ui::form;
+use ui::menu;
 
 pub fn show(editor: &mut Editor, root: &mut Ui) {
     let ctx = root.ctx().clone();
@@ -42,7 +43,7 @@ pub fn show(editor: &mut Editor, root: &mut Ui) {
                         if controls::primary(ui, "Open folder…").clicked() {
                             pick_folder(editor);
                         }
-                        if ui.button("+ New game…").clicked() {
+                        if controls::button(ui, "+ New game…").clicked() {
                             new_game_dialog(editor, None);
                         }
                     });
@@ -75,7 +76,7 @@ pub fn show(editor: &mut Editor, root: &mut Ui) {
                                 .strong(),
                         );
                         ui.label(theme::muted(reason));
-                        if ui.button("Close").clicked() {
+                        if controls::button(ui, "Close").clicked() {
                             editor.start.failed = None;
                         }
                     });
@@ -354,7 +355,7 @@ fn folder_menu(ui: &mut Ui, folder: &Path, picks: &mut FolderPicks) {
         picks.copy = Some(folder.to_path_buf());
         ui.close();
     }
-    if ui.button("Show folder").clicked() {
+    if menu::entry(ui, "Show folder").clicked() {
         let _ = opener::open(folder);
         ui.close();
     }

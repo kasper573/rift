@@ -3,23 +3,20 @@ use std::path::Path;
 use std::sync::Arc;
 
 use engine::core::content::gltf;
-use engine::core::content::{ContentFolder, FileHash, FilesystemFolder, FolderReader, LoadPurpose};
+use engine::core::content::{ContentFolder, FileHash, FilesystemFolder, FolderReader};
 use engine::core::units::Meters;
 use engine::systems::area::prop::{Footprint, ModelHash, PropDef};
 use engine::systems::{player, registry};
 
-use crate::folder;
-
 /// Shapes the footprint of each of `props`, named by its path in the game folder, round all of
 /// its model that whoever stands `tall` would meet: the game's player, unless a height is given.
 pub fn run(game: &Path, tall: Option<Meters>, props: &[String]) {
-    let tall = tall.unwrap_or_else(|| {
-        let content = folder::load(game, "fit", LoadPurpose::Play)
-            .unwrap_or_else(|report| panic!("{report}"));
-        player::stature(&content)
-    });
     let files = Arc::new(FilesystemFolder(game.to_path_buf()));
     let reader = FolderReader::new(registry(), files.clone());
+    let tall = tall.unwrap_or_else(|| {
+        player::stature_in_folder(&reader)
+            .unwrap_or_else(|errors| panic!("the game's character does not read: {errors:?}"))
+    });
     for prop in props {
         let row: PropDef = reader
             .read(prop)

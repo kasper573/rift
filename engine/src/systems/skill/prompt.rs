@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
 use super::{ResetAnswerRequest, ResetPrompt};
+use crate::core::content::Content;
 use crate::systems::hud::{self, Confirm};
+use crate::systems::messages;
 use crate::systems::player::session;
 
 /// Where the question on the character stands: put to the player, answered, or both until the
@@ -31,16 +33,15 @@ pub fn ask(world: &mut World) {
         return;
     }
     world.resource_mut::<PromptState>().asked = true;
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).skill;
     hud::confirm(
         world,
         Confirm {
-            title: "Reset your skills?".into(),
-            body: vec![
-                asked.describe().into(),
-                "Bar slots that held them stay, dimmed, until they are learned again.".into(),
-            ],
-            confirm: "Reset".to_owned(),
-            cancel: "Keep".to_owned(),
+            title: words.reset_title().into(),
+            body: vec![asked.describe(words).into(), words.reset_body().into()],
+            confirm: words.reset_confirm().to_owned(),
+            cancel: words.keep().to_owned(),
             answer: Box::new(|world, accepted| {
                 world.resource_mut::<PromptState>().answered = true;
                 world.write_message(ResetAnswerRequest { accepted });

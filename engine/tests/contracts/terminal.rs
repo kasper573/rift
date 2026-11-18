@@ -13,7 +13,7 @@ use engine::systems::chat::{ChatChannel, ChatEmbed, ChatEmbedKind, ChatLocation,
 use engine::systems::input::map::InputMap;
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::terminal::draft::ChatDraft;
-use engine::systems::{chat, command, movement, region, script};
+use engine::systems::{chat, command, movement, region};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -684,9 +684,9 @@ fn serving(content: Content, area: &str) -> Sim {
             command::complete::answer,
             player::arrival_holds,
         ))
-        .plan(script::RunFlows::default());
+        .plan(engine::core::script::run::FlowRunner::default());
     chat::route_lines(&mut sim.world);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 

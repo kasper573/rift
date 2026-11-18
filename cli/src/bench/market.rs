@@ -124,7 +124,7 @@ pub fn trade(
         if let Some(row) = row {
             let buy = MarketAsk::Buy {
                 listing: row.id,
-                offer: row.offer.clone(),
+                goods: row.goods.clone(),
                 price: row.price.clone(),
             };
             from_client(world, conn, MarketRequest::Ask(buy));
@@ -140,7 +140,7 @@ pub fn trade(
         });
         if let Some(stack) = sold {
             let list = MarketAsk::List {
-                offer: vec![stack],
+                goods: vec![stack],
                 price: vec![ItemStack::new(settings.default_currency, price_of(turn))],
                 duration: settings.durations[0],
             };
@@ -167,7 +167,7 @@ fn listing(
     Some(Listing {
         id: ListingId(index as u64 + 1),
         seller: seller.clone(),
-        offer: vec![ItemStack::new(item, 1 + index as u32 % most)].into(),
+        goods: vec![ItemStack::new(item, 1 + index as u32 % most)].into(),
         price: vec![ItemStack::new(settings.default_currency, price_of(index))].into(),
         deposit: vec![settings.deposit()].into(),
         ends: now.after(Seconds(duration.0 * share)),

@@ -10,6 +10,7 @@ use crate::core::math::Pos;
 use crate::core::render::Look;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::opacity::Opacity;
+use crate::core::script::condition::CompiledCondition;
 use crate::core::tick::Planner;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
@@ -19,7 +20,6 @@ use crate::systems::movement::{Position, RenderPosition, position};
 use crate::systems::player::session::MyCharacter;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
 use crate::systems::screen::ClientScreen;
-use crate::systems::script::condition::CompiledCondition;
 
 /// How far the game's players see.
 pub fn sight(world: &World) -> Meters {

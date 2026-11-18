@@ -60,17 +60,21 @@ impl Sheet<'_> {
         vellum(painter, rect);
         let inset = if small { SMALL_RULE_INSET } else { RULE_INSET };
         rule(painter, rect, inset);
-        let band = Rect::from_min_size(rect.min, Vec2::new(rect.width(), TITLE_BAND));
         let cross_size = if small { SMALL_CROSS } else { CROSS };
+        let cross_inset = inset + CROSS_MARGIN;
+        let band = Rect::from_min_size(
+            rect.min + Vec2::new(0.0, title_top(cross_inset, cross_size)),
+            Vec2::new(rect.width(), TITLE_BAND),
+        );
         let bleeds = self.title.is_none() && !small;
         let cross = self.closable.then(|| {
-            let at = if bleeds {
-                let from_rule = inset + CROSS_MARGIN;
-                Pos2::new(rect.max.x - from_rule - cross_size, rect.min.y + from_rule)
-            } else {
-                Pos2::new(rect.max.x - 10.0 - cross_size, rect.min.y + 6.0)
-            };
-            Rect::from_min_size(at, Vec2::splat(cross_size))
+            Rect::from_min_size(
+                Pos2::new(
+                    rect.max.x - cross_inset - cross_size,
+                    rect.min.y + cross_inset,
+                ),
+                Vec2::splat(cross_size),
+            )
         });
         if let Some(title) = self.title {
             title_band(painter, title_room(band, small), title, !small);
@@ -110,10 +114,20 @@ impl Sheet<'_> {
 /// rule and its margin round the rest.
 pub fn titled_size(body: Vec2) -> Vec2 {
     let edge = RULE_INSET + BODY_INSET;
-    Vec2::new(body.x + 2.0 * edge, body.y + TITLE_BAND + edge)
+    let top = title_top(RULE_INSET + CROSS_MARGIN, CROSS) + TITLE_BAND;
+    Vec2::new(body.x + 2.0 * edge, body.y + top + edge)
+}
+
+/// How far below a sheet's top edge its title band starts: so far that the title stands on the
+/// line through the middle of the close cross, which every closable sheet keeps the same way in
+/// from its corner.
+fn title_top(cross_inset: f32, cross_size: f32) -> f32 {
+    (cross_inset + cross_size / 2.0 - TITLE_BAND / 2.0).max(0.0)
 }
 
 pub const GUTTER: f32 = 16.0;
+/// The room under a strip of tabs, before the page they turn.
+pub const TABS_GAP: f32 = 6.0;
 const BODY_INSET: f32 = 4.0;
 pub const PAGE_MARGIN: f32 = GUTTER - BODY_INSET;
 
@@ -488,7 +502,7 @@ pub fn tabs<T: PartialEq + Copy>(
     room: f32,
 ) -> Rect {
     let strip = tabs_inset(ui, size, tabs, active, room, 0.0);
-    ui.add_space(6.0);
+    ui.add_space(TABS_GAP);
     strip
 }
 

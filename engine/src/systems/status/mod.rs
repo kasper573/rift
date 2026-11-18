@@ -1,12 +1,15 @@
 pub mod aspect;
 pub mod boost;
 pub mod effects;
+pub mod query;
 pub mod widget;
 
 pub use aspect::{ActiveAspects, AspectSource, CarriedStatus, CarriedStatuses, StatusBeat};
 pub use boost::{Boosts, HeldBoost};
 pub use effects::{ApplyStatus, Boost, RemoveStatus, boosts_of};
 
+use crate::core::script::RunnerSpec;
+use crate::core::script::Vocabulary;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
@@ -16,18 +19,37 @@ use strum::{IntoStaticStr, VariantArray};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::ImageRef;
 use crate::core::content::{
-    Content, ContentFile, ContentId, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck, serial,
+    Content, ContentFile, ContentId, Loading, ModuleRule, ModuleSet, NamedContent, Nearby,
+    RowCheck, serial,
 };
+use crate::core::script::{RunnerKind, ScriptModule, ScriptedRow};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
-use crate::core::vfx::VfxId;
-use crate::systems::script::{RunnerKind, ScriptModule, ScriptedRow};
+use crate::core::vfx::{SiteKind, VfxId, check_played};
+use crate::systems::messages::messages;
 
 pub type StatusEffectId = ContentId<StatusEffectDef>;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
     app.replicate::<Statuses>().replicate_private::<Boosts>();
+}
+
+/// Refuses the stage of a status effect's vfx that an actor or an object, whoever carries the
+/// status, cannot take.
+pub fn check_vfx(loading: &mut Loading) {
+    let content = loading.content();
+    for (id, status) in loading.rows::<StatusEffectDef>(&content) {
+        let phases = [
+            status.vfx.on_activate,
+            status.vfx.during,
+            status.vfx.on_expire,
+        ];
+        for vfx in phases.into_iter().flatten() {
+            let carriers = &[SiteKind::Actor, SiteKind::Object];
+            check_played(loading, vfx, carriers, id.path(&content));
+        }
+    }
 }
 
 /// A state an actor or an object of an area carries for a while or until it is taken off: the row
@@ -217,8 +239,18 @@ pub fn expire(world: &mut World, held: &mut QueryState<(Entity, &Statuses)>) {
 }
 
 impl StatusCategory {
-    pub fn label(self) -> &'static str {
-        self.into()
+    pub fn named(self, words: &StatusMessages) -> &str {
+        match self {
+            StatusCategory::Buff => words.buff(),
+            StatusCategory::Debuff => words.debuff(),
+        }
+    }
+
+    pub fn plural(self, words: &StatusMessages) -> &str {
+        match self {
+            StatusCategory::Buff => words.buffs(),
+            StatusCategory::Debuff => words.debuffs(),
+        }
     }
 }
 
@@ -283,11 +315,49 @@ impl ModuleSet for StatusEffectDef {
 }
 
 impl ScriptedRow for StatusEffectDef {
-    const OWNER: RunnerKind = RunnerKind::StatusEffect;
+    const OWNER: RunnerKind = STATUS_EFFECT_RUNNER;
 
     fn script(module: &StatusModule) -> Option<&ScriptModule> {
         match module {
             StatusModule::Script(script) => Some(script),
         }
     }
+}
+
+messages! {
+    /// What the game says of statuses.
+    pub struct StatusMessages {
+        /// A status that helps who carries it.
+        buff,
+        /// A status that hinders who carries it.
+        debuff,
+        /// Statuses that help, together.
+        buffs,
+        /// Statuses that hinder, together.
+        debuffs,
+        /// Statuses of either kind, together.
+        statuses,
+        /// How a screen reader names a status `{name}` of the kind `{category}`.
+        named(category: Text, name: Text),
+        /// How long a status lasts that lasts until something removes it.
+        until_removed,
+    }
+}
+
+pub const STATUS_EFFECT_RUNNER: RunnerKind = RunnerKind::new("status_effect");
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .runner(
+            STATUS_EFFECT_RUNNER,
+            RunnerSpec::named_row::<StatusEffectDef>()
+                .stateless()
+                .starting_with_world(),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<StatusEffectDef>(loading, content))
+        .event::<aspect::Activated>("activated")
+        .event::<aspect::Deactivated>("deactivated")
+        .event::<aspect::Interval>("interval");
+    effects::scripting(vocabulary);
 }

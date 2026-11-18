@@ -8,7 +8,6 @@ use engine::systems::actor::{self, Actor, Motion, Pose};
 use engine::systems::emote::{self, EmoteDef, EmoteRequest};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
 use engine::systems::region;
-use engine::systems::script;
 use serde_json::{Value, json};
 use strum::VariantArray;
 use testkit::{BODY, Game, Map, Sim, clip, path, rig_clips};
@@ -49,8 +48,8 @@ fn a_script_sits_a_body_down_and_stands_it_up_through_the_clips_its_skeleton_nam
         let mut sim = Sim::new(game(case.placed, case.pose).load());
         sim.serve("room")
             .add(actor::playing::progress)
-            .plan(script::RunFlows::default());
-        script::spawn_stateless(&mut sim.world);
+            .plan(engine::core::script::run::FlowRunner::default());
+        engine::systems::spawn_scripts(&mut sim.world);
         region::hold_whole(&mut sim.world);
         let guard = sim.npc("guard");
         sim.tick();

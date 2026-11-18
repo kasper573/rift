@@ -10,11 +10,12 @@ use ui::egui::{Pos2, Rect, Vec2};
 
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, ContentProblem, RowCheck, id};
+use crate::core::script::{Expr, condition};
+use crate::core::text::LineText;
 use crate::systems::mention::Mention;
-use crate::systems::script::condition::ConditionNames;
-use crate::systems::script::{Condition, condition};
+use crate::systems::messages;
+use crate::systems::requirement;
 use crate::systems::skill::{Rank, SkillId};
-use crate::systems::text::LineText;
 
 /// How far apart two nodes must sit on the canvas, in canvas units, not to overlap.
 pub const NODE_EXTENT: f32 = 56.0;
@@ -52,7 +53,7 @@ pub enum AccessRequirement {
         level: u32,
     },
     Condition {
-        condition: Condition,
+        condition: Expr,
     },
 }
 
@@ -314,7 +315,7 @@ impl AccessRequirement {
         &self,
         ranks: &BTreeMap<NodeKey, Rank>,
         level: u32,
-        condition: impl Fn(&Condition) -> bool,
+        condition: impl Fn(&Expr) -> bool,
     ) -> bool {
         match self {
             AccessRequirement::Skill { node, rank } => {
@@ -340,33 +341,18 @@ impl AccessRequirement {
     }
 
     pub fn line(&self, content: &Content, tree: &SkillTree) -> LineText {
+        let messages = messages::of(content);
         match self {
             AccessRequirement::Skill { node, rank } => {
                 let name = tree.node(node).map_or_else(
                     || LineText::plain(node.to_string()),
                     |node| Mention::Skill(node.skill).line(content),
                 );
-                name.then(format!(" rank {}", rank.0))
+                messages.condition.skill_rank_of(rank.0, name)
             }
-            AccessRequirement::Level { level } => LineText::plain(format!("Level {level}")),
+            AccessRequirement::Level { level } => messages.condition.level_of(*level),
             AccessRequirement::Condition { condition } => {
-                LineText::from(&condition::describe(content, condition))
-            }
-        }
-    }
-
-    pub fn describe(&self, content: &impl ConditionNames, tree: &SkillTree) -> String {
-        match self {
-            AccessRequirement::Skill { node, rank } => {
-                let name = tree
-                    .node(node)
-                    .map(|node| content.name_of(node.skill))
-                    .unwrap_or_else(|| node.to_string());
-                format!("{name} rank {}", rank.0)
-            }
-            AccessRequirement::Level { level } => format!("Level {level}"),
-            AccessRequirement::Condition { condition } => {
-                condition::describe(content, condition).to_string()
+                requirement::describe(content, messages, condition)
             }
         }
     }

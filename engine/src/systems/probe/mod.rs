@@ -61,13 +61,13 @@ use crate::core::render::world::outline::Outline;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::world::{OnItsWay, missing_drawn};
 use crate::core::render::{self, CameraRig, Pointed, ground_height, world_point};
+use crate::core::script::DialogueCamera;
+use crate::core::script::Scripts;
 use crate::core::stage::card::HungCardLamp;
 use crate::core::time;
 use crate::core::units::{
     Bytes, Degrees, MeterSize, Meters, Millis, Percent, PlaybackRate, Radians, Seconds, WindowPx,
 };
-use crate::core::vfx::cover::ShownWeather;
-use crate::core::vfx::rain::{RainField, Shelter};
 use crate::core::vfx::standing::StandingVfx;
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
@@ -77,6 +77,9 @@ use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{
     self, Action, Actor, ActorModel, Aloft, Appearance, Hitbox, Motion, Playing, Pose,
 };
+use crate::systems::area::rain::{RainField, Shelter};
+use crate::systems::area::shown_weather::ShownWeather;
+use crate::systems::area::sky;
 use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayName};
 use crate::systems::area_instance::entrance::ShownInstanceEntrance;
@@ -85,7 +88,6 @@ use crate::systems::area_instance::{self, plate::ShownAreaInstance};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::crafting::{self, RecipeId};
-use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::stage;
 use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::friend::{self, page::ShownFriends};
@@ -93,13 +95,14 @@ use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
 use crate::systems::hud::menu::MenuTabName;
-use crate::systems::inbox::{self, page::ShownMessages};
 use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
 use crate::systems::input::scope::InputScope;
 use crate::systems::interface::CursorId;
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
+use crate::systems::mail::{self, page::ShownLetters};
+use crate::systems::messages;
 use crate::systems::mount::{self, plate::ShownMount};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
@@ -111,7 +114,6 @@ use crate::systems::quest::{self, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
 use crate::systems::save::{self, notice::ShownSaving};
-use crate::systems::script::{RiftScripts, sky};
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, aim::SpotAim, bar::SlotReport};
 use crate::systems::social_request::{self, card::ShownRequestCard};
@@ -364,8 +366,8 @@ pub struct ProbeSnapshot {
     /// What the Friends page shows: the list, the requests in and out, the players kept away
     /// and what the search found.
     pub friends: ShownFriends,
-    /// What the Messages page shows: the inbox, the message chosen and the one being written.
-    pub messages: ShownMessages,
+    /// What the Mail page shows: the inbox, the letter chosen and the one being written.
+    pub mail: ShownLetters,
     /// The party the player is in, and the invitations that wait for their answer.
     pub party: ShownParty,
     /// The tabs of chat, which is shown and how much waits on each.
@@ -583,8 +585,8 @@ pub struct ProbeBody {
     pub rate: PlaybackRate,
     /// Where its skeleton's sets named that clip.
     pub naming: Naming,
-    /// What its skeleton calls each of its hands, in their order.
-    pub hands: Vec<String>,
+    /// Each of its hands, in their order.
+    pub hands: Vec<ProbeHand>,
     /// What each hand of its body shows, as the server says.
     pub wearing: Vec<ProbeWorn>,
     /// The item in its tool slot.
@@ -595,6 +597,15 @@ pub struct ProbeBody {
     pub held: Vec<ProbeHeld>,
     /// Whether any layer moves its joints this frame.
     pub layered: bool,
+}
+
+/// A hand of a body, as its skeleton declares it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeHand {
+    /// What its skeleton calls it.
+    pub name: String,
+    /// What the player calls it, as the equipment panel heads it.
+    pub label: String,
 }
 
 /// A prop hanging from a hand of a drawn body.
@@ -771,11 +782,11 @@ pub struct ProbeRecord {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeShop {
     pub shop: ShopId,
-    pub offers: Vec<ProbeOffer>,
+    pub wares: Vec<ProbeWare>,
     pub buyback: Vec<ProbeStack>,
-    /// What the player has set out to sell, stack by stack.
-    pub offered: Vec<ProbeStack>,
-    /// What the shop pays for all that is offered.
+    /// What the player has placed to sell, stack by stack.
+    pub to_sell: Vec<ProbeStack>,
+    /// What the shop pays for all that is placed to sell.
     pub pays: Vec<ProbeStack>,
 }
 
@@ -837,7 +848,7 @@ pub struct ProbePlaced {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeOffer {
+pub struct ProbeWare {
     pub item: ItemId,
     pub count: u32,
     pub left: Option<u32>,
@@ -1217,7 +1228,7 @@ fn publish(world: &mut World) {
 fn snapshot(world: &mut World) -> ProbeSnapshot {
     let content = world.resource::<Content>().clone();
     let me = session::me(world);
-    let offered_sale = shop::counter::offered(world);
+    let placed_sale = shop::counter::placed_sale(world);
     let area = me
         .and_then(|seen| world.get::<AreaTag>(seen))
         .map(|tag| tag.area);
@@ -1282,7 +1293,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         saving: save::notice::shown(world),
         social_requests: social_request::card::shown(world),
         friends: friend::page::shown(world),
-        messages: inbox::page::shown(world),
+        mail: mail::page::shown(world),
         party: party::page::shown(world),
         chat: terminal::chat::shown(world),
         mount: mount::plate::shown(world),
@@ -1296,7 +1307,10 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),
-            tab: history_tab.map(|tab| tab.title().to_owned()),
+            tab: history_tab.map(|tab| {
+                tab.named(&messages::of(world.resource::<Content>()).history)
+                    .to_owned()
+            }),
             records: world
                 .resource::<HistoryBook>()
                 .records()
@@ -1329,7 +1343,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             text: view
                 .text
                 .as_ref()
-                .map(|text| text.words(&content, world.resource::<InputMap>())),
+                .map(|text| text.words(&content, &world.resource::<InputMap>().key_names())),
             slots: view.slots,
             placed: prompt::tray::placed(world)
                 .iter()
@@ -1377,19 +1391,19 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             }
         }),
         shop: shop::counter::view(world)
-            .zip(offered_sale)
+            .zip(placed_sale)
             .map(|(shown, sale)| ProbeShop {
-                offered: sale.stacks.iter().map(probe_stack).collect(),
+                to_sell: sale.stacks.iter().map(probe_stack).collect(),
                 pays: sale.pays.iter().map(probe_stack).collect(),
                 shop: shown.shop,
-                offers: shown
+                wares: shown
                     .shop
                     .get(&content)
                     .sells()
-                    .zip(&shown.offers)
-                    .map(|(offer, view)| ProbeOffer {
-                        item: offer.item,
-                        count: offer.count,
+                    .zip(&shown.wares)
+                    .map(|(ware, view)| ProbeWare {
+                        item: ware.item,
+                        count: ware.count,
                         left: view.left,
                         refusal: view
                             .refusal
@@ -1406,8 +1420,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                     })
                     .collect(),
             }),
-        bag: me
-            .and_then(|seen| world.get::<Inventory>(seen))
+        bag: item::my_bag(world)
             .map(|inventory| {
                 inventory
                     .slots
@@ -1483,14 +1496,14 @@ fn gpu_memory(world: &World) -> Bytes {
 }
 
 fn record_line(record: &HistoryRecord, content: &Content, inputs: &InputMap) -> ProbeRecord {
-    let text = record.entry.text.words(content, inputs);
+    let text = record.entry.text.words(content, &inputs.key_names());
     ProbeRecord {
         topic: record.entry.topic,
         by: record.entry.by.clone(),
-        text: record
-            .entry
-            .tally
-            .map_or_else(|| text.clone(), |tally| tally.line(&text)),
+        text: record.entry.tally.map_or_else(
+            || text.clone(),
+            |tally| tally.line(&text, &messages::of(content).history),
+        ),
         mark: record.entry.mark,
     }
 }
@@ -1837,7 +1850,14 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         motion,
         rate,
         naming,
-        hands: built.hands().iter().map(|hand| hand.name.clone()).collect(),
+        hands: built
+            .hands()
+            .iter()
+            .map(|hand| ProbeHand {
+                name: hand.name.clone(),
+                label: hand.label().to_owned(),
+            })
+            .collect(),
         wearing: entity
             .get::<Held>()
             .map(|wearing| {
@@ -2077,7 +2097,7 @@ fn warps(world: &World, area: Option<AreaId>) -> Vec<ProbeWarp> {
         return Vec::new();
     };
     let content = world.resource::<Content>();
-    let scripts = world.resource::<RiftScripts>();
+    let scripts = world.resource::<Scripts>();
     let mut warps: Vec<ProbeWarp> = area::warp::warp_objects(content, scripts, area)
         .into_iter()
         .map(|object| ProbeWarp {

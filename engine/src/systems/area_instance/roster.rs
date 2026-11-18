@@ -1,5 +1,5 @@
 //! A leader's call to their party: who of the members within sight of the leader joins, who the
-//! leader picks of them, and the copy that opens for them once the leader enters. A call is
+//! leader picks of them, and the instance that opens for them once the leader enters. A call is
 //! society's, as parties are, and lives from Gather the party until Enter or until it ends. It
 //! is never saved: nobody has moved while it is open, so a server that stops loses nothing.
 
@@ -9,7 +9,7 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{AreaInstanceEntry, CharacterCount, answer as answer_flow, open, step_in};
+use super::{AreaInstanceEntry, PlayerCount, answer as answer_flow, open, step_in};
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::script::{NEXT, REFUSED};
@@ -19,12 +19,12 @@ use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::history::HistoryTopic;
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::{self, PlayedBy, RequestNeeds};
 use crate::systems::society::{self, AccountNumber, Settling, Society, SocietyAsk, SocietyMember};
-use crate::systems::text::LineText;
 use crate::systems::worlds::WorldName;
-use crate::systems::{GameSettings, GameWords, stat};
+use crate::systems::{GameSettings, stat};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -35,7 +35,7 @@ pub fn register(app: &mut App) {
 /// What a world asks of society about instances, for one of its players.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InstanceAsk {
-    /// A copy of their own.
+    /// An instance of their own.
     GoAlone(AreaInstanceEntry),
     /// A call to the party they lead, made at `door` where the entrance is a thing in the world.
     Gather {
@@ -125,7 +125,7 @@ pub enum RosterRowShown {
 pub struct InstanceCallShown {
     pub leader: SocietyMember,
     pub area: AreaId,
-    pub characters: CharacterCount,
+    pub players: PlayerCount,
     pub ends: UnixMillis,
     /// Whether the player it is shown to leads it.
     pub leads: bool,
@@ -210,16 +210,14 @@ impl InstanceCall {
             .find(|member| member.account == *account)
     }
 
-    fn characters(&self, content: &Content) -> CharacterCount {
+    fn players(&self, content: &Content) -> PlayerCount {
         self.entry
             .to
             .area
             .get(content)
             .instance
             .as_ref()
-            .map_or(CharacterCount { least: 1, most: 1 }, |rules| {
-                rules.characters
-            })
+            .map_or(PlayerCount { least: 1, most: 1 }, |rules| rules.players)
     }
 
     fn row(&self, member: &CallMember) -> RosterRowShown {
@@ -278,7 +276,7 @@ impl InstanceCallShown {
         Some(InstanceCallShown {
             leader: society.member(leader)?,
             area: call.entry.to.area,
-            characters: call.characters(content),
+            players: call.players(content),
             ends: call.ends,
             leads,
             rows,
@@ -332,11 +330,7 @@ pub(crate) fn keep(settling: &mut Settling, content: &Content) {
         let Some(call) = settling.society.instances.calls.0.get(&leader) else {
             continue;
         };
-        let leads = settling
-            .society
-            .parties
-            .of_account(&leader)
-            .is_some_and(|party| party.leader == leader);
+        let leads = settling.society.parties.leads(&leader);
         let at = place(settling, &leader);
         let ended = if !leads || at.is_none() {
             Some(CallEnd::LostLead)
@@ -382,11 +376,7 @@ fn gather(
     entry: AreaInstanceEntry,
     door: Option<InstanceDoor>,
 ) {
-    let leads = settling
-        .society
-        .parties
-        .of_account(by)
-        .is_some_and(|party| party.leader == *by);
+    let leads = settling.society.parties.leads(by);
     let (true, Some(rules)) = (leads, content.built::<GameSettings>().party) else {
         answer_flow(settling, &entry, REFUSED);
         return;
@@ -401,14 +391,11 @@ fn gather(
         leader_fallen: false,
         members: Vec::new(),
     };
-    let area = LineText::from(Mention::Area(call.entry.to.area).span(content)).plain_words(content);
+    let sent = messages::of(content)
+        .instance
+        .call_sent(Mention::Area(call.entry.to.area).span(content));
     settling.society.instances.calls.0.insert(by.clone(), call);
     settling.society.changed(by);
-    let sent = content
-        .built::<GameSettings>()
-        .words
-        .instance_call_sent
-        .replace("{area}", &area);
     settling.tell(by, Notification::feed(HistoryTopic::Notification, sent));
     follow(settling, content, by);
 }
@@ -426,7 +413,7 @@ fn ask_call(settling: &mut Settling, content: &Content, by: &AccountId, request:
     let Some(call) = settling.society.instances.calls.0.get_mut(by) else {
         return;
     };
-    let room = call.taken() < call.characters(content).most;
+    let room = call.taken() < call.players(content).most;
     let Some(asked) = call.member_mut(&member) else {
         return;
     };
@@ -455,7 +442,7 @@ fn answer(settling: &mut Settling, content: &Content, by: &AccountId, reply: Cal
     let Some(call) = settling.society.instances.calls.0.get_mut(&leader) else {
         return;
     };
-    let room = call.taken() < call.characters(content).most;
+    let room = call.taken() < call.players(content).most;
     let Some(member) = call.member_mut(by).filter(|member| member.called) else {
         return;
     };
@@ -473,10 +460,10 @@ fn answer(settling: &mut Settling, content: &Content, by: &AccountId, reply: Cal
     settling.society.changed(by);
 }
 
-/// Opens the copy for everyone the leader takes, as long as the leader stands and enough would
+/// Opens the instance for everyone the leader takes, as long as the leader stands and enough would
 /// go: each goes in, and the rest who joined are told the party went without them.
 fn enter(settling: &mut Settling, content: &Content, leader: &AccountId) {
-    let words = &content.built::<GameSettings>().words;
+    let messages = &messages::of(content).instance;
     follow(settling, content, leader);
     let Some(call) = settling.society.instances.calls.0.get(leader).cloned() else {
         return;
@@ -484,17 +471,15 @@ fn enter(settling: &mut Settling, content: &Content, leader: &AccountId) {
     let Some(going) = call.going() else {
         return;
     };
-    let characters = call.characters(content);
+    let players = call.players(content);
     let area = Mention::Area(call.entry.to.area).span(content);
     let going: Vec<AccountId> = std::iter::once(leader.clone()).chain(going).collect();
-    if (going.len() as u32) < characters.least {
-        let why = LineText::plain(words.instance_needs_characters.as_str())
-            .filling("{area}", area)
-            .filling("{least}", characters.least.to_string());
+    if (going.len() as u32) < players.least {
+        let why = messages.needs_players(area, players.least);
         settling.refuse(leader, why.plain_words(content));
         return;
     }
-    let run = match open(settling, content, &call.entry, going.clone()) {
+    let run = match open(settling, content, &call.entry, leader, going.clone()) {
         Ok(run) => run,
         Err(why) => {
             settling.refuse(leader, why.plain_words(content));
@@ -516,12 +501,9 @@ fn enter(settling: &mut Settling, content: &Content, leader: &AccountId) {
             continue;
         }
         let said = match member.standing {
-            CallStanding::TooFar(Some(_)) => &words.instance_went_too_far,
-            _ => &words.instance_went_without,
+            CallStanding::TooFar(Some(_)) => messages.went_too_far(area.clone(), &leader_name),
+            _ => messages.went_without(area.clone()),
         };
-        let said = LineText::plain(said.as_str())
-            .filling("{area}", area.clone())
-            .filling("{leader}", leader_name.clone());
         settling.tell(
             &member.account,
             Notification::feed(HistoryTopic::Notification, said),
@@ -536,10 +518,15 @@ fn end(settling: &mut Settling, content: &Content, leader: &AccountId, why: Call
     let Some(call) = settling.society.instances.calls.0.remove(leader) else {
         return;
     };
-    let words = &content.built::<GameSettings>().words;
-    let said = LineText::plain(ended_by(words, why))
-        .filling("{leader}", settling.name(leader))
-        .filling("{area}", Mention::Area(call.entry.to.area).span(content));
+    let messages = &messages::of(content).instance;
+    let area = Mention::Area(call.entry.to.area).span(content);
+    let leader_name = settling.name(leader);
+    let said = match why {
+        CallEnd::CalledOff => messages.called_off(area, leader_name),
+        CallEnd::RanOut => messages.call_ran_out(area),
+        CallEnd::LostLead => messages.call_lost_lead(area, leader_name),
+        CallEnd::LeftDoor => messages.call_left_door(leader_name),
+    };
     for member in &call.members {
         settling.society.changed(&member.account);
         if member.called {
@@ -568,13 +555,7 @@ fn follow(settling: &mut Settling, content: &Content, leader: &AccountId) {
         .society
         .parties
         .of_account(leader)
-        .map(|party| {
-            party
-                .accounts()
-                .filter(|member| *member != leader)
-                .cloned()
-                .collect()
-        })
+        .map(|party| party.others(leader).cloned().collect())
         .unwrap_or_default();
     let from = place(settling, leader);
     let leader_fallen = fallen(settling, leader);
@@ -670,13 +651,4 @@ fn at_entrance(call: &InstanceCall, at: Option<Standing>) -> bool {
                 .door
                 .is_none_or(|door| at.distance(door.at) <= door.reach)
     })
-}
-
-fn ended_by(words: &GameWords, why: CallEnd) -> &str {
-    match why {
-        CallEnd::CalledOff => &words.instance_called_off,
-        CallEnd::RanOut => &words.instance_call_ran_out,
-        CallEnd::LostLead => &words.instance_call_lost_lead,
-        CallEnd::LeftDoor => &words.instance_call_left_door,
-    }
 }

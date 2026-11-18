@@ -12,21 +12,73 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use strum::{IntoStaticStr, VariantArray};
+use strum::VariantArray;
 
 pub use block::{Block, BlockAsk, BlockLists};
 
+use crate::core::content::Content;
 use crate::core::store::{Record, RecordId};
+use crate::core::text::LineText;
 use crate::core::time::UnixMillis;
 use crate::core::units::Seconds;
+use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::history::HistoryTopic;
+use crate::systems::messages::{self, Messages, messages};
 use crate::systems::notification::Notification;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::society::{self, AccountNumber, Settling, Society, SocietyAsk};
-use crate::systems::{GameSettings, GameWords};
+
+messages! {
+    /// What the game says of requests between players.
+    pub struct RequestMessages {
+        /// What a player is told asking something of `{name}`, who takes no request from them.
+        not_taking(name: Text),
+        /// What a player is told asking something of `{name}`, whom they keep away themselves.
+        you_blocked(name: Text),
+        /// What a player is told asking `{name}` for what needs them at their character, as they
+        /// are not.
+        not_here(name: Text),
+        /// What the card of the next request says of the `{count}` more waiting behind it.
+        more_waiting(count: Number),
+        /// The title of the question whether to block `{name}`.
+        block_title(name: Text),
+        /// What the question whether to block `{name}` tells the player blocking does.
+        block_body(name: Text),
+        /// The button that blocks a player, and its confirmation.
+        block,
+        /// The button that lifts a block.
+        unblock,
+        /// The button that accepts a request.
+        accept,
+        /// The button that denies a request.
+        deny,
+        /// The label of the setting that says who the player takes requests from.
+        accept_from,
+        /// The choice to take requests from everyone.
+        from_everyone,
+        /// The choice to take requests from friends only.
+        from_friends,
+        /// The choice to take requests from the party only.
+        from_party,
+        /// The choice to take requests from no one.
+        from_nobody,
+        /// What the setting says of taking requests from everyone.
+        admits_everyone,
+        /// What the setting says of taking requests from friends only.
+        admits_friends,
+        /// What the setting says of taking requests from the party only.
+        admits_party,
+        /// What the setting says of taking requests from no one.
+        admits_nobody,
+        /// What the setting says of where it is kept.
+        kept_with_account,
+        /// The heading over the list of blocked players.
+        blocked_heading,
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -50,17 +102,7 @@ pub enum SocialRequestKind {
 /// Who an account takes requests from. The server keeps it with the account and holds every
 /// request to it, of every kind.
 #[derive(
-    JsonSchema,
-    Serialize,
-    Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    Default,
-    PartialEq,
-    Eq,
-    IntoStaticStr,
-    VariantArray,
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AcceptsRequestsFrom {
@@ -89,52 +131,54 @@ pub struct SocialRequestSource {
     pub lasts: fn(&GameSettings) -> Option<Seconds>,
     /// Whether it reaches a player who is not playing, and so is saved until they are.
     pub reaches_offline: bool,
-    pub words: fn(&GameWords) -> SocialRequestWords<'_>,
+    pub words: SocialRequestWords,
     /// Whether the first account may ask the second, by the kind's own rules, once the gate
     /// every request passes has let it through.
-    pub may_send: fn(&Society, &GameSettings, &AccountId, &AccountId) -> Result<(), RequestUnsent>,
+    pub may_send: fn(&Society, &Content, &AccountId, &AccountId) -> Result<(), RequestUnsent>,
     /// What accepting does.
-    pub accepted: fn(&mut Settling, &GameSettings, &SocialRequest) -> Result<(), RequestUnaccepted>,
+    pub accepted: fn(&mut Settling, &Content, &SocialRequest) -> Result<(), RequestUnaccepted>,
     /// Whether one that waits still may, by the kind's own rules. One that may not ends with
     /// nobody told.
     pub stands: fn(&mut Settling, &SocialRequest) -> bool,
 }
 
 /// Why a request was not sent.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RequestUnsent {
     /// The asker is told nothing.
     Quietly,
     /// The asker is told why, in the game's words.
-    Told(String),
+    Told(LineText),
 }
 
 /// Why accepting did not do what its kind does, in the game's words.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RequestUnaccepted {
     /// The request waits on, and the player who accepted is told why.
-    Waits(String),
+    Waits(LineText),
     /// The request is over, and both are told why.
-    Over(String),
+    Over(LineText),
 }
 
-/// What a kind of request says, in the game's words. `{name}` is the other player and `{about}`
-/// what the request is about, where its kind names something.
-#[derive(Clone, Copy, Debug)]
-pub struct SocialRequestWords<'a> {
+/// Says something of a request to the player called `name`, as the game words it.
+pub type RequestSays = fn(&Messages, &str) -> String;
+
+/// What a kind of request says, in the game's words, each of the player it is with.
+#[derive(Clone, Copy)]
+pub struct SocialRequestWords {
     /// What the player asked reads on its card.
-    pub asks: &'a str,
+    pub asks: RequestSays,
     /// What the asker reads while it waits.
-    pub asked: &'a str,
+    pub asked: RequestSays,
     /// What the asker is told as it is sent.
-    pub sent: &'a str,
+    pub sent: RequestSays,
     /// What the asker is told when it is accepted, for a kind that tells them.
-    pub accepted: Option<&'a str>,
+    pub accepted: Option<RequestSays>,
     /// What the asker is told when it is denied. A kind that does not tell them keeps a request that was
     /// denied waiting as far as its asker sees, until its time is up.
-    pub denied: Option<&'a str>,
+    pub denied: Option<RequestSays>,
     /// What the asker is told as its time is up unanswered, for a kind that tells them.
-    pub lapsed: Option<&'a str>,
+    pub lapsed: Option<RequestSays>,
 }
 
 #[derive(
@@ -287,13 +331,13 @@ pub enum RequestRefusal {
 
 impl RequestRefusal {
     /// What the asker is told, of the player called `name`.
-    pub fn describe(self, words: &GameWords, name: &str) -> String {
-        let says = match self {
-            RequestRefusal::NotTaking => &words.not_taking_requests,
-            RequestRefusal::YouBlocked => &words.you_blocked,
-            RequestRefusal::NotHere => &words.not_here,
-        };
-        says.replace("{name}", name)
+    pub fn line(self, messages: &RequestMessages, name: &str) -> LineText {
+        match self {
+            RequestRefusal::NotTaking => messages.not_taking(name),
+            RequestRefusal::YouBlocked => messages.you_blocked(name),
+            RequestRefusal::NotHere => messages.not_here(name),
+        }
+        .into()
     }
 }
 
@@ -404,10 +448,10 @@ pub fn requests(world: &mut World) {
     );
 }
 
-/// Does with a request what `by` asked, under the game `settings` are of.
+/// Does with a request what `by` asked, under the game `content` is of.
 pub(crate) fn settle(
     settling: &mut Settling,
-    settings: &GameSettings,
+    content: &Content,
     by: &AccountId,
     ask: SocialRequestAsk,
 ) {
@@ -416,20 +460,20 @@ pub(crate) fn settle(
             let Some(asked) = settling.society.accounts().numbered(of).cloned() else {
                 return;
             };
-            send(settling, settings, kind, by, &asked, about);
+            send(settling, content, kind, by, &asked, about);
         }
         SocialRequestAsk::Accept(id) => {
             if waits_for(settling, id, |request| {
                 request.asked == *by && !request.denied
             }) {
-                accept(settling, settings, id);
+                accept(settling, content, id);
             }
         }
         SocialRequestAsk::Deny(id) => {
             if waits_for(settling, id, |request| {
                 request.asked == *by && !request.denied
             }) {
-                deny(settling, settings, id);
+                deny(settling, content, id);
             }
         }
         SocialRequestAsk::TakeBack(id) => {
@@ -440,15 +484,18 @@ pub(crate) fn settle(
     }
 }
 
-/// Ends every request whose wait is over, under the game `settings` are of.
-pub(crate) fn lapse(settling: &mut Settling, settings: &GameSettings) {
+/// Ends every request whose wait is over, under the game `content` is of.
+pub(crate) fn lapse(settling: &mut Settling, content: &Content) {
     while let Some(id) = settling.society.requests.ended(settling.now) {
         let Some(request) = end(settling, id) else {
             continue;
         };
-        let lapsed = words_of(settling, settings, request.kind).and_then(|says| says.lapsed);
+        let lapsed = settling
+            .society
+            .source(request.kind)
+            .and_then(|source| source.words.lapsed);
         if let Some(lapsed) = lapsed.filter(|_| !request.denied) {
-            let text = lapsed.replace("{name}", &settling.name(&request.asked));
+            let text = lapsed(messages::of(content), &settling.name(&request.asked));
             let told = Notification::feed(HistoryTopic::Notification, text).failed();
             settling.tell(&request.asker, told);
         }
@@ -485,11 +532,7 @@ pub(crate) fn end_unless(
 
 /// Denies every other request of its kind that the player `accepted` was asked of has
 /// waiting, as accepting one denies the rest.
-pub(crate) fn deny_others(
-    settling: &mut Settling,
-    settings: &GameSettings,
-    accepted: &SocialRequest,
-) {
+pub(crate) fn deny_others(settling: &mut Settling, content: &Content, accepted: &SocialRequest) {
     let others: Vec<SocialRequestId> = settling
         .society
         .requests
@@ -502,7 +545,7 @@ pub(crate) fn deny_others(
         .map(|request| request.id)
         .collect();
     for id in others {
-        deny(settling, settings, id);
+        deny(settling, content, id);
     }
 }
 
@@ -522,7 +565,7 @@ fn end_between(settling: &mut Settling, one: &AccountId, other: &AccountId) {
 
 fn send(
     settling: &mut Settling,
-    settings: &GameSettings,
+    content: &Content,
     kind: SocialRequestKind,
     asker: &AccountId,
     asked: &AccountId,
@@ -534,6 +577,8 @@ fn send(
     let Some(source) = settling.society.source(kind) else {
         return;
     };
+    let settings = content.built::<GameSettings>();
+    let messages = messages::of(content);
     let Some(lasts) = (source.lasts)(settings) else {
         return;
     };
@@ -546,7 +591,7 @@ fn send(
         .between(kind, asked, asker)
         .map(|request| request.id)
     {
-        accept(settling, settings, answered);
+        accept(settling, content, answered);
         return;
     }
     let gate = may_ask(
@@ -559,9 +604,9 @@ fn send(
     );
     let gate = gate
         .map_err(|refusal| {
-            RequestUnsent::Told(refusal.describe(&settings.words, &settling.name(asked)))
+            RequestUnsent::Told(refusal.line(&messages.requests, &settling.name(asked)))
         })
-        .and_then(|()| (source.may_send)(settling.society, settings, asker, asked));
+        .and_then(|()| (source.may_send)(settling.society, content, asker, asked));
     if let Err(unsent) = gate {
         if let RequestUnsent::Told(why) = unsent {
             settling.refuse(asker, why);
@@ -585,24 +630,22 @@ fn send(
     if source.reaches_offline {
         settling.unwritten.put(request);
     }
-    let sent = (source.words)(&settings.words)
-        .sent
-        .replace("{name}", &settling.name(asked));
+    let sent = (source.words.sent)(messages, &settling.name(asked));
     settling.tell(asker, Notification::feed(HistoryTopic::Notification, sent));
 }
 
-fn accept(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId) {
+fn accept(settling: &mut Settling, content: &Content, id: SocialRequestId) {
     let Some(request) = settling.society.requests.get(id).cloned() else {
         return;
     };
     let Some(source) = settling.society.source(request.kind) else {
         return;
     };
-    match (source.accepted)(settling, settings, &request) {
+    match (source.accepted)(settling, content, &request) {
         Ok(()) => {
             end(settling, id);
-            if let Some(accepted) = (source.words)(&settings.words).accepted {
-                let text = accepted.replace("{name}", &settling.name(&request.asked));
+            if let Some(accepted) = source.words.accepted {
+                let text = accepted(messages::of(content), &settling.name(&request.asked));
                 let told = Notification::feed(HistoryTopic::Notification, text);
                 settling.tell(&request.asker, told);
             }
@@ -616,7 +659,7 @@ fn accept(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId)
     }
 }
 
-fn deny(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId) {
+fn deny(settling: &mut Settling, content: &Content, id: SocialRequestId) {
     let Some(said) = settling
         .society
         .requests
@@ -625,7 +668,11 @@ fn deny(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId) {
     else {
         return;
     };
-    let Some(denied) = words_of(settling, settings, said).and_then(|says| says.denied) else {
+    let denied = settling
+        .society
+        .source(said)
+        .and_then(|source| source.words.denied);
+    let Some(denied) = denied else {
         if let Some(request) = settling.society.requests.deny(id) {
             settling.society.changed(&request.asked);
             let saved = settling.society.source(request.kind);
@@ -638,7 +685,7 @@ fn deny(settling: &mut Settling, settings: &GameSettings, id: SocialRequestId) {
     let Some(request) = end(settling, id) else {
         return;
     };
-    let text = denied.replace("{name}", &settling.name(&request.asked));
+    let text = denied(messages::of(content), &settling.name(&request.asked));
     let told = Notification::feed(HistoryTopic::Notification, text).failed();
     settling.tell(&request.asker, told);
 }
@@ -664,13 +711,4 @@ fn waits_for(
     is: impl FnOnce(&SocialRequest) -> bool,
 ) -> bool {
     settling.society.requests.get(id).is_some_and(is)
-}
-
-fn words_of<'a>(
-    settling: &Settling,
-    settings: &'a GameSettings,
-    kind: SocialRequestKind,
-) -> Option<SocialRequestWords<'a>> {
-    let source = settling.society.source(kind)?;
-    Some((source.words)(&settings.words))
 }

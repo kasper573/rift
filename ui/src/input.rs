@@ -277,47 +277,51 @@ pub fn search(ui: &mut Ui, text: &mut String, hint: &str, key: Option<&KeyCap>) 
 }
 
 /// The input box a field sits in, beside its `unit`: an [`InputField`]'s, or one framing a field
-/// of its own (a search, a line of styled text, a value shown where it can't be typed).
+/// of its own (a search, a line of styled text, a value shown where it can't be typed). A line of
+/// it stands as tall as every control, and focus turns its border, never drawing outside it.
 pub fn boxed(ui: &mut Ui, unit: Option<&str>, field: impl FnOnce(&mut Ui) -> Response) -> Response {
     let focused_id = ui.ctx().memory(|m| m.focused());
-    let mut inner = None;
-    let outer = frame().show(ui, |ui| {
+    let mut framed = frame().begin(ui);
+    let response = {
+        let ui = &mut framed.content_ui;
         ui.set_width(ui.available_width());
-        ui.horizontal(|ui| {
-            if let Some(unit) = unit {
+        ui.spacing_mut().interact_size.y = ROW_HEIGHT;
+        ui.horizontal(|ui| match unit {
+            Some(unit) => {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(theme::faint(unit).size(12.0));
-                    inner = Some(field(ui));
-                });
-            } else {
-                inner = Some(field(ui));
+                    field(ui)
+                })
+                .inner
             }
-        });
-    });
-    let response = inner.expect("the field was drawn");
+            None => field(ui),
+        })
+        .inner
+    };
     if focused_id == Some(response.id) || response.has_focus() {
-        controls::focus_ring(ui.painter(), outer.response.rect, controls::RADIUS);
+        framed.frame.stroke.color = controls::FOCUS;
     }
+    framed.end(ui);
     response
 }
 
 /// The input box's look, for what sits among fields without being typed in (a pick, a key being
-/// captured); its contents keep to one row of [`row_height`].
+/// captured); its contents keep to one row of [`ROW_HEIGHT`], so it stands as tall as a control.
 pub fn frame() -> egui::Frame {
     egui::Frame::new()
         .fill(theme::INPUT)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .stroke(egui::Stroke::new(BORDER_WIDTH, theme::BORDER))
         .corner_radius(controls::RADIUS)
-        .inner_margin(egui::Margin::symmetric(8, 3))
+        .inner_margin(egui::Margin::symmetric(8, 0))
 }
 
-pub fn row_height(ui: &Ui) -> f32 {
-    ui.spacing().interact_size.y
-}
+/// How tall a row of an input box is within its border.
+pub const ROW_HEIGHT: f32 = controls::CONTROL_HEIGHT - 2.0 * BORDER_WIDTH;
 
 /// `edit` as fields type in the input box, for a field [`boxed`] frames itself.
 pub fn unframed(edit: TextEdit<'_>) -> TextEdit<'_> {
     edit.frame(egui::Frame::NONE)
+        .margin(egui::Margin::symmetric(0, 2))
         .font(egui::TextStyle::Body)
         .desired_width(f32::INFINITY)
 }
@@ -362,3 +366,5 @@ fn nearest<N: Copy + PartialOrd>(number: N, range: &Option<RangeInclusive<N>>) -
 }
 
 const SLIDER_FIELD_WIDTH: f32 = 64.0;
+
+const BORDER_WIDTH: f32 = 1.0;

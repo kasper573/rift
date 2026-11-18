@@ -3,6 +3,7 @@ use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::time::WallClock;
 use engine::core::units::{MeterPos, Meters, Seconds};
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef, AreaId, transition};
 use engine::systems::area_instance::entrance::{
     EntranceAnswer, EntranceChoice, EntranceParty, EntranceView,
@@ -12,18 +13,19 @@ use engine::systems::area_instance::{
     self, AreaInstanceGiven, AreaInstanceShown, AreaInstanceWorld, CallReply, CallRequest,
     LeaveInstance, RosterPlace,
 };
-use engine::systems::inbox::{InboxSender, InboxView};
+use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{self, Inventory, ItemDef, ItemStack, UseItemRequest};
+use engine::systems::mail::{InboxSender, InboxView};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::party::PartyRequest;
 use engine::systems::player::snapshot::{CharacterStart, JoinAs, JoinOrigin, SavedCharacter};
 use engine::systems::player::{self, AreaDrawn, ClientId, Players, SpawnPoint, Xp};
-use engine::systems::script::{self, Place};
+use engine::systems::prompt;
 use engine::systems::social_request::RequestAnswer;
 use engine::systems::society::SocietyView;
-use engine::systems::{combat, request_sources, stat};
+use engine::systems::{combat, request_sources, stat, window};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -35,7 +37,7 @@ const BY_THE_DOOR: Pos<Meters> = Pos::new(9.0, 6.0);
 const DOOR: Pos<Meters> = Pos::new(6.0, 9.0);
 
 #[test]
-fn a_player_goes_in_alone_at_once_and_a_party_chooses_at_the_entrance() {
+fn a_player_starts_a_copy_at_an_entrance_panel_alone_or_with_a_party() {
     let mut host = Host::of(game(3), 2);
     for (client, name) in [
         (1, "Wren"),
@@ -48,9 +50,49 @@ fn a_player_goes_in_alone_at_once_and_a_party_chooses_at_the_entrance() {
     }
 
     uses(&mut host, 4, "vault_key");
+    assert_eq!(
+        (
+            host.entrance(4).map(|panel| panel.party),
+            host.run_of(4).is_none()
+        ),
+        (Some(EntranceParty::Alone), true),
+        "the panel opens for a player in no party too, and lets nobody in by itself"
+    );
+    host.carry(4, &[host.planks(2)]);
+    host.choose_with(4, EntranceAnswer::GoAlone, vec![host.planks(1)]);
+    assert_eq!(
+        (
+            host.run_of(4).is_none(),
+            host.entrance(4).is_some(),
+            host.count(4, "plank"),
+            host.errors(4).len()
+        ),
+        (true, true, 2, 1),
+        "the wrong items are refused with a reason, nothing is taken, and the panel stays open"
+    );
+    host.choose_with(4, EntranceAnswer::GoAlone, vec![host.planks(3)]);
+    assert_eq!(
+        (host.run_of(4).is_none(), host.count(4, "plank")),
+        (true, 2),
+        "so is an offer that holds more than the area takes"
+    );
+    host.carry(4, &[host.planks(1)]);
+    host.choose(4, EntranceAnswer::GoAlone);
+    assert_eq!(
+        (host.run_of(4).is_none(), host.count(4, "plank")),
+        (true, 1),
+        "and an offer the bag doesn't cover"
+    );
+    host.carry(4, &[host.planks(2)]);
+    host.choose(4, EntranceAnswer::GoAlone);
     let his = host
         .run_of(4)
-        .expect("a player in no party goes in at once, where the area may be done alone");
+        .expect("the right items let a player in alone where the area may be done alone");
+    assert_eq!(
+        (host.count(4, "plank"), host.entrance(4)),
+        (0, None),
+        "what it takes is taken as the instance opens"
+    );
     let village = host.server.village.id::<AreaDef>("village");
     assert_eq!(
         (his.return_to, host.entrance(4)),
@@ -113,11 +155,15 @@ fn a_player_goes_in_alone_at_once_and_a_party_chooses_at_the_entrance() {
         (false, EntranceParty::Alone),
         "a player in no party can't go alone where the area needs more players"
     );
-    host.choose(5, EntranceAnswer::GoAlone);
+    host.pay_and_choose(5, EntranceAnswer::GoAlone);
     assert_eq!(
-        (host.run_of(5), host.count(5, "pebble")),
-        (None, 1),
-        "nor does choosing it anyway let them in: the door takes its refusal"
+        (
+            host.run_of(5),
+            host.count(5, "pebble"),
+            host.count(5, "plank")
+        ),
+        (None, 1, 3),
+        "nor does choosing it anyway let them in: the door takes its refusal, and nothing"
     );
 
     party(&mut host, 1, &[(2, "Hale"), (3, "Marrow")]);
@@ -134,11 +180,17 @@ fn a_player_goes_in_alone_at_once_and_a_party_chooses_at_the_entrance() {
         ),
         "a leader is offered the party, counting who stands near"
     );
-    host.choose(1, EntranceAnswer::Cancel);
+    host.carry(1, &[host.planks(2)]);
+    host.leave(1);
     assert_eq!(
-        (host.entrance(1), host.run_of(1), host.count(1, "pebble")),
-        (None, None, 0),
-        "leaving the panel lets nobody in"
+        (
+            host.entrance(1),
+            host.run_of(1),
+            host.count(1, "plank"),
+            host.count(1, "pebble")
+        ),
+        (None, None, 2, 0),
+        "leaving the panel lets nobody in and takes nothing"
     );
     host.at_door(1);
     host.door(1);
@@ -154,7 +206,12 @@ fn a_player_goes_in_alone_at_once_and_a_party_chooses_at_the_entrance() {
     host.at_door(1);
     host.door(1);
     assert!(host.entrance(1).is_some(), "so the door may be used again");
-    host.choose(1, EntranceAnswer::Cancel);
+    host.leave(1);
+    assert_eq!(
+        (host.entrance(1), host.count(1, "pebble")),
+        (None, 2),
+        "and leaving it gives the door's script its refusal"
+    );
 
     uses(&mut host, 2, "vault_key");
     assert_eq!(
@@ -164,10 +221,10 @@ fn a_player_goes_in_alone_at_once_and_a_party_chooses_at_the_entrance() {
         }),
         "a member is told who takes the party in"
     );
-    host.choose(2, EntranceAnswer::Gather);
+    host.pay_and_choose(2, EntranceAnswer::Gather);
     assert_eq!(
-        (host.run_of(2), host.call(1)),
-        (None, None),
+        (host.run_of(2), host.call(1), host.count(2, "plank")),
+        (None, None, 2),
         "only the leader gathers the party"
     );
     uses(&mut host, 2, "vault_key");
@@ -186,13 +243,14 @@ fn a_player_goes_in_alone_at_once_and_a_party_chooses_at_the_entrance() {
         Some(EntranceParty::Inside),
         "a member whose party is inside is told so"
     );
-    host.choose(3, EntranceAnswer::GoAlone);
+    host.pay_and_choose(3, EntranceAnswer::GoAlone);
     assert_eq!(
-        (host.run_of(3), host.errors(3)),
-        (None, vec!["There is no room right now".to_owned()]),
-        "the server runs only as many as it is set to"
+        (host.run_of(3), host.errors(3), host.count(3, "plank")),
+        (None, vec!["There is no room right now".to_owned()], 2),
+        "the server runs only as many as it is set to, and a start refused takes nothing"
     );
     uses(&mut host, 5, "token");
+    host.choose(5, EntranceAnswer::GoAlone);
     assert_eq!(
         (host.count(5, "pebble"), host.errors(5)),
         (2, Vec::<String>::new()),
@@ -326,9 +384,16 @@ fn a_leader_gathers_who_joins_within_sight_and_picks_who_goes() {
     host.ask_call(1, CallRequest::Pick(host.server.number("Marrow")));
     let before = [3, 4, 5].map(|client| host.told(client).len());
     host.send(3, CallReply::Decline);
+    host.carry(2, &[host.planks(2)]);
+    assert_eq!(host.count(1, "plank"), 2, "gathering takes nothing");
     host.send(1, CallRequest::Enter);
     run(&mut host, 0.5);
     let inside = host.run_of(1).expect("the leader goes in on Enter");
+    assert_eq!(
+        (host.count(1, "plank"), host.count(2, "plank")),
+        (0, 2),
+        "only the leader pays, as the instance opens"
+    );
     assert_eq!(
         (
             host.run_of(2),
@@ -376,7 +441,7 @@ fn a_call_ends_with_its_leaders_lead_their_place_at_the_door_or_its_time() {
     party(&mut host, 1, &[(2, "Hale"), (3, "Marrow")]);
 
     uses(&mut host, 1, "archive_key");
-    host.choose(1, EntranceAnswer::Gather);
+    host.pay_and_choose(1, EntranceAnswer::Gather);
     host.ask_call(1, CallRequest::Enter);
     assert_eq!(
         (
@@ -386,7 +451,7 @@ fn a_call_ends_with_its_leaders_lead_their_place_at_the_door_or_its_time() {
         ),
         (
             None,
-            Some("archive needs at least 2 characters.".to_owned()),
+            Some("archive needs at least 2 players.".to_owned()),
             true
         ),
         "Enter waits until enough would go"
@@ -436,7 +501,7 @@ fn a_call_ends_with_its_leaders_lead_their_place_at_the_door_or_its_time() {
         let member = if leader == 2 { 3 } else { 2 };
         host.at_door(leader);
         host.door(leader);
-        host.choose(leader, EntranceAnswer::Gather);
+        host.pay_and_choose(leader, EntranceAnswer::Gather);
         assert!(host.call(member).is_some(), "a call opens at the door");
         let refused = host.count(leader, "pebble");
         end(&mut host, leader);
@@ -478,17 +543,17 @@ fn a_copy_belongs_to_the_roster_it_opened_with() {
         host.reply(client, CallReply::Join);
     }
     host.ask_call(1, CallRequest::Enter);
-    let copy = host.run_of(1).expect("the party went in");
+    let ours = host.run_of(1).expect("the party went in");
 
     uses(&mut host, 5, "vault_key");
     assert_eq!(
         host.entrance(5).map(|panel| panel.party),
         Some(EntranceParty::Inside),
-        "nobody joins a copy once it opened"
+        "nobody joins an instance once it opened"
     );
-    host.choose(5, EntranceAnswer::GoAlone);
-    let his = host.run_of(5).expect("a copy of his own");
-    assert_ne!(his.id, copy.id);
+    host.pay_and_choose(5, EntranceAnswer::GoAlone);
+    let his = host.run_of(5).expect("an instance of his own");
+    assert_ne!(his.id, ours.id);
     host.send(5, LeaveInstance);
     run(&mut host, 0.5);
 
@@ -514,10 +579,10 @@ fn a_copy_belongs_to_the_roster_it_opened_with() {
         "whoever leaves is listed as left, and the others are told"
     );
     uses(&mut host, 3, "vault_key");
-    host.choose(3, EntranceAnswer::GoAlone);
+    host.pay_and_choose(3, EntranceAnswer::GoAlone);
     assert_ne!(
         host.run_of(3).map(|run| run.id),
-        Some(copy.id),
+        Some(ours.id),
         "leaving is for good"
     );
     uses(&mut host, 3, "rope");
@@ -531,8 +596,8 @@ fn a_copy_belongs_to_the_roster_it_opened_with() {
             host.run_of(2),
             host.shown(1).map(|plate| roster(&plate)[1].1)
         ),
-        (Some(copy), Some(RosterPlace::Inside)),
-        "party changes don't reach inside a copy"
+        (Some(ours), Some(RosterPlace::Inside)),
+        "party changes don't reach inside an instance"
     );
 
     let stood = host.at(4);
@@ -560,8 +625,8 @@ fn a_copy_belongs_to_the_roster_it_opened_with() {
             host.at(4).distance(stood) < Meters(1.0),
             host.shown(1).map(|plate| roster(&plate)[3].1)
         ),
-        (Some(copy), true, Some(RosterPlace::Inside)),
-        "a member who comes back while the copy lives is back inside, where they stood"
+        (Some(ours), true, Some(RosterPlace::Inside)),
+        "a member who comes back while the instance lives is back inside, where they stood"
     );
     let isolde = host.sim(4).player(4);
     assert_eq!(
@@ -595,7 +660,7 @@ fn a_copy_belongs_to_the_roster_it_opened_with() {
         "clearing rewards whoever is inside, and not who left"
     );
     host.later(31.0);
-    assert_eq!(host.instances(), 0, "a cleared copy closes");
+    assert_eq!(host.instances(), 0, "a cleared instance closes");
     host.come_back(4, "Isolde", &saved);
     assert_eq!(
         (
@@ -737,16 +802,39 @@ fn a_copy_lives_while_its_roster_may_come_back_and_its_time_lasts() {
     host.sign_in(1, "Wren");
     host.sign_in(4, "Osric");
     uses(&mut host, 1, "vault_key");
+    host.pay_and_choose(1, EntranceAnswer::GoAlone);
     let first = host.run_of(1).expect("an instance");
     uses(&mut host, 1, "rope");
     assert_eq!(host.run_of(1), None, "a script leads out as the plate does");
     assert_eq!(
         host.instances(),
         0,
-        "a copy everyone on its roster left is gone at once"
+        "an instance everyone on its roster left is gone at once"
     );
     uses(&mut host, 1, "vault_key");
-    let second = host.run_of(1).expect("another copy");
+    let panel = host
+        .entrance(1)
+        .expect("the panel opens while the starter waits");
+    let now = host.server.village.world.resource::<WallClock>().now;
+    assert!(
+        panel
+            .ready_at
+            .is_some_and(|ready| ready > now && ready <= now.after(Seconds(60.0))),
+        "the panel shows when the starter may start another instance"
+    );
+    host.pay_and_choose(1, EntranceAnswer::GoAlone);
+    assert_eq!(
+        (host.run_of(1), host.count(1, "plank"), host.errors(1).len()),
+        (None, 2, 1),
+        "the starter is refused while they wait, and nothing is taken"
+    );
+    host.leave(1);
+    host.later(61.0);
+    uses(&mut host, 1, "vault_key");
+    host.choose(1, EntranceAnswer::GoAlone);
+    let second = host
+        .run_of(1)
+        .expect("another instance once the cooldown is out");
     assert_ne!(second.id, first.id);
 
     host.sim(1).disconnect(1);
@@ -762,6 +850,7 @@ fn a_copy_lives_while_its_roster_may_come_back_and_its_time_lasts() {
     assert_eq!(host.run_of(1), None);
 
     uses(&mut host, 4, "trial_key");
+    host.pay_and_choose(4, EntranceAnswer::GoAlone);
     assert!(host.run_of(4).is_some());
     host.later(601.0);
     run(&mut host, 0.5);
@@ -825,15 +914,12 @@ fn a_game_whose_instances_cannot_be_played_is_refused() {
         ["starts in an instance"]
     );
     let mut unsent = rules(game(2).edit_settings(|settings| {
-        settings
-            .as_object_mut()
-            .expect("settings")
-            .remove("messages");
+        settings.as_object_mut().expect("settings").remove("mail");
     }));
     unsent.dedup();
     assert_eq!(
         unsent,
-        ["pays items without messages"],
+        ["delivers items without mail"],
         "what a bag has no room for needs somewhere to go"
     );
     assert_eq!(
@@ -844,10 +930,10 @@ fn a_game_whose_instances_cannot_be_played_is_refused() {
     );
     assert_eq!(
         rules(game(2).edit("area", "vault", |vault| {
-            vault["instance"]["characters"] = json!({ "least": 3, "most": 2 })
+            vault["instance"]["players"] = json!({ "least": 3, "most": 2 })
         })),
         ["out of range"],
-        "a copy can't need more players than it takes"
+        "an instance can't need more players than it takes"
     );
 }
 
@@ -880,6 +966,14 @@ impl Host {
             names: std::collections::BTreeMap::new(),
             told_before: Vec::new(),
         }
+    }
+
+    fn planks(&self, count: u32) -> ItemStack {
+        let item = self
+            .content
+            .by_path::<ItemDef>(&path("item", "plank"))
+            .expect("an item of the test game");
+        ItemStack::new(item, count)
     }
 
     fn sims(&mut self) -> Vec<&mut Sim> {
@@ -989,7 +1083,7 @@ impl Host {
     }
 
     /// The character `saved` of the account called `name` signs in again as `client`, where the
-    /// server lets it in: back inside a copy it was away from while that lives, else where it
+    /// server lets it in: back inside an instance it was away from while that lives, else where it
     /// was saved.
     fn come_back(&mut self, client: u32, name: &str, saved: &SavedCharacter) {
         self.names.insert(client, name.to_owned());
@@ -1095,10 +1189,13 @@ impl Host {
         run(self, 0.2);
     }
 
-    /// The player of `client` uses the vault's door.
+    /// The player of `client` uses the vault's door and chooses to go down, as its conversation
+    /// asks before the entrance panel opens.
     fn door(&mut self, client: u32) {
         let target = self.sim(client).npc("door");
         self.send(client, InteractRequest { target });
+        run(self, 0.5);
+        self.sim(client).pick(client, "Go down.");
         run(self, 0.5);
     }
 
@@ -1109,10 +1206,55 @@ impl Host {
         sim.world.get::<EntranceView>(character).cloned()
     }
 
-    /// The player of `client` chooses `answer` at their entrance panel.
-    fn choose(&mut self, client: u32, answer: EntranceAnswer) {
+    /// The player of `client` inserts `offer` at their entrance panel and chooses `answer`.
+    fn choose_with(&mut self, client: u32, answer: EntranceAnswer, offer: Vec<ItemStack>) {
         let step = self.entrance(client).expect("an entrance panel").step;
-        self.send(client, EntranceChoice { step, answer });
+        self.send(
+            client,
+            EntranceChoice {
+                step,
+                answer,
+                offer,
+            },
+        );
+        run(self, 0.5);
+    }
+
+    /// The player of `client` inserts what their entrance panel's area takes and chooses `answer`.
+    fn choose(&mut self, client: u32, answer: EntranceAnswer) {
+        let offer = self.fee(client);
+        self.choose_with(client, answer, offer);
+    }
+
+    /// The player of `client` is handed what their entrance panel's area takes, and chooses
+    /// `answer` with it.
+    fn pay_and_choose(&mut self, client: u32, answer: EntranceAnswer) {
+        let offer = self.fee(client);
+        let sim = self.sim(client);
+        let character = sim.player(client);
+        sim.give(
+            character,
+            "plank",
+            offer.iter().map(|stack| stack.count).sum(),
+        );
+        self.choose_with(client, answer, offer);
+    }
+
+    /// What the area of the entrance panel of `client` takes.
+    fn fee(&mut self, client: u32) -> Vec<ItemStack> {
+        let area = self.entrance(client).expect("an entrance panel").area;
+        area.get(&self.content)
+            .instance
+            .as_ref()
+            .expect("an instanced area")
+            .entry
+            .needs
+            .clone()
+    }
+
+    /// The player of `client` leaves the conversation their entrance panel is in.
+    fn leave(&mut self, client: u32) {
+        self.sim(client).leave(client);
         run(self, 0.5);
     }
 
@@ -1232,25 +1374,36 @@ fn plays(sim: &mut Sim) {
         .accept::<LeaveInstance>()
         .accept::<InteractRequest>()
         .accept::<EntranceChoice>()
+        .accept::<ConversationRequest>()
         .accept::<CallRequest>()
         .accept::<CallReply>()
         .add((
             player::arrival_holds,
             item::use_item,
             interact::interact_request,
+            dialogue::requests,
             area_instance::requests,
             area_instance::entrance::requests,
             area_instance::roster::requests,
         ))
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
-        .add((interact::interactions, area_instance::entrance::hold).chain())
+        .add(
+            (
+                interact::interactions,
+                dialogue::hold,
+                dialogue::refresh,
+                window::hold::<prompt::PromptSession>,
+                window::hold::<area_instance::entrance::EntranceSession>,
+            )
+                .chain(),
+        )
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, area_instance::count_defeats).chain());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
 }
 
 /// What the feed told the player of `client` in this world, refusals aside.
@@ -1311,7 +1464,7 @@ fn party(host: &mut Host, leader: u32, members: &[(u32, &str)]) {
 fn gather(host: &mut Host, leader: u32) {
     host.at_door(leader);
     host.door(leader);
-    host.choose(leader, EntranceAnswer::Gather);
+    host.pay_and_choose(leader, EntranceAnswer::Gather);
 }
 
 /// The player of `client` is handed `item`, uses it, and no longer has it once the world has
@@ -1423,6 +1576,14 @@ fn game(most: u32) -> Game {
             { "item": path("item", "warden_key") },
         ],
     });
+    let entry = |planks: u32| {
+        json!({
+            "needs": [{ "item": path("item", "plank"), "count": planks }],
+            "empty": "Nothing is inserted.",
+            "wrong": "{items} is not what it takes.",
+            "right": "That is what it takes.",
+        })
+    };
     let instanced = |game: Game, area: &str, rules: Value| {
         game.area(area, &Map::open(12, 12), json!([]))
             .edit("area", area, |row| row["instance"] = rules)
@@ -1433,6 +1594,7 @@ fn game(most: u32) -> Game {
         .area("forest", &Map::open(12, 12), json!([]))
         .hero("village", 4.0, 4.0)
         .sfx("ui_refuse")
+        .sfx("ui_close")
         .interface_icon("map")
         .npc("warden", 25.0, json!([]))
         .npc(
@@ -1458,7 +1620,7 @@ fn game(most: u32) -> Game {
                 "absent_for": 3600.0,
                 "experience": { "split": "even", "range": 40.0, "bonus": 0.0 },
             });
-            settings["messages"] = json!({
+            settings["mail"] = json!({
                 "inbox": 2, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
             });
         });
@@ -1466,7 +1628,9 @@ fn game(most: u32) -> Game {
         game,
         "vault",
         json!({
-            "characters": { "least": 1, "most": most },
+            "players": { "least": 1, "most": most },
+            "entry": entry(2),
+            "cooldown": 60.0,
             "goals": [
                 { "type": "defeat", "npc": path("npc", "warden"), "count": 2 },
                 { "type": "task", "task": "seal", "label": "Seal the gate" },
@@ -1479,7 +1643,9 @@ fn game(most: u32) -> Game {
         game,
         "archive",
         json!({
-            "characters": { "least": 2, "most": 3 },
+            "players": { "least": 2, "most": 3 },
+            "entry": entry(3),
+            "cooldown": 60.0,
             "goals": [{ "type": "task", "task": "read", "label": "Read the ledger" }],
             "empties_after": 300.0,
             "closes_after": 30.0,
@@ -1489,7 +1655,9 @@ fn game(most: u32) -> Game {
         game,
         "trial",
         json!({
-            "characters": { "least": 1, "most": 1 },
+            "players": { "least": 1, "most": 1 },
+            "entry": entry(1),
+            "cooldown": 120.0,
             "goals": [{ "type": "task", "task": "endure", "label": "Endure" }],
             "empties_after": 300.0,
             "closes_after": 30.0,
@@ -1512,7 +1680,12 @@ fn game(most: u32) -> Game {
         "vault_gate",
         "npc",
         json!({
-            "interacted": { "type": "on", "event": "interacted", "verb": "use", "reach": 2.0, "next": "enter" },
+            "interacted": { "type": "on", "event": "interacted", "verb": "use", "reach": 2.0, "next": "seam" },
+            "seam": {
+                "type": "dialogue",
+                "lines": [{ "by": { "type": "narrator" }, "text": ["Cold air breathes through the seam."] }],
+                "choices": [{ "label": ["Go down."], "to": "enter" }],
+            },
             "enter": at_gate,
             "sorry": pebble,
         }),

@@ -17,16 +17,16 @@ use engine::core::content::serial::json_of;
 use engine::core::content::{
     Content, ContentFile, LoadReport, fields_file, parent_of, with_content,
 };
+use engine::core::script::Expr;
+use engine::core::script::RunnerKind;
 use engine::core::script::{Assignment, Target, VariableType};
 use engine::core::stage::card::StagedCard;
 use engine::systems::area::AreaDef;
-use engine::systems::script::{Condition, RiftScripting, RunnerKind};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use ui::egui::{LayerId, Ui};
-use ui::glyph::{self, Mark};
 
 use crate::body_names::{self, NameChoice, NameKind};
 use crate::browser;
@@ -406,7 +406,7 @@ fn hole_chip(ui: &mut Ui, cx: &mut FormCx, path: &str, name: &str) {
                     })
                     .unwrap_or_default();
                 for other in fitting {
-                    if ui.button(format!("Use variable {other}")).clicked() {
+                    if menu::entry(ui, format!("Use variable {other}")).clicked() {
                         request(
                             cx,
                             HoleRequest::Use {
@@ -417,8 +417,7 @@ fn hole_chip(ui: &mut Ui, cx: &mut FormCx, path: &str, name: &str) {
                         ui.close();
                     }
                 }
-                if ui
-                    .button("Use a fixed value")
+                if menu::entry(ui, "Use a fixed value")
                     .on_hover_text("The same for every placement")
                     .clicked()
                 {
@@ -448,8 +447,7 @@ fn hole_menu(ui: &mut Ui, cx: &mut FormCx, path: &str, kind: VariableType) {
                     .monospace()
                     .size(11.5),
             );
-            if ui
-                .button("Make variable")
+            if menu::entry(ui, "Make variable")
                 .on_hover_text(
                     "A new one of this type, without a default; every placement keeps its value",
                 )
@@ -478,11 +476,14 @@ fn hole_menu(ui: &mut Ui, cx: &mut FormCx, path: &str, kind: VariableType) {
                 .unwrap_or_default();
             if fitting.is_empty() {
                 ui.add_enabled_ui(false, |ui| {
-                    let _ = ui.button(format!("Use variable · no {} variable yet", kind.name()));
+                    let _ = menu::entry(
+                        ui,
+                        format!("Use variable · no {} variable yet", kind.name()),
+                    );
                 });
             }
             for name in fitting {
-                if ui.button(format!("Use variable {name}")).clicked() {
+                if menu::entry(ui, format!("Use variable {name}")).clicked() {
                     request(
                         cx,
                         HoleRequest::Use {
@@ -734,7 +735,7 @@ pub(crate) fn object_without(
                 }
                 if optional {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                        if controls::remove(ui, "Remove")
                             .on_hover_text(format!("Unset {name}"))
                             .clicked()
                         {
@@ -839,7 +840,7 @@ fn params_map(ui: &mut Ui, cx: &mut FormCx, at: ParamsMapField, parent: &mut Val
                     ui.set_min_width(ui.available_width() - 24.0);
                     changed |= self::value(ui, cx, value_schema, entry, &entry_path);
                 });
-                if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                if controls::remove(ui, "Remove")
                     .on_hover_text("Leave it to the vfx")
                     .clicked()
                 {
@@ -872,7 +873,7 @@ fn params_map(ui: &mut Ui, cx: &mut FormCx, at: ParamsMapField, parent: &mut Val
         .collect();
     for key in stale {
         ui.horizontal(|ui| {
-            if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+            if controls::remove(ui, "Remove")
                 .on_hover_text("Drop it")
                 .clicked()
             {
@@ -1296,8 +1297,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
                                 ui.label(theme::faint("kept").size(12.0))
                                     .on_hover_text(KEPT_TIP)
                             } else {
-                                glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
-                                    .on_hover_text("Remove")
+                                controls::remove(ui, "Remove").on_hover_text("Remove")
                             };
                             if response.clicked() && !kept {
                                 remove = Some(index);
@@ -1426,8 +1426,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
         error_line(ui, cx, path);
         let unlisted = unlisted_item(cx, item_schema, list, path);
         let addable = unlisted.as_ref().is_none_or(Option::is_some);
-        if ui
-            .add_enabled(addable, egui::Button::new(format!("+ {singular}")))
+        if controls::button_if(ui, addable, format!("+ {singular}"))
             .on_disabled_hover_text(format!("every {singular} there is is listed"))
             .clicked()
         {
@@ -1649,7 +1648,7 @@ fn map(
             if response.changed() {
                 draft::set_draft(ui, id, &draft);
             }
-            let add = ui.small_button("+ add").clicked()
+            let add = controls::button(ui, "+ add").clicked()
                 || (response.lost_focus() && ui.input(|i| EditorKey::Confirm.pressed(i)));
             if add && !draft.is_empty() && !entries.contains_key(&draft) {
                 entries.insert(draft, schema::template(cx.root, values, cx.nearby()));
@@ -1746,7 +1745,7 @@ pub(crate) fn inline_fields_of<T: Serialize + DeserializeOwned>(
     schema: &Value,
     typed: &mut T,
     path: &str,
-    condition: &mut dyn FnMut(&mut Ui, &mut FormCx, &mut Condition, &str) -> FormChange,
+    condition: &mut dyn FnMut(&mut Ui, &mut FormCx, &mut Expr, &str) -> FormChange,
 ) -> FormChange {
     let reader = cx.project.reader();
     let Ok(mut value) = reader.to_json(typed) else {
@@ -2011,7 +2010,7 @@ fn inline_width(ui: &Ui, field: &Value) -> f32 {
 
 fn boolean(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
     let mut on = value.as_bool().unwrap_or(false);
-    let response = ui.checkbox(&mut on, "");
+    let response = controls::tick(ui, &mut on);
     if std::mem::take(&mut cx.autofocus) {
         response.request_focus();
     }
@@ -2286,12 +2285,7 @@ fn key_error_path(item_path: &str) -> String {
 
 /// An assignment of a set node: which value the script keeps it writes, picked among those the
 /// script declares, and what it writes there.
-fn assignment(
-    ui: &mut Ui,
-    cx: &mut FormCx,
-    assignment: &mut Assignment<RiftScripting>,
-    path: &str,
-) -> FormChange {
+fn assignment(ui: &mut Ui, cx: &mut FormCx, assignment: &mut Assignment, path: &str) -> FormChange {
     let kept = cx.kept.clone().unwrap_or_default();
     let declared = kept
         .locals

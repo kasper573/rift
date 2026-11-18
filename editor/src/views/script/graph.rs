@@ -4,9 +4,11 @@ use ui::egui_snarl;
 use ui::theme;
 use ui::words;
 
-use engine::core::script::{Exit, NodeKind};
-use engine::systems::script::{Node, ScriptLine, Speaker};
-use engine::systems::text::{Span, plain};
+use engine::core::script::Node;
+use engine::core::script::{DialogueLine, Exit, NodeKind};
+use engine::systems::dialogue::ScriptLine;
+use engine::systems::dialogue::Speaker;
+use engine::systems::dialogue::span::ScriptSpan;
 use serde::{Deserialize, Serialize};
 use ui::egui::emath::TSTransform;
 use ui::egui::text::{LayoutJob, TextFormat};
@@ -237,7 +239,7 @@ pub enum ScriptGraphAction {
     EditLine {
         name: String,
         index: usize,
-        text: Vec<Span>,
+        text: Vec<ScriptSpan>,
     },
 }
 
@@ -297,7 +299,7 @@ impl ScriptGraphViewer<'_> {
         }
     }
 
-    fn dialogue_body(&mut self, ui: &mut Ui, name: &str, lines: &[ScriptLine]) {
+    fn dialogue_body(&mut self, ui: &mut Ui, name: &str, lines: &[DialogueLine]) {
         let editing = self.selected.len() == 1 && self.selected.contains(name);
         let shown = if editing {
             lines.len()
@@ -305,6 +307,7 @@ impl ScriptGraphViewer<'_> {
             lines.len().min(3)
         };
         for (index, line) in lines.iter().take(shown).enumerate() {
+            let line = nodes::line_of(line);
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = big(6.0);
                 self.speaker_mark(ui, line);
@@ -337,7 +340,7 @@ impl ScriptGraphViewer<'_> {
                         } else {
                             let text = words::clip(&spans::plain(&line.text), 64);
                             let job = spans::layout_job(
-                                &[plain(text)],
+                                &[ScriptSpan::plain(text)],
                                 FontId::proportional(big(12.5)),
                                 theme::TEXT,
                                 width,

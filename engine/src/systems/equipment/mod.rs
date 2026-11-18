@@ -1,5 +1,7 @@
+pub mod query;
 pub mod widget;
 
+use crate::core::script::Vocabulary;
 use std::collections::BTreeMap;
 
 use bevy_app::App;
@@ -7,17 +9,18 @@ use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::skeleton::EquipmentSlot;
 use crate::systems::actor::stance::HandIndex;
 use crate::systems::actor::{ActorModel, appearance};
 use crate::systems::item::{self, Inventory, ItemId, ItemKind, ItemStack, Wear};
 use crate::systems::mention::Mention;
+use crate::systems::messages::{self, messages};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
+use crate::systems::requirement;
 use crate::systems::resource::Working;
-use crate::systems::script::condition;
-use crate::systems::text::LineText;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -25,7 +28,7 @@ pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
     app.replicate::<Equipment>()
         .add_client_message::<UnequipRequest>()
-        .add_client_message::<HoldRequest>();
+        .add_client_message::<EquipRequest>();
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -38,12 +41,12 @@ pub struct UnequipRequest {
     pub slot: EquipmentPlace,
 }
 
-/// Holds the item in the bag's slot `slot` in `hand`, whichever hand its stance's clips were made
-/// for.
+/// Puts on the item in the bag's slot `slot`: a held one in `hand` when one is named, whichever
+/// hand its stance's clips were made for. Never uses the item: one that isn't worn is refused.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct HoldRequest {
+pub struct EquipRequest {
     pub slot: u32,
-    pub hand: HandIndex,
+    pub hand: Option<HandIndex>,
 }
 
 /// A place a character wears an item: one of its body's hands, in the skeleton's order, one of the
@@ -112,26 +115,28 @@ pub fn equip(
     hand: Option<HandIndex>,
 ) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
+    let messages = messages::of(&content);
     let item = world
         .get::<Inventory>(player)
         .and_then(|inventory| inventory.slots.get(inv_slot).map(|slot| slot.item))
-        .ok_or_else(|| LineText::plain("Nothing there"))?;
+        .ok_or_else(|| LineText::from(messages.item.nothing_there()))?;
     let ItemKind::Equipment { wear, requires, .. } = &item.get(&content).kind else {
-        return Err(Mention::Item(item).line(&content).then(" can't be worn"));
+        return Err(messages
+            .equipment
+            .cannot_wear(Mention::Item(item).line(&content)));
     };
-    if let Some(unmet) = condition::first_unmet(world, player, requires) {
-        return Err(Mention::Item(item)
-            .line(&content)
-            .then(" needs ")
-            .then(LineText::from(&unmet)));
+    if let Some(unmet) = requirement::first_unmet(world, player, requires) {
+        return Err(messages
+            .equipment
+            .needs(Mention::Item(item).line(&content), unmet));
     }
     let worn = world.get::<Equipment>(player).cloned().unwrap_or_default();
     let (slots, returned): (BTreeMap<EquipmentPlace, ItemId>, Vec<ItemId>) = match wear {
         Wear::Worn { slot, .. } => {
             if !body_slots(world, player).contains(slot) {
-                return Err(Mention::Item(item)
-                    .line(&content)
-                    .then(" can't be worn by this body"));
+                return Err(messages
+                    .equipment
+                    .body_cannot_wear(Mention::Item(item).line(&content)));
             }
             let mut slots = worn.slots.clone();
             let returned = slots.insert(EquipmentPlace::Slot(slot.clone()), item);
@@ -164,11 +169,7 @@ pub fn equip(
         .into_iter()
         .map(|item| ItemStack::new(item, 1))
         .collect();
-    world
-        .get_mut::<Inventory>(player)
-        .ok_or_else(|| LineText::plain("Has no bag"))?
-        .exchange(&content, &[ItemStack::new(item, 1)], &returned)
-        .map_err(|refusal| refusal.line(&content))?;
+    item::effects::exchange(world, player, &[ItemStack::new(item, 1)], &returned)?;
     world.entity_mut(player).insert(Equipment { slots });
     Ok(())
 }
@@ -290,14 +291,10 @@ pub fn unequip_slot(
     slot: EquipmentPlace,
 ) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
-    let item =
-        in_slot(world, player, &slot).ok_or_else(|| LineText::plain("Nothing worn there"))?;
-    let mut inventory = world
-        .get_mut::<Inventory>(player)
-        .ok_or_else(|| LineText::plain("Has no bag"))?;
-    inventory
-        .exchange(&content, &[], &[ItemStack::new(item, 1)])
-        .map_err(|refusal| refusal.line(&content))?;
+    let messages = messages::of(&content);
+    let item = in_slot(world, player, &slot)
+        .ok_or_else(|| LineText::from(messages.equipment.nothing_worn()))?;
+    item::effects::exchange(world, player, &[], &[ItemStack::new(item, 1)])?;
     if let Some(equipment) = world.get::<Equipment>(player) {
         let mut slots = equipment.slots.clone();
         slots.retain(|worn, there| {
@@ -320,9 +317,10 @@ pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(
                 .map(|(slot, _)| slot.clone())
         })
         .ok_or_else(|| {
-            Mention::Item(item)
-                .line(world.resource::<Content>())
-                .then(" is not worn")
+            let content = world.resource::<Content>();
+            messages::of(content)
+                .equipment
+                .not_worn(Mention::Item(item).line(content))
         })?;
     unequip_slot(world, player, slot)
 }
@@ -381,9 +379,9 @@ pub fn hands(equipment: &Equipment) -> BTreeMap<HandIndex, ItemId> {
         .collect()
 }
 
-pub fn hold(world: &mut World) {
-    player_requests::<HoldRequest>(world, RequestNeeds::Command, |world, player, request| {
-        equip(world, player, request.slot as usize, Some(request.hand))
+pub fn equip_requested(world: &mut World) {
+    player_requests::<EquipRequest>(world, RequestNeeds::Command, |world, player, request| {
+        equip(world, player, request.slot as usize, request.hand)
     });
 }
 
@@ -391,4 +389,55 @@ pub fn unequip(world: &mut World) {
     player_requests::<UnequipRequest>(world, RequestNeeds::Command, |world, player, request| {
         unequip_slot(world, player, request.slot)
     });
+}
+
+messages! {
+    /// What the game says of what the player wears and holds.
+    pub struct EquipmentMessages {
+        /// What a player is told of the item `{item}` that can't be worn.
+        cannot_wear[item: Line],
+        /// What a player is told of the item `{item}` they can't wear before they meet `{requirement}`.
+        needs[item: Line, requirement: Line],
+        /// What a player is told of the item `{item}` whose slot their body lacks.
+        body_cannot_wear[item: Line],
+        /// What a player is told taking off a slot where nothing is worn.
+        nothing_worn,
+        /// What a player is told taking off the item `{item}` they don't wear.
+        not_worn[item: Line],
+        /// The name of the one place on the pane for a hand, when the body has none of its own.
+        hand_name,
+        /// The name of the tool slot on the pane.
+        tool_name,
+        /// Where an item is worn, as a pane says it beside the place's name: the kind of `{place}`,
+        /// one of `slot`, `tool`, `both_hands`, `any_hand` or `hand`.
+        where_held(place: Text),
+        /// How a screen reader names a place of the pane holding `{item}`, the place `{place}`.
+        worn_as(item: Text, place: Text),
+        /// How a screen reader names the empty place `{place}` of the pane.
+        empty_named(place: Text),
+        /// What an empty worn slot says of itself, beside its name.
+        empty_slot_tip,
+        /// What the empty tool slot says of itself.
+        empty_tool_tip,
+        /// What an empty hand says of itself and the stances `{stances}` that land in it.
+        empty_hand_landing_tip(stances: Text),
+        /// What an empty hand says of itself when no stance is made for it.
+        empty_hand_tip,
+        /// What the input that takes a worn item off does, as a hint names it.
+        take_off,
+        /// What the input that carries a worn item away does, as a hint names it.
+        carry_off,
+        /// What a hand says of a held item whose stance, `{stance}`, the body cannot show.
+        unseen_stance(stance: Text),
+        /// Where an item is worn, as `where_held` says it, and the stance `{stance}` it brings.
+        with_stance(place: Text, stance: Text),
+        /// Where an item is worn, as `where_held` says it, when the body cannot show it.
+        unseen(place: Text),
+        /// What a hand says when its stance has no set on the body.
+        no_set,
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
 }

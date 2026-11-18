@@ -8,13 +8,18 @@ use crate::core::units::Radians;
 use crate::systems::hud::menu::{self, MenuTabName};
 use crate::systems::hud::{self, HudWidget, day_clock};
 use crate::systems::settings::UserSettings;
+use crate::systems::{area_instance, messages};
 
 pub const MINIMAP: &str = "minimap";
 
-/// The room the minimap rests in: its disc, what goes round it, and the area's name under it.
+/// The room the minimap rests in: its disc, what goes round it, and the area's name under it,
+/// with what an instanced area adds under that.
 pub fn resting_size(world: &World) -> Vec2 {
     let round = DISC + 2.0 * overhang(world);
-    Vec2::new(round, round + NAME_ROOM)
+    Vec2::new(
+        round,
+        round + NAME_ROOM + area_instance::plate::height(world),
+    )
 }
 
 pub struct MinimapWidget;
@@ -57,7 +62,7 @@ impl HudWidget for MinimapWidget {
         hud::grab_spot(world, MINIMAP, &disc, piece);
         let reach = view.reach.0;
         disc.widget_info(|| {
-            let said = format!("Minimap of {area_name}, reaching {reach} m");
+            let said = messages::of(&content).map.minimap_of(&area_name, reach);
             egui::WidgetInfo::labeled(egui::WidgetType::Button, true, said)
         });
         super::chart(ui, world, &view, None);
@@ -70,10 +75,17 @@ impl HudWidget for MinimapWidget {
         if let Some(step) = stepped {
             world.resource_mut::<UserSettings>().set_minimap_reach(step);
         }
-        super::lettered(
+        let title = super::lettered(
             ui,
             &area_name,
             center + Vec2::new(0.0, DISC / 2.0 + overhang),
+        );
+        area_instance::plate::under_title(
+            ui,
+            world,
+            title.bottom(),
+            piece.right(),
+            title.center().x,
         );
         if disc.clicked() {
             menu::toggle(world, MenuTabName::Map);

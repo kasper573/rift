@@ -19,11 +19,11 @@ pub const INDENT: f32 = 16.0;
 pub const ROW_GAP: f32 = 2.0;
 pub const ENTRY_GAP: f32 = 6.0;
 
-/// What a tracker is headed with: its title, how many it lists, and what those are called.
+/// What a tracker is headed with, as its words say it for the state it is in: the title as it is
+/// lettered, and what a screen reader says of the heading's button.
 pub struct TrackerHeading<'a> {
     pub title: &'a str,
-    pub listed: usize,
-    pub lists: &'a str,
+    pub said: &'a str,
 }
 
 /// A tracker as it was drawn: the room it took, and whether its heading was clicked to fold it
@@ -154,21 +154,12 @@ impl TrackerLine<'_> {
 
 fn head(ui: &mut Ui, heading: &TrackerHeading, folded: bool) -> (Rect, bool) {
     let (rect, pressed) = ui.allocate_exact_size(Vec2::new(WIDTH, HEADING), Sense::click());
-    let (title, lists) = (heading.title, heading.lists);
-    let title = if folded {
-        format!("{title} ({})", heading.listed)
-    } else {
-        title.to_owned()
-    };
-    let said = if folded {
-        format!("{title} · show {lists}")
-    } else {
-        format!("{title} · hide {lists}")
-    };
-    pressed.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, said.clone()));
-    let galley = ui
-        .painter()
-        .layout_no_wrap(title, TextRole::Section.font_id(), ink::GOLD2);
+    pressed.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, heading.said));
+    let galley = ui.painter().layout_no_wrap(
+        heading.title.to_owned(),
+        TextRole::Section.font_id(),
+        ink::GOLD2,
+    );
     let at = Align2::LEFT_CENTER.anchor_size(rect.left_center(), galley.size());
     dusk::lettering(
         ui.painter(),

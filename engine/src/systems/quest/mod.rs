@@ -1,8 +1,19 @@
 pub mod card;
 pub mod effects;
 pub mod log;
+pub mod query;
 pub mod tracker;
 
+use crate::core::script::EventDef;
+use crate::core::script::ReachDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::Vocabulary;
+use crate::systems::area::OBJECT_RUNNER;
+use crate::systems::area::spawnable::SPAWNABLE_RUNNER;
+use crate::systems::class;
+use crate::systems::item::ITEM_RUNNER;
+use crate::systems::npc::NPC_RUNNER;
+use crate::systems::requirement;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -26,30 +37,235 @@ use crate::core::content::{
     NamedContent, Nearby, RowCheck,
 };
 use crate::core::math::Rng;
+use crate::core::script::ChoiceReveal;
+use crate::core::script::condition::{self, CompiledCondition};
+use crate::core::script::{
+    EventKind, Expr, Instances, Owner, OwnerRow, RunnerKind, ScriptModule, ScriptedRow, Scripts,
+};
+use crate::core::text::LineText;
 use crate::core::time::{GameDay, UnixMillis, WallClock};
 use crate::systems::GameSettings;
 use crate::systems::area::spawnable::SpawnableDef;
 use crate::systems::area::{self, AreaDef, AreaId, AreaTag};
 use crate::systems::attention::{AttentionId, AttentionMark};
-use crate::systems::class;
-use crate::systems::dialogue::{self, ChoiceReveal, Revealable};
+use crate::systems::combat::credit::KillCredited;
+use crate::systems::dialogue::span::ScriptSpan;
+use crate::systems::dialogue::{self, Revealable};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::{Inventory, ItemId, ItemModuleKind, ItemStack, scatter_at};
+use crate::systems::item::deliver::DeliveryReason;
+use crate::systems::item::{
+    self, DropRow, Inventory, ItemId, ItemModuleKind, ItemStack, scatter_at,
+};
 use crate::systems::mention::Mention;
+use crate::systems::messages::{self, messages};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
-use crate::systems::payout::{self, PayoutReason};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{PlayedBy, player_requests};
-use crate::systems::rewards::KillCredited;
-use crate::systems::script::condition::{self, CompiledCondition};
-use crate::systems::script::{
-    self, Condition, EffectReach, EventKind, Owner, OwnerRow, RiftInstances, RiftScripts,
-    RunnerKind, ScriptModule, ScriptedRow,
-};
-use crate::systems::text::{LineText, Span};
+use crate::systems::reward::{self, Reward};
 use crate::systems::visibility::Presence;
+
+messages! {
+    /// What the game says of quests.
+    pub struct QuestMessages {
+        accept,
+        /// The player's choice turning a quest offer down.
+        decline,
+        /// The player's choice leaving a quest unhanded for now.
+        not_yet,
+        /// What a player is told offered a quest with every slot of their quest log taken.
+        log_full,
+        /// The title of the message the game sends a player whose bag had no room for the rewards of
+        /// the quest `{quest}`.
+        rewards_title(quest: Text),
+        /// The text of the message the game sends a player whose bag had no room for the rewards of
+        /// the quest `{quest}`.
+        rewards_text,
+        /// How a delivery objective reads, bringing `{item}` to `{taker}`.
+        bring[item: Line, taker: Line],
+        /// Who a delivery objective names as `{taker}` when no one takes the delivery.
+        its_taker,
+        /// How an objective to defeat `{npc}` reads.
+        defeat(npc: Text),
+        /// What a quest card calls one kind of quest, `{kind}` being `collect`, `defeat`, `explore`,
+        /// `deliver`, `choice`, `timed` or `daily`, and `{position}` `first` in the list of kinds
+        /// the card names or `later` after it.
+        kind(kind: Text, position: Text),
+        /// The line under a quest's name, of its minimum `{level}` and who it comes `{giver}`.
+        meta(giver: Text, level: Number),
+        /// Who a quest comes from, as `{giver}`, when no one offers it.
+        no_giver,
+        /// What to do to hand in a quest the one who gave it takes back, to `{taker}`.
+        return_to[taker: Line],
+        /// What to do to hand in a quest another takes, to `{taker}`.
+        go_to[taker: Line],
+        /// What to do to hand in a quest the one who gave it takes back, when no one is named.
+        return_and_hand_in,
+        /// What to do to hand in a quest another takes, when no one is named.
+        go_and_hand_in,
+        /// What to do to take on a failed quest again when an item offers it, `{giver}`.
+        use_to_retry[giver: Line],
+        /// What to do to take on a failed quest again when someone offers it, `{giver}`.
+        talk_to_retry[giver: Line],
+        /// What to do to take on a failed quest again when no one is named.
+        try_again,
+        /// When a quest done for today is open again, in `{time}`.
+        resets_in(time: Text),
+        /// How long a timed quest has left, as a clock, `{clock}`.
+        clock_left(clock: Text),
+        /// What the tracker says of a daily quest done for today.
+        done_today,
+        /// What a quest card says of a daily quest done for today, with when it `{resets}`.
+        done_today_resets(resets: Text),
+        /// What the player is told on taking `{quest}`.
+        accepted[quest: Line],
+        /// The heading of the notice that a quest is complete.
+        complete_label,
+        /// What the player is told when `{quest}` fails.
+        failed_notice(quest: Text),
+        /// What the player is told on abandoning `{quest}`.
+        abandoned_notice(quest: Text),
+        /// What the player is told on finishing the objective `{objective}`.
+        objective_done[objective: Line],
+        /// What the player is told when a quest can be handed in, with what to do about it, `{hint}`.
+        ready_notice[hint: Line],
+        /// What the player is told when `{quest}` can be taken again.
+        open_again[quest: Line],
+        /// What the player is told handing in `{quest}` before it is done.
+        not_ready[quest: Line],
+        /// What the player is told offered `{quest}` while on it.
+        already_on[quest: Line],
+        /// What the player is told offered `{quest}` while it is done for the day.
+        done_for_now[quest: Line],
+        /// What the player is told taking a quest with nowhere to keep it.
+        no_log,
+        /// What the player says picking one reward item, `{item}`.
+        take_item[item: Line],
+        /// What the player says picking a reward of several items, `{items}`.
+        take_items[items: Line],
+        /// The quest log's tab of quests in progress.
+        tab_active,
+        /// A quest log tab, `{tab}`, with how many quests it holds, `{count}`.
+        tab_label(count: Number, tab: Text),
+        /// The heading over the quests in progress.
+        active_title,
+        /// The quest log's tab and heading of finished quests, and what a finished quest reads as.
+        completed,
+        /// What a failed quest reads as.
+        failed,
+        /// How many quests are in progress, `{count}`, of how many the log holds, `{limit}`.
+        active_count(count: Number, limit: Number),
+        /// How many quests are finished, `{count}`.
+        finished_count(count: Number),
+        /// What the quest log says with no quest in progress.
+        none_yet,
+        /// What the quest log says with no quest finished.
+        nothing_finished,
+        /// What the quest list says of a quest waiting for a decision.
+        status_choice,
+        /// What the quest list says of a quest ready to hand in.
+        status_ready,
+        /// What the quest list says of a daily quest in progress.
+        status_daily,
+        /// What the quest list says of a failed quest.
+        status_failed,
+        /// What the quest list says of a finished quest.
+        status_done,
+        /// The heading over a quest's objectives.
+        objectives,
+        /// The heading over a quest card's objectives.
+        card_objectives,
+        /// The heading over a quest card's rewards.
+        card_rewards,
+        /// The heading over the rewards of which the player picks one, on a quest card.
+        card_pick_one,
+        /// The heading over what the player hands in for a quest, on a quest card.
+        card_hand_in,
+        /// The heading over a quest's choices.
+        choices,
+        /// The heading over a quest's rewards.
+        rewards,
+        /// The heading over the rewards of which the player picks one on returning.
+        pick_one,
+        /// The heading over what the player hands in for a quest.
+        hand_in,
+        /// The heading over what happens when a timed quest runs out.
+        time_runs_out,
+        /// What happens when a timed quest runs out, with what to do about it, `{hint}`.
+        fails_retry[hint: Line],
+        /// What the quest log says of a failed quest that is offered again, with what to do about it, `{hint}`.
+        failed_retry[hint: Line],
+        /// One path of a quest's choice, `{choice}`, and what it means, `{means}`.
+        choice_means(choice: Text, means: Text),
+        /// The checkbox that shows a quest on the HUD.
+        track,
+        /// The button that gives a quest up.
+        abandon,
+        /// The question confirming giving up `{quest}`.
+        abandon_title[quest: Line],
+        /// The button that confirms giving a quest up.
+        abandon_confirm,
+        /// The button that keeps a quest instead of giving it up.
+        abandon_cancel,
+        /// What the confirmation says of what a quest gave, `{item}`, going away.
+        item_taken_back[item: Line],
+        /// What the confirmation says of the progress a quest has.
+        progress_lost,
+        /// What the confirmation says of how to take the quest again, by using the item `{giver}`.
+        offered_again_item(giver: Text),
+        /// What the confirmation says of how to take the quest again, from `{giver}`.
+        offered_again(giver: Text),
+        /// What the confirmation says when nobody offers the quest again.
+        offered_nobody,
+        /// What the key that selects a quest does in the quest log.
+        select_hint,
+        /// What an item note says of an item that begins a quest.
+        item_begins,
+        /// What an item note says of a count of an item, `{count}`, wanted for `{quest}`.
+        item_wanted(count: Number, quest: Text),
+        /// What an item note says of a quest item taken back on abandoning `{quest}`.
+        item_quest_given(quest: Text),
+        /// What an item note says of a quest item.
+        item_quest,
+        /// The band of a quest card offering a quest.
+        moment_offer,
+        /// The band of a quest card completing a quest.
+        moment_turn_in,
+        /// The band of a quest card asking for a decision.
+        moment_decision,
+        /// The band of a quest card, of its moment, `{moment}`, and its category, `{category}`.
+        band(category: Text, moment: Text),
+        /// What a quest offer card says of how to answer.
+        offer_foot,
+        /// What a quest completion card says of how to pick a reward.
+        pick_foot,
+        /// How many of an item the player has, `{count}`.
+        held(count: Number),
+        /// The experience a quest gives, `{xp}`.
+        reward_xp(xp: Number),
+        /// How far along an objective is on the tracker, `{have}` of `{need}`.
+        of(have: Number, need: Number),
+        /// How far along an objective is, `{have}` out of `{need}`, in the quest log and on quest cards.
+        progress(have: Number, need: Number),
+        /// A tracker row, its objective `{label}` beside its count or clock, `{count}`.
+        row_counted[label: Line, count: Text],
+        /// The heading of the quest tracker.
+        tracker_title,
+        /// The quest tracker's heading while it is folded away: `{count}` quests tracked.
+        tracker_folded(count: Number),
+        /// What a screen reader names the folded quest tracker's heading, which opens it.
+        tracker_show,
+        /// What a screen reader names the open quest tracker's heading, which folds it.
+        tracker_hide,
+        /// What the player is told when a quest is to be offered to nobody.
+        nobody_to_offer,
+        /// What the player is told when a quest is to be taken by nobody.
+        nobody_to_accept,
+        /// What the player is told when a quest is to be handed in by nobody.
+        nobody_to_hand_in,
+    }
+}
 
 pub type QuestId = ContentId<QuestDef>;
 
@@ -69,7 +285,6 @@ pub struct QuestDef {
     /// A picture of the quest, of any size and in any colours: the log prints it in ink beside
     /// what it says of the quest, and reads best of one taller than it is wide.
     pub art: ImageRef,
-    pub xp: u32,
     /// What the quest's card is drawn in. Left out, the game's default card style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub card_style: Option<CardStyleId>,
@@ -88,7 +303,6 @@ impl ContentFile for QuestDef {
             category: String::new(),
             blurb: String::new(),
             art: near.image()?,
-            xp: 0,
             card_style: None,
             reveal: Vec::new(),
             modules: vec![
@@ -97,7 +311,7 @@ impl ContentFile for QuestDef {
                     label: "See it through".to_owned(),
                 }),
                 QuestModule::HandOver {
-                    text: vec![crate::systems::text::plain("It's done.")],
+                    text: vec![ScriptSpan::plain("It's done.")],
                 },
             ],
         })
@@ -132,7 +346,7 @@ impl ModuleSet for QuestDef {
 }
 
 impl ScriptedRow for QuestDef {
-    const OWNER: RunnerKind = RunnerKind::Quest;
+    const OWNER: RunnerKind = QUEST_RUNNER;
 
     fn script(module: &QuestModule) -> Option<&ScriptModule> {
         match module {
@@ -146,10 +360,10 @@ impl ScriptedRow for QuestDef {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum QuestModule {
     Shown {
-        condition: Condition,
+        condition: Expr,
     },
     Requires {
-        condition: Condition,
+        condition: Expr,
     },
     Grants {
         items: Vec<ItemStack>,
@@ -158,11 +372,9 @@ pub enum QuestModule {
         items: Vec<ItemStack>,
     },
     HandOver {
-        text: Vec<Span>,
+        text: Vec<ScriptSpan>,
     },
-    Reward {
-        items: Vec<ItemStack>,
-    },
+    Reward(Reward),
     PickOne {
         items: Vec<ItemStack>,
     },
@@ -177,14 +389,14 @@ pub enum QuestModule {
 }
 
 impl QuestDef {
-    pub fn shown(&self) -> Option<&Condition> {
+    pub fn shown(&self) -> Option<&Expr> {
         self.modules.iter().find_map(|module| match module {
             QuestModule::Shown { condition } => Some(condition),
             _ => None,
         })
     }
 
-    pub fn requires(&self) -> Option<&Condition> {
+    pub fn requires(&self) -> Option<&Expr> {
         self.modules.iter().find_map(|module| match module {
             QuestModule::Requires { condition } => Some(condition),
             _ => None,
@@ -195,7 +407,7 @@ impl QuestDef {
         self.requires()
             .into_iter()
             .flat_map(condition::parts)
-            .filter_map(condition::min_level)
+            .filter_map(class::min_level)
             .max()
             .unwrap_or(1)
     }
@@ -221,7 +433,7 @@ impl QuestDef {
         })
     }
 
-    pub fn hand_over(&self) -> &[Span] {
+    pub fn hand_over(&self) -> &[ScriptSpan] {
         self.modules
             .iter()
             .find_map(|module| match module {
@@ -231,11 +443,24 @@ impl QuestDef {
             .unwrap_or(&[])
     }
 
-    pub fn rewards(&self) -> &[ItemStack] {
-        self.stacks(|module| match module {
-            QuestModule::Reward { items } => Some(items),
+    pub fn reward(&self) -> Option<&Reward> {
+        self.modules.iter().find_map(|module| match module {
+            QuestModule::Reward(reward) => Some(reward),
             _ => None,
         })
+    }
+
+    /// The experience completing the quest gives.
+    pub fn xp(&self) -> u32 {
+        self.reward().map_or(0, |reward| reward.xp)
+    }
+
+    /// The items completing the quest gives, whole: a quest's reward is never left to chance.
+    pub fn rewards(&self) -> impl Iterator<Item = ItemStack> + '_ {
+        self.reward()
+            .into_iter()
+            .flat_map(|reward| &reward.items)
+            .map(DropRow::whole)
     }
 
     pub fn pick_one(&self) -> &[ItemStack] {
@@ -280,14 +505,15 @@ impl QuestDef {
             Objective::Task { label, .. } | Objective::Decide { label, .. } => {
                 LineText::plain(label.clone())
             }
-            Objective::Deliver { item } => LineText::plain("Bring ")
-                .then(Mention::Item(*item).span(content))
-                .then(" to ")
-                .then(
+            Objective::Deliver { item } => {
+                let words = words(content);
+                words.bring(
+                    Mention::Item(*item).span(content),
                     parties
                         .turn_in(quest)
-                        .map_or("its taker", |party| party.name.as_str()),
-                ),
+                        .map_or(words.its_taker(), |party| party.name.as_str()),
+                )
+            }
         }
     }
 
@@ -303,15 +529,14 @@ impl QuestDef {
             .enumerate()
             .map(|(index, objective)| {
                 let counted = active.counts.get(index).copied().unwrap_or(0);
-                let (have, need, shown) = match objective {
-                    Objective::Hold(stack) => {
-                        (held(stack.item).min(stack.count), stack.count, true)
-                    }
-                    Objective::Defeat { count, .. } => (counted.min(*count), *count, true),
-                    Objective::Task { .. } => (counted.min(1), 1, true),
-                    Objective::Deliver { item } => (held(*item).min(1), 1, false),
-                    Objective::Decide { .. } => (0, 1, false),
+                let need = objective.need();
+                let (have, shown) = match objective {
+                    Objective::Hold(stack) => (held(stack.item), true),
+                    Objective::Defeat { .. } | Objective::Task { .. } => (counted, true),
+                    Objective::Deliver { item } => (held(*item), false),
+                    Objective::Decide { .. } => (0, false),
                 };
+                let have = have.min(need);
                 ObjectiveProgress {
                     label: self.objective_label(content, parties, active.quest, objective),
                     have,
@@ -336,7 +561,8 @@ impl QuestDef {
             })
     }
 
-    pub fn kinds(&self) -> String {
+    pub fn kinds(&self, content: &Content) -> String {
+        let messages = messages::of(content);
         let mut kinds: Vec<&str> = Vec::new();
         for objective in self.objectives() {
             let kind = match objective {
@@ -356,20 +582,25 @@ impl QuestDef {
         if self.daily() {
             kinds.push("daily");
         }
-        match kinds.split_last() {
-            Some((last, [])) => (*last).to_owned(),
-            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-            None => String::new(),
-        }
+        let named = kinds
+            .into_iter()
+            .enumerate()
+            .map(|(index, kind)| {
+                messages
+                    .quest
+                    .kind(kind, if index == 0 { "first" } else { "later" })
+            })
+            .collect();
+        messages.interface.listed_words(named)
     }
 
-    pub fn meta(&self, parties: &Parties, quest: QuestId) -> String {
-        format!(
-            "Level {} · from {}",
-            self.min_level(),
+    pub fn meta(&self, content: &Content, parties: &Parties, quest: QuestId) -> String {
+        let words = words(content);
+        words.meta(
             parties
                 .giver(quest)
-                .map_or("nobody", |party| party.name.as_str())
+                .map_or(words.no_giver(), |party| party.name.as_str()),
+            self.min_level(),
         )
     }
 
@@ -386,22 +617,22 @@ impl QuestDef {
     pub fn hand_in_hint(&self, content: &Content, parties: &Parties, quest: QuestId) -> LineText {
         let giver = parties.giver(quest);
         let taker = parties.turn_in(quest);
-        let verb = if giver == taker { "Return" } else { "Go" };
+        let words = words(content);
+        let returns = giver == taker;
         match taker {
-            Some(party) => LineText::plain(format!("{verb} to ")).then(party.named(content)),
-            None => format!("{verb} and hand it in").into(),
+            Some(party) if returns => words.return_to(party.named(content)),
+            Some(party) => words.go_to(party.named(content)),
+            None if returns => LineText::plain(words.return_and_hand_in()),
+            None => LineText::plain(words.go_and_hand_in()),
         }
     }
 
     pub fn retry_hint(&self, content: &Content, parties: &Parties, quest: QuestId) -> LineText {
+        let words = words(content);
         match parties.giver(quest) {
-            Some(party) if party.item.is_some() => LineText::plain("Use the ")
-                .then(party.named(content))
-                .then(" to try again"),
-            Some(party) => LineText::plain("Talk to ")
-                .then(party.named(content))
-                .then(" to try again"),
-            None => "Try again".into(),
+            Some(party) if party.item.is_some() => words.use_to_retry(party.named(content)),
+            Some(party) => words.talk_to_retry(party.named(content)),
+            None => LineText::plain(words.try_again()),
         }
     }
 
@@ -465,6 +696,15 @@ impl Objective {
             Objective::Defeat { .. } | Objective::Task { .. } | Objective::Decide { .. } => None,
         }
     }
+
+    /// How much of it there is to do: the count to hold or defeat, else one.
+    pub fn need(&self) -> u32 {
+        match self {
+            Objective::Hold(stack) => stack.count,
+            Objective::Defeat { count, .. } => *count,
+            Objective::Task { .. } | Objective::Deliver { .. } | Objective::Decide { .. } => 1,
+        }
+    }
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -522,7 +762,7 @@ impl QuestParty {
 }
 
 impl Parties {
-    pub fn of(content: &Content, scripts: &RiftScripts) -> Parties {
+    pub fn of(content: &Content, scripts: &Scripts) -> Parties {
         let mut parties: HashMap<QuestId, QuestParties> = HashMap::new();
         for (owner, role) in quest_roles(scripts) {
             let Some(party) = party_name(content, owner) else {
@@ -568,18 +808,16 @@ impl QuestRole {
     }
 }
 
-fn quest_roles(scripts: &RiftScripts) -> Vec<(OwnerRow, QuestRole)> {
+fn quest_roles(scripts: &Scripts) -> Vec<(OwnerRow, QuestRole)> {
     let mut roles = Vec::new();
-    for (owner, _) in scripts.owners() {
-        for reach in scripts.may_do(*owner).reaches {
-            match reach {
-                EffectReach::Offers(quest) | EffectReach::Accepts(quest) => {
-                    roles.push((*owner, QuestRole::Gives(quest)));
-                }
-                EffectReach::TurnsIn(quest) => roles.push((*owner, QuestRole::TurnsIn(quest))),
-                _ => {}
-            }
-        }
+    for offers in scripts.reaching::<Offers>() {
+        roles.push((offers.row, QuestRole::Gives(offers.reach.0)));
+    }
+    for accepts in scripts.reaching::<Accepts>() {
+        roles.push((accepts.row, QuestRole::Gives(accepts.reach.0)));
+    }
+    for turns_in in scripts.reaching::<TurnsIn>() {
+        roles.push((turns_in.row, QuestRole::TurnsIn(turns_in.reach.0)));
     }
     roles
 }
@@ -591,7 +829,7 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<QuestParty> {
         })
     };
     Some(match owner.kind {
-        RunnerKind::Npc => {
+        NPC_RUNNER => {
             let npc: NpcId = owner.id();
             if !placed(npc) {
                 return None;
@@ -602,7 +840,7 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<QuestParty> {
                 npc: Some(npc),
             }
         }
-        RunnerKind::Object => {
+        OBJECT_RUNNER => {
             let area: AreaId = owner.id();
             let (_, object) = area::objects(area::placed(content, area))
                 .find(|(index, _)| Some(*index) == owner.object)?;
@@ -612,7 +850,7 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<QuestParty> {
                 npc: None,
             }
         }
-        RunnerKind::Item => {
+        ITEM_RUNNER => {
             let item: ItemId = owner.id();
             QuestParty {
                 name: item.get(content).name.to_owned(),
@@ -620,7 +858,7 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<QuestParty> {
                 npc: None,
             }
         }
-        RunnerKind::Spawnable => QuestParty {
+        SPAWNABLE_RUNNER => QuestParty {
             name: owner.id::<SpawnableDef>().get(content).title.clone(),
             item: None,
             npc: None,
@@ -752,17 +990,13 @@ impl FinishedQuest {
     }
 }
 
-pub fn clock_label(left: Seconds) -> String {
-    let seconds = left.0.max(0.0).ceil() as u32;
-    format!("{:02}:{:02}", seconds / 60, seconds % 60)
+pub fn resets_label(content: &Content, left: Seconds) -> String {
+    let messages = messages::of(content);
+    messages.quest.resets_in(messages.time.rough(left))
 }
 
-pub fn resets_label(left: Seconds) -> String {
-    let minutes = (left.0.max(0.0) / 60.0).ceil() as u32;
-    match minutes {
-        0..60 => format!("resets in {minutes}m"),
-        _ => format!("resets in {}h", minutes.div_ceil(60)),
-    }
+fn words(content: &Content) -> &QuestMessages {
+    &messages::of(content).quest
 }
 
 pub fn log_of(world: &World, player: Entity) -> Option<&QuestLog> {
@@ -784,15 +1018,10 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), L
     let content = world.resource::<Content>().clone();
     let clock = *world.resource::<WallClock>();
     let def = quest.get(&content);
-    let mut inventory = world
-        .get_mut::<Inventory>(player)
-        .ok_or_else(|| "Has no bag".to_owned())?;
-    inventory
-        .exchange(&content, &[], def.grants())
-        .map_err(|refusal| refusal.line(&content))?;
+    item::effects::exchange(world, player, &[], def.grants())?;
     let mut log = world
         .get_mut::<QuestLog>(player)
-        .ok_or_else(|| "Has no quest log".to_owned())?;
+        .ok_or_else(|| LineText::plain(words(&content).no_log()))?;
     log.finished
         .retain(|finished| finished.quest != quest || finished.result == QuestResult::Completed);
     log.active.push(ActiveQuest {
@@ -805,19 +1034,17 @@ pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), L
     tell(
         world,
         player,
-        LineText::plain("Quest accepted · ").then(Mention::Quest(quest).span(&content)),
+        words(&content).accepted(Mention::Quest(quest).span(&content)),
         Some(&offered_mark(def).get(&content).icon),
         Some(InterfaceSound::QuestAccepted.id(&content)),
     );
-    raise(world, quest, EventKind::Accepted, player);
+    raise(world, quest, EventKind::of::<Accepted>(), player);
     announce(world, player, clock);
     Ok(())
 }
 
 pub fn not_ready(content: &Content, quest: QuestId) -> LineText {
-    Mention::Quest(quest)
-        .line(content)
-        .then(" isn't ready to hand in")
+    words(content).not_ready(Mention::Quest(quest).line(content))
 }
 
 pub fn turn_in(
@@ -831,15 +1058,8 @@ pub fn turn_in(
     if !ready_to_hand_in(world, player, quest) {
         return Err(not_ready(&content, quest));
     }
-    let gives: Vec<ItemStack> = def.rewards().iter().copied().chain(pick).collect();
-    let mut inventory = world
-        .get_mut::<Inventory>(player)
-        .ok_or_else(|| "Has no bag".to_owned())?;
-    inventory
-        .exchange(&content, def.hand_in(), &[])
-        .map_err(|refusal| refusal.line(&content))?;
-    let paid = payout::pay(world, player, &gives, PayoutReason::QuestCompleted(quest));
-    finish_completed(world, player, quest, paid.overflow(&content));
+    item::effects::exchange(world, player, def.hand_in(), &[])?;
+    finish_completed(world, player, quest, pick);
     Ok(())
 }
 
@@ -847,9 +1067,8 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
     finish_completed(world, player, quest, None);
 }
 
-/// Completes `quest` for `player`, its notification telling what of its rewards went to
-/// messages.
-fn finish_completed(world: &mut World, player: Entity, quest: QuestId, sent: Option<LineText>) {
+/// Completes `quest` for `player`, who is given its reward and the item they picked.
+fn finish_completed(world: &mut World, player: Entity, quest: QuestId, pick: Option<ItemStack>) {
     let content = world.resource::<Content>().clone();
     let clock = *world.resource::<WallClock>();
     let def = quest.get(&content);
@@ -863,24 +1082,24 @@ fn finish_completed(world: &mut World, player: Entity, quest: QuestId, sent: Opt
     if !def.daily() {
         log.tracked.retain(|&tracked| tracked != quest);
     }
-    class::grant_xp(world, player, def.xp);
+    let mut reward = def.reward().cloned().unwrap_or_default();
+    reward.items.extend(pick.map(DropRow::certain));
+    let to = reward::Where::Bag(DeliveryReason::QuestCompleted(quest));
+    reward::grant(world, &[player], &reward, to);
     notification::notify(
         world,
         player,
         None,
         Notification::new(
             NotificationKind::Milestone {
-                label: "Quest complete".into(),
+                label: words(&content).complete_label().to_owned().into(),
                 topic: HistoryTopic::Quest,
                 sfx: Some(InterfaceSound::QuestCompleted.id(&content)),
             },
-            match sent {
-                Some(sent) => Mention::Quest(quest).line(&content).then(" · ").then(sent),
-                None => Mention::Quest(quest).line(&content),
-            },
+            Mention::Quest(quest).line(&content),
         ),
     );
-    raise(world, quest, EventKind::Completed, player);
+    raise(world, quest, EventKind::of::<Completed>(), player);
     announce(world, player, clock);
 }
 
@@ -897,13 +1116,13 @@ pub fn fail(world: &mut World, player: Entity, quest: QuestId) {
     take_back(world, player, quest.get(&content).grants());
     let failed = Notification::feed(
         HistoryTopic::Quest,
-        format!("Quest failed · {}", quest.get(&content).title),
+        words(&content).failed_notice(&quest.get(&content).title),
     )
-    .icon(quest.get(&content).icon(&content).path())
+    .icon(quest.get(&content).icon(&content).clone())
     .failed()
     .sound(InterfaceSound::QuestAbandoned.id(&content));
     notification::notify(world, player, None, failed);
-    raise(world, quest, EventKind::Failed, player);
+    raise(world, quest, EventKind::of::<Failed>(), player);
 }
 
 pub fn abandon(world: &mut World, player: Entity, quest: QuestId) {
@@ -920,11 +1139,11 @@ pub fn abandon(world: &mut World, player: Entity, quest: QuestId) {
     tell(
         world,
         player,
-        format!("Quest abandoned · {}", quest.get(&content).title),
+        words(&content).abandoned_notice(&quest.get(&content).title),
         Some(&AttentionMark::QuestInProgress.get(&content).icon),
         Some(InterfaceSound::QuestAbandoned.id(&content)),
     );
-    raise(world, quest, EventKind::Failed, player);
+    raise(world, quest, EventKind::of::<Failed>(), player);
 }
 
 pub fn complete_task(world: &mut World, player: Entity, quest: QuestId, index: usize) {
@@ -950,8 +1169,8 @@ pub fn complete_task(world: &mut World, player: Entity, quest: QuestId, index: u
         tell(
             world,
             player,
-            LineText::plain("Objective done · ")
-                .then(def.objective_label(&content, &parties, quest, objective)),
+            words(&content)
+                .objective_done(def.objective_label(&content, &parties, quest, objective)),
             objective.icon(&content),
             Some(InterfaceSound::TallyTick.id(&content)),
         );
@@ -968,8 +1187,8 @@ pub fn decide(world: &mut World, player: Entity, quest: QuestId, path: &str) {
 }
 
 fn raise(world: &mut World, quest: QuestId, kind: EventKind, player: Entity) {
-    world.resource_mut::<RiftInstances>().raise(
-        Owner::Row(RunnerKind::Quest, quest.raw()),
+    world.resource_mut::<Instances>().raise(
+        Owner::Row(QUEST_RUNNER, quest.raw()),
         kind,
         Some(player),
         Vec::new(),
@@ -986,7 +1205,7 @@ fn tell(
 ) {
     let mut told = Notification::feed(HistoryTopic::Quest, text);
     if let Some(icon) = icon {
-        told = told.icon(icon.path());
+        told = told.icon(icon.clone());
     }
     if let Some(sfx) = sfx {
         told = told.sound(sfx);
@@ -1100,7 +1319,7 @@ fn announcement(world: &World, player: Entity, clock: WallClock) -> Option<Annou
             log.told_ready.push(quest);
             let def = quest.get(content);
             told.push((
-                LineText::plain("Quest ready · ").then(def.hand_in_hint(content, parties, quest)),
+                words(content).ready_notice(def.hand_in_hint(content, parties, quest)),
                 ready_mark(def).get(content).icon.clone(),
                 Some(InterfaceSound::UiChime.id(content)),
             ));
@@ -1111,9 +1330,7 @@ fn announcement(world: &World, player: Entity, clock: WallClock) -> Option<Annou
         if finished.resets_at.is_some_and(|at| clock.now >= at) {
             finished.resets_at = None;
             told.push((
-                Mention::Quest(finished.quest)
-                    .line(content)
-                    .then(" is open again"),
+                words(content).open_again(Mention::Quest(finished.quest).line(content)),
                 AttentionMark::RepeatableOffered.get(content).icon.clone(),
                 Some(InterfaceSound::UiPage.id(content)),
             ));
@@ -1199,12 +1416,25 @@ pub fn check_all(loading: &mut Loading) {
                 "a decision, a pick_one or a hand_over line",
             );
         }
+        if quest
+            .reward()
+            .is_some_and(|reward| reward.items.iter().any(|row| row.chance.is_some()))
+        {
+            check.error(
+                "/modules",
+                "reward left to chance",
+                key,
+                "reward items given every time, as the quest's card tells them",
+            );
+        }
         if let Err(fault) = dialogue::check_reveal(
             &quest.reveal,
             Revealable {
                 needs: quest.requires().is_some(),
                 costs: !quest.hand_in().is_empty(),
-                gains: !quest.rewards().is_empty() || !quest.pick_one().is_empty() || quest.xp > 0,
+                gains: quest.rewards().next().is_some()
+                    || !quest.pick_one().is_empty()
+                    || quest.xp() > 0,
             },
         ) {
             check.error(
@@ -1218,7 +1448,22 @@ pub fn check_all(loading: &mut Loading) {
     }
 }
 
-pub fn check_parties(loading: &mut Loading, scripts: &RiftScripts, parties: &Parties) {
+/// What a whole game must do with its quests: offer and take back every one, from an owner
+/// placed somewhere.
+pub fn check_reached(loading: &mut Loading) {
+    let content = loading.content();
+    let scripts = content.built::<Scripts>();
+    check_parties(loading, scripts, content.built::<Parties>());
+}
+
+/// Works out who offers and takes back each quest, from the scripts that reach it.
+pub fn build_parties(loading: &mut Loading) {
+    let content = loading.content();
+    let parties = Parties::of(&content, content.built::<Scripts>());
+    loading.built(parties);
+}
+
+fn check_parties(loading: &mut Loading, scripts: &Scripts, parties: &Parties) {
     let content = loading.content();
     let mut offered = HashSet::new();
     let mut turned_in = HashSet::new();
@@ -1294,16 +1539,14 @@ pub fn offer_refusal(world: &World, player: Entity, quest: QuestId) -> Option<Li
     let content = world.resource::<Content>();
     let log = log_of(world, player)?;
     if log.active(quest).is_some() {
-        return Some(
-            LineText::plain("You're already on ").then(Mention::Quest(quest).span(content)),
-        );
+        return Some(words(content).already_on(Mention::Quest(quest).span(content)));
     }
     if log.done_for_now(content, quest, world.resource::<WallClock>().day()) {
-        return Some(Mention::Quest(quest).line(content).then(" is done for now"));
+        return Some(words(content).done_for_now(Mention::Quest(quest).line(content)));
     }
     let settings = content.built::<GameSettings>();
     if log.active.len() >= settings.slots.quest_log as usize {
-        return Some(LineText::plain(settings.words.quest_log_full.clone()));
+        return Some(LineText::plain(words(content).log_full()));
     }
     None
 }
@@ -1313,8 +1556,12 @@ fn accept_refusal(world: &World, player: Entity, quest: QuestId) -> Option<LineT
         return Some(refusal);
     }
     let def = quest.get(world.resource::<Content>());
-    condition::first_unmet(world, player, def.requires().into_iter().chain(def.shown()))
-        .map(|unmet| LineText::plain("Needs ").then(LineText::from(&unmet)))
+    requirement::first_unmet(world, player, def.requires().into_iter().chain(def.shown())).map(
+        |unmet| {
+            let content = world.resource::<Content>();
+            messages::of(content).dialogue.needs(unmet)
+        },
+    )
 }
 
 pub fn open_to(world: &World, player: Entity, quest: QuestId) -> bool {
@@ -1380,7 +1627,7 @@ fn announce(world: &mut World, player: Entity, clock: WallClock) {
             log.told_ready.push(quest);
             let def = quest.get(&content);
             told.push((
-                LineText::plain("Quest ready · ").then(def.hand_in_hint(&content, &parties, quest)),
+                words(&content).ready_notice(def.hand_in_hint(&content, &parties, quest)),
                 &ready_mark(def).get(&content).icon,
                 Some(InterfaceSound::UiChime.id(&content)),
             ));
@@ -1391,9 +1638,7 @@ fn announce(world: &mut World, player: Entity, clock: WallClock) {
         if finished.resets_at.is_some_and(|at| clock.now >= at) {
             finished.resets_at = None;
             told.push((
-                Mention::Quest(finished.quest)
-                    .line(&content)
-                    .then(" is open again"),
+                words(&content).open_again(Mention::Quest(finished.quest).line(&content)),
                 &AttentionMark::RepeatableOffered.get(&content).icon,
                 Some(InterfaceSound::UiPage.id(&content)),
             ));
@@ -1495,11 +1740,10 @@ fn still_needs(def: &QuestDef, item: ItemId, inventory: Option<&Inventory>) -> b
 }
 
 pub fn pick_label(content: &Content, pick: ItemStack) -> LineText {
+    let words = words(content);
     match pick.count {
-        1 => LineText::plain("I'll take the ")
-            .then(Mention::Item(pick.item).span(content))
-            .then("."),
-        _ => LineText::plain("I'll take ").then(pick.named()).then("."),
+        1 => words.take_item(Mention::Item(pick.item).span(content)),
+        _ => words.take_items(pick.named()),
     }
 }
 
@@ -1509,19 +1753,27 @@ pub(crate) fn marks(
     viewers: &[Entity],
     out: &mut dyn FnMut(Entity, AttentionId),
 ) {
-    let Some(owner) = script::owner_of(world, target) else {
+    let Some(owner) = crate::systems::area::script::owner_of(world, target) else {
         return;
     };
-    let Some(may_do) = world.resource::<RiftInstances>().may_do(owner) else {
+    let Some(may_do) = world.resource::<Instances>().may_do(owner) else {
         return;
     };
     let mut quests: Vec<(QuestId, bool, bool)> = Vec::new();
-    for reach in &may_do.reaches {
-        let (quest, gives, takes) = match reach {
-            EffectReach::Offers(quest) | EffectReach::Accepts(quest) => (*quest, true, false),
-            EffectReach::TurnsIn(quest) => (*quest, false, true),
-            _ => continue,
-        };
+    let reached = may_do
+        .reaching::<Offers>()
+        .map(|offers| (offers.0, true, false))
+        .chain(
+            may_do
+                .reaching::<Accepts>()
+                .map(|accepts| (accepts.0, true, false)),
+        )
+        .chain(
+            may_do
+                .reaching::<TurnsIn>()
+                .map(|turns_in| (turns_in.0, false, true)),
+        );
+    for (quest, gives, takes) in reached {
         match quests.iter_mut().find(|(known, ..)| *known == quest) {
             Some(known) => {
                 known.1 |= gives;
@@ -1612,4 +1864,82 @@ pub fn offered_mark(def: &QuestDef) -> AttentionMark {
     } else {
         AttentionMark::QuestOffered
     }
+}
+
+pub const QUEST_RUNNER: RunnerKind = RunnerKind::new("quest");
+
+/// A script that may offer a quest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Offers(pub QuestId);
+
+impl ReachDef for Offers {}
+
+/// A script that may have someone accept a quest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Accepts(pub QuestId);
+
+impl ReachDef for Accepts {}
+
+/// A script that may take a quest back, once done.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TurnsIn(pub QuestId);
+
+impl ReachDef for TurnsIn {}
+
+/// A script that may fail a quest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fails(pub QuestId);
+
+impl ReachDef for Fails {}
+
+/// A script that may complete a task of a quest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Completes(pub QuestId);
+
+impl ReachDef for Completes {}
+
+/// A script that may decide a path of a quest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Decides(pub QuestId);
+
+impl ReachDef for Decides {}
+
+/// A player took the quest.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Accepted {}
+
+/// A player completed the quest.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Completed {}
+
+/// A player failed the quest.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Failed {}
+
+macro_rules! quest_events {
+    ($($event:ident),*) => {$(
+        impl EventDef for $event {
+            fn owners(&self) -> &'static [RunnerKind] {
+                &[QUEST_RUNNER]
+            }
+        }
+    )*};
+}
+
+quest_events!(Accepted, Completed, Failed);
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .runner(
+            QUEST_RUNNER,
+            RunnerSpec::named_row::<QuestDef>()
+                .stateless()
+                .starting_with_world(),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<QuestDef>(loading, content))
+        .event::<Accepted>("accepted")
+        .event::<Completed>("completed")
+        .event::<Failed>("failed");
+    effects::scripting(vocabulary);
 }

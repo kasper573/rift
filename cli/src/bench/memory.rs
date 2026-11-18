@@ -11,7 +11,7 @@ use std::time::Duration;
 use engine::core::content::Content;
 use engine::core::render::video::VideoPreferences;
 use engine::core::units::Bytes;
-use engine::systems::script::Place;
+use engine::systems::area::Place;
 use engine::systems::staging::Staging;
 
 use super::places::{arrived, away_from, settled_in_world, staged};

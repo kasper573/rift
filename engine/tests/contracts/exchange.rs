@@ -106,11 +106,15 @@ fn refusals_read_as_what_is_needed() {
         .load();
     let [gold] = items(&content, ["gold"]);
     assert_eq!(
-        ExchangeRefusal::NoRoom { slots: 1 }.describe(&content),
+        ExchangeRefusal::NoRoom { slots: 1 }
+            .line(&content)
+            .plain_words(&content),
         "Needs 1 free slot"
     );
     assert_eq!(
-        ExchangeRefusal::Missing(ItemStack::new(gold, 20)).describe(&content),
+        ExchangeRefusal::Missing(ItemStack::new(gold, 20))
+            .line(&content)
+            .plain_words(&content),
         "Needs 20 Gold more"
     );
 }

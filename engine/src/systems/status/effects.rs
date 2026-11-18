@@ -1,3 +1,10 @@
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::Vocabulary;
+use crate::systems::item::ITEM_RUNNER;
+use crate::systems::mount::MOUNT_RUNNER;
+use crate::systems::skill::SKILL_RUNNER;
+use crate::systems::status::STATUS_EFFECT_RUNNER;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -8,12 +15,10 @@ use crate::core::content::SchemaMark;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Expr, NEXT, ScriptFault, ValueType,
 };
+use crate::core::script::{EffectCall, OwnerRow, Scripts};
 use crate::core::units::Seconds;
+use crate::systems::aim::{self as effects, AimedAll, Reaching};
 use crate::systems::item::ItemId;
-use crate::systems::script::effect::{self as effects, AimedAll, Reaching};
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, OwnerRow, RiftScripting, RiftScripts, RunnerKind,
-};
 use crate::systems::skill::{SkillId, SkillKind};
 use crate::systems::stat::{Stat, StatKind};
 
@@ -23,14 +28,14 @@ use crate::systems::stat::{Stat, StatKind};
 pub struct ApplyStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub effect: StatusEffectId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = 1.0))]
-    pub power: Option<Condition>,
+    pub power: Option<Expr>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = 10.0))]
-    pub seconds: Option<Condition>,
+    pub seconds: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
@@ -41,7 +46,7 @@ pub struct ApplyStatus {
 pub struct RemoveStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<StatusEffectId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,20 +62,17 @@ pub struct RemoveStatus {
 pub struct Boost {
     pub stat: StatKind,
     #[schemars(extend("default" = 1.0))]
-    pub by: Condition,
+    pub by: Expr,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for ApplyStatus {
+impl EffectDef for ApplyStatus {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_all_anywhere(cx, &self.who)?;
         let power = cx.opt_expr(self.power.as_ref(), ValueType::Number)?;
         let seconds = cx.opt_expr(self.seconds.as_ref(), ValueType::Number)?;
@@ -110,20 +112,17 @@ impl EffectDef<RiftScripting> for ApplyStatus {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Applies(self.effect)]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Applies(self.effect))]
     }
 }
 
-impl EffectDef<RiftScripting> for RemoveStatus {
+impl EffectDef for RemoveStatus {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_all_anywhere(cx, &self.who)?;
         let (effect, category) = (self.effect, self.category);
         Ok(Box::new(move |world, flow, cx| {
@@ -156,20 +155,17 @@ impl EffectDef<RiftScripting> for RemoveStatus {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Cleanses]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Cleanses)]
     }
 }
 
-impl EffectDef<RiftScripting> for Boost {
+impl EffectDef for Boost {
     fn needs_subject(&self) -> bool {
         true
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let source = source_of(cx)?;
         let by = effects::number(cx, &self.by)?;
         let stat = self.stat;
@@ -181,8 +177,8 @@ impl EffectDef<RiftScripting> for Boost {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Boosts(self.stat, constant(&self.by))]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(BoostsStat(self.stat, constant(&self.by)))]
     }
 }
 
@@ -190,28 +186,24 @@ impl EffectDef<RiftScripting> for Boost {
 /// the amount when the script states it outright.
 pub fn boosts_of(content: &Content, item: ItemId) -> Vec<(StatKind, Option<f32>)> {
     content
-        .built::<RiftScripts>()
+        .built::<Scripts>()
         .may_do(OwnerRow::of_row(item))
-        .reaches
-        .iter()
-        .filter_map(|reach| match reach {
-            EffectReach::Boosts(stat, by) => Some((*stat, *by)),
-            _ => None,
-        })
+        .reaching::<BoostsStat>()
+        .map(|boosts| (boosts.0, boosts.1))
         .collect()
 }
 
 /// The aspect a boost belongs to, from the row whose script it is in.
-fn source_of(cx: &Compiler<RiftScripting>) -> Result<AspectSource, ScriptFault> {
+fn source_of(cx: &Compiler) -> Result<AspectSource, ScriptFault> {
     let expected = "a status effect's, an item's, a mount's or a passive skill's script";
     let Some(row) = cx.owner_row() else {
         return Err(ScriptFault::new("boost without an aspect", expected));
     };
     match row.kind {
-        RunnerKind::StatusEffect => Ok(AspectSource::Status(row.id())),
-        RunnerKind::Mount => Ok(AspectSource::Mount(row.id())),
-        RunnerKind::Item => Ok(AspectSource::Item(row.id())),
-        RunnerKind::Skill => {
+        STATUS_EFFECT_RUNNER => Ok(AspectSource::Status(row.id())),
+        MOUNT_RUNNER => Ok(AspectSource::Mount(row.id())),
+        ITEM_RUNNER => Ok(AspectSource::Item(row.id())),
+        SKILL_RUNNER => {
             let skill: SkillId = row.id();
             if skill.get(cx.content).kind == SkillKind::Passive {
                 Ok(AspectSource::Skill(skill))
@@ -226,10 +218,35 @@ fn source_of(cx: &Compiler<RiftScripting>) -> Result<AspectSource, ScriptFault> 
     }
 }
 
-fn constant(expr: &Condition) -> Option<f32> {
+fn constant(expr: &Expr) -> Option<f32> {
     match expr {
         Expr::Num(value) => Some(*value as f32),
         Expr::Int(value) => Some(*value as f32),
         _ => None,
     }
+}
+
+/// A script that may give someone a status effect.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Applies(pub StatusEffectId);
+
+impl ReachDef for Applies {}
+
+/// A script that may take statuses off someone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cleanses;
+
+impl ReachDef for Cleanses {}
+
+/// A script that may boost a stat, by the amount when the script states it outright.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoostsStat(pub StatKind, pub Option<f32>);
+
+impl ReachDef for BoostsStat {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .effect::<ApplyStatus>("apply_status")
+        .effect::<RemoveStatus>("remove_status")
+        .effect::<Boost>("boost");
 }

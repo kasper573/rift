@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use engine::core::content::check::RowError;
 use engine::core::content::{ContentScope, FileWriter, ReadRow, RowCheck, with_content};
+use engine::core::script::Variable;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::scene::{self, SCENE_FILE, SceneNode};
-use engine::systems::script::Variable;
 
 use super::files::{FileBytes, FileStamp, ProjectFiles};
 use crate::doc::ops::SceneOp;

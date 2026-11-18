@@ -7,7 +7,7 @@ use ui::ink;
 use super::sign_in::SignInFailure;
 use super::{ClientScreen, Notice, Retry, notice_screen};
 use crate::core::content::sync::SyncedContent;
-use crate::core::content::version;
+use crate::core::content::{Content, version};
 use crate::core::gui::{self, Band};
 use crate::core::math::Rng;
 use crate::core::net::SessionRequest;
@@ -17,6 +17,7 @@ use crate::core::os::{FetchFailure, Http, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::time;
 use crate::core::units::Seconds;
+use crate::systems::messages;
 use crate::systems::player::{JoinRequest, session};
 
 pub struct ConnectionPlugin;
@@ -104,9 +105,11 @@ pub(super) fn poll_session(world: &mut World) {
         Err(FetchFailure::Status { status: 401, body }) => {
             info!("the server refused the sign-in: {body}");
             world.remove_resource::<Credentials>();
-            world.insert_resource(SignInFailure(
-                "The server didn't take your sign-in.".to_owned(),
-            ));
+            let refused = messages::of(world.resource::<Content>())
+                .screen
+                .sign_in_refused()
+                .to_owned();
+            world.insert_resource(SignInFailure(refused));
             world
                 .resource_mut::<NextState<ClientScreen>>()
                 .set(ClientScreen::SigningIn);
@@ -139,8 +142,10 @@ fn connecting(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).screen;
     let notice = Notice {
-        title: "Connecting…",
+        title: words.connecting(),
         lines: &[],
         notes: &[],
         progress: None,
@@ -160,21 +165,27 @@ fn connection_lost(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).screen;
     let (title, line, action) = if world.contains_resource::<RecordsUnreachable>() {
         (
-            "The game cannot reach its records",
-            "Nothing of yours is lost. Try again in a moment.",
-            "Try again",
+            words.records_unreachable(),
+            words.records_safe(),
+            words.try_again(),
         )
     } else {
-        ("Connection lost", "Reconnecting…", "Retry now")
+        (
+            words.connection_lost(),
+            words.reconnecting(),
+            words.retry_now(),
+        )
     };
     let notice = Notice {
         title,
         lines: &[line.to_owned()],
         notes: &[],
         progress: None,
-        actions: &[action],
+        actions: &[egui::RichText::new(action)],
     };
     let retry = notice_screen(&gui, "lost", world.resource::<Backdrop>().0, notice);
     if retry.is_some() {

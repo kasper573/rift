@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum::{IntoStaticStr, VariantArray};
 use ui::egui;
 use ui::egui::Stroke;
 use ui::egui::emath::TSTransform;
@@ -8,26 +9,61 @@ use ui::face::{self, Face, TextRole};
 use ui::{dialog, dusk, ink};
 
 use super::{CastAim, Rank, SkillId, Targeting, UseSkillRequest, casting};
-use crate::core::content::{Content, Fixture};
+use crate::core::content::fixture::FixtureLock;
+use crate::core::content::{Content, Fixture, Nearby};
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::{Pos, PosSchema};
 use crate::core::render::Pointed;
+use crate::core::text::LineText;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::core::time::{self};
 use crate::core::units::Meters;
 use crate::core::vfx::render::ShaderOverlay;
-use crate::core::vfx::{ParamValue, VfxParams, VfxSite};
+use crate::core::vfx::{
+    ParamKind, ParamValue, ShaderParam, Stage, VfxParams, VfxShaderDef, VfxSite,
+};
 use crate::core::{gui, render};
 use crate::systems::actor::{self, Actor};
 use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
+use crate::systems::input::escape::{self, Dismissal};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::{CursorShape, InterfaceSound};
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::mount::seat::MountRequest;
 use crate::systems::mount::{self, MountId, Travels};
 use crate::systems::player::session;
-use crate::systems::vfx::{VfxShaderFixture, fixture};
 use crate::systems::{movement, notification};
+
+/// The parameter the engine sets when it draws the ground an area skill is aimed at: whether the
+/// skill hurts whom it lands on.
+pub const HOSTILE: &str = "hostile";
+
+/// The shaders every game provides for the ground an area skill is aimed at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum AreaShader {
+    SkillArea,
+}
+
+impl Fixture for AreaShader {
+    type Row = VfxShaderDef;
+    const FOLDER: Option<&'static str> = Some("vfx");
+
+    fn locks(self) -> Vec<FixtureLock> {
+        VfxShaderDef::fixture_locks(Stage::GROUND, &Self::params())
+    }
+
+    fn fresh(self, near: &Nearby) -> Result<VfxShaderDef, String> {
+        VfxShaderDef::fixture_fresh(near, Stage::GROUND, Self::params())
+    }
+}
+
+impl AreaShader {
+    fn params() -> Vec<ShaderParam> {
+        vec![ShaderParam::of(HOSTILE, ParamKind::Bool)]
+    }
+}
 
 /// What a press armed, waiting for the click that aims it, and the surface drawn on the ground
 /// where an area skill would land.
@@ -93,7 +129,8 @@ pub fn spot_aim(world: &mut World) -> Option<SpotAim> {
     Some(SpotAim {
         aimed,
         at,
-        refused: spot_refusal(world, me, aimed, at),
+        refused: spot_refusal(world, me, aimed, at)
+            .map(|why| why.plain_words(world.resource::<Content>())),
     })
 }
 
@@ -119,12 +156,10 @@ pub fn cast_at_pointer(world: &mut World, skill: SkillId) -> bool {
             true
         }
         None => {
-            notification::local_error(
-                world,
-                Mention::Skill(skill)
-                    .line(&content)
-                    .then(": nothing under the pointer to cast at"),
-            );
+            let said = messages::of(&content)
+                .skill
+                .nothing_to_aim_at(Mention::Skill(skill).line(&content));
+            notification::local_error(world, said);
             false
         }
     }
@@ -176,12 +211,9 @@ pub fn surface(world: &mut World) {
         .and_then(|entity| world.get::<ShaderOverlay>(entity))
         .map_or(uptime, |overlay| overlay.since);
     let overlay = ShaderOverlay {
-        shader: VfxShaderFixture::SkillArea.id(&content),
+        shader: AreaShader::SkillArea.id(&content),
         site: VfxSite::Area(footprint),
-        params: VfxParams(vec![(
-            fixture::HOSTILE.to_owned(),
-            ParamValue::Bool(hostile),
-        )]),
+        params: VfxParams(vec![(HOSTILE.to_owned(), ParamValue::Bool(hostile))]),
         since,
     };
     match shown {
@@ -346,20 +378,24 @@ const PROMPT_WIDTH: f32 = 380.0;
 fn prompt(world: &mut World, gui: &egui::Context, me: Entity, aimed: Aimed) {
     let content = world.resource::<Content>().clone();
     let floats = |mount: MountId| matches!(mount.get(&content).travels, Travels::Floating { .. });
+    let words = &messages::of(&content).skill;
     let (asks, click, leaves) = match aimed {
-        Aimed::Landing => ("Pick a spot on the shore", " step off", " stay aboard"),
+        Aimed::Landing => (words.pick_shore(), words.step_off(), words.stay_aboard()),
         Aimed::Skill { skill, .. } if mount::left_by(world, me, skill) => {
-            ("Pick a spot on the shore", " step off", " stay aboard")
+            (words.pick_shore(), words.step_off(), words.stay_aboard())
         }
         Aimed::Skill { skill, .. } if mount::called_by(world, skill).is_some_and(floats) => {
-            ("Pick a spot on the water", " launch", " put it away")
+            (words.pick_water(), words.launch(), words.put_away())
         }
-        Aimed::Skill { .. } => ("Pick a spot", " use it there", " put it away"),
+        Aimed::Skill { .. } => (words.pick_spot(), words.use_there(), words.put_away()),
     };
-    let hints = StyledLine::new(map::hints([
-        (InputAction::Interact, click),
-        (InputAction::Dismiss, leaves),
-    ]));
+    let puts_away = (escape::dismisses(world) == Some(Dismissal::Aim))
+        .then_some((InputAction::Dismiss, leaves));
+    let hints = StyledLine::new(map::hints(
+        [(InputAction::Interact, click)]
+            .into_iter()
+            .chain(puts_away),
+    ));
     let area = gui::world_area(world, "aim prompt");
     area.anchor(
         egui::Align2::CENTER_BOTTOM,
@@ -377,12 +413,13 @@ fn prompt(world: &mut World, gui: &egui::Context, me: Entity, aimed: Aimed) {
 /// What a good spot is marked as: what would stand there.
 fn good_spot(world: &World, me: Entity, aimed: Aimed) -> Option<String> {
     let content = world.resource::<Content>();
+    let words = &messages::of(content).skill;
     match aimed {
         Aimed::Skill { skill, .. } if !mount::left_by(world, me, skill) => {
             let mount = mount::called_by(world, skill)?;
-            Some(format!("{} here", mount.get(content).name))
+            Some(words.mount_here(&mount.get(content).name))
         }
-        Aimed::Skill { .. } | Aimed::Landing => Some("Step off here".to_owned()),
+        Aimed::Skill { .. } | Aimed::Landing => Some(words.step_off_here().to_owned()),
     }
 }
 
@@ -398,7 +435,7 @@ fn reach_of(world: &World, me: Entity, aimed: Aimed) -> Meters {
 }
 
 /// What the spot `at` has against being taken by what is armed, in the game's words.
-fn spot_refusal(world: &World, me: Entity, aimed: Aimed, at: Pos<Meters>) -> Option<String> {
+fn spot_refusal(world: &World, me: Entity, aimed: Aimed, at: Pos<Meters>) -> Option<LineText> {
     match aimed {
         Aimed::Skill { skill, .. } => casting::spot_refused(world, me, skill, at),
         Aimed::Landing => mount::landing(world, me, Some(at)).err(),

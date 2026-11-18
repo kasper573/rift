@@ -5,8 +5,11 @@ use ui::theme;
 use ui::words;
 
 use engine::core::content::{ContentFile, ContentNames};
+use engine::core::script::DialogueNode;
 use engine::core::script::Exit;
-use engine::systems::script::{DialogueNode, Node, ScriptDef, Speaker};
+use engine::core::script::Node;
+use engine::core::script::ScriptDef;
+use engine::systems::dialogue::Speaker;
 use ui::egui::{Align2, Color32, FontId, Sense, Ui};
 use ui::glyph::Mark;
 
@@ -258,7 +261,7 @@ fn draw(
                 Some(Node::Dialogue(dialogue)) => dialogue
                     .choices
                     .get(index)
-                    .map(|choice| spans::plain(&choice.label))
+                    .map(|choice| spans::plain(nodes::label_of(&choice.label)))
                     .unwrap_or_default(),
                 _ => String::new(),
             };
@@ -331,20 +334,24 @@ fn summaries(editor: &Editor, doc: &ScriptDoc) -> HashMap<String, String> {
 }
 
 fn dialogue_summary(editor: &Editor, dialogue: &DialogueNode) -> String {
-    let speaker = dialogue.lines.first().map(|line| match line.by {
-        Speaker::Npc(npc) => {
-            let name = editor
-                .project
-                .as_ref()
-                .map_or_else(String::new, |project| project.name_of(npc));
-            match &line.gesture {
-                Some(gesture) => format!("{name}, {}", gesture.as_str()),
-                None => name,
+    let speaker = dialogue
+        .lines
+        .first()
+        .map(nodes::line_of)
+        .map(|line| match line.by {
+            Speaker::Npc(npc) => {
+                let name = editor
+                    .project
+                    .as_ref()
+                    .map_or_else(String::new, |project| project.name_of(npc));
+                match &line.gesture {
+                    Some(gesture) => format!("{name}, {}", gesture.as_str()),
+                    None => name,
+                }
             }
-        }
-        Speaker::Object => "the object".to_owned(),
-        Speaker::Narrator | Speaker::Character => "narrator".to_owned(),
-    });
+            Speaker::Object => "the object".to_owned(),
+            Speaker::Narrator | Speaker::Character => "narrator".to_owned(),
+        });
     let count = format!(
         "{} line{}",
         dialogue.lines.len(),

@@ -1,6 +1,6 @@
+use engine::systems::area::Place;
 use engine::systems::area::world_map::{MAX_SIZE, MIN_SIZE, WorldMapDef};
 use engine::systems::area::{self, AreaId};
-use engine::systems::script::Place;
 use ui::egui::{Modifiers, PointerButton, Pos2, Rect, Ui, Vec2};
 use ui::menu;
 
@@ -357,10 +357,7 @@ fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapGrou
         }
         menu::submenu(ui, "Play here as…", |ui| {
             for test in play::test_characters(editor) {
-                if ui
-                    .button(format!("{} · level {}", test.key, test.level))
-                    .clicked()
-                {
+                if menu::entry(ui, format!("{} · level {}", test.key, test.level)).clicked() {
                     editor.play.character = Some(test.key);
                     play::start(editor, Some(place));
                     ui.close();
@@ -379,10 +376,7 @@ fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapGrou
         area_view::open_area_at(editor, &hit.area, Some(cell), None);
         ui.close();
     }
-    if ui
-        .button(format!("Copy position {}, {}", cell.x, cell.y))
-        .clicked()
-    {
+    if menu::entry(ui, format!("Copy position {}, {}", cell.x, cell.y)).clicked() {
         ui.ctx().copy_text(format!("{}, {}", cell.x, cell.y));
         ui.close();
     }
@@ -404,13 +398,13 @@ fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapGrou
         );
         ui.close();
     }
-    if ui.button("Route from here").clicked() {
+    if menu::entry(ui, "Route from here").clicked() {
         start_route(editor, hit.area.clone());
         ui.close();
     }
     if let Some(from) = editor.views.world.route_from.clone()
         && from != hit.area
-        && ui.button(format!("Route from {from} to here")).clicked()
+        && menu::entry(ui, format!("Route from {from} to here")).clicked()
     {
         editor.views.world.route = Some(MapRoute {
             from,
@@ -422,18 +416,18 @@ fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapGrou
 }
 
 fn canvas_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, canvas: &MapCanvas) {
-    if ui.button("Add note here").clicked() {
+    if menu::entry(ui, "Add note here").clicked() {
         let at = ui
             .input(|i| i.pointer.latest_pos())
             .map_or(canvas.viewport.center, |p| canvas.viewport.to_ground(p));
         super::add_note(editor, map, at);
         ui.close();
     }
-    if ui.button("Region from selection").clicked() {
+    if menu::entry(ui, "Region from selection").clicked() {
         super::region_from_selection(editor, map);
         ui.close();
     }
-    if ui.button("Arrange…").clicked() {
+    if menu::entry(ui, "Arrange…").clicked() {
         super::arrange::open(editor);
         ui.close();
     }

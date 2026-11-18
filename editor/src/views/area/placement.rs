@@ -9,6 +9,8 @@ use engine::core::content::{
     Content, ContentFile, ContentScope, FolderReader, name_of, rescoped, table_of,
 };
 use engine::core::math::{Pos, Rect};
+use engine::core::script::VarValue;
+use engine::core::script::Variable;
 use engine::core::script::VariableType;
 use engine::core::units::{Degrees, Meters};
 use engine::systems::area::blueprint::{
@@ -16,11 +18,10 @@ use engine::systems::area::blueprint::{
 };
 use engine::systems::area::scene::{ModuleNode, SceneFolder, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule};
-use engine::systems::script::{VarValue, Variable, condition};
 use serde_json::Value;
 use ui::controls;
 use ui::egui::{RichText, Stroke as EStroke, Ui, Vec2};
-use ui::glyph::{self, Mark};
+use ui::glyph::Mark;
 
 use super::inspect::Followups;
 use super::{AreaFrame, AreaSnapshot, nodes, shapes};
@@ -131,7 +132,7 @@ pub(crate) fn placement_card(
                             changed = true;
                         }
                         if default.is_some()
-                            && glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                            && controls::remove(ui, "Remove")
                                 .on_hover_text("Back to the blueprint's default")
                                 .clicked()
                         {
@@ -196,6 +197,7 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
     let text = match value {
         VarValue::Str(text) => return text.clone(),
         VarValue::Place(place) => {
+            let place = crate::views::script::nodes::place_of(place);
             return format!(
                 "{} {}, {}",
                 project.reader().path_of(place.area).unwrap_or_default(),
@@ -206,7 +208,7 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
         VarValue::Integer(number) => number.to_string(),
         VarValue::Number(number) => number.to_string(),
         VarValue::Boolean(on) => on.to_string(),
-        VarValue::Condition(held) => condition::describe(project, held).to_string(),
+        VarValue::Condition(held) => project.describe(held),
     };
     if text.chars().count() > 40 {
         format!("{}…", text.chars().take(40).collect::<String>())
@@ -282,7 +284,7 @@ pub(crate) fn shared_values(
             match values[0].clone() {
                 None => {
                     ui.label(RichText::new("default").weak());
-                    if ui.small_button("Set all").clicked() {
+                    if controls::button(ui, "Set all").clicked() {
                         let template = variable_default(&reader, variable)
                             .unwrap_or_else(|| variable_template(variable, cx.nearby()));
                         if let Ok(read) = reader.from_json::<VarValue>(&template) {
@@ -729,10 +731,10 @@ pub(super) fn placement_extras(
             out.actions
                 .push(super::AreaAction::OpenBlueprint(key.clone()));
         }
-        if ui.button("Unpack into a folder").clicked() {
+        if controls::button(ui, "Unpack into a folder").clicked() {
             out.actions.push(super::AreaAction::Unpack(node.to_owned()));
         }
-        if ui.button("Replace with…").clicked() {
+        if controls::button(ui, "Replace with…").clicked() {
             out.actions
                 .push(super::AreaAction::Replace(node.to_owned()));
         }

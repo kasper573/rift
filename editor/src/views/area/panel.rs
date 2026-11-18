@@ -14,7 +14,6 @@ use engine::field;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
-use engine::systems::script::RiftScripting;
 use strum::VariantArray;
 use ui::controls;
 use ui::egui::{Align, Layout, Ui};
@@ -36,6 +35,7 @@ use crate::views;
 use crate::widgets::{self, KindMark};
 use ui::draft;
 use ui::input::{self, InputField};
+use ui::menu;
 
 /// The left panel's own state between frames: the scene graph's tree, its filter, and what was
 /// cut from it.
@@ -116,7 +116,7 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.menu_button(Mark::More.text(16.0).color(theme::FAINT), |ui| {
-                    if ui.button("Resize…").clicked() {
+                    if menu::entry(ui, "Resize…").clicked() {
                         menu = Some(BoxMenu::Resize);
                         ui.close();
                     }
@@ -206,7 +206,7 @@ fn variables(
     bundle: &str,
     blueprint: &BlueprintDef,
     actions: &mut Vec<crate::forms::FormAction>,
-) -> Option<BTreeMap<String, Variable<RiftScripting>>> {
+) -> Option<BTreeMap<String, Variable>> {
     let placements = set_by(editor, bundle);
     let shapes = editor.shapes.clone();
     let root = shapes.shape_of(BlueprintDef::TABLE);
@@ -301,7 +301,7 @@ fn header(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnaps
                 let mut item = |ui: &mut Ui, text: String, key: Option<EditorKey>, picked| {
                     let clicked = match key {
                         Some(key) => ui.add(widgets::shortcut_button(text, key)).clicked(),
-                        None => ui.button(text).clicked(),
+                        None => menu::entry(ui, text).clicked(),
                     };
                     if clicked {
                         action = Some(picked);
@@ -334,8 +334,7 @@ fn header(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnaps
                     HeaderAction::Scene(SceneAction::CloseAll),
                 );
             });
-            let plus = ui
-                .button(Mark::Plus.text(14.0))
+            let plus = controls::button(ui, Mark::Plus.text(14.0))
                 .on_hover_text("Add into the insertion folder");
             egui::Popup::menu(&plus).show(|ui| {
                 let folder = insertion_row(editor, snapshot);

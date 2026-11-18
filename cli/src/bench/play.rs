@@ -7,12 +7,12 @@ use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaId;
+use engine::systems::area::Place;
 use engine::systems::from_client;
 use engine::systems::movement::Position;
 use engine::systems::npc::Npc;
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, start_of};
 use engine::systems::player::{ClientId, Players};
-use engine::systems::script::Place;
 use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
 use engine::systems::visibility;
 

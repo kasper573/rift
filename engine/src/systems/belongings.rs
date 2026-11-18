@@ -3,16 +3,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use bevy_ecs::prelude::*;
 
 use crate::core::content::{Content, Fixture};
+use crate::core::text::LineText;
 use crate::systems::class::{self, Class, SkillPoints};
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::inline::InlineItem;
 use crate::systems::item::{Inventory, ItemId};
+use crate::systems::messages::{self, messages};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::player::Xp;
 use crate::systems::skill::Learned;
-use crate::systems::text::{LineText, SpanText};
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Belongings {
@@ -85,6 +86,7 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
         })
         .filter(|&(_, change)| change != 0)
         .collect();
+    let messages = &messages::of(content).belongings;
     let lost = items.iter().filter(|(_, change)| *change < 0);
     let gained = items.iter().filter(|(_, change)| *change > 0);
     let mut told: Vec<Notification> = lost
@@ -93,30 +95,34 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
         .collect();
     if now.xp > before.xp {
         told.push(
-            Notification::feed(HistoryTopic::Item, "XP")
+            Notification::feed(HistoryTopic::Item, messages.xp())
                 .tally(RecordTally::Change(change(before.xp, now.xp)))
                 .into(),
         );
     }
     for &on in now.worn.difference(&before.worn) {
-        told.push(worn_row(content, "Equipped ", on));
+        told.push(worn_row(content, messages.equipped(InlineItem::of(on)), on));
     }
     for &off in before.worn.difference(&now.worn) {
-        told.push(worn_row(content, "Took off ", off));
+        told.push(worn_row(
+            content,
+            messages.took_off(InlineItem::of(off)),
+            off,
+        ));
     }
     if now.level > before.level {
         told.push(Notification::new(
             NotificationKind::Milestone {
-                label: "Level up".into(),
+                label: messages.level_up().to_owned().into(),
                 topic: HistoryTopic::Notification,
                 sfx: Some(InterfaceSound::RisingChime.id(content)),
             },
-            LineText::plain(format!("Level {}", now.level)),
+            LineText::plain(messages.level_reached(now.level)),
         ));
     }
     if now.points > before.points {
         told.push(
-            Notification::feed(HistoryTopic::Notification, "Skill points to spend")
+            Notification::feed(HistoryTopic::Notification, messages.points_to_spend())
                 .tally(RecordTally::Change(change(before.points.0, now.points.0)))
                 .into(),
         );
@@ -142,15 +148,26 @@ fn change(before: u32, now: u32) -> i32 {
     i32::try_from(i64::from(now) - i64::from(before)).unwrap_or(i32::MAX)
 }
 
-fn worn_row(content: &Content, did: &str, item: ItemId) -> Notification {
-    let text = LineText(vec![
-        SpanText::Text {
-            text: did.to_owned(),
-            fx: Vec::new(),
-        },
-        InlineItem::of(item).into(),
-    ]);
+fn worn_row(content: &Content, text: LineText, item: ItemId) -> Notification {
     Notification::feed(HistoryTopic::Item, text)
         .sound(item.get(content).sfx.trade)
         .into()
+}
+
+messages! {
+    /// What the game says of the player's belongings.
+    pub struct BelongingsMessages {
+        /// What the feed names experience gained.
+        xp,
+        /// What the feed says of the item `{item}` the player put on.
+        equipped[item: Line],
+        /// What the feed says of the item `{item}` the player took off.
+        took_off[item: Line],
+        /// The label of the notice that the player reached a level.
+        level_up,
+        /// What the notice says of the level `{level}` the player reached.
+        level_reached(level: Number),
+        /// What the feed names skill points gained.
+        points_to_spend,
+    }
 }

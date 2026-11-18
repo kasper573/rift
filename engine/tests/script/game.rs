@@ -1,9 +1,16 @@
+use engine::systems::area::Started;
+use engine::systems::npc::NPC_RUNNER;
 use std::sync::{Arc, LazyLock};
 
 use bevy_ecs::prelude::*;
 use engine::core::content::id::Leaf;
 use engine::core::content::{Content, ContentScope, with_content};
 use engine::core::math::{Offset, Pos};
+use engine::core::script::EventKind;
+use engine::core::script::Instances;
+use engine::core::script::Owner;
+use engine::core::script::Procedure;
+use engine::core::script::ScriptModule;
 use engine::core::script::compile::compile_owner;
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
@@ -13,9 +20,6 @@ use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::region;
-use engine::systems::script::{
-    self, EventKind, Owner, Procedure, RiftInstances, RunnerKind, ScriptModule,
-};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, skill};
 use serde::de::DeserializeOwned;
@@ -64,8 +68,8 @@ pub fn field() -> (Sim, Entity) {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
@@ -73,7 +77,7 @@ pub fn field() -> (Sim, Entity) {
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     let player = sim.join(1);
     sim.equip(player, "sword");
@@ -93,18 +97,20 @@ pub fn spawn(sim: &mut Sim, key: &str, near: Entity, offset: Offset<Meters>, pac
 /// A plain fighter beside `beside`, running only `modules`.
 pub fn scripted_npc(sim: &mut Sim, beside: Entity, modules: &[&ScriptModule]) -> (Entity, Owner) {
     let npc = spawn(sim, "fighter", beside, Offset::new(1.0, 0.0), u32::MAX);
-    let owner = Owner::Entity(RunnerKind::Npc, npc);
+    let owner = Owner::Entity(NPC_RUNNER, npc);
     let procedures = compiled("test/npc", modules);
-    let mut instances = sim.world.resource_mut::<RiftInstances>();
+    let mut instances = sim.world.resource_mut::<Instances>();
     instances.remove_owner(owner);
     instances.spawn_owner(owner, procedures);
-    instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
+    instances.raise(owner, EventKind::of::<Started>(), None, Vec::new(), |_| {
+        true
+    });
     sim.tick();
     (npc, owner)
 }
 
 pub fn compiled(name: &str, modules: &[&ScriptModule]) -> Vec<Arc<Procedure>> {
-    compile_owner(content(), RunnerKind::Npc, name, modules).expect("compiles")
+    compile_owner(content(), NPC_RUNNER, name, modules).expect("compiles")
 }
 
 pub fn health(sim: &Sim, who: Entity) -> f32 {
@@ -120,6 +126,22 @@ pub fn game() -> Game {
             json!([{ "type": "resident", "npc": "stroller.npc.json", "at": { "x": 26.0, "y": 4.0 } }]),
         )
         .area("forest", &Map::open(8, 20), json!([]))
+        .area("vault", &Map::open(8, 8), json!([]))
+        .edit("area", "vault", |vault| {
+            vault["instance"] = json!({
+                "players": { "least": 1, "most": 2 },
+                "entry": {
+                    "needs": [{ "item": "gold.item.json", "count": 1 }],
+                    "empty": "Nothing is inserted.",
+                    "wrong": "{items} is not what it takes.",
+                    "right": "That is what it takes.",
+                },
+                "cooldown": 60.0,
+                "goals": [{ "type": "task", "task": "open_the_gate", "label": "Open the gate" }],
+                "empties_after": 300.0,
+                "closes_after": 30.0,
+            })
+        })
         .hero("field", 8.0, 8.0)
         .sword()
         .npc("fighter", 30.0, json!([]))
@@ -203,7 +225,6 @@ pub fn game() -> Game {
                 "title": "X Marks the Spot",
                 "category": "Mysteries",
                 "blurb": "Dig.",
-                "xp": 10,
                 "modules": [
                     { "type": "task", "task": "find_stone", "label": "Find the stone" },
                     { "type": "hand_over", "text": ["Here."] },
@@ -215,7 +236,6 @@ pub fn game() -> Game {
                 "title": "The Plea",
                 "category": "Errands",
                 "blurb": "Answer.",
-                "xp": 10,
                 "modules": [{
                     "type": "decide",
                     "label": "Answer",

@@ -3,8 +3,10 @@ use bevy_replication::ToClient;
 use bevy_terminal::{TerminalLine, TerminalSaid};
 use engine::core::content::Content;
 use engine::core::math::{Offset, Pos};
+use engine::core::text::LineText;
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
+use engine::systems::area::vfx;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::chat::{ChatChannel, ChatSpeaker};
 use engine::systems::combat::{self, Attitude};
@@ -21,8 +23,7 @@ use engine::systems::player::{AreaDrawn, commands_locked};
 use engine::systems::quest::{self, QuestDef};
 use engine::systems::region;
 use engine::systems::status::{self, StatusEffectDef};
-use engine::systems::text::LineText;
-use engine::systems::{actor, belongings, chat, class, script, stat, vfx};
+use engine::systems::{actor, belongings, chat, class, stat};
 use serde_json::json;
 use testkit::{Game, Map, Sim, path};
 
@@ -589,10 +590,10 @@ fn area(game: &Content, key: &str) -> Sim {
             status::aspect::TickAspects::default(),
         ))
         .plan((
-            script::query::ListRoster::default(),
+            engine::systems::roster::ListRoster::default(),
             area::object::TrackUnderfoot::default(),
             npc::ApproachWatchers::default(),
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
@@ -606,7 +607,7 @@ fn area(game: &Content, key: &str) -> Sim {
         .plan(actor::SettleActions::default())
         .add(belongings::notify_changes);
     chat::route_lines(&mut sim.world);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 

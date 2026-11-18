@@ -5,9 +5,13 @@ use engine::core::vfx::{ParamKind, ShaderParam};
 use engine::systems::area::world_map::WorldMap;
 use engine::systems::attention::AttentionMark;
 use engine::systems::chat::ChatChannel;
+use engine::systems::class::LevelVfx;
+use engine::systems::combat::DefeatVfx;
 use engine::systems::input::map::{BoundAction, InputAction, InputBinding, InputDef, InputFixture};
 use engine::systems::interface::{CursorShape, InterfaceIcon, InterfaceSound};
-use engine::systems::vfx::{VfxFixture, VfxShaderFixture};
+use engine::systems::notification::pop::PopShader;
+use engine::systems::skill::aim::AreaShader;
+use engine::systems::stat::VitalVfx;
 use serde_json::{Value, json};
 use strum::VariantArray;
 
@@ -27,19 +31,11 @@ impl Game {
             let channel = json!({ "name": key, "color": [255, 255, 255] });
             game.row("chat_channel", key, channel)
         });
-        let game = each::<VfxFixture>(game, |game, key, _| game.vfx(key));
-        let game = each::<VfxShaderFixture>(game, |game, key, locks| {
-            game.shader(key).edit("vfx_shader", key, |shader| {
-                shader["params"] = Value::Array(locks.iter().filter_map(param).collect());
-                for lock in &locks {
-                    if let FixtureLock::Field { field, value } = lock
-                        && let Some(held) = shader.pointer_mut(field)
-                    {
-                        *held = value.clone();
-                    }
-                }
-            })
-        });
+        let game = each::<VitalVfx>(game, |game, key, _| game.vfx(key));
+        let game = each::<DefeatVfx>(game, |game, key, _| game.vfx(key));
+        let game = each::<LevelVfx>(game, |game, key, _| game.vfx(key));
+        let game = each::<PopShader>(game, shader_fixture);
+        let game = each::<AreaShader>(game, shader_fixture);
         let game = each::<WorldMap>(game, |game, key, _| game.row("world_map", key, json!({})));
         each::<CardStyleFixture>(game, |game, key, _| game.card_style(key, json!({})))
     }
@@ -73,6 +69,19 @@ impl Game {
     }
 }
 
+fn shader_fixture(game: Game, key: &str, locks: Vec<FixtureLock>) -> Game {
+    game.shader(key).edit("vfx_shader", key, |shader| {
+        shader["params"] = Value::Array(locks.iter().filter_map(param).collect());
+        for lock in &locks {
+            if let FixtureLock::Field { field, value } = lock
+                && let Some(held) = shader.pointer_mut(field)
+            {
+                *held = value.clone();
+            }
+        }
+    })
+}
+
 fn each<F: Fixture>(game: Game, add: impl Fn(Game, &str, Vec<FixtureLock>) -> Game) -> Game {
     F::VARIANTS.iter().fold(game, |game, fixture| {
         add(game, fixture.name(), fixture.locks())
@@ -89,12 +98,6 @@ fn param(lock: &FixtureLock) -> Option<Value> {
     }
     let name = entry["name"].as_str()?.to_owned();
     let kind: ParamKind = serde_json::from_value(entry["kind"].clone()).ok()?;
-    let param = ShaderParam {
-        name,
-        kind,
-        default: kind.blank(),
-        min: None,
-        max: None,
-    };
+    let param = ShaderParam::of(&name, kind);
     serde_json::to_value(param).ok()
 }

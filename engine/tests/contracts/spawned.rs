@@ -3,10 +3,10 @@ use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
 use engine::core::time::{TimeCourse, WeatherClock};
 use engine::core::units::Meters;
-use engine::core::vfx::Stage;
-use engine::core::vfx::rain::RAIN_CELL;
+use engine::systems::area::rain::RAIN_CELL;
 use engine::systems::area::rain::falling_on;
 use engine::systems::area::spawnable::SpawnedObject;
+use engine::systems::area::stages::RAIN;
 use engine::systems::area::{self, AreaObject};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
@@ -14,7 +14,7 @@ use engine::systems::item::{self, UseItemRequest};
 use engine::systems::movement::{self, position};
 use engine::systems::skill::{self, CastAim, SkillDef, UseSkillRequest};
 use engine::systems::status::{self, StatusEffectDef};
-use engine::systems::{actor, region, script};
+use engine::systems::{actor, region};
 use serde_json::json;
 use testkit::{Game, Map, Sim, box_glb, dialogue, path};
 
@@ -207,7 +207,7 @@ fn moor() -> Sim {
                 },
             });
         })
-        .shader_on("falling", Stage::Rain)
+        .shader_on("falling", RAIN)
         .prop_of(
             "roof",
             box_glb(Vec3::new(8.0, 4.0, 8.0), "thatch", [1.0; 4]),
@@ -338,8 +338,8 @@ fn moor() -> Sim {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
@@ -347,7 +347,7 @@ fn moor() -> Sim {
             (dialogue::hold, dialogue::refresh).chain(),
         ))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }

@@ -26,6 +26,7 @@ use ui::egui::text::{LayoutJob, TextFormat};
 use ui::egui::{Align, Context, Layout};
 use ui::egui_dock::{DockArea, DockState, TabViewer};
 use ui::face::{self, TextRole};
+use ui::menu;
 use ui::sheet::{Tab, TabSize};
 use ui::{float, ink, sheet};
 
@@ -208,26 +209,20 @@ fn top_bar(editor: &mut Editor, root: &mut egui::Ui) {
                         editor.save();
                         ui.close();
                     }
-                    if ui
-                        .add_enabled(has_project, egui::Button::new("Close project"))
-                        .clicked()
-                    {
+                    if menu::entry_if(ui, has_project, "Close project").clicked() {
                         request_close(editor, CloseThen::Close);
                         ui.close();
                     }
                     ui.separator();
-                    if ui
-                        .add_enabled(has_project, egui::Button::new("Find unused content…"))
-                        .clicked()
-                    {
+                    if menu::entry_if(ui, has_project, "Find unused content…").clicked() {
                         unused_dialog::find_unused(editor);
                         ui.close();
                     }
-                    if ui.button("Video settings…").clicked() {
+                    if menu::entry(ui, "Video settings…").clicked() {
                         editor.dialogs.push(ModalDialog::Video);
                         ui.close();
                     }
-                    if ui.button("Game binaries…").clicked() {
+                    if menu::entry(ui, "Game binaries…").clicked() {
                         editor.dialogs.push(ModalDialog::Binaries);
                         ui.close();
                     }
@@ -614,17 +609,17 @@ impl TabViewer for Viewer<'_> {
     }
 
     fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut EditorTab, _: egui_dock::NodePath) {
-        if ui.button("Close all").clicked() {
+        if menu::entry(ui, "Close all").clicked() {
             self.editor.dock_requests.push(DockRequest::CloseAll);
             ui.close();
         }
-        if ui.button("Close other tabs").clicked() {
+        if menu::entry(ui, "Close other tabs").clicked() {
             self.editor
                 .dock_requests
                 .push(DockRequest::CloseOthers(tab.clone()));
             ui.close();
         }
-        if ui.button("Close tabs to the right").clicked() {
+        if menu::entry(ui, "Close tabs to the right").clicked() {
             self.editor
                 .dock_requests
                 .push(DockRequest::CloseToTheRight(tab.clone()));

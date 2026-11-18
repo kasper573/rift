@@ -8,6 +8,7 @@ use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::actor::plate;
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::NodeKey;
 use engine::systems::history::{History, HistoryNews};
@@ -24,7 +25,6 @@ use engine::systems::quest::QuestDef;
 use engine::systems::save::load::{self, LoadedCharacter};
 use engine::systems::save::notice::{self, ChangeLine, GameChanged, Returned, SavingNews};
 use engine::systems::save::{self, GameChange, SavedCharacter, ServerSaving};
-use engine::systems::script::Place;
 use engine::systems::skill::{self, Rank};
 use engine::systems::society::{Account, Society};
 use engine::systems::stat::{self, StatKind};
@@ -296,7 +296,10 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
     let lines = vec![
         line("The item token is no longer in the game.", kept),
         line("The quest errand is no longer in the game.", kept),
-        line("Your inventory now holds 2. One stack did not fit.", kept),
+        line(
+            "Your inventory now holds 2 slots. 1 stack did not fit.",
+            "It was sent to you in a letter.",
+        ),
         line(
             "The Hero's skills were rearranged.",
             "Your 2 skill points are yours to spend again.",
@@ -523,7 +526,6 @@ fn game(forest: Option<&Map>) -> Game {
                 "title": "An errand",
                 "category": "Errands",
                 "blurb": "Bring five tokens.",
-                "xp": 120,
                 "modules": [
                     { "type": "hold", "item": "token.item.json", "count": 5 },
                     { "type": "hand_over", "text": ["Done."] },

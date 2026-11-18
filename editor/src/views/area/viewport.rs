@@ -37,9 +37,10 @@ use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::{HandIndex, StanceId};
 use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::{self, Eyes, Sight};
+use engine::systems::area::sky;
+use engine::systems::area::sky::Sky;
 use engine::systems::area::{Area, Picture, Weather};
 use engine::systems::item::PropHold;
-use engine::systems::script::{Sky, sky};
 use ui::egui;
 
 use super::camera::OrbitCamera;

@@ -17,7 +17,7 @@ use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::area::GroundHold;
 use crate::systems::sleep::Sleep;
-use crate::systems::{WorldArea, area, script, sleep, spawner};
+use crate::systems::{WorldArea, area, sleep, spawner};
 
 mod client;
 
@@ -156,7 +156,7 @@ fn come_to_life(world: &mut World, held: BTreeSet<TileAt>) {
             .collect()
     };
     for tile in fresh {
-        script::spawn_placed(world, tile);
+        area::script::spawn_placed(world, tile);
         area::object::spawn_in(world, tile);
         spawner::fill(world, tile);
     }

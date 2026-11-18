@@ -13,8 +13,10 @@ use crate::core::time::{GameDay, UnixMillis, WallClock};
 use crate::core::units::Seconds;
 use crate::systems::account::AccountId;
 use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
+use crate::systems::area::Place;
 use crate::systems::area::{self, AreaId, transition::Discovered};
 use crate::systems::area_instance::AreaInstanceWorld;
+use crate::systems::area_instance::InstanceCooldowns;
 use crate::systems::class::{Class, ClassId, NodeKey};
 use crate::systems::command::{CommandCooldowns, TerminalCommandId};
 use crate::systems::crafting::{self, RecipeKey, RecipeMasteries};
@@ -27,8 +29,9 @@ use crate::systems::movement::Position;
 use crate::systems::player::{
     CharacterAccount, CharacterDef, CharacterState, SpawnPoint, StandIn, Xp, def,
 };
-use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
-use crate::systems::script::Place;
+use crate::systems::quest::{
+    ActiveQuest, FinishedQuest, Objective, QuestId, QuestLog, QuestResult,
+};
 use crate::systems::shop::{Sale, ShopId, ShopLedger};
 use crate::systems::skill::learn::{PlanRefusal, plan};
 use crate::systems::skill::{
@@ -93,6 +96,9 @@ pub struct CharacterSnapshot {
     /// The commands still cooling down.
     #[serde(default, skip_serializing_if = "SavedList::is_empty")]
     pub command_cooldowns: SavedList<SnapshotCommandCooldown>,
+    /// The instanced areas they started too lately to start again yet.
+    #[serde(default, skip_serializing_if = "SavedList::is_empty")]
+    pub instance_cooldowns: SavedList<SnapshotInstanceCooldown>,
     /// The spot they rise on after a fall, in the area they start in. Without it, where they
     /// start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,6 +139,7 @@ impl ContentFile for CharacterSnapshot {
             statuses: SavedList::default(),
             cooldowns: SavedList::default(),
             command_cooldowns: SavedList::default(),
+            instance_cooldowns: SavedList::default(),
             rises_at: None,
             start: CharacterStart::InitialSpawn(AtInitialSpawn::InitialSpawn),
         })
@@ -165,6 +172,7 @@ impl CharacterSnapshot {
             statuses: SavedList::default(),
             cooldowns: SavedList::default(),
             command_cooldowns: SavedList::default(),
+            instance_cooldowns: SavedList::default(),
             rises_at: None,
             start: CharacterStart::InitialSpawn(AtInitialSpawn::InitialSpawn),
         }
@@ -290,7 +298,7 @@ pub struct SnapshotShop {
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShopStock {
-    pub offer: u32,
+    pub ware: u32,
     pub left: u32,
     pub restocks_in: Seconds,
 }
@@ -345,6 +353,13 @@ pub struct SnapshotBeat {
 #[serde(deny_unknown_fields)]
 pub struct SnapshotCommandCooldown {
     pub command: TerminalCommandId,
+    pub left: Seconds,
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotInstanceCooldown {
+    pub area: AreaId,
     pub left: Seconds,
 }
 
@@ -428,6 +443,7 @@ macro_rules! saved_lists {
             ("statuses", $snapshot.statuses.$of()),
             ("cooldowns", $snapshot.cooldowns.$of()),
             ("command_cooldowns", $snapshot.command_cooldowns.$of()),
+            ("instance_cooldowns", $snapshot.instance_cooldowns.$of()),
         ]
     };
 }
@@ -577,7 +593,7 @@ pub fn materialize(
         for stock in &visited.stock {
             ledger.stocked(
                 visited.shop,
-                stock.offer,
+                stock.ware,
                 stock.left,
                 taken.after(stock.restocks_in),
             );
@@ -634,7 +650,7 @@ pub fn materialize(
                 .history
                 .iter()
                 .map(|record| (taken.before(record.ago), record.entry.clone())),
-            content.built::<GameSettings>().history_merges_within,
+            content.built::<GameSettings>().history,
         ),
         cooldowns: Cooldowns(
             snapshot
@@ -648,6 +664,13 @@ pub fn materialize(
                 .command_cooldowns
                 .iter()
                 .map(|cooling| (cooling.command, taken.after(cooling.left)))
+                .collect(),
+        ),
+        instance_cooldowns: InstanceCooldowns(
+            snapshot
+                .instance_cooldowns
+                .iter()
+                .map(|cooling| (cooling.area, taken.after(cooling.left)))
                 .collect(),
         ),
         statuses,
@@ -714,11 +737,11 @@ impl CharacterSnapshot {
                 })
         };
         let mut stock: Vec<_> = state.ledger.stock().collect();
-        stock.sort_by_key(|&(shop, offer, ..)| (shop, offer));
-        for (id, offer, left, full_at) in stock {
+        stock.sort_by_key(|&(shop, ware, ..)| (shop, ware));
+        for (id, ware, left, full_at) in stock {
             let visited = shop(&mut shops, id);
             shops[visited].stock.push(ShopStock {
-                offer,
+                ware,
                 left,
                 restocks_in: full_at.since(now),
             });
@@ -842,6 +865,16 @@ impl CharacterSnapshot {
                 .filter(|&(_, &ready)| ready > now)
                 .map(|(&command, &ready)| SnapshotCommandCooldown {
                     command,
+                    left: ready.since(now),
+                })
+                .collect(),
+            instance_cooldowns: state
+                .instance_cooldowns
+                .0
+                .iter()
+                .filter(|&(_, &ready)| ready > now)
+                .map(|(&area, &ready)| SnapshotInstanceCooldown {
+                    area,
                     left: ready.since(now),
                 })
                 .collect(),
@@ -1143,7 +1176,7 @@ fn check_skills(content: &Content, snapshot: &CharacterSnapshot, check: &mut Row
                     refusal.sentence(content, class, &picks),
                     format!(
                         "its requirement met: {}",
-                        requirement.describe(content, &class.tree)
+                        requirement.line(content, &class.tree).plain_words(content)
                     ),
                 ),
             }
@@ -1246,7 +1279,6 @@ fn check_hotbar(
 }
 
 fn check_quests(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
-    let parties = content.built::<Parties>();
     for (index, entry) in snapshot.quests.iter().enumerate() {
         if snapshot.quests[..index]
             .iter()
@@ -1273,19 +1305,18 @@ fn check_quests(content: &Content, snapshot: &CharacterSnapshot, check: &mut Row
             );
             continue;
         }
-        let needs = def.progress(
-            content,
-            parties,
-            &ActiveQuest::fresh(content, entry.quest),
-            None,
-        );
-        for (objective, (&count, progress)) in entry.progress.iter().zip(needs).enumerate() {
-            if count > progress.need {
+        for (objective, (&count, need)) in entry
+            .progress
+            .iter()
+            .zip(def.objectives().map(Objective::need))
+            .enumerate()
+        {
+            if count > need {
                 check.error(
                     format!("/quests/{index}/progress/{objective}"),
                     "progress out of range",
                     count,
-                    format!("0 to {}", progress.need),
+                    format!("0 to {need}"),
                 );
             }
         }
@@ -1328,16 +1359,16 @@ fn check_memories(content: &Content, snapshot: &CharacterSnapshot, check: &mut R
 
 fn check_shops(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
     for (index, visited) in snapshot.shops.iter().enumerate() {
-        let offers = visited.shop.get(content).sells().count() as u32;
+        let wares = visited.shop.get(content).sells().count() as u32;
         for (entry, stock) in visited.stock.iter().enumerate() {
-            if stock.offer >= offers {
+            if stock.ware >= wares {
                 check.error(
-                    format!("/shops/{index}/stock/{entry}/offer"),
-                    "unknown offer",
-                    stock.offer,
+                    format!("/shops/{index}/stock/{entry}/ware"),
+                    "unknown ware",
+                    stock.ware,
                     format!(
-                        "0 to {}, an offer of {}",
-                        offers.saturating_sub(1),
+                        "0 to {}, a ware of {}",
+                        wares.saturating_sub(1),
                         visited.shop.path(content)
                     ),
                 );

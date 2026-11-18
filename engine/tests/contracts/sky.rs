@@ -2,11 +2,11 @@ use bevy_ecs::prelude::*;
 use engine::core::math::Pos;
 use engine::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
 use engine::core::units::HourOfDay;
+use engine::systems::area::sky::SkyCondition;
 use engine::systems::area::{self, AreaObject};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, position};
-use engine::systems::script::{self, SkyCondition};
 use engine::systems::status::{self, StatusEffectDef};
 use engine::systems::visibility::present;
 use engine::systems::{GameSettings, actor, npc, region, spawner};
@@ -376,8 +376,8 @@ fn hills(times: Value) -> Sim {
             status::aspect::TickAspects::default(),
         ))
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
@@ -387,7 +387,7 @@ fn hills(times: Value) -> Sim {
         .plan(actor::SettleActions::default());
     sim.world
         .insert_resource(WeatherClock(Some(TimeCourse::Held(0))));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim.later(HOUR * 24.0);
     sim

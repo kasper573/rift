@@ -17,8 +17,8 @@ use engine::core::math::Pos;
 use engine::core::text::{StyledLine, Typewriter};
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
+use engine::systems::area::sky::Sky;
 use engine::systems::area::{self, AreaId};
-use engine::systems::script::Sky;
 use ui::egui::Ui;
 
 use crate::app::Editor;

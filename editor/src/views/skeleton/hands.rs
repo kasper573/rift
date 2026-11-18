@@ -120,11 +120,12 @@ fn list(
         .as_ref()
         .and_then(|rig| joint_names(rig).into_iter().next());
     if let Some(joint) = first_joint
-        && ui.button("+ Add hand").clicked()
+        && controls::button(ui, "+ Add hand").clicked()
     {
         let mut more = hands.to_vec();
         more.push(Hand {
             name: format!("hand {}", hands.len() + 1),
+            label: None,
             joint: JointName::new(joint),
             offset: LocalOffset::default(),
             turn: LocalTurn::default(),
@@ -179,6 +180,16 @@ fn fields(
         .show(ui, |ui| {
             ui.label(theme::muted("name"));
             ui.add(egui::TextEdit::singleline(&mut edited.name).desired_width(140.0));
+            ui.end_row();
+            ui.label(theme::muted("label"));
+            let mut label = edited.label.clone().unwrap_or_default();
+            ui.add(
+                egui::TextEdit::singleline(&mut label)
+                    .hint_text(&edited.name)
+                    .desired_width(140.0),
+            )
+            .on_hover_text("What players call the hand; its name when left empty.");
+            edited.label = Some(label).filter(|label| !label.trim().is_empty());
             ui.end_row();
             ui.label(theme::muted("joint"));
             ui.horizontal(|ui| {

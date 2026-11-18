@@ -1,6 +1,7 @@
 //! What a command line types into a command's inputs. An input is a variable of the command's
 //! script, and its type says what may be typed for it and what the terminal suggests.
 
+use crate::core::script::PlaceValue;
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
@@ -10,9 +11,10 @@ use crate::core::content::files::name_of;
 use crate::core::content::{Content, ContentFile, NamedContent};
 use crate::core::math::Pos;
 use crate::core::script::VariableType;
+use crate::core::script::{VarValue, Variable};
 use crate::core::units::{MeterPos, Meters};
-use crate::systems::GameSettings;
 use crate::systems::actor::Name as ActorName;
+use crate::systems::area::Place;
 use crate::systems::area::{self, AreaDef, AreaId};
 use crate::systems::class::ClassDef;
 use crate::systems::item::ItemDef;
@@ -23,10 +25,10 @@ use crate::systems::npc::NpcDef;
 use crate::systems::player::Players;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::quest::QuestDef;
-use crate::systems::script::{Place, VarValue, Variable};
 use crate::systems::shop::ShopDef;
 use crate::systems::skill::SkillDef;
 use crate::systems::status::StatusEffectDef;
+use crate::systems::{GameSettings, messages};
 
 /// A command line as far as it is typed: the command's name, and once a space ends the name,
 /// what follows it cut at each comma.
@@ -258,7 +260,7 @@ pub fn bind(
                     (None, _) => return Err(InputRefusal::Needs("x".to_owned())),
                     (_, None) => return Err(InputRefusal::Needs("y".to_owned())),
                 };
-                VarValue::Place(Place { area, at })
+                VarValue::Place(PlaceValue::new(Place { area, at }))
             }
         };
         values.insert(input.name.to_owned(), value);
@@ -283,7 +285,9 @@ pub fn stand_ins(content: &Content, inputs: &[CommandInput]) -> Option<BTreeMap<
                 InputKind::Row(table) => {
                     VarValue::Str(rows(content, table).into_iter().next()?.key)
                 }
-                InputKind::Place => VarValue::Place(content.built::<GameSettings>().initial_spawn),
+                InputKind::Place => VarValue::Place(PlaceValue::new(
+                    content.built::<GameSettings>().initial_spawn,
+                )),
             };
             Some((input.name.to_owned(), value))
         })
@@ -358,7 +362,9 @@ fn players_here(world: &World, caller: Entity) -> Vec<InputOption> {
             let detail = if away == f32::MAX {
                 String::new()
             } else {
-                format!("{away:.0} m")
+                messages::of(world.resource::<Content>())
+                    .command
+                    .distance(away.round())
             };
             Some((
                 away,

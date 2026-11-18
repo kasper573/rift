@@ -3,16 +3,16 @@ use engine::core::content::Content;
 use engine::core::math::Offset;
 use engine::core::time::WallClock;
 use engine::core::units::Seconds;
+use engine::systems::dialogue::Speaker;
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack, SlotStack};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::NpcDef;
-use engine::systems::region;
-use engine::systems::script::{self, Speaker};
 use engine::systems::shop::{
     self, SaleQuote, SaleVerdict, ShopDef, ShopRequest, ShopView, WareRefusal,
 };
+use engine::systems::{region, window};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path, said};
 
@@ -26,8 +26,8 @@ fn asking_a_keeper_opens_the_shop_and_buying_trades_the_price_for_the_goods() {
     assert_eq!(opened.shop, sim.id::<ShopDef>("wares"));
 
     let conn = sim.conn(1);
-    let offer = offer_of(&sim, "wares", "potion");
-    sim.send(conn, ShopRequest::Buy { offer });
+    let ware = ware_of(&sim, "wares", "potion");
+    sim.send(conn, ShopRequest::Buy { ware });
     sim.tick();
 
     assert_eq!(sim.count(player, "gold"), 4);
@@ -41,11 +41,11 @@ fn a_purchase_you_cannot_cover_changes_nothing_and_the_keeper_says_so() {
     sim.give(player, "gold", 12);
     let merchant = sim.npc("merchant");
     let opened = browse(&mut sim, 1, "merchant");
-    let tonic = offer_of(&sim, "wares", "tonic");
-    assert!(opened.offers[tonic as usize].refusal.is_some());
+    let tonic = ware_of(&sim, "wares", "tonic");
+    assert!(opened.wares[tonic as usize].refusal.is_some());
 
     let conn = sim.conn(1);
-    sim.send(conn, ShopRequest::Buy { offer: tonic });
+    sim.send(conn, ShopRequest::Buy { ware: tonic });
     sim.tick();
 
     assert_eq!(sim.count(player, "gold"), 12);
@@ -67,29 +67,29 @@ fn limited_stock_is_kept_per_player_and_restocks_on_its_timer() {
     }
     browse(&mut sim, 1, "merchant");
     browse(&mut sim, 2, "merchant");
-    let tonic = offer_of(&sim, "wares", "tonic");
+    let tonic = ware_of(&sim, "wares", "tonic");
     let (one, two) = (sim.conn(1), sim.conn(2));
 
     for _ in 0..4 {
-        sim.send(one, ShopRequest::Buy { offer: tonic });
+        sim.send(one, ShopRequest::Buy { ware: tonic });
         sim.tick();
     }
     assert_eq!(sim.count(first, "tonic"), 3);
     let sold_out = shown(&sim, first).expect("open");
-    assert_eq!(sold_out.offers[tonic as usize].left, Some(0));
+    assert_eq!(sold_out.wares[tonic as usize].left, Some(0));
     assert_eq!(
-        sold_out.offers[tonic as usize].refusal,
+        sold_out.wares[tonic as usize].refusal,
         Some(WareRefusal::SoldOut)
     );
 
-    sim.send(two, ShopRequest::Buy { offer: tonic });
+    sim.send(two, ShopRequest::Buy { ware: tonic });
     sim.tick();
     assert_eq!(sim.count(second, "tonic"), 1);
 
     let mut clock = sim.world.resource_mut::<WallClock>();
     clock.now = clock.now.after(Seconds(600.0));
     sim.run(0.5);
-    sim.send(one, ShopRequest::Buy { offer: tonic });
+    sim.send(one, ShopRequest::Buy { ware: tonic });
     sim.tick();
     assert_eq!(sim.count(first, "tonic"), 4);
 }
@@ -132,8 +132,8 @@ fn a_collector_pays_in_his_own_currency_for_all_or_part_of_a_stack_and_buyback_c
     assert_eq!(sim.count(player, "token"), 0);
     let refused = shown(&sim, player).expect("open");
     assert_eq!(
-        refused.answered,
-        before.answered + 3,
+        refused.answered.0,
+        before.answered.0 + 3,
         "a request that changes nothing is answered all the same"
     );
 
@@ -234,8 +234,8 @@ fn a_map_object_can_keep_a_shop() {
         "the box keeps its shop inside a conversation"
     );
 
-    let offer = offer_of(&sim, "box", "steak");
-    sim.send(conn, ShopRequest::Buy { offer });
+    let ware = ware_of(&sim, "box", "steak");
+    sim.send(conn, ShopRequest::Buy { ware });
     sim.tick();
     assert_eq!(sim.count(player, "steak"), 1);
     assert_eq!(sim.count(player, "gold"), 0);
@@ -382,17 +382,17 @@ fn market() -> Sim {
             shop::requests,
         ))
         .plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
-            shop::hold,
+            window::hold::<shop::ShopVisit>,
             shop::refresh,
         ));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }
@@ -436,12 +436,12 @@ fn quote<'a>(view: &'a ShopView, sim: &Sim, item: &str) -> Option<&'a SaleQuote>
     view.quotes.iter().find(|quote| quote.item == item)
 }
 
-fn offer_of(sim: &Sim, shop: &str, item: &str) -> u32 {
+fn ware_of(sim: &Sim, shop: &str, item: &str) -> u32 {
     let content = sim.world.resource::<Content>();
     let item = sim.id::<ItemDef>(item);
     sim.id::<ShopDef>(shop)
         .get(content)
         .sells()
-        .position(|offer| offer.item == item)
+        .position(|ware| ware.item == item)
         .expect("on sale") as u32
 }

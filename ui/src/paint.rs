@@ -70,6 +70,28 @@ pub fn band(painter: &Painter, rect: Rect, color_at: impl Fn(f32) -> Color32) {
 
 const BAND_COLUMN: f32 = 2.0;
 
+/// `rect` filled with `color`, clear at its top and solid at its bottom, easing between: what
+/// text set straight over the world is laid on so it reads over any picture.
+pub fn fade_up(rect: Rect, color: Color32) -> Shape {
+    let mut mesh = Mesh::default();
+    for step in 0..=FADE_STEPS {
+        let along = step as f32 / FADE_STEPS as f32;
+        let y = rect.top() + rect.height() * along;
+        let eased = along * along * (3.0 - 2.0 * along);
+        let color = color.gamma_multiply(eased);
+        mesh.colored_vertex(Pos2::new(rect.left(), y), color);
+        mesh.colored_vertex(Pos2::new(rect.right(), y), color);
+        if step > 0 {
+            let at = (step - 1) * 2;
+            mesh.add_triangle(at, at + 1, at + 2);
+            mesh.add_triangle(at + 1, at + 2, at + 3);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
+const FADE_STEPS: u32 = 16;
+
 /// The edge of `rect`, `width` wide inside it, shaded from the first colour at its top to the
 /// second at its bottom.
 pub fn gradient_edge(painter: &Painter, rect: Rect, width: f32, [top, bottom]: [Color32; 2]) {

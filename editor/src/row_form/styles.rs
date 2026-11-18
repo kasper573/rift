@@ -6,12 +6,12 @@ use engine::core::content::{Content, Fixture};
 use engine::core::gui::ImageSource;
 use engine::core::math::ColorGradient;
 use engine::core::stage::card::StagedCard;
-use engine::systems::GameSettings;
 use engine::systems::item::card::{self as item_card, CardLook};
 use engine::systems::item::rarity::ItemRarityDef;
-use engine::systems::item::{ItemDef, ItemId, widget};
+use engine::systems::item::{ItemCategory, ItemDef, ItemId, widget};
 use engine::systems::quest::QuestDef;
-use engine::systems::skill::{self, SkillDef};
+use engine::systems::skill::{self, SkillDef, SkillKind};
+use engine::systems::{GameSettings, messages};
 use ui::card::{self, Card};
 use ui::egui::{LayerId, Ui};
 use ui::glyph::CardKind;
@@ -62,6 +62,7 @@ pub(super) fn show_rarity(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 &mut images,
                 CardStyleDef::of(&content, def.card_style),
                 Some(ground),
+                &ItemCategory::Material.named(&messages::of(&content).item),
                 &def.name,
             );
         }
@@ -106,12 +107,24 @@ pub(super) fn show_card_style(editor: &mut Editor, ui: &mut Ui, key: &str) {
             quest_card(ui, &mut images, &content, quest.path(&content));
         } else if let Some(skill) = skill {
             let def = skill.get(&content);
-            let mut face = Card::new(skill::card::kind(def), &def.name);
+            let words = &messages::of(&content).skill;
+            let band = match def.kind {
+                SkillKind::Active => words.active_band(),
+                SkillKind::Passive => words.passive_band(),
+            };
+            let mut face = Card::new(skill::card::kind(def), band, &def.name);
             face.dress = style.get(&content).dress(&mut images, None);
             face.picture = images.image(&def.icon).map(|image| image.texture);
             face.show(ui, |_, _| {});
         } else {
-            stand_in(ui, &mut images, style.get(&content), None, "Card");
+            stand_in(
+                ui,
+                &mut images,
+                style.get(&content),
+                None,
+                &ItemCategory::Material.named(&messages::of(&content).item),
+                "Card",
+            );
         }
     });
 }
@@ -143,7 +156,11 @@ fn show_item(ui: &mut Ui, images: &mut ProjectImages, content: &Content, item: I
         closable: false,
         ..CardLook::PINNED
     };
-    let face = item_card::face_of(content, images, item, look);
+    let band = item
+        .get(content)
+        .category()
+        .named(&messages::of(content).item);
+    let face = item_card::face_of(content, images, item, look, &band);
     face.show(ui, |ui, plate| {
         item_card::summary(ui, content, item, plate);
         item_card::details(ui, content, item, |_| None);
@@ -157,9 +174,10 @@ fn stand_in(
     images: &mut ProjectImages,
     style: &CardStyleDef,
     ground: Option<ColorGradient>,
+    band: &str,
     name: &str,
 ) {
-    let mut face = Card::new(CardKind::Resource, name);
+    let mut face = Card::new(CardKind::Resource, band, name);
     face.dress = style.dress(images, ground);
     face.show(ui, |ui, plate| {
         card::overview(ui, "A card with nothing on it yet");

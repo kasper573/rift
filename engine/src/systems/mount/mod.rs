@@ -3,9 +3,13 @@
 
 pub mod effect;
 pub mod plate;
+pub mod query;
 pub mod render;
 pub mod seat;
 
+use crate::core::script::ReachDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::Vocabulary;
 use std::collections::BTreeSet;
 
 use bevy_app::App;
@@ -19,25 +23,47 @@ use crate::core::content::{
     Nearby, RowCheck,
 };
 use crate::core::math::Pos;
+use crate::core::script::{OwnerRow, RunnerKind, ScriptModule, ScriptedRow, Scripts};
+use crate::core::text::LineText;
 use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters, Seconds};
-use crate::systems::GameSettings;
 use crate::systems::actor::model::{ActorModel, ModelId};
 use crate::systems::actor::skeleton::{self, Declared, JointName, MoveName, SkeletonDef};
 use crate::systems::actor::{Appearance, Hitbox};
+use crate::systems::area::Place;
 use crate::systems::area::{self, AreaId, AreaTag, HeldMesh};
 use crate::systems::history::HistoryTopic;
+use crate::systems::messages::{self, messages};
 use crate::systems::movement;
 use crate::systems::notification::{self, Notification};
 use crate::systems::region;
-use crate::systems::script::{
-    EffectReach, OwnerRow, Place, RiftScripts, RunnerKind, ScriptModule, ScriptedRow,
-};
 use crate::systems::skill::casting::CastAim;
 use crate::systems::skill::{self, SkillDef, SkillId, Targeting};
 use crate::systems::stat;
 use crate::systems::status::aspect;
-use crate::systems::text::LineText;
+
+messages! {
+    /// What the game says of mounts.
+    pub struct MountMessages {
+        /// What a player is told calling a mount where the area bars its kind, or arriving on foot
+        /// through a warp into one.
+        barred_here,
+        /// What a player is told calling a mount that floats at a spot where nothing floats it.
+        no_water_in_reach,
+        /// What a rider is told calling a mount.
+        step_off_first,
+        /// What a rider is told stepping off where no ground lies within their mount's reach.
+        no_ground_in_reach,
+        /// What a rider is told doing what their seat on `{mount}` does not let them.
+        not_from_mount(mount: Text),
+        /// What a rider of `{mount}` is told arriving through a warp at a spot it can't be at, on foot.
+        not_here(mount: Text),
+        /// What calling a mount says when there is nobody to ride it.
+        nobody_to_ride,
+        /// The button on the mount plate that steps the rider off.
+        step_off,
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
@@ -205,7 +231,7 @@ impl ModuleSet for MountDef {
 }
 
 impl ScriptedRow for MountDef {
-    const OWNER: RunnerKind = RunnerKind::Mount;
+    const OWNER: RunnerKind = MOUNT_RUNNER;
 
     fn script(module: &MountModule) -> Option<&ScriptModule> {
         match module {
@@ -293,24 +319,26 @@ pub fn mesh_in(content: &Content, area: AreaId, travels: Travels) -> Option<Held
 
 /// The skills that call `mount`: those whose script's `mount` effect names it.
 pub fn callers(content: &Content, mount: MountId) -> Vec<SkillId> {
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     content
         .ids::<SkillDef>()
         .filter(|skill| {
-            let reaches = &scripts.may_do(OwnerRow::of_row(*skill)).reaches;
-            reaches.contains(&EffectReach::Mounts(mount))
+            scripts
+                .may_do(OwnerRow::of_row(*skill))
+                .reaching::<Mounts>()
+                .any(|mounts| mounts.0 == mount)
         })
         .collect()
 }
 
 /// The mount a skill calls: the one its script's `mount` effect names.
 pub fn called_by(world: &World, skill: SkillId) -> Option<MountId> {
-    let scripts = world.resource::<RiftScripts>();
-    let reaches = &scripts.may_do(OwnerRow::of_row(skill)).reaches;
-    reaches.iter().find_map(|reach| match reach {
-        EffectReach::Mounts(mount) => Some(*mount),
-        _ => None,
-    })
+    let scripts = world.resource::<Scripts>();
+    scripts
+        .may_do(OwnerRow::of_row(skill))
+        .reaching::<Mounts>()
+        .next()
+        .map(|mounts| mounts.0)
 }
 
 /// Whether using `skill` is how `rider` leaves the mount they ride: the skill that called it.
@@ -328,7 +356,7 @@ pub fn rides_on(world: &World, rider: Entity, mount: MountId) -> bool {
 /// Why `actor` could not use `skill` from where they are, whatever they aim it at, in the game's
 /// words: their seat does not let them, or the mount it calls may not be called here. Nothing for
 /// the skill that called the mount they ride, which is how they leave it.
-pub fn shut(world: &World, actor: Entity, skill: SkillId) -> Option<String> {
+pub fn shut(world: &World, actor: Entity, skill: SkillId) -> Option<LineText> {
     if left_by(world, actor, skill) {
         return None;
     }
@@ -342,12 +370,12 @@ pub fn shut(world: &World, actor: Entity, skill: SkillId) -> Option<String> {
 }
 
 /// Why `caster` may not call `mount` at `aim`, in the game's words.
-pub fn uncallable(world: &World, caster: Entity, mount: MountId, aim: CastAim) -> Option<String> {
+pub fn uncallable(world: &World, caster: Entity, mount: MountId, aim: CastAim) -> Option<LineText> {
     if let Some(refusal) = unwelcome(world, caster, mount) {
         return Some(refusal);
     }
     let content = world.resource::<Content>();
-    let words = &world.resource::<GameSettings>().words;
+    let words = &messages::of(world.resource::<Content>()).mount;
     let def = mount.get(content);
     let tag = world.get::<AreaTag>(caster)?;
     match def.travels {
@@ -359,24 +387,24 @@ pub fn uncallable(world: &World, caster: Entity, mount: MountId, aim: CastAim) -
                     .is_some_and(|water| water.walkable(spot)),
                 CastAim::Actor(_) | CastAim::None => false,
             };
-            (!floats).then(|| words.no_water_in_reach.clone())
+            (!floats).then(|| words.no_water_in_reach().into())
         }
     }
 }
 
 /// Why `caster` may call no `mount` where they are, wherever they would call it to, in the
 /// game's words: they already ride, or their area bars mounts of its kind.
-fn unwelcome(world: &World, caster: Entity, mount: MountId) -> Option<String> {
+fn unwelcome(world: &World, caster: Entity, mount: MountId) -> Option<LineText> {
     let content = world.resource::<Content>();
-    let words = &world.resource::<GameSettings>().words;
+    let words = &messages::of(world.resource::<Content>()).mount;
     if world.get::<Riding>(caster).is_some() {
-        return Some(words.step_off_first.clone());
+        return Some(words.step_off_first().into());
     }
     let travels = mount.get(content).travels;
     let welcome = world
         .get::<AreaTag>(caster)
         .is_some_and(|tag| welcome_in(content, tag.area, travels));
-    (!welcome).then(|| words.mount_barred_here.clone())
+    (!welcome).then(|| words.barred_here().into())
 }
 
 /// Seats `caster` on a `mount` of their own: where they stand, or for a mount that floats on the
@@ -388,7 +416,7 @@ pub fn call(
     aim: CastAim,
 ) -> Result<(), LineText> {
     if let Some(refusal) = uncallable(world, caster, mount, aim) {
-        return Err(refusal.into());
+        return Err(refusal);
     }
     let riding = Riding { mount };
     let travels = mount.get(world.resource::<Content>()).travels;
@@ -420,15 +448,9 @@ pub fn landing(
     world: &World,
     rider: Entity,
     at: Option<Pos<Meters>>,
-) -> Result<Pos<Meters>, String> {
+) -> Result<Pos<Meters>, LineText> {
     let content = world.resource::<Content>();
-    let refusal = || {
-        world
-            .resource::<GameSettings>()
-            .words
-            .no_ground_in_reach
-            .clone()
-    };
+    let refusal = || LineText::from(messages::of(content).mount.no_ground_in_reach());
     let (Some(riding), Some(from), Some(tag)) = (
         world.get::<Riding>(rider),
         movement::position(world, rider),
@@ -579,17 +601,10 @@ pub fn check_all(loading: &mut Loading) {
             );
         }
     }
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     for (id, skill) in loading.rows::<SkillDef>(&content) {
         let may_do = scripts.may_do(OwnerRow::of_row(id));
-        let mounts: Vec<MountId> = may_do
-            .reaches
-            .iter()
-            .filter_map(|reach| match reach {
-                EffectReach::Mounts(mount) => Some(*mount),
-                _ => None,
-            })
-            .collect();
+        let mounts: Vec<MountId> = may_do.reaching::<Mounts>().map(|mounts| mounts.0).collect();
         for mount in mounts {
             let floats = matches!(mount.get(&content).travels, Travels::Floating { .. });
             let wanted = if floats {
@@ -657,11 +672,11 @@ pub(crate) fn unseat(world: &mut World, rider: Entity) {
 fn tell_on_foot(world: &mut World, rider: Entity, mount: MountId, area: AreaId) {
     let content = world.resource::<Content>().clone();
     let def = mount.get(&content);
-    let words = &world.resource::<GameSettings>().words;
+    let words = &messages::of(world.resource::<Content>()).mount;
     let said = if welcome_in(&content, area, def.travels) {
-        words.mount_not_here.replace("{mount}", &def.name)
+        words.not_here(&def.name)
     } else {
-        words.mount_barred_here.clone()
+        words.barred_here().to_owned()
     };
     let told = Notification::feed(HistoryTopic::Notification, said);
     notification::notify(world, rider, None, told);
@@ -672,4 +687,25 @@ fn standing(world: &World, actor: Entity) -> Option<Place> {
         area: world.get::<AreaTag>(actor)?.area,
         at: movement::position(world, actor)?,
     })
+}
+
+pub const MOUNT_RUNNER: RunnerKind = RunnerKind::new("mount");
+
+/// A script that may seat someone on a mount.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mounts(pub MountId);
+
+impl ReachDef for Mounts {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .runner(
+            MOUNT_RUNNER,
+            RunnerSpec::named_row::<MountDef>()
+                .stateless()
+                .starting_with_world(),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<MountDef>(loading, content));
+    effect::scripting(vocabulary);
 }

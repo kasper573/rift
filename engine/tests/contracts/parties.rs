@@ -5,13 +5,14 @@ use engine::core::units::{Meters, Seconds};
 use engine::systems::area::AreaDef;
 use engine::systems::area_map::{self, MapMarkKind};
 use engine::systems::chat::{ChatChannel, ChatChannels, ChatSpeaker};
+use engine::systems::combat::credit::KillCredited;
 use engine::systems::item::{self, DropTaker, Reservation};
 use engine::systems::movement::position;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::party::share::shares;
 use engine::systems::party::{ExperienceSplit, PartyRequest, SharedExperience};
 use engine::systems::player::{ClientId, Xp};
-use engine::systems::rewards::{self, KillCredited};
+use engine::systems::reward;
 use engine::systems::social_request::RequestAnswer;
 use engine::systems::{GameSettings, combat, request_sources, stat};
 use serde_json::json;
@@ -221,7 +222,7 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
     let mut server = Server::of(game(), request_sources());
     server
         .village
-        .add(rewards::grant)
+        .add((combat::credit::credit, reward::kills).chain())
         .plan(stat::SettleVitals::default())
         .add(combat::defeats);
     let wren = server.sign_in(1, "Wren", "village");

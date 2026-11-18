@@ -404,7 +404,7 @@ fn a_basic_attack_that_costs_or_cools_down_is_refused() {
 #[test]
 fn a_fixture_shader_without_the_parameter_the_engine_sets_is_refused() {
     let report = Game::new()
-        .shader_on("skill_area", Stage::Ground)
+        .shader_on("skill_area", Stage::GROUND)
         .whole()
         .try_load()
         .err()
@@ -528,8 +528,9 @@ fn a_layer_filling_a_parameter_its_shader_lacks_is_refused() {
 #[test]
 fn a_game_file_that_does_not_parse_is_refused_at_its_field() {
     let unread_settings = game()
-        .quest("errand",
-            json!({ "title": "Errand", "category": "Errands", "blurb": "Errand", "xp": 10, "modules": [] }),
+        .quest(
+            "errand",
+            json!({ "title": "Errand", "category": "Errands", "blurb": "Errand", "modules": [] }),
         )
         .edit_settings(|settings| settings["initial_spawn"] = json!(path("area", "start")));
     let unread_character = game().row("test_character", "nameless", json!({ "xp": 10 }));
@@ -666,16 +667,15 @@ fn what_follows_the_sky_or_is_away_by_it_reads_the_sky_alone_by_times_of_day_the
         }])
     };
     let pack = |more: Value| {
-        let mut spawner = json!({
-            "type": "spawner",
-            "count": 2,
+        let mut population = json!({
+            "max_spawned_at_once": 2,
             "spawns": [{ "type": "npc", "npc": path("npc", "wolf"), "when": night.clone() }],
         });
-        spawner
+        population
             .as_object_mut()
-            .expect("the spawner")
+            .expect("the population")
             .extend(more.as_object().expect("fields").clone());
-        json!([spawner])
+        json!([{ "type": "spawner", "populations": [population] }])
     };
     for (modules, refused) in [
         (light(night.clone()), None),
@@ -971,8 +971,8 @@ fn a_file_that_did_not_load_is_reported_alone() {
 }
 
 #[test]
-fn content_that_pays_out_items_needs_messages_for_what_a_bag_has_no_room_for() {
-    let paying = |messages: bool| {
+fn content_that_pays_out_items_needs_mail_for_what_a_bag_has_no_room_for() {
+    let paying = |mail: bool| {
         let gift = json!({
             "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "give" },
             "give": { "type": "items", "give": [{ "item": path("item", "ore") }] },
@@ -982,15 +982,15 @@ fn content_that_pays_out_items_needs_messages_for_what_a_bag_has_no_room_for() {
             "take": { "type": "items", "take": [{ "item": path("item", "ore") }] },
         });
         let errand = json!({
-            "title": "Errand", "category": "Errands", "blurb": "Errand", "xp": 10,
+            "title": "Errand", "category": "Errands", "blurb": "Errand",
             "modules": [{ "type": "reward", "items": [{ "item": path("item", "ore") }] }],
         });
         let script = |name: &str| json!([{ "type": "script", "script": path("script", name) }]);
         game()
             .edit_settings(|settings| {
-                if !messages {
+                if !mail {
                     let settings = settings.as_object_mut().expect("settings");
-                    settings.remove("messages");
+                    settings.remove("mail");
                 }
             })
             .item("ore", json!({ "kind": { "type": "resource" } }))
@@ -1005,7 +1005,7 @@ fn content_that_pays_out_items_needs_messages_for_what_a_bag_has_no_room_for() {
         report
             .errors
             .into_iter()
-            .filter(|error| error.problem.rule == "pays items without messages")
+            .filter(|error| error.problem.rule == "delivers items without mail")
             .map(|error| error.file)
             .collect()
     };

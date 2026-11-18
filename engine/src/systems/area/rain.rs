@@ -29,12 +29,127 @@ use crate::core::render::world::clouds::{CLOUD_TILE, CloudDrift, CloudReading, C
 use crate::core::render::{CameraRig, Look};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::Meters;
-use crate::core::vfx::rain::{
-    self as shelter, OPEN_TOP, RAIN_CELL, RAIN_SIDE, RainCell, RainField, SHELTER_CELL,
-    SHELTER_SIDE, Shelter,
-};
 use crate::systems::area::scenery::{prop_transform, shown_weather};
 use crate::systems::{GameSettings, WorldArea};
+
+/// How many cells of the rain field lie each way round the camera's subject, and how wide each
+/// is: far enough for the rain seen on the horizon to fall where the field says.
+pub const RAIN_SIDE: usize = 64;
+pub const RAIN_CELL: Meters = Meters(128.0);
+
+/// How many cells of the shelter lie each way round the camera, and how wide each is: as far as
+/// rain is drawn falling, and fine enough to keep it off the ground under a roof.
+pub const SHELTER_SIDE: usize = 128;
+pub const SHELTER_CELL: Meters = Meters(1.0);
+
+/// The top of a cell of the shelter where nothing stands over the ground.
+pub const OPEN_TOP: f32 = -1.0e6;
+
+/// How far under a shelter's top a point lies wholly sheltered, in metres: the top itself stands
+/// in the rain, and less of the rain reaches what lies deeper under it.
+pub const SHELTER_DEPTH: f32 = 1.5;
+
+/// How many points of the rain's way down a point is held against for shelter, and the most the
+/// rain falls from one to the next, in metres: a way that leans is followed a cell at a time.
+pub const SHELTER_STEPS: usize = 6;
+pub const SHELTER_STEP: f32 = 2.0;
+
+/// The lean from which the rain is followed from a full half cell upwind, in metres carried for
+/// every metre fallen: rain that falls straight lands on what stands under it alone.
+pub const LEANING: f32 = 0.2;
+
+/// The rain over the ground round the camera's subject: [`RAIN_SIDE`] cells each way from the
+/// north-west `corner` (x east, y south), [`RAIN_CELL`] wide, row by row from the north; none held
+/// while it is empty.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct RainField {
+    pub corner: Vec2,
+    pub cells: Vec<RainCell>,
+}
+
+impl RainField {
+    /// The rain over the cell holding the ground point `at`, none off the field.
+    pub fn cell_at(&self, at: Vec2) -> Option<RainCell> {
+        let cell = ((at - self.corner) / RAIN_CELL.0).floor();
+        let side = RAIN_SIDE as f32;
+        let inside = cell.cmpge(Vec2::ZERO).all() && cell.cmplt(Vec2::splat(side)).all();
+        inside
+            .then(|| {
+                self.cells
+                    .get(cell.y as usize * RAIN_SIDE + cell.x as usize)
+            })
+            .flatten()
+            .copied()
+    }
+
+    /// How hard it rains over the cell holding the ground point `at`, none off the field.
+    pub fn rain_at(&self, at: Vec2) -> f32 {
+        self.cell_at(at).map_or(0.0, |cell| cell.rain)
+    }
+}
+
+impl Shelter {
+    /// Whether the rain is kept off `point` by what stands over the ground round the camera.
+    pub fn covers(&self, point: Vec3) -> bool {
+        kept_off(point, self.lean, |ground| self.top_over(ground))
+    }
+
+    fn top_over(&self, ground: Vec2) -> Option<f32> {
+        let cell = ((ground - self.corner) / SHELTER_CELL.0).floor();
+        let side = SHELTER_SIDE as f32;
+        let inside = cell.cmpge(Vec2::ZERO).all() && cell.cmplt(Vec2::splat(side)).all();
+        inside
+            .then(|| {
+                self.tops
+                    .get(cell.y as usize * SHELTER_SIDE + cell.x as usize)
+                    .copied()
+            })
+            .flatten()
+    }
+}
+
+/// Whether rain carried `lean` over the ground for every metre it falls is kept off `point`:
+/// something stands in the way the rain comes to it, down its lean from upwind, its top, as
+/// `top_over` tells it for each point of the ground, more than [`SHELTER_DEPTH`] over where the
+/// rain passes.
+pub fn kept_off(point: Vec3, lean: Vec2, top_over: impl Fn(Vec2) -> Option<f32>) -> bool {
+    way_down_to(point.xz(), lean)
+        .any(|(over, rise)| top_over(over).is_some_and(|top| point.y + rise < top - SHELTER_DEPTH))
+}
+
+/// Where the rain that lands on `ground` passes on its way down, nearest first: each point it
+/// passes over, and how far above where it lands it passes there. It leans with the wind, so it
+/// is followed from half a cell upwind, clear of the side it lands on.
+fn way_down_to(ground: Vec2, lean: Vec2) -> impl Iterator<Item = (Vec2, f32)> {
+    let leaning = lean.length();
+    let nudge = lean.normalize_or_zero() * SHELTER_CELL.0 / 2.0 * (leaning / LEANING).min(1.0);
+    let step = (SHELTER_CELL.0 / leaning.max(f32::EPSILON)).min(SHELTER_STEP);
+    (0..SHELTER_STEPS).map(move |index| {
+        let rise = index as f32 * step;
+        (ground - nudge - lean * rise, rise)
+    })
+}
+
+/// The rain over a cell: the share of the downpour the lie of the land gives it, how wet its
+/// ground lies and how hard it rains there, each 0 to 1.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RainCell {
+    pub share: f32,
+    pub wetness: f32,
+    pub rain: f32,
+}
+
+/// Where the ground round the camera lies under shelter from the rain: the height of the top of
+/// what stands over each of [`SHELTER_SIDE`] cells each way from the north-west `corner`,
+/// [`SHELTER_CELL`] wide, row by row from the north, or [`OPEN_TOP`] under the open sky; none held
+/// while it is empty.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Shelter {
+    pub corner: Vec2,
+    pub tops: Vec<f32>,
+    /// How far the rain is carried over the ground for every metre it falls.
+    pub lean: Vec2,
+}
 
 /// How hard it rains at `at` in `area` under `weather`, 0 none to 1 a cloudburst, with the field
 /// of cloud `sheet` carried `drift` along and the rain carried `lean` sideways for every metre it
@@ -90,7 +205,7 @@ pub fn falling_on(world: &World, at: Pos<Meters>) -> f32 {
         .0
         .get_or_init(|| Shelters::of(content, area));
     let stood = Vec3::new(at.x, area.heights.height_at(at).0, at.y);
-    if shelter::kept_off(stood, lean, |ground| shelters.top_over(ground)) {
+    if kept_off(stood, lean, |ground| shelters.top_over(ground)) {
         0.0
     } else {
         rain

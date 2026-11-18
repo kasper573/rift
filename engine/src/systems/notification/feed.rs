@@ -10,20 +10,21 @@ use ui::ink::{self, Ground};
 
 use super::rows::{self, Clock, NoticePlace};
 use super::{FeedRow, Notification, NotificationKind, NotificationSent};
-use crate::core::content::Content;
+use crate::core::content::{Content, ImageRef};
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::core::units::Seconds;
+use crate::systems::GameSettings;
 use crate::systems::actor::plate;
 use crate::systems::dialogue::stage;
 use crate::systems::history::RecordTally;
 use crate::systems::history::widget::tallied;
 use crate::systems::hud;
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use ui::motion::{Swell, Transit, TransitMove, TransitPose, Transits};
 
-const SHOWN: usize = 5;
 const WIDEST: f32 = 360.0;
 const ICON: f32 = 22.0;
 const SIZE: f32 = 20.0;
@@ -55,6 +56,11 @@ impl Plugin for FeedPlugin {
 
 pub fn show(world: &mut World, notification_sent: NotificationSent) {
     let (notification, lasts) = (notification_sent.notification, notification_sent.stays);
+    let shown = world
+        .resource::<Content>()
+        .built::<GameSettings>()
+        .notices
+        .feed_rows as usize;
     let mut feed = world.resource_mut::<Feed>();
     let clock = feed.clock;
     let merge = feed.toasts.iter().enumerate().find_map(|(index, shown)| {
@@ -77,7 +83,7 @@ pub fn show(world: &mut World, notification_sent: NotificationSent) {
         notification,
         swell: Swell::default(),
     });
-    if feed.toasts.len() > SHOWN {
+    if feed.toasts.len() > shown {
         feed.toasts.remove(0);
     }
 }
@@ -171,7 +177,7 @@ fn draw(world: &mut World) {
                 NotificationKind::Feed(FeedRow { failure: true, .. })
             );
             let text_look = text_look(failure);
-            let icon = icon_of(&toast.notification).and_then(|icon| gui::image_file(world, &icon));
+            let icon = icon_of(&toast.notification).and_then(|icon| gui::image(world, &icon));
             let lead = if icon.is_some() { ICON + GAP } else { 0.0 };
             let text_size = text::measure(&gui, world, &line, text_look, WIDEST - lead);
             FeedLine {
@@ -279,7 +285,12 @@ impl FeedAnchor {
             FeedPlace::Corner if !lines.is_empty() => row,
             FeedPlace::OverHead | FeedPlace::Corner => 0.0,
         };
-        let needed = ABOVE_HEAD + SHOWN as f32 * row + spare;
+        let shown = world
+            .resource::<Content>()
+            .built::<GameSettings>()
+            .notices
+            .feed_rows as f32;
+        let needed = ABOVE_HEAD + shown * row + spare;
         if let Some(head) = head.filter(|head| head.y - needed >= screen.top() + EDGE) {
             return FeedAnchor::OverHead(Pos2::new(head.x, head.y - ABOVE_HEAD));
         }
@@ -288,11 +299,11 @@ impl FeedAnchor {
         let mut bottom = screen.bottom() - EDGE;
         let mut taken: Vec<Rect> = hud::drawn_rects(world)
             .into_iter()
-            .chain(stage::rects(world))
+            .chain(stage::dialogue_rect(world))
             .filter(|rect| rect.right() > right - widest && rect.left() < right)
             .collect();
         taken.sort_by(|a, b| b.bottom().total_cmp(&a.bottom()));
-        let reach = SHOWN as f32 * row;
+        let reach = shown * row;
         for rect in taken {
             if rect.bottom() > bottom - reach && rect.top() < bottom {
                 let over = rect.top() - EDGE;
@@ -348,7 +359,10 @@ fn merged(shown: &Notification, newer: &Notification) -> Option<Notification> {
 
 fn label(notification: &Notification, content: &Content) -> String {
     let text = notification.text.plain_words(content);
-    tally_of(notification).map_or_else(|| text.clone(), |tally| tally.line(&text))
+    tally_of(notification).map_or_else(
+        || text.clone(),
+        |tally| tally.line(&text, &messages::of(content).history),
+    )
 }
 
 fn tally_of(notification: &Notification) -> Option<RecordTally> {
@@ -358,7 +372,7 @@ fn tally_of(notification: &Notification) -> Option<RecordTally> {
     }
 }
 
-fn icon_of(notification: &Notification) -> Option<String> {
+fn icon_of(notification: &Notification) -> Option<ImageRef> {
     match &notification.kind {
         NotificationKind::Feed(row) => row.icon.clone(),
         _ => None,
@@ -372,6 +386,7 @@ fn feed_line(notification: &Notification, content: &Content) -> StyledLine {
         tally_of(notification),
         icon_of(notification).is_some(),
         Ground::Dusk,
+        &messages::of(content).history,
     );
     line
 }

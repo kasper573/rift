@@ -103,7 +103,11 @@ pub fn label(module: &AreaModule, paths: &impl IdPaths) -> String {
             format!("{} placement", named(paths.path_of(placement.blueprint)))
         }
         AreaModule::Spawner(spawner) => {
-            format!("{} × {}", spawned_names(spawner, paths), spawner.count)
+            format!(
+                "{} × {}",
+                spawned_names(spawner, paths),
+                spawner.most_at_once()
+            )
         }
         AreaModule::Resident(resident) => {
             format!("resident {}", named(paths.path_of(resident.npc)))
@@ -163,7 +167,7 @@ pub(crate) fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
         )
     };
     match module {
-        AreaModule::Spawner(spawner) => format!("× {}", spawner.count),
+        AreaModule::Spawner(spawner) => format!("× {}", spawner.most_at_once()),
         AreaModule::Resident(resident) => point(resident.at),
         AreaModule::Prop(prop) => point(prop.at),
         AreaModule::Light(light) => point(light.at),
@@ -175,9 +179,8 @@ pub(crate) fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
 }
 
 fn spawned_names(spawner: &Spawner, paths: &impl IdPaths) -> String {
-    let names: Vec<String> = spawner
-        .spawns
-        .iter()
+    let mut names: Vec<String> = spawner
+        .shares()
         .map(|share| match share.what {
             Spawns::Npc { npc } => name_of(paths.path_of(npc).unwrap_or_default()).to_owned(),
             Spawns::Resource { resource } => {
@@ -185,6 +188,12 @@ fn spawned_names(spawner: &Spawner, paths: &impl IdPaths) -> String {
             }
         })
         .collect();
+    let mut seen = Vec::new();
+    names.retain(|name| {
+        let first = !seen.contains(name);
+        seen.push(name.clone());
+        first
+    });
     names.join(" · ")
 }
 
@@ -258,11 +267,14 @@ pub(crate) fn draw_footprint(
     scale: f32,
     stroke: EStroke,
 ) {
-    let outline = footprint.outline(at, yaw, scale);
-    if outline.len() >= 3 {
-        painter.add(egui::Shape::closed_line(canvas.closed(&outline), stroke));
-        let clear = EStroke::new(1.0, ui::ink::wash(stroke.color, 0.5));
-        for kept in movement::kept_clear(&outline, canvas.area().bodies.radius) {
+    let outlines = footprint.outlines(at, yaw, scale);
+    if outlines.is_empty() {
+        painter.add(egui::Shape::closed_line(canvas.circle(at, 0.25), stroke));
+    }
+    let clear = EStroke::new(1.0, ui::ink::wash(stroke.color, 0.5));
+    for outline in outlines.iter().filter(|outline| outline.len() >= 3) {
+        painter.add(egui::Shape::closed_line(canvas.closed(outline), stroke));
+        for kept in movement::kept_clear(outline, canvas.area().bodies.radius) {
             painter.add(egui::Shape::dashed_line(
                 &canvas.closed(&kept),
                 clear,
@@ -270,8 +282,6 @@ pub(crate) fn draw_footprint(
                 4.0,
             ));
         }
-    } else {
-        painter.add(egui::Shape::closed_line(canvas.circle(at, 0.25), stroke));
     }
     let heading = at + yaw.rotate(engine::core::math::Offset::new(0.0, -0.5));
     painter.add(egui::Shape::line(canvas.polyline(&[at, heading]), stroke));

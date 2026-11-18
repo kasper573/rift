@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
 use engine::core::script::Value;
+use engine::core::script::condition;
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
@@ -10,8 +11,6 @@ use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::ClientId;
 use engine::systems::region;
-use engine::systems::script;
-use engine::systems::script::condition;
 use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility;
 use engine::systems::{actor, reach, skill};
@@ -152,15 +151,15 @@ fn arena() -> Sim {
         .add((combat::request, actor::playing::progress))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 

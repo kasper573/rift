@@ -14,13 +14,13 @@ pub fn show(editor: &mut Editor, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(theme::faint(format!("{} lines", editor.output.lines.len())).size(12.0));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.small_button("Clear").clicked() {
+            if controls::button(ui, "Clear").clicked() {
                 editor.output.lines.clear();
             }
-            if ui.small_button("Save to file…").clicked() {
+            if controls::button(ui, "Save to file…").clicked() {
                 play::save_output(editor);
             }
-            if ui.small_button("Copy").clicked() {
+            if controls::button(ui, "Copy").clicked() {
                 let text = editor.output.text();
                 ui.ctx().copy_text(text);
             }

@@ -10,7 +10,7 @@ use engine::systems::region;
 use engine::systems::spawner;
 use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility;
-use engine::systems::{actor, movement, rewards, script, skill};
+use engine::systems::{actor, movement, reward, skill};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, dialogue, hunting, path};
 
@@ -268,11 +268,11 @@ fn harbour() -> Sim {
             combat::request,
             actor::playing::progress,
         ))
-        .add((rewards::grant, npc::defeated))
+        .add((reward::kills, npc::defeated))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
@@ -284,7 +284,7 @@ fn harbour() -> Sim {
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }

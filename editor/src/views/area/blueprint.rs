@@ -5,11 +5,11 @@ use engine::core::content::locate::escape;
 use engine::core::content::{Content, ContentFile, FolderReader, name_of, parent_of, rescoped};
 use engine::core::ground::GroundSize;
 use engine::core::math::{Pos, Rect};
+use engine::core::script::Variable;
 use engine::core::units::{Degrees, Meters};
 use engine::systems::area::AreaModule;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{self, Holes, ModuleNode, SceneNode};
-use engine::systems::script::Variable;
 
 use super::{AreaSnapshot, nodes, placement, shapes};
 use crate::app::Editor;

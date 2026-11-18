@@ -837,13 +837,12 @@ impl<'a> GameFolder<'a> {
             if rename.clicked() {
                 picked = Some(TreeAction::Rename(folder.to_owned()));
             }
-            let move_to = ui
-                .add_enabled(fixed.is_none(), egui::Button::new("Move to…"))
+            let move_to = menu::entry_if(ui, fixed.is_none(), "Move to…")
                 .on_disabled_hover_text(fixed.unwrap_or_default());
             if move_to.clicked() {
                 picked = Some(TreeAction::MoveTo(vec![folder.to_owned()]));
             }
-            if ui.button("Show in the file manager").clicked() {
+            if menu::entry(ui, "Show in the file manager").clicked() {
                 picked = Some(TreeAction::ShowInFileManager(folder.to_owned()));
             }
             ui.separator();
@@ -893,7 +892,7 @@ impl<'a> GameFolder<'a> {
                 });
             }
         }
-        if ui.button("Other type…").clicked() {
+        if menu::entry(ui, "Other type…").clicked() {
             picked = Some(TreeAction::OtherType(folder.to_owned()));
         }
         ui.separator();
@@ -924,7 +923,7 @@ impl<'a> GameFolder<'a> {
         {
             picked = file(BrowserAction::Open);
         }
-        if self.index.media.contains(path) && ui.button("Used by").clicked() {
+        if self.index.media.contains(path) && menu::entry(ui, "Used by").clicked() {
             picked = file(BrowserAction::Usages);
         }
         if ui
@@ -940,10 +939,10 @@ impl<'a> GameFolder<'a> {
         {
             picked = Some(TreeAction::Rename(path.to_owned()));
         }
-        if ui.button("Move to…").clicked() {
+        if menu::entry(ui, "Move to…").clicked() {
             picked = Some(TreeAction::MoveTo(vec![path.to_owned()]));
         }
-        if self.index.media.contains(path) && ui.button("Replace with…").clicked() {
+        if self.index.media.contains(path) && menu::entry(ui, "Replace with…").clicked() {
             picked = Some(TreeAction::ReplaceWith(path.to_owned()));
         }
         ui.separator();
@@ -969,13 +968,13 @@ impl<'a> GameFolder<'a> {
             picked = Some(TreeAction::Paste(String::new()));
         }
         ui.separator();
-        if ui.button("Open all").clicked() {
+        if menu::entry(ui, "Open all").clicked() {
             picked = Some(TreeAction::OpenAll);
         }
-        if ui.button("Close all").clicked() {
+        if menu::entry(ui, "Close all").clicked() {
             picked = Some(TreeAction::CloseAll);
         }
-        if ui.button("Show the game folder").clicked() {
+        if menu::entry(ui, "Show the game folder").clicked() {
             picked = Some(TreeAction::ShowGameFolder);
         }
         if picked.is_some() {
@@ -987,8 +986,7 @@ impl<'a> GameFolder<'a> {
     fn many_menu(&self, ui: &mut Ui, paths: &[String]) -> Option<TreeAction> {
         let fixed = paths.iter().find_map(|path| fixed_place(path));
         let mut picked = None;
-        let move_to = ui
-            .add_enabled(fixed.is_none(), egui::Button::new("Move to…"))
+        let move_to = menu::entry_if(ui, fixed.is_none(), "Move to…")
             .on_disabled_hover_text(fixed.unwrap_or_default());
         if move_to.clicked() {
             picked = Some(TreeAction::MoveTo(paths.to_vec()));
@@ -1121,7 +1119,7 @@ impl TreeSource for GameFolder<'_> {
         match ids {
             [] => self.empty_space_menu(ui),
             [one] if self.is_missing(one) && !self.is_folder(one) => {
-                let make = ui.button("Make it").clicked();
+                let make = menu::entry(ui, "Make it").clicked();
                 if make {
                     ui.close();
                 }

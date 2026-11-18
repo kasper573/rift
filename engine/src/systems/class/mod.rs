@@ -1,3 +1,4 @@
+pub mod query;
 pub mod tree;
 
 pub use tree::{
@@ -5,29 +6,37 @@ pub use tree::{
     SkillTree, TreeBackdrop,
 };
 
+use crate::core::script::EventDef;
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::RunnerKind;
+use crate::core::script::Vocabulary;
+use crate::systems::area::AREA_RUNNER;
+use crate::systems::area::script::area_owner;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum::{IntoStaticStr, VariantArray};
 use ui::egui;
 
 use crate::core::content::ImageRef;
 use crate::core::content::SchemaMark;
 use crate::core::content::{
-    Content, ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck,
+    Content, ContentFile, ContentId, Fixture, Loading, NamedContent, Nearby, RowCheck,
 };
 use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault, ValueType};
-use crate::core::vfx::VfxSite;
+use crate::core::script::{EffectCall, EventKind, Expr, Instances};
+use crate::core::vfx::{SiteKind, VfxDef, VfxSite, check_fixtures_played};
 use crate::systems::actor::ModelId;
+use crate::systems::aim::{self as effects, Reaching};
+use crate::systems::area::vfx::play_fixture;
+use crate::systems::messages::{self, messages};
 use crate::systems::notification;
+use crate::systems::notification::pop::PopShader;
 use crate::systems::player::Xp;
-use crate::systems::script::effect::{self as effects, Reaching};
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, EventKind, RiftInstances, RiftScripting, area_owner,
-};
 use crate::systems::skill::{self, Learned};
 use crate::systems::stat::{Stat, Stats};
-use crate::systems::vfx::{self, VfxFixture, VfxShaderFixture};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
@@ -224,13 +233,15 @@ pub fn grant_xp(world: &mut World, entity: Entity, amount: u32) {
     }
     let reached = level(world, entity);
     if reached > before {
-        vfx::fixture::play(world, VfxFixture::LevelUp, VfxSite::Actor(entity));
-        let shown = format!("Level {reached}");
-        notification::pop_as(world, entity, shown, VfxShaderFixture::LevelPop);
+        play_fixture(world, LevelVfx::LevelUp, VfxSite::Actor(entity));
+        let shown = messages::of(world.resource::<Content>())
+            .class
+            .level_reached(reached);
+        notification::pop_as(world, entity, shown, PopShader::LevelPop);
         let owner = area_owner(world);
-        world.resource_mut::<RiftInstances>().raise(
+        world.resource_mut::<Instances>().raise(
             owner,
-            EventKind::LeveledUp,
+            EventKind::of::<LeveledUp>(),
             Some(entity),
             Vec::new(),
             |_| true,
@@ -238,7 +249,20 @@ pub fn grant_xp(world: &mut World, entity: Entity, amount: u32) {
     }
 }
 
+/// The vfx every game provides, played on an actor where it reaches a level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum LevelVfx {
+    LevelUp,
+}
+
+impl Fixture for LevelVfx {
+    type Row = VfxDef;
+    const FOLDER: Option<&'static str> = Some("vfx");
+}
+
 pub fn check_all(loading: &mut Loading) {
+    check_fixtures_played::<LevelVfx>(loading, &[SiteKind::Actor]);
     let content = loading.content();
     for (id, def) in loading.rows::<ClassDef>(&content) {
         let mut check = RowCheck::default();
@@ -275,22 +299,19 @@ pub fn check_all(loading: &mut Loading) {
 pub struct GrantXp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[schemars(extend("default" = 10))]
-    pub xp: Condition,
+    pub xp: Expr,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for GrantXp {
+impl EffectDef for GrantXp {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let xp = cx.expr(&self.xp, ValueType::Integer)?;
         Ok(Box::new(move |world, flow, cx| {
@@ -309,8 +330,8 @@ impl EffectDef<RiftScripting> for GrantXp {
             )
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::GrantsXp]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(GrantsXp)]
     }
 }
 
@@ -320,5 +341,49 @@ pub(crate) fn level_stats(world: &World, entity: Entity, into: &mut dyn FnMut(St
         for stat in class.get(content).stats_at(xp_of(world, entity)) {
             into(stat);
         }
+    }
+}
+
+messages! {
+    /// What the game says of classes and their levels.
+    pub struct ClassMessages {
+        /// The notice that a level `{level}` was reached.
+        level_reached(level: Number),
+    }
+}
+
+/// A script that may grant experience.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GrantsXp;
+
+impl ReachDef for GrantsXp {}
+
+/// Someone reached a new level.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct LeveledUp {}
+
+impl EventDef for LeveledUp {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[AREA_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .effect::<GrantXp>("grant_xp")
+        .event::<LeveledUp>("leveled_up");
+}
+
+/// The level a requirement asks for, when it asks no more than that.
+pub fn min_level(part: &Expr) -> Option<u32> {
+    let Expr::AtLeast { a, b } = part else {
+        return None;
+    };
+    match (&**a, &**b) {
+        (Expr::Query(query), Expr::Int(level)) if query.is::<query::Level>() => {
+            u32::try_from(*level).ok()
+        }
+        _ => None,
     }
 }

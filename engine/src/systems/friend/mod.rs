@@ -14,11 +14,13 @@ use serde::{Deserialize, Serialize};
 
 pub use search::{CharactersFound, FindCharacters};
 
+use crate::core::content::Content;
 use crate::core::store::{Record, RecordId};
 use crate::core::time::UnixMillis;
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
+use crate::systems::messages::{self, messages};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::social_request::{
@@ -26,6 +28,86 @@ use crate::systems::social_request::{
     SocialRequestSource, SocialRequestWords,
 };
 use crate::systems::society::{self, AccountNumber, Settling, Society, SocietyAsk};
+
+messages! {
+    /// What the game says of friends.
+    pub struct FriendMessages {
+        /// What a request for friendship from `{name}` says to the player asked.
+        asks(name: Text),
+        /// What a request for friendship says to the player who asked `{name}`.
+        asked(name: Text),
+        /// What a player is told as their request for friendship is sent to `{name}`.
+        sent(name: Text),
+        /// What a player is told as `{name}` accepts their request for friendship.
+        accepted(name: Text),
+        /// What a player is told asking `{name}`, a friend already, to be their friend.
+        already_friends(name: Text),
+        /// What a player is told as their friends list has no room for one more.
+        full,
+        /// What a player is told asking for friendship with as many requests waiting as they may have.
+        too_many_requests,
+        /// The name of the Friends page, on the Social tab.
+        title,
+        /// The hint, beside its key, that chooses a friend on the Friends page.
+        hint_choose,
+        /// The heading over the search for a player by name.
+        find_heading,
+        /// What the empty search box says it takes: a name, of at least `{count}` letters.
+        search_hint(count: Number),
+        /// What the search says while fewer than `{count}` letters are typed.
+        type_more(count: Number),
+        /// What the search says while the server has not answered.
+        looking,
+        /// What the search says when no player has the name typed.
+        nobody_found,
+        /// What the search says when it found more than it lists: `{found}` is how many were found, `{shown}` how many are listed.
+        found_shown(found: Number, shown: Number),
+        /// What the search says of the player who searched, when they are found.
+        you,
+        /// The mark on a found player who is already a friend.
+        friend,
+        /// The mark on a found player the player has asked to be their friend.
+        request_sent,
+        /// What the search says of a found player who asked the player to be their friend.
+        asked_you,
+        /// The button that asks a found player to be a friend.
+        add_friend,
+        /// The heading over the requests for friendship the player is asked.
+        requests_heading,
+        /// The heading over the requests for friendship the player has sent.
+        sent_heading,
+        /// The button that takes back a request for friendship the player sent.
+        withdraw,
+        /// What a request the player sent says while it waits for its answer.
+        waiting,
+        /// The heading over the list of friends.
+        friends_heading,
+        /// How many friends the player has, `{count}`, of the most they may have, `{most}`.
+        friends_of_most(count: Number, most: Number),
+        /// What the page says of friends when the player has none.
+        friends_intro,
+        /// What the page tells a player with no friends to do.
+        find_to_ask,
+        /// The button that ends a friendship.
+        remove_friend,
+        /// What a friend's row says of a friend playing in `{area}`.
+        online_in[area: Line],
+        /// What a friend's row says of a friend who is away, last seen `{ago}`.
+        offline_seen(ago: Text),
+        /// What a friend's row says of a friend who is away.
+        offline,
+        /// The title of the question whether to end the friendship with `{name}`.
+        remove_title(name: Text),
+        /// What the question whether to end the friendship with `{name}` tells the player.
+        remove_body(name: Text),
+        /// The button that keeps a friendship the player was asked about.
+        keep,
+        /// How a screen reader names a button: `{does}` is what it does, `{name}` the player it does it to.
+        button_for(does: Text, name: Text),
+        /// How a screen reader names a friend's row: `{name}` is the friend, `{state}` where they are.
+        row_named(name: Text, state: Text),
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -160,11 +242,11 @@ pub fn request_source() -> SocialRequestSource {
         kind: SocialRequestKind::Friendship,
         lasts: |settings| settings.friends.map(|friends| friends.request_lasts),
         reaches_offline: true,
-        words: |words| SocialRequestWords {
-            asks: &words.friendship_asks,
-            asked: &words.friendship_asked,
-            sent: &words.friendship_sent,
-            accepted: Some(&words.friendship_accepted),
+        words: SocialRequestWords {
+            asks: |messages, name| messages.friends.asks(name),
+            asked: |messages, name| messages.friends.asked(name),
+            sent: |messages, name| messages.friends.sent(name),
+            accepted: Some(|messages, name| messages.friends.accepted(name)),
             denied: None,
             lapsed: None,
         },
@@ -218,21 +300,24 @@ pub fn requests(world: &mut World) {
     );
 }
 
-/// Does what `by` asked of friends, under the game `settings` are of.
-pub(crate) fn settle(
-    settling: &mut Settling,
-    settings: &GameSettings,
-    by: &AccountId,
-    ask: FriendAsk,
-) {
+/// Does what `by` asked of friends, under the game `content` is of.
+pub(crate) fn settle(settling: &mut Settling, content: &Content, by: &AccountId, ask: FriendAsk) {
+    let settings = content.built::<GameSettings>();
     match ask {
         FriendAsk::Remove(number) => {
-            if let Some(friend) = settling.society.accounts().numbered(number).cloned() {
+            if settings.friends.is_some()
+                && let Some(friend) = settling.society.accounts().numbered(number).cloned()
+            {
                 part(settling, by, &friend);
             }
         }
         FriendAsk::Find(starts) => {
-            let found = search::find(settling.society, &starts, settings.suggestions as usize);
+            let found = search::find(
+                settling.society,
+                &starts,
+                settings.suggestions as usize,
+                settings.search_letters,
+            );
             settling.send(by, found);
         }
     }
@@ -270,43 +355,42 @@ fn sent(society: &Society, account: &AccountId) -> usize {
 
 fn may_send(
     society: &Society,
-    settings: &GameSettings,
+    content: &Content,
     asker: &AccountId,
     asked: &AccountId,
 ) -> Result<(), RequestUnsent> {
-    let Some(friends) = &settings.friends else {
+    let Some(friends) = &content.built::<GameSettings>().friends else {
         return Err(RequestUnsent::Quietly);
     };
-    let words = &settings.words;
+    let messages = &messages::of(content).friends;
     if society.friends().are(asker, asked) {
         let name = society
             .accounts()
             .get(asked)
             .map_or("", |asked| &asked.name);
-        return Err(RequestUnsent::Told(
-            words.already_friends.replace("{name}", name),
-        ));
+        return Err(RequestUnsent::Told(messages.already_friends(name).into()));
     }
     if room(society, friends, asker) == 0 {
-        return Err(RequestUnsent::Told(words.friends_full.clone()));
+        return Err(RequestUnsent::Told(messages.full().into()));
     }
     if sent(society, asker) >= friends.requests as usize {
-        return Err(RequestUnsent::Told(words.too_many_friend_requests.clone()));
+        return Err(RequestUnsent::Told(messages.too_many_requests().into()));
     }
     Ok(())
 }
 
 fn accepted(
     settling: &mut Settling,
-    settings: &GameSettings,
+    content: &Content,
     request: &SocialRequest,
 ) -> Result<(), RequestUnaccepted> {
-    let full = settings
+    let full = content
+        .built::<GameSettings>()
         .friends
         .is_some_and(|friends| room(settling.society, &friends, &request.asked) == 0);
     if full {
         return Err(RequestUnaccepted::Waits(
-            settings.words.friends_full.clone(),
+            messages::of(content).friends.full().into(),
         ));
     }
     let (one, other) = (&request.asker, &request.asked);

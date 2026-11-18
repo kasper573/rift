@@ -187,12 +187,7 @@ fn paired(
                 ui.label(theme::muted("it becomes"));
             }
         }
-        add = ui
-            .add_enabled(
-                with.is_some() && becomes.is_some(),
-                egui::Button::new("+ Add pair"),
-            )
-            .clicked();
+        add = controls::button_if(ui, with.is_some() && becomes.is_some(), "+ Add pair").clicked();
     });
     ui.data_mut(|data| data.insert_temp(id, (with.clone(), becomes.clone())));
     if add && let (Some(with), Some(becomes)) = (with, becomes) {

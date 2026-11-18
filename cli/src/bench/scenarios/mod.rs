@@ -11,9 +11,9 @@ use engine::core::content::{Content, ContentId};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
+use engine::systems::area::Place;
 use engine::systems::input::map::InputAction;
 use engine::systems::player::snapshot::CharacterSnapshot;
-use engine::systems::script::Place;
 use serde::{Deserialize, Serialize};
 
 use super::places;

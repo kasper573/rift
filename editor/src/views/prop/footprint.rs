@@ -59,7 +59,7 @@ pub enum Handle {
     Radius,
     Width,
     Depth,
-    Point(usize),
+    Point { part: usize, corner: usize },
 }
 
 /// A handle being dragged, and the footprint as the drag has shaped it so far.
@@ -82,12 +82,12 @@ pub fn converted(from: &Footprint, bounds: Option<(Vec3, Vec3)>, kind: Footprint
             depth: Meters(half_depth * 2.0),
         },
         FootprintKind::Polygon => Footprint::Polygon {
-            points: vec![
+            parts: vec![vec![
                 Pos::new(-half_width, -half_depth),
                 Pos::new(half_width, -half_depth),
                 Pos::new(half_width, half_depth),
                 Pos::new(-half_width, half_depth),
-            ],
+            ]],
             fitted_to: None,
         },
     }
@@ -165,7 +165,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
         );
     }
     let midpoints = midpoints_of(&working);
-    for midpoint in &midpoints {
+    for (_, _, midpoint) in &midpoints {
         painter.circle_stroke(
             canvas.to_screen(at + midpoint.to_vector()),
             3.5,
@@ -178,16 +178,20 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
                 handle: handles[index].0,
                 footprint: working.clone(),
             });
-        } else if let Some(edge) = midpoints.iter().position(|midpoint| near(*midpoint))
-            && let Footprint::Polygon { points, .. } = &working
-            && points.len() < MAX_POLYGON_POINTS
+        } else if let Some(&(part, edge, midpoint)) =
+            midpoints.iter().find(|(_, _, midpoint)| near(*midpoint))
+            && let Footprint::Polygon { parts, .. } = &working
+            && parts[part].len() < MAX_POLYGON_POINTS
         {
-            let mut points = points.clone();
-            points.insert(edge + 1, midpoints[edge]);
+            let mut parts = parts.clone();
+            parts[part].insert(edge + 1, midpoint);
             view.drag = Some(Drag {
-                handle: Handle::Point(edge + 1),
+                handle: Handle::Point {
+                    part,
+                    corner: edge + 1,
+                },
                 footprint: Footprint::Polygon {
-                    points,
+                    parts,
                     fitted_to: None,
                 },
             });
@@ -209,14 +213,14 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     }
     if response.secondary_clicked()
         && let Some(index) = hot
-        && let (Handle::Point(point), Footprint::Polygon { points, .. }) =
+        && let (Handle::Point { part, corner }, Footprint::Polygon { parts, .. }) =
             (handles[index].0, &working)
-        && points.len() > MIN_POLYGON_POINTS
+        && parts[part].len() > MIN_POLYGON_POINTS
     {
-        let mut points = points.clone();
-        points.remove(point);
+        let mut parts = parts.clone();
+        parts[part].remove(corner);
         landed = Some(Footprint::Polygon {
-            points,
+            parts,
             fitted_to: None,
         });
     }
@@ -257,20 +261,30 @@ fn handles_of(footprint: &Footprint) -> Vec<(Handle, Pos<Meters>)> {
             (Handle::Width, Pos::new(width.0 / 2.0, 0.0)),
             (Handle::Depth, Pos::new(0.0, depth.0 / 2.0)),
         ],
-        Footprint::Polygon { points, .. } => points
+        Footprint::Polygon { parts, .. } => parts
             .iter()
             .enumerate()
-            .map(|(index, point)| (Handle::Point(index), *point))
+            .flat_map(|(part, points)| {
+                points
+                    .iter()
+                    .enumerate()
+                    .map(move |(corner, point)| (Handle::Point { part, corner }, *point))
+            })
             .collect(),
     }
 }
 
-fn midpoints_of(footprint: &Footprint) -> Vec<Pos<Meters>> {
+/// The middle of every edge, with the part and the corner the edge starts at.
+fn midpoints_of(footprint: &Footprint) -> Vec<(usize, usize, Pos<Meters>)> {
     match footprint {
-        Footprint::Polygon { points, .. } => (0..points.len())
-            .map(|index| {
-                let next = points[(index + 1) % points.len()];
-                points[index].lerp(next, 0.5)
+        Footprint::Polygon { parts, .. } => parts
+            .iter()
+            .enumerate()
+            .flat_map(|(part, points)| {
+                (0..points.len()).map(move |corner| {
+                    let next = points[(corner + 1) % points.len()];
+                    (part, corner, points[corner].lerp(next, 0.5))
+                })
             })
             .collect(),
         _ => Vec::new(),
@@ -288,8 +302,11 @@ fn move_handle(footprint: &mut Footprint, handle: Handle, local: Offset<Meters>)
         (Footprint::Box { depth, .. }, Handle::Depth) => {
             depth.0 = (local.y.abs() * 2.0).max(SMALLEST);
         }
-        (Footprint::Polygon { points, fitted_to }, Handle::Point(index)) => {
-            if let Some(point) = points.get_mut(index) {
+        (Footprint::Polygon { parts, fitted_to }, Handle::Point { part, corner }) => {
+            if let Some(point) = parts
+                .get_mut(part)
+                .and_then(|points| points.get_mut(corner))
+            {
                 *point = Pos::origin() + local;
                 *fitted_to = None;
             }
@@ -303,6 +320,12 @@ fn describe(footprint: &Footprint) -> String {
         Footprint::None => "no footprint · walkers pass through".to_owned(),
         Footprint::Circle { radius } => format!("circle · {:.2} m across", radius.0 * 2.0),
         Footprint::Box { width, depth } => format!("box · {:.2} × {:.2} m", width.0, depth.0),
-        Footprint::Polygon { points, .. } => format!("polygon · {} corners", points.len()),
+        Footprint::Polygon { parts, .. } => {
+            let corners: usize = parts.iter().map(Vec::len).sum();
+            match parts.len() {
+                1 => format!("polygon · {corners} corners"),
+                count => format!("polygon · {count} parts · {corners} corners"),
+            }
+        }
     }
 }

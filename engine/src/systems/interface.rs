@@ -6,6 +6,8 @@ use crate::core::audio::playback::{PlaySfx, SfxDef, SfxPlace};
 use crate::core::content::ImageRef;
 use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, Fixture, Nearby};
+use crate::core::text::{LineText, SpanText};
+use crate::systems::messages::messages;
 
 pub type CursorId = ContentId<CursorDef>;
 
@@ -90,6 +92,74 @@ impl Fixture for InterfaceIcon {
     type Row = InterfaceIconDef;
     const FOLDER: Option<&'static str> = Some("interface");
     const WHOLE_TABLE: bool = true;
+}
+
+messages! {
+    /// What the game says on the parts of its interface every window shares.
+    pub struct InterfaceMessages {
+        /// The button that puts away what the player was told.
+        ok,
+        /// The button that backs out of what the player was asked.
+        cancel,
+        /// What closes a window, as a screen reader names its cross.
+        close,
+        /// What the corner that resizes a window is named by a screen reader.
+        resize,
+        /// The button that takes a row out of a list the player is making.
+        remove,
+        /// The button that turns to the page before.
+        back,
+        /// The button that turns to the page after.
+        next,
+        /// The heading over the player's inventory, where a window shows it.
+        inventory,
+        /// What a screen reader names a choice listed under a heading, `{group}` being the heading and `{choice}` the choice's name.
+        grouped_choice(group: Text, choice: Text),
+        /// What a dropdown's button shows of a choice listed under a heading, `{group}` being the heading and `{choice}` the choice.
+        grouped_choice_line[group: Text, choice: Line],
+        /// A list of two, `{first}` and `{second}`, as CLDR's list pattern for two words it.
+        list_pair[first: Line, second: Line],
+        /// The start of a longer list: its first item, `{first}`, before the rest, `{rest}`.
+        list_start[first: Line, rest: Line],
+        /// The middle of a longer list: an item, `{first}`, before the rest, `{rest}`.
+        list_middle[first: Line, rest: Line],
+        /// The end of a longer list: the item before the last, `{first}`, and the last, `{last}`.
+        list_end[first: Line, last: Line],
+    }
+}
+
+impl InterfaceMessages {
+    /// The `lines` as one, the way a sentence lists them in the catalog's language.
+    pub fn listed(&self, mut lines: Vec<LineText>) -> LineText {
+        let Some(last) = lines.pop() else {
+            return LineText::default();
+        };
+        let Some(before) = lines.pop() else {
+            return last;
+        };
+        if lines.is_empty() {
+            return self.list_pair(before, last);
+        }
+        let mut rest = self.list_end(before, last);
+        while lines.len() > 1 {
+            let item = lines.pop().unwrap_or_default();
+            rest = self.list_middle(item, rest);
+        }
+        let first = lines.pop().unwrap_or_default();
+        self.list_start(first, rest)
+    }
+
+    /// The `words` as one, the way a sentence lists them in the catalog's language.
+    pub fn listed_words(&self, words: Vec<String>) -> String {
+        self.listed(words.into_iter().map(LineText::plain).collect())
+            .0
+            .into_iter()
+            .filter_map(|span| match span {
+                SpanText::Text { text, .. } => Some(text),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr, strum::VariantArray)]

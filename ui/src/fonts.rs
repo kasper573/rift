@@ -37,6 +37,7 @@ pub(crate) fn bytes(face: Face) -> &'static [u8] {
         Face::BookMedium => include_bytes!("../fonts/Alegreya-Medium.ttf"),
         Face::BookBold => include_bytes!("../fonts/Alegreya-Bold.ttf"),
         Face::BookItalic => include_bytes!("../fonts/Alegreya-Italic.ttf"),
+        Face::BookMediumItalic => include_bytes!("../fonts/Alegreya-MediumItalic.ttf"),
         Face::SmallCaps => include_bytes!("../fonts/AlegreyaSC-Medium.ttf"),
         Face::SmallCapsBold => include_bytes!("../fonts/AlegreyaSC-Bold.ttf"),
         Face::Quill => include_bytes!("../fonts/IMFellEnglish-Italic.ttf"),
@@ -51,7 +52,11 @@ pub(crate) fn bytes(face: Face) -> &'static [u8] {
 // the two centres puts both within a hair of the middle.
 fn tweak(face: Face) -> FontTweak {
     match face {
-        Face::Book | Face::BookMedium | Face::BookBold | Face::BookItalic => FontTweak {
+        Face::Book
+        | Face::BookMedium
+        | Face::BookBold
+        | Face::BookItalic
+        | Face::BookMediumItalic => FontTweak {
             y_offset_factor: -0.06,
             ..FontTweak::default()
         },

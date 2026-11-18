@@ -1,3 +1,4 @@
+use engine::systems::area::stages::PROP;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -24,9 +25,8 @@ use engine::core::render::world::gpu::impostor::{
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, Meters};
-use engine::core::vfx::rain::{RainField, Shelter};
 use engine::core::vfx::render::VfxMaterialsPlugin;
-use engine::core::vfx::shader::Stage;
+use engine::systems::area::rain::{RainField, Shelter};
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, AreaDef};
 use serde_json::json;
@@ -366,7 +366,7 @@ fn field() -> Game {
     Game::new()
         .shader_of(
             "red",
-            Stage::Prop,
+            PROP,
             &format!(
                 "fn vfx(uv: vec2<f32>) -> vec4<f32> {{\n    let paint = select(vec4<f32>(0.0, 0.0, 1.0, 1.0), vec4<f32>(1.0, 0.0, 0.0, 1.0), local().y > {:?});\n    return paint * vec4<f32>(light(), 1.0);\n}}\nfn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {{\n    return world + screen_right() * local().x / {:?} * {OVERHANG:?};\n}}\n",
                 BLOCK_SIZE.y / 2.0,

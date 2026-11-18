@@ -2,6 +2,7 @@ use crate::app::Editor;
 use engine::core::content::{
     ContentFile, Fixture, NOTE_EXTENSION, SETTINGS_FILE, fields_file, table_of,
 };
+use engine::core::script::ScriptDef;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::part::ModelPartDef;
 use engine::systems::area::AreaDef;
@@ -10,7 +11,6 @@ use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
 use engine::systems::input::map::InputDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
-use engine::systems::script::ScriptDef;
 use ui::egui_dock;
 use ui::egui_dock::DockState;
 use ui::glyph::Mark;

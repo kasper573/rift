@@ -1,5 +1,5 @@
 //! A tray of item slots a player fills from their bag: a prompt's, a message's attachments, a
-//! new listing's offer, a sale. What is placed in a tray stays in the bag, and is known to this
+//! new listing's goods, a sale. What is placed in a tray stays in the bag, and is known to this
 //! client alone until whoever owns the tray sends it.
 
 use super::{Inventory, ItemId, ItemStack, SlotStack};

@@ -1,3 +1,4 @@
+use engine::systems::area::OBJECT_RUNNER;
 use ui::egui;
 
 use editor::app::Editor;
@@ -14,7 +15,7 @@ use engine::systems::area::{AreaDef, AreaModule};
 use serde_json::{Value, json};
 
 use crate::support::{self, Frames, area, key};
-use engine::systems::script::{RunnerKind, ScriptDef};
+use engine::core::script::ScriptDef;
 use testkit::{Game, Map, path};
 
 fn barn_door() -> Value {
@@ -245,7 +246,7 @@ fn an_object_given_a_script_runs_the_nearest_object_script_or_one_made_for_it() 
             .read::<ScriptDef>(&named)
             .expect("a project")
             .expect("the script reads");
-        assert_eq!(script.runs_on, RunnerKind::Object);
+        assert_eq!(script.runs_on, OBJECT_RUNNER);
     }
 }
 
@@ -254,8 +255,7 @@ fn a_spawner_given_a_rect_first_spawns_over_the_whole_area_it_spawned_over_witho
     let scratch = tempfile::tempdir().expect("scratch");
     let wolves = json!({
         "type": "spawner",
-        "spawns": [{ "type": "npc", "npc": path("npc", "wolf") }],
-        "count": 2,
+        "populations": [{ "spawns": [{ "type": "npc", "npc": path("npc", "wolf") }], "max_spawned_at_once": 2 }],
     });
     let game = Game::new()
         .npc("wolf", 20.0, json!([]))

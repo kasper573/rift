@@ -2,6 +2,7 @@
 //! the prop stage, filled with the material's values. Many props share one, as many models share
 //! a material.
 
+use crate::systems::area::stages::PROP;
 use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::SchemaMark;
 use crate::core::content::{ContentFile, ContentId, Loading, Nearby, RowCheck, serial};
 use crate::core::units::Meters;
-use crate::core::vfx::shader::{Stage, VfxShaderDef};
+use crate::core::vfx::VfxShaderDef;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 
 pub type PropMaterialId = ContentId<PropMaterialDef>;
@@ -40,7 +41,7 @@ impl ContentFile for PropMaterialDef {
     fn fresh(near: &Nearby) -> Result<PropMaterialDef, String> {
         Ok(PropMaterialDef {
             shader: near.file_where("a shader of the prop stage", |shader: &VfxShaderDef| {
-                shader.stage == Stage::Prop
+                shader.stage == PROP
             })?,
             params: BTreeMap::new(),
             translucency: 0.0,
@@ -67,7 +68,7 @@ pub fn check_all(loading: &mut Loading) {
     for (id, material) in loading.rows::<PropMaterialDef>(&content) {
         let mut check = RowCheck::default();
         let shader = material.shader.get(&content);
-        if shader.stage != Stage::Prop {
+        if shader.stage != PROP {
             check.error(
                 "/shader",
                 "a shader of another stage",

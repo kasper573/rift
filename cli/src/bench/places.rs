@@ -5,10 +5,13 @@ use engine::core::content::Content;
 use engine::core::ground::TILE_SIDE;
 use engine::core::math::{Pos, Rect};
 use engine::core::render::transition::ScreenTransitionPhase;
+use engine::core::script::OwnerRow;
+use engine::core::script::Scripts;
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area;
+use engine::systems::area::Place;
+use engine::systems::area::Warps;
 use engine::systems::probe::ProbeSnapshot;
-use engine::systems::script::{EffectReach, OwnerRow, Place, RiftScripts};
 use engine::systems::sleep;
 use engine::systems::staging::Staging;
 
@@ -43,14 +46,11 @@ pub fn staged(me: &Playtest, staging: Staging) {
 
 /// Where the warps out of `from` lead.
 pub fn warps_from(content: &Content, from: area::AreaId) -> impl Iterator<Item = Place> + '_ {
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     area::warp_objects(content, from)
         .into_iter()
         .flat_map(move |(index, _)| scripts.may_do(OwnerRow::of_object(from, index)).reaches)
-        .filter_map(|reach| match reach {
-            EffectReach::Warp(to) => Some(to),
-            _ => None,
-        })
+        .filter_map(|reach| reach.downcast_ref::<Warps>().map(|warps| warps.0))
 }
 
 /// The legs of a walk from `from` to `to` along the shortest walk there, each no longer than the

@@ -2,10 +2,10 @@ use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
 use engine::core::content::Content;
+use engine::systems::dialogue;
 use engine::systems::notification::{
     Notification, NotificationDef, NotificationKind, NotificationSent,
 };
-use engine::systems::script::condition;
 
 use crate::Sim;
 
@@ -43,7 +43,7 @@ impl Sim {
     pub fn spoken(&self, key: &str) -> Notification {
         let content = self.world.resource::<Content>();
         let def = self.id::<NotificationDef>(key).get(content);
-        def.notification(condition::spoken(
+        def.notification(dialogue::spoken(
             &World::new(),
             Entity::PLACEHOLDER,
             &def.text,

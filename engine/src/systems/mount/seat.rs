@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use super::{BarredAct, RiderAct, Riding, Travels};
 use crate::core::content::Content;
 use crate::core::math::Pos;
+use crate::core::text::LineText;
 use crate::core::units::Meters;
-use crate::systems::GameSettings;
+use crate::systems::messages;
 use crate::systems::player::{self, RequestNeeds};
-use crate::systems::text::LineText;
 
 /// What a player asks of the mount they ride.
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -33,7 +33,7 @@ pub fn requests(world: &mut World) {
 /// refused in the game's words.
 pub fn act(world: &mut World, rider: Entity, act: RiderAct) -> Result<(), LineText> {
     if let Some(refusal) = barred(world, rider, act) {
-        return Err(refusal.into());
+        return Err(refusal);
     }
     if lets(world, rider, act) {
         return Ok(());
@@ -44,7 +44,7 @@ pub fn act(world: &mut World, rider: Entity, act: RiderAct) -> Result<(), LineTe
 /// What the seat `rider` holds has against them doing `act` from it, in the game's words:
 /// nothing on foot, from a seat that lets them, or on a mount that has them step off for it and
 /// walks the ground they would stand on. One that flies or floats refuses in its place.
-pub fn barred(world: &World, rider: Entity, act: RiderAct) -> Option<String> {
+pub fn barred(world: &World, rider: Entity, act: RiderAct) -> Option<LineText> {
     if lets(world, rider, act) {
         return None;
     }
@@ -56,8 +56,8 @@ pub fn barred(world: &World, rider: Entity, act: RiderAct) -> Option<String> {
         BarredAct::StepOff => matches!(def.travels, Travels::Riding),
         BarredAct::Refuse => false,
     };
-    let words = &world.resource::<GameSettings>().words;
-    (!steps_off).then(|| words.not_from_mount.replace("{mount}", &def.name))
+    let words = &messages::of(world.resource::<Content>()).mount;
+    (!steps_off).then(|| words.not_from_mount(&def.name).into())
 }
 
 /// Whether `rider` may do `act` where they are with no more ado: on foot, or from a seat that

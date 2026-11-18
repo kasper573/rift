@@ -3,13 +3,14 @@ use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
 use engine::core::card::CardStyleDef;
 use engine::core::content::{Content, ContentFile, MODULES, NamedContent};
 use engine::core::units::{Degrees, Meters, Seconds};
-use engine::systems::GameSettings;
 use engine::systems::area::prop::Footprint;
 use engine::systems::area::{AreaModuleKind, Pictured};
 use engine::systems::movement::Bodies;
 use engine::systems::resource::{self, ResourceDef};
+use engine::systems::{GameSettings, messages};
 use std::collections::{BTreeMap, HashMap};
 
+use engine::core::script::Scripts;
 use engine::systems::actor::MaterialDef;
 use engine::systems::actor::model::{ActorModel, ModelDef};
 use engine::systems::actor::plate::{self, PlateLabel};
@@ -21,12 +22,12 @@ use engine::systems::equipment::{self, Equipment};
 use engine::systems::item::card::CardLook;
 use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::item::{ItemId, ItemStack};
+use engine::systems::npc::summon::{TurnsFriendly, TurnsHostile};
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::CharacterDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::card::{QuestCardLook, QuestMoment};
 use engine::systems::quest::{self, Parties, QuestDef};
-use engine::systems::script::{EffectReach, RiftScripts};
 use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
 use strum::VariantArray;
@@ -221,7 +222,12 @@ fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
         plate::draw_label(
             ui,
             turntable.rect.center_top() + Vec2::new(0.0, 28.0),
-            &PlateLabel::resource(&def.name, 0, def.max_occupants),
+            &PlateLabel::resource(
+                &messages::of(&content).resource,
+                &def.name,
+                0,
+                def.max_occupants,
+            ),
         );
         turntable.stand(editor, ui, Vec::new());
     }
@@ -316,7 +322,7 @@ fn show_status(editor: &mut Editor, ui: &mut Ui, key: &str) {
         } else {
             "apply status effect"
         };
-        if ui.button(label).clicked() {
+        if controls::button(ui, label).clicked() {
             state.status_applied = !state.status_applied;
         }
     });
@@ -363,7 +369,7 @@ fn show_sfx(editor: &mut Editor, ui: &mut Ui, key: &str) {
         } else if controls::marked_primary(ui, Mark::Play, "play").clicked() {
             sound.play.push(key.to_owned());
         }
-        replace = ui.button("Replace the clip…").clicked();
+        replace = controls::button(ui, "Replace the clip…").clicked();
     });
     if replace
         && let Some(source) = rfd::FileDialog::new()
@@ -399,7 +405,7 @@ fn show_babble_bank(editor: &mut Editor, ui: &mut Ui, key: &str) {
         } else {
             format!("lacks {}", words::join_and(&lacking))
         }));
-        import = ui.button("Import letters…").clicked();
+        import = controls::button(ui, "Import letters…").clicked();
     });
     if import
         && let Some(sources) = rows::picked_files(
@@ -635,10 +641,10 @@ pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Cont
     let Some(quest) = content.by_path::<QuestDef>(key) else {
         return;
     };
-    if !content.has_built::<RiftScripts>() {
+    if !content.has_built::<Scripts>() {
         return;
     }
-    let parties = Parties::of(content, content.built::<RiftScripts>());
+    let parties = Parties::of(content, content.built::<Scripts>());
     let width = ui.available_width();
     ui.vertical(|ui| {
         ui.set_width(width);
@@ -654,10 +660,10 @@ pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Cont
 }
 
 fn attitude(content: &Content, key: &str, npc: &NpcDef) -> Option<bool> {
-    if !content.has_built::<RiftScripts>() {
+    if !content.has_built::<Scripts>() {
         return None;
     }
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     let mut friendly = false;
     for (index, module) in npc.modules.iter().enumerate() {
         if !matches!(module, NpcModule::Script(_)) {
@@ -668,10 +674,11 @@ fn attitude(content: &Content, key: &str, npc: &NpcDef) -> Option<bool> {
             continue;
         };
         for reach in scripts.may_do(bound.row).reaches {
-            match reach {
-                EffectReach::Hostile => return Some(true),
-                EffectReach::Friendly => friendly = true,
-                _ => {}
+            if reach.is::<TurnsHostile>() {
+                return Some(true);
+            }
+            if reach.is::<TurnsFriendly>() {
+                friendly = true;
             }
         }
     }

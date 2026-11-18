@@ -1,6 +1,6 @@
-//! The market: one for the whole server. A seller lists an offer of items for a price in items,
+//! The market: one for the whole server. A seller lists goods for a price in items,
 //! each with how many, for one of the game's lengths, and the first player to pay the price
-//! gets what they offer. The market holds what a listing offers from the moment it is listed, so
+//! gets the goods. The market holds a listing's goods from the moment it is listed, so
 //! every way a listing ends pays out what it holds, in the same settle that ends it.
 
 pub mod effect;
@@ -14,23 +14,136 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::{Content, ContentProblem, Loading, SETTINGS_FILE, SavedList};
+use crate::core::script::{self, OwnerRow, Scripts};
 use crate::core::store::{Record, RecordId};
+use crate::core::text::LineText;
 use crate::core::time::UnixMillis;
-use crate::core::units::{MeterPos, Meters, Seconds};
+use crate::core::units::Seconds;
+use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
-use crate::systems::area::transition::Crossing;
 use crate::systems::history::HistoryTopic;
-use crate::systems::inbox;
-use crate::systems::interact::Interactive;
-use crate::systems::item::{Inventory, ItemDef, ItemId, ItemStack};
+use crate::systems::item::deliver::{self, DeliveryReason};
+use crate::systems::item::{ExchangeRefusal, Inventory, ItemDef, ItemId, ItemStack};
 use crate::systems::mention::Mention;
+use crate::systems::messages::{self, messages};
 use crate::systems::notification::Notification;
-use crate::systems::payout::{self, PayoutReason};
 use crate::systems::player::{self, PlayedBy, RequestNeeds};
-use crate::systems::script::{self, EffectReach, OwnerRow, RiftScripts};
+use crate::systems::reach::{self, Tether};
 use crate::systems::society::{self, Settling, Society, SocietyAsk};
-use crate::systems::text::LineText;
-use crate::systems::{GameSettings, GameWords, area, movement, stat};
+use crate::systems::window::{AnswerCount, OpenWindow};
+
+messages! {
+    /// What the game says of the market.
+    pub struct MarketMessages {
+        /// What the player is told once their listing of `{goods}` is up on the market.
+        listed[goods: Line],
+        /// What a player is told as they get `{goods}` for `{price}` on the market.
+        bought[goods: Line, price: Line],
+        /// What a seller is told as their listing of `{goods}` is bought and they get `{price}`.
+        sold[goods: Line, price: Line],
+        /// What a seller is told as their listing of `{goods}` ends unbought.
+        expired[goods: Line],
+        /// What a seller is told as `{goods}` comes back from a listing they cancelled.
+        cancelled[goods: Line],
+        /// What a player is told as someone else bought the listing of `{goods}` before their
+        /// purchase settled.
+        gone[goods: Line],
+        /// What a player is told listing more than the `{listings}` listings they may have up.
+        too_many(listings: Number),
+        /// The text of every message the market sends.
+        message,
+        /// The title of the message of what a purchase on the market brought that had no room.
+        bought_title,
+        /// The title of the message paying a seller for their listing.
+        sold_title,
+        /// The title of the message bringing back the goods of a listing.
+        returned_title,
+        /// What a player is told listing no goods.
+        no_goods,
+        /// What a player is told listing without setting a price.
+        no_price,
+        /// What a player is told listing more than the `{items}` items a listing's goods may hold.
+        goods_too_many(items: Number),
+        /// What a player is told pricing in more than the `{items}` items a listing's price may hold.
+        price_too_many(items: Number),
+        /// What a player is told naming the same item twice on one side of a listing.
+        named_twice,
+        /// What a player is told naming `{item}` without how many.
+        needs_amount[item: Line],
+        /// The market window's title.
+        title,
+        /// The tab to search and buy on.
+        browse,
+        /// The tab to put items up on.
+        new_listing,
+        /// The tab of the player's own listings, `{count}` of them up.
+        my_listings(count: Number),
+        /// The label over the field naming the item to look for or to price in.
+        item,
+        /// What the item field invites before an item is chosen, and as it is typed in.
+        item_hint,
+        /// What the item field's list says when no item's name holds what was typed.
+        no_such_item,
+        /// What Browse says before an item is chosen.
+        choose_item,
+        /// What Browse says when no listing has `{item}` among its goods.
+        no_listings_of[item: Line],
+        /// The label over how the listings are sorted.
+        sort_by,
+        /// The label over which way the listings are sorted.
+        order,
+        /// The listings sorted from the highest to the lowest.
+        high_to_low,
+        /// The listings sorted from the lowest to the highest.
+        low_to_high,
+        /// Where Browse is among its pages: page `{page}` of `{pages}`, `{listings}` listings in all.
+        page(listings: Number, page: Number, pages: Number),
+        /// The heading over the goods of listings.
+        goods,
+        /// The heading over what listings cost.
+        price,
+        /// A listing's price for one of the item sorted by, `{price}`.
+        each[price: Line],
+        /// The button that buys a listing.
+        buy,
+        /// What a listing someone else bought first says of itself.
+        taken,
+        /// What the player's own listing says of itself, `{left}` its time left.
+        yours(left: Text),
+        /// Why Buy is shut on a listing someone else bought first.
+        bought_first,
+        /// Why Buy is shut on the player's own listing.
+        own_listing,
+        /// Why Buy is shut on a listing whose price the player can't pay.
+        cannot_pay,
+        /// What the player is asked before buying `{goods}` for `{price}`.
+        confirm_buy[goods: Line, price: Line],
+        /// What the player is reminded of before buying.
+        cannot_undo,
+        /// The heading over the goods of the new listing.
+        your_goods,
+        /// The heading over the new listing's price.
+        your_price,
+        /// The label over how many of an item a price asks for.
+        amount,
+        /// The button adding another item to the new listing's price.
+        add_item,
+        /// The label before how long the new listing stays up.
+        lasts,
+        /// What the new listing costs to put up: `{deposit}`, kept unless it is bought.
+        deposit[deposit: Line],
+        /// The button that puts the new listing up.
+        create,
+        /// What My listings says while the player has none up.
+        none_up,
+        /// What My listings says of the player's `{count}` listings, of the `{most}` they may have.
+        up_of(count: Number, most: Number),
+        /// What a listing of the player's holds, `{goods}`.
+        holds[goods: Line],
+        /// What a listing of the player's costs, `{price}`.
+        costs[price: Line],
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
@@ -42,11 +155,11 @@ pub fn register(app: &mut App) {
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MarketSettings {
-    /// The item a new listing's first price row starts on. A listing's offer and price may hold any
+    /// The item a new listing's first price row starts on. A listing's goods and price may hold any
     /// items that can change hands.
     pub default_currency: ItemId,
-    /// How many different items a listing may offer.
-    pub max_offer_items: u32,
+    /// How many different items a listing's goods may hold.
+    pub max_goods_items: u32,
     /// How many different items a listing's price may hold.
     pub max_price_items: u32,
     /// The lengths a seller may choose from.
@@ -58,6 +171,8 @@ pub struct MarketSettings {
     pub deposit: u32,
     /// How many listings an account may have up at once.
     pub max_listings: u32,
+    /// The most listings a page of results shows, however many a player's window has room for.
+    pub page_rows: u32,
 }
 
 impl MarketSettings {
@@ -66,16 +181,54 @@ impl MarketSettings {
         ItemStack::new(self.deposit_currency, self.deposit)
     }
 
-    /// Why the market refuses `stacks` as the `side` of a listing, if it does: none or too many
-    /// items, an item named twice or none of, or one that can't change hands.
+    /// What a listing of `goods` costs its seller: the goods, and the deposit unless it is none.
+    pub fn costs(&self, goods: &[ItemStack]) -> Vec<ItemStack> {
+        goods.iter().chain(&self.deposit_paid()).copied().collect()
+    }
+
+    /// The deposit a listing is put up with, none when it costs none.
+    pub fn deposit_paid(&self) -> Vec<ItemStack> {
+        Some(self.deposit())
+            .filter(|deposit| deposit.count > 0)
+            .into_iter()
+            .collect()
+    }
+
+    /// Why the market refuses a listing of `goods` for `price` from a seller with `bag` who has
+    /// `listed` listings up, if it does: a side with none or too many items, an item named twice
+    /// or none of, or one that can't change hands; too many listings up; or a bag that doesn't
+    /// hold what the listing costs.
     pub fn refusal(
+        &self,
+        content: &Content,
+        bag: &Inventory,
+        listed: u32,
+        goods: &[ItemStack],
+        price: &[ItemStack],
+    ) -> Option<ListingRefusal> {
+        if let Some(refusal) = self
+            .side_refusal(content, ListingSide::Goods, goods)
+            .or_else(|| self.side_refusal(content, ListingSide::Price, price))
+        {
+            return Some(refusal);
+        }
+        if listed >= self.max_listings {
+            return Some(ListingRefusal::TooManyListings(self.max_listings));
+        }
+        bag.clone()
+            .exchange(content, &self.costs(goods), &[])
+            .err()
+            .map(ListingRefusal::Costs)
+    }
+
+    fn side_refusal(
         &self,
         content: &Content,
         side: ListingSide,
         stacks: &[ItemStack],
     ) -> Option<ListingRefusal> {
         let most = match side {
-            ListingSide::Offer => self.max_offer_items,
+            ListingSide::Goods => self.max_goods_items,
             ListingSide::Price => self.max_price_items,
         };
         if stacks.is_empty() {
@@ -94,7 +247,7 @@ impl MarketSettings {
         }
         stacks
             .iter()
-            .find(|stack| stack.item.get(content).bound())
+            .find(|stack| stack.bound(content))
             .map(|stack| ListingRefusal::Bound(stack.item))
     }
 }
@@ -102,7 +255,7 @@ impl MarketSettings {
 /// One of the two sets of items a listing holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ListingSide {
-    Offer,
+    Goods,
     Price,
 }
 
@@ -114,32 +267,27 @@ pub enum ListingRefusal {
     NoneOf(ItemId),
     Twice,
     Bound(ItemId),
+    TooManyListings(u32),
+    Costs(ExchangeRefusal),
 }
 
 impl ListingRefusal {
     pub fn describe(self, content: &Content) -> LineText {
-        let words = &content.built::<GameSettings>().words;
-        let named = |said: &str, item: ItemId| {
-            LineText::plain(said).filling("{item}", Mention::Item(item).span(content))
-        };
-        let most =
-            |said: &str, items: u32| LineText::plain(said.replace("{items}", &items.to_string()));
+        let words = &messages::of(content).market;
         match self {
-            ListingRefusal::Empty(ListingSide::Offer) => {
-                LineText::plain(words.market_no_offer.as_str())
-            }
-            ListingRefusal::Empty(ListingSide::Price) => {
-                LineText::plain(words.market_no_price.as_str())
-            }
-            ListingRefusal::TooMany(ListingSide::Offer, items) => {
-                most(&words.market_offer_too_many, items)
+            ListingRefusal::Empty(ListingSide::Goods) => LineText::plain(words.no_goods()),
+            ListingRefusal::Empty(ListingSide::Price) => LineText::plain(words.no_price()),
+            ListingRefusal::TooMany(ListingSide::Goods, items) => {
+                LineText::plain(words.goods_too_many(items))
             }
             ListingRefusal::TooMany(ListingSide::Price, items) => {
-                most(&words.market_price_too_many, items)
+                LineText::plain(words.price_too_many(items))
             }
-            ListingRefusal::NoneOf(item) => named(&words.market_needs_amount, item),
-            ListingRefusal::Twice => LineText::plain(words.market_named_twice.as_str()),
+            ListingRefusal::NoneOf(item) => words.needs_amount(Mention::Item(item).span(content)),
+            ListingRefusal::Twice => LineText::plain(words.named_twice()),
             ListingRefusal::Bound(item) => ItemStack::bound_line(item, content),
+            ListingRefusal::TooManyListings(most) => LineText::plain(words.too_many(most)),
+            ListingRefusal::Costs(refusal) => refusal.line(content),
         }
     }
 }
@@ -155,9 +303,9 @@ pub struct ListingId(pub u64);
 pub struct Listing {
     pub id: ListingId,
     pub seller: AccountId,
-    /// What the listing offers, held by the market. An item the game no longer has waits set
+    /// The goods of the listing, held by the market. An item the game no longer has waits set
     /// aside, and the listing can't be taken until it is back.
-    pub offer: SavedList<ItemStack>,
+    pub goods: SavedList<ItemStack>,
     /// The seller's price for all of it. An item the game no longer has waits set aside, and
     /// the listing can't be taken until it is back.
     pub price: SavedList<ItemStack>,
@@ -175,9 +323,9 @@ impl Record for Listing {
 }
 
 impl Listing {
-    /// What it offers, while the game has every item of it.
-    pub fn known_offer(&self) -> Option<&[ItemStack]> {
-        self.offer.set_aside().is_empty().then_some(&self.offer[..])
+    /// Its goods, while the game has every item of them.
+    pub fn known_goods(&self) -> Option<&[ItemStack]> {
+        self.goods.set_aside().is_empty().then_some(&self.goods[..])
     }
 
     /// Its price, while the game has every item of it.
@@ -187,15 +335,15 @@ impl Listing {
 }
 
 /// Every listing up on the server, indexed so what a player asks of the market costs as much as
-/// what they are shown: by when each ends, by seller, by every item it offers, and by every way
-/// the listings offering an item can be sorted.
+/// what they are shown: by when each ends, by seller, by every item among its goods, and by every way
+/// the listings with an item among their goods can be sorted.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Market {
     listings: BTreeMap<ListingId, Listing>,
     ends: BTreeSet<(UnixMillis, ListingId)>,
     by_seller: BTreeMap<AccountId, BTreeSet<(UnixMillis, ListingId)>>,
-    /// The listings that can be bought offering each item, those ending first first.
-    offering: BTreeMap<ItemId, BTreeSet<(UnixMillis, ListingId)>>,
+    /// The listings that can be bought with each item among their goods, those ending first first.
+    with_goods: BTreeMap<ItemId, BTreeSet<(UnixMillis, ListingId)>>,
     /// The same listings by each way they can be sorted, the least first.
     ranked: BTreeMap<ItemId, BTreeMap<SortBy, BTreeSet<Ranked>>>,
     dealt: u64,
@@ -252,11 +400,11 @@ impl Market {
             .entry(listing.seller.clone())
             .or_default()
             .insert(ending);
-        for (offer, ranks) in Self::ranks(&listing) {
-            self.offering.entry(offer).or_default().insert(ending);
+        for (goods, ranks) in Self::ranks(&listing) {
+            self.with_goods.entry(goods).or_default().insert(ending);
             for (by, ranked) in ranks {
                 self.ranked
-                    .entry(offer)
+                    .entry(goods)
                     .or_default()
                     .entry(by)
                     .or_default()
@@ -276,14 +424,14 @@ impl Market {
                 self.by_seller.remove(&listing.seller);
             }
         }
-        for (offer, ranks) in Self::ranks(&listing) {
-            if let Some(offering) = self.offering.get_mut(&offer) {
-                offering.remove(&ending);
-                if offering.is_empty() {
-                    self.offering.remove(&offer);
+        for (goods, ranks) in Self::ranks(&listing) {
+            if let Some(with_goods) = self.with_goods.get_mut(&goods) {
+                with_goods.remove(&ending);
+                if with_goods.is_empty() {
+                    self.with_goods.remove(&goods);
                 }
             }
-            let Some(sorts) = self.ranked.get_mut(&offer) else {
+            let Some(sorts) = self.ranked.get_mut(&goods) else {
                 continue;
             };
             for (by, ranked) in ranks {
@@ -295,7 +443,7 @@ impl Market {
                 }
             }
             if sorts.is_empty() {
-                self.ranked.remove(&offer);
+                self.ranked.remove(&goods);
             }
         }
         Some(listing)
@@ -310,10 +458,10 @@ impl Market {
     }
 
     /// Where `listing` stands in the market while it can be bought, while the game has every
-    /// item of its offer and price: under each item it offers, by every way it can be sorted
+    /// item of its goods and price: under each item of its goods, by every way it can be sorted
     /// there.
     fn ranks(listing: &Listing) -> Vec<(ItemId, Vec<(SortBy, Ranked)>)> {
-        let (Some(offer), Some(price)) = (listing.known_offer(), listing.known_price()) else {
+        let (Some(goods), Some(price)) = (listing.known_goods(), listing.known_price()) else {
             return Vec::new();
         };
         let ranked = |amount: u32, per: u32| Ranked {
@@ -322,22 +470,22 @@ impl Market {
             ends: listing.ends,
             id: listing.id,
         };
-        offer
+        goods
             .iter()
             .map(|found| {
-                let by_offer = offer
+                let by_goods = goods
                     .iter()
-                    .map(|stack| (SortBy::Offer(stack.item), ranked(stack.count, 1)));
+                    .map(|stack| (SortBy::Goods(stack.item), ranked(stack.count, 1)));
                 let by_price = price.iter().map(|stack| {
                     let per = found.count.max(1);
                     (SortBy::Price(stack.item), ranked(stack.count, per))
                 });
-                (found.item, by_offer.chain(by_price).collect())
+                (found.item, by_goods.chain(by_price).collect())
             })
             .collect()
     }
 
-    /// The item in the prices of the most listings that offer `item`, the first of those that tie.
+    /// The item in the prices of the most listings with `item` among their goods, the first of those that tie.
     fn most_common_price(&self, item: ItemId) -> Option<ItemId> {
         self.ranked
             .get(&item)?
@@ -345,13 +493,13 @@ impl Market {
             .rev()
             .filter_map(|(by, ranked)| match by {
                 SortBy::Price(price) => Some((*price, ranked.len())),
-                SortBy::Offer(_) => None,
+                SortBy::Goods(_) => None,
             })
             .max_by_key(|&(_, listings)| listings)
             .map(|(price, _)| price)
     }
 
-    /// The listings that offer `item` in the order `sort` gives: those it can't rank after,
+    /// The listings with `item` among their goods, in the order `sort` gives: those it can't rank after,
     /// ending first first.
     fn found(&self, item: ItemId, sort: Option<ListingSort>) -> impl Iterator<Item = ListingId> {
         let sorted = sort.and_then(|sort| Some((self.ranked.get(&item)?.get(&sort.by)?, sort)));
@@ -370,7 +518,7 @@ impl Market {
             })
         };
         let rest = self
-            .offering
+            .with_goods
             .get(&item)
             .into_iter()
             .flatten()
@@ -380,8 +528,8 @@ impl Market {
     }
 }
 
-/// Where a listing stands among those sorted one way: by the `amount` it offers or prices of the
-/// item sorted by, for `per` of the item it is found under, the least first, then those ending
+/// Where a listing stands among those sorted one way: by the `amount` it holds, as goods or in its price,
+/// of the item sorted by, for `per` of the item it is found under, the least first, then those ending
 /// first.
 #[derive(Clone, Copy, Debug)]
 struct Ranked {
@@ -420,14 +568,14 @@ impl Eq for Ranked {}
 pub enum MarketAsk {
     Search(MarketQuery),
     List {
-        offer: Vec<ItemStack>,
+        goods: Vec<ItemStack>,
         price: Vec<ItemStack>,
         duration: Seconds,
     },
     /// Buys the listing, as the player saw it: one whose seller changed it since is not bought.
     Buy {
         listing: ListingId,
-        offer: Vec<ItemStack>,
+        goods: Vec<ItemStack>,
         price: Vec<ItemStack>,
     },
     Cancel(ListingId),
@@ -440,7 +588,7 @@ pub enum MarketRequest {
     Close,
 }
 
-/// A search of the market: the listings that offer `item`, in the order `sort` gives, `rows` to a
+/// A search of the market: the listings with `item` among their goods, in the order `sort` gives, `rows` to a
 /// page.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct MarketQuery {
@@ -460,14 +608,14 @@ pub struct ListingSort {
     pub descending: bool,
 }
 
-/// What listings are sorted by: how many of an item they offer, or their price in an item for
+/// What listings are sorted by: how many of an item their goods hold, or their price in an item for
 /// one of the item searched for.
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SortBy {
-    Offer(ItemId),
+    Goods(ItemId),
     Price(ItemId),
 }
 
@@ -475,7 +623,7 @@ impl SortBy {
     /// Whether `listing` has the item this sorts by, where it sorts by it.
     fn ranks(self, listing: &Listing) -> bool {
         let (stacks, item) = match self {
-            SortBy::Offer(item) => (&listing.offer, item),
+            SortBy::Goods(item) => (&listing.goods, item),
             SortBy::Price(item) => (&listing.price, item),
         };
         stacks.iter().any(|stack| stack.item == item)
@@ -486,7 +634,7 @@ impl SortBy {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ListingRow {
     pub id: ListingId,
-    pub offer: Vec<ItemStack>,
+    pub goods: Vec<ItemStack>,
     pub price: Vec<ItemStack>,
     pub ends: UnixMillis,
     /// Whether the player it is shown to listed it.
@@ -502,7 +650,7 @@ pub struct MarketResults {
     /// How many listings match.
     pub found: u32,
     pub pages: u32,
-    /// Every way the listings that match can be sorted: by each item they offer, then by each
+    /// Every way the listings that match can be sorted: by each item among their goods, then by each
     /// item of their prices.
     pub sorts: Vec<SortBy>,
 }
@@ -510,16 +658,12 @@ pub struct MarketResults {
 /// The market as the player who has it open sees it.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct MarketView {
-    /// Raised by every answer of the market, so a client can tell an answer from silence.
-    pub answered: u32,
+    pub answered: AnswerCount,
     /// What the latest search found: none before the first.
     pub results: Option<MarketResults>,
     /// The listings of those results someone else bought before this player's purchase settled.
     pub gone: Vec<ListingId>,
 }
-
-/// The most listings a page of results shows, however many a player's window has room for.
-pub const MOST_ROWS: u32 = 50;
 
 /// Opens the market for `player`, from `opener` where a thing in the world opened it: then it
 /// closes as they walk out of its reach.
@@ -527,12 +671,10 @@ pub fn open(world: &mut World, player: Entity, opener: Option<Entity>) {
     if world.resource::<GameSettings>().market.is_none() {
         return;
     }
-    let opener = opener
-        .filter(|opener| *opener != player)
-        .and_then(|opener| Some((opener, world.get::<Interactive>(opener)?.reach)));
+    let tether = Tether::opened_by(world, player, opener);
     world
         .entity_mut(player)
-        .insert((MarketVisit { opener }, MarketView::default()));
+        .insert((MarketVisit { tether }, MarketView::default()));
 }
 
 /// Hands what players of this world asked of the market to society.
@@ -557,49 +699,29 @@ pub fn requests(world: &mut World) {
     );
 }
 
-/// Closes the market of whoever fell, or walked out of reach of what opened it.
-pub fn hold(world: &mut World, visits: &mut QueryState<(Entity, &'static MarketVisit)>) {
-    let over: Vec<Entity> = visits
-        .iter(world)
-        .filter(|(player, visit)| {
-            stat::is_dead(world, *player)
-                || world.get::<Crossing>(*player).is_some()
-                || visit
-                    .opener
-                    .is_some_and(|(opener, reach)| !within(world, *player, opener, reach))
-        })
-        .map(|(player, _)| player)
-        .collect();
-    for player in over {
-        close(world, player);
-    }
-}
-
 /// Does what `by` asked of the market.
 pub(crate) fn settle(settling: &mut Settling, content: &Content, by: &AccountId, ask: MarketAsk) {
     let Some(settings) = content.built::<GameSettings>().market.clone() else {
         return;
     };
     match ask {
-        MarketAsk::Search(query) => search(settling, by, query),
+        MarketAsk::Search(query) => search(settling, settings.page_rows, by, query),
         MarketAsk::List {
-            offer,
+            goods,
             price,
             duration,
-        } => list(settling, content, &settings, by, offer, price, duration),
+        } => list(settling, content, &settings, by, goods, price, duration),
         MarketAsk::Buy {
             listing,
-            offer,
+            goods,
             price,
-        } => buy(settling, content, by, listing, offer, price),
+        } => buy(settling, content, by, listing, goods, price),
         MarketAsk::Cancel(listing) => cancel(settling, content, by, listing),
     }
-    show(settling, by, |view| {
-        view.answered = view.answered.wrapping_add(1)
-    });
+    show(settling, by, |view| view.answered.raise());
 }
 
-/// Ends every listing whose time is up, what it offers going back to its seller.
+/// Ends every listing whose time is up, its goods going back to its seller.
 pub(crate) fn keep(settling: &mut Settling, content: &Content) {
     while let Some(id) = settling.society.market.ended(settling.now) {
         let Some(listing) = settling.society.market.remove(id) else {
@@ -617,29 +739,6 @@ pub(crate) fn mine(society: &Society, account: &AccountId) -> Vec<ListingRow> {
         .of_seller(account)
         .filter_map(|listing| row(listing, account))
         .collect()
-}
-
-/// The words a game's settings must have for the market, checked as the game loads.
-pub(crate) fn words(words: &GameWords) -> [(&'static str, &String); 17] {
-    [
-        ("market_listed", &words.market_listed),
-        ("market_bought", &words.market_bought),
-        ("market_sold", &words.market_sold),
-        ("market_expired", &words.market_expired),
-        ("market_cancelled", &words.market_cancelled),
-        ("market_gone", &words.market_gone),
-        ("market_too_many", &words.market_too_many),
-        ("market_message", &words.market_message),
-        ("market_bought_title", &words.market_bought_title),
-        ("market_sold_title", &words.market_sold_title),
-        ("market_returned_title", &words.market_returned_title),
-        ("market_no_offer", &words.market_no_offer),
-        ("market_no_price", &words.market_no_price),
-        ("market_offer_too_many", &words.market_offer_too_many),
-        ("market_price_too_many", &words.market_price_too_many),
-        ("market_named_twice", &words.market_named_twice),
-        ("market_needs_amount", &words.market_needs_amount),
-    ]
 }
 
 /// A game whose content opens the market has one, and the items its settings name can change
@@ -668,15 +767,16 @@ pub(crate) fn check(loading: &mut Loading, content: &Content, settings: &GameSet
     if settings.market.is_some() {
         return;
     }
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     let opening: Vec<OwnerRow> = scripts
         .owners()
         .map(|(row, _)| *row)
         .filter(|row| {
             scripts
                 .may_do(*row)
-                .reaches
-                .contains(&EffectReach::OpensMarket)
+                .reaching::<effect::OpensMarket>()
+                .next()
+                .is_some()
         })
         .collect();
     for row in opening {
@@ -694,14 +794,24 @@ pub(crate) fn check(loading: &mut Loading, content: &Content, settings: &GameSet
 #[derive(Component)]
 pub struct MarketVisit {
     /// The thing that opened it, and how far from it the player may stand.
-    opener: Option<(Entity, Meters)>,
+    tether: Option<Tether>,
 }
 
-/// How a listing ended, what it offers going back to its seller.
+/// How a listing ended, its goods going back to its seller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Returned {
     Expired,
     Cancelled,
+}
+
+impl OpenWindow for MarketVisit {
+    fn kept(&self, world: &World, player: Entity) -> bool {
+        reach::lapse(world, player, self.tether.as_ref()).is_none()
+    }
+
+    fn close(world: &mut World, player: Entity) {
+        close(world, player);
+    }
 }
 
 fn close(world: &mut World, player: Entity) {
@@ -710,18 +820,7 @@ fn close(world: &mut World, player: Entity) {
     }
 }
 
-fn within(world: &World, player: Entity, opener: Entity, reach: Meters) -> bool {
-    let near = match (
-        movement::position(world, player),
-        movement::position(world, opener),
-    ) {
-        (Some(player), Some(opener)) => player.distance(opener) <= reach,
-        _ => false,
-    };
-    near && area::same_area(world, player, opener)
-}
-
-fn search(settling: &mut Settling, by: &AccountId, query: MarketQuery) {
+fn search(settling: &mut Settling, page_rows: u32, by: &AccountId, query: MarketQuery) {
     let market = &settling.society.market;
     let sorts: Vec<SortBy> = market
         .ranked
@@ -738,8 +837,8 @@ fn search(settling: &mut Settling, by: &AccountId, query: MarketQuery) {
                 descending: false,
             })
         });
-    let found = market.offering.get(&query.item).map_or(0, BTreeSet::len) as u32;
-    let rows = query.rows.clamp(1, MOST_ROWS);
+    let found = market.with_goods.get(&query.item).map_or(0, BTreeSet::len) as u32;
+    let rows = query.rows.clamp(1, page_rows);
     let pages = found.div_ceil(rows).max(1);
     let page = query.page.min(pages - 1);
     let shown = market
@@ -771,49 +870,39 @@ fn list(
     content: &Content,
     settings: &MarketSettings,
     by: &AccountId,
-    offer: Vec<ItemStack>,
+    goods: Vec<ItemStack>,
     price: Vec<ItemStack>,
     duration: Seconds,
 ) {
-    let words = &content.built::<GameSettings>().words;
-    let refusal = settings
-        .refusal(content, ListingSide::Offer, &offer)
-        .or_else(|| settings.refusal(content, ListingSide::Price, &price));
-    if let Some(refusal) = refusal {
-        return settling.refuse(by, refusal.describe(content));
-    }
     if !settings.durations.contains(&duration) {
         return;
     }
-    let running = settling.society.market.of_seller(by).count() as u32;
-    if running >= settings.max_listings {
-        let full = words
-            .market_too_many
-            .replace("{listings}", &settings.max_listings.to_string());
-        return settling.refuse(by, full);
-    }
-    let deposit: Vec<ItemStack> = [settings.deposit()]
-        .into_iter()
-        .filter(|deposit| deposit.count > 0)
-        .collect();
-    let costs: Vec<ItemStack> = offer.iter().chain(&deposit).copied().collect();
+    let listed = settling.society.market.of_seller(by).count() as u32;
     let Some((world, character)) = settling.reach(by) else {
         return;
     };
-    let taken = world
-        .get_mut::<Inventory>(character)
-        .map(|mut bag| bag.exchange(content, &costs, &[]));
-    match taken {
-        Some(Ok(())) => {}
-        Some(Err(refusal)) => return settling.refuse(by, refusal.describe(content)),
-        None => return,
+    let refusal = settings.refusal(
+        content,
+        &Inventory::of(world, character),
+        listed,
+        &goods,
+        &price,
+    );
+    if let Some(refusal) = refusal {
+        return settling.refuse(by, refusal.describe(content));
+    }
+    let Some(mut bag) = world.get_mut::<Inventory>(character) else {
+        return;
+    };
+    if bag.exchange(content, &settings.costs(&goods), &[]).is_err() {
+        return;
     }
     let listing = settling.society.market.add(Listing {
         id: ListingId(0),
         seller: by.clone(),
-        offer: offer.into(),
+        goods: goods.into(),
         price: price.into(),
-        deposit: deposit.into(),
+        deposit: settings.deposit_paid().into(),
         ends: settling.now.after(duration),
     });
     settling.unwritten.put(listing);
@@ -825,20 +914,21 @@ fn buy(
     content: &Content,
     by: &AccountId,
     id: ListingId,
-    offer: Vec<ItemStack>,
+    goods: Vec<ItemStack>,
     price: Vec<ItemStack>,
 ) {
-    let words = &content.built::<GameSettings>().words;
+    let messages = messages::of(content);
     let unchanged = settling.society.market.get(id).is_some_and(|listing| {
-        listing.known_offer() == Some(offer.as_slice())
+        listing.known_goods() == Some(goods.as_slice())
             && listing.known_price() == Some(price.as_slice())
             && listing.seller != *by
     });
     if !unchanged {
         if settling.society.market.get(id).is_none() {
-            let said = LineText::plain(words.market_gone.as_str())
-                .filling("{offer}", ItemStack::listed(&offer));
-            settling.refuse(by, said.plain_words(content));
+            let said = messages
+                .market
+                .gone(ItemStack::listed(&messages.interface, &goods));
+            settling.refuse(by, said);
             show(settling, by, |view| view.gone.push(id));
         }
         return;
@@ -851,36 +941,35 @@ fn buy(
         .map(|mut bag| bag.exchange(content, &price, &[]));
     match given {
         Some(Ok(())) => {}
-        Some(Err(refusal)) => return settling.refuse(by, refusal.describe(content)),
+        Some(Err(refusal)) => return settling.refuse(by, refusal.line(content)),
         None => return,
     }
     let Some(listing) = settling.society.market.remove(id) else {
         return;
     };
     settling.unwritten.remove::<Listing>(listing.id());
-    let got = payout::pay_account(settling, content, by, &offer, PayoutReason::MarketBought);
-    let said = LineText::plain(words.market_bought.as_str())
-        .filling("{offer}", ItemStack::listed(&offer))
-        .filling("{price}", ItemStack::listed(&price));
+    deliver::to_account(settling, content, by, &goods, DeliveryReason::MarketBought);
+    let said = messages.market.bought(
+        ItemStack::listed(&messages.interface, &goods),
+        ItemStack::listed(&messages.interface, &price),
+    );
     settling.tell(by, Notification::feed(HistoryTopic::Item, said));
-    if let Some(overflow) = got.overflow(content) {
-        settling.tell(by, Notification::feed(HistoryTopic::Item, overflow));
-    }
     let paid: Vec<ItemStack> = price
         .iter()
         .chain(listing.deposit.iter())
         .copied()
         .collect();
-    payout::pay_account(
+    deliver::to_account(
         settling,
         content,
         &listing.seller,
         &paid,
-        PayoutReason::MarketSold,
+        DeliveryReason::MarketSold,
     );
-    let said = LineText::plain(words.market_sold.as_str())
-        .filling("{offer}", ItemStack::listed(&offer))
-        .filling("{price}", ItemStack::listed(&price));
+    let said = messages.market.sold(
+        ItemStack::listed(&messages.interface, &goods),
+        ItemStack::listed(&messages.interface, &price),
+    );
     settling.tell(
         &listing.seller,
         Notification::feed(HistoryTopic::Item, said),
@@ -905,39 +994,30 @@ fn cancel(settling: &mut Settling, content: &Content, by: &AccountId, id: Listin
     give_back(settling, content, listing, Returned::Cancelled);
 }
 
-/// Pays what a listing that was not taken offers back to its seller, wherever they are: one with
+/// Pays the goods of a listing that was not taken back to its seller, wherever they are: one with
 /// an item set aside goes by message, as it was saved.
 fn give_back(settling: &mut Settling, content: &Content, listing: Listing, why: Returned) {
-    let words = &content.built::<GameSettings>().words;
+    let messages = messages::of(content);
     let seller = listing.seller.clone();
     settling.society.changed(&seller);
-    let Some(offer) = listing.known_offer() else {
-        inbox::from_system(
-            settling.society,
-            settling.unwritten,
-            settling.now,
-            &seller,
-            (&words.market_returned_title, &words.market_message),
-            listing.offer,
-        );
+    let Some(goods) = listing.known_goods() else {
+        let reason = DeliveryReason::MarketReturned;
+        deliver::by_mail(settling, content, &seller, listing.goods, reason);
         return;
     };
-    let paid = payout::pay_account(
+    deliver::to_account(
         settling,
         content,
         &seller,
-        offer,
-        PayoutReason::MarketReturned,
+        goods,
+        DeliveryReason::MarketReturned,
     );
+    let kept = ItemStack::listed(&messages.interface, goods);
     let said = match why {
-        Returned::Expired => &words.market_expired,
-        Returned::Cancelled => &words.market_cancelled,
+        Returned::Expired => messages.market.expired(kept),
+        Returned::Cancelled => messages.market.cancelled(kept),
     };
-    let said = LineText::plain(said.as_str()).filling("{offer}", ItemStack::listed(offer));
     settling.tell(&seller, Notification::feed(HistoryTopic::Item, said));
-    if let Some(overflow) = paid.overflow(content) {
-        settling.tell(&seller, Notification::feed(HistoryTopic::Item, overflow));
-    }
 }
 
 /// Changes `by`'s window as `edit` says, while they have the market open.
@@ -953,7 +1033,7 @@ fn show(settling: &mut Settling, by: &AccountId, edit: impl FnOnce(&mut MarketVi
 fn row(listing: &Listing, viewer: &AccountId) -> Option<ListingRow> {
     Some(ListingRow {
         id: listing.id,
-        offer: listing.known_offer()?.to_vec(),
+        goods: listing.known_goods()?.to_vec(),
         price: listing.known_price()?.to_vec(),
         ends: listing.ends,
         mine: listing.seller == *viewer,

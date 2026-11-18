@@ -11,6 +11,7 @@ pub enum Face {
     BookMedium,
     BookBold,
     BookItalic,
+    BookMediumItalic,
     SmallCaps,
     SmallCapsBold,
     Quill,
@@ -35,6 +36,13 @@ impl Face {
         self.into()
     }
 }
+
+/// How tall a conversation's text is, as a share of the viewport's height, so it reads the same
+/// at every resolution.
+pub const DIALOGUE_SIZE_SHARE: f32 = 0.027;
+
+/// How far apart the lines of a conversation's text stand, in ems.
+pub const DIALOGUE_LEADING: f32 = 1.45;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextRole {

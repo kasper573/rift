@@ -9,6 +9,7 @@ use super::{PartyMemberRow, PartyShown};
 use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::hud::{self, HudWidget};
+use crate::systems::messages::{self, Messages};
 use crate::systems::player::{ClientId, PlayedBy, session};
 use crate::systems::settings::UserSettings;
 use crate::systems::social_request::card::time_left;
@@ -47,14 +48,32 @@ impl HudWidget for PartyFramesWidget {
         let now = time::server_now(world);
         let folded = world.resource::<Folded>().0;
         let opacity = world.resource::<UserSettings>().tracker_backing();
-        let heading = TrackerHeading {
-            title: "Party",
-            listed: others.len(),
-            lists: "party members",
+        let content = world.resource::<Content>().clone();
+        let messages = messages::of(&content);
+        let words = &messages.party;
+        let title = words.tracker_title_folded(others.len());
+        let heading = if folded {
+            TrackerHeading {
+                title: &title,
+                said: words.tracker_show(),
+            }
+        } else {
+            TrackerHeading {
+                title: words.title(),
+                said: words.tracker_hide(),
+            }
         };
         let shown = tracker::show(ui, heading, folded, opacity.0 / 100.0, |ui, at| {
             others.iter().fold(at.y, |foot, member| {
-                frame(ui, world, party, member, now, Pos2::new(at.x, foot))
+                frame(
+                    ui,
+                    world,
+                    messages,
+                    party,
+                    member,
+                    now,
+                    Pos2::new(at.x, foot),
+                )
             })
         });
         if shown.toggled {
@@ -109,15 +128,14 @@ pub(super) fn character_of(world: &mut World, client: ClientId) -> Option<Entity
 }
 
 /// What `standing` says in words, to whoever reads the interface.
-pub(super) fn said(standing: &Standing, now: Option<UnixMillis>) -> String {
+pub(super) fn said(messages: &Messages, standing: &Standing, now: Option<UnixMillis>) -> String {
+    let words = &messages.party;
     match standing {
-        Standing::Seen { health } => format!("health {:.0}%", health * 100.0),
+        Standing::Seen { health } => words.health_percent((health * 100.0).round()),
         Standing::Elsewhere(area) => area.clone(),
         Standing::Away(leaves_at) => match leaves_at.zip(now) {
-            Some((leaves_at, now)) => {
-                format!("Away · leaves the party in {}", time_left(leaves_at, now))
-            }
-            None => "Away".to_owned(),
+            Some((leaves_at, now)) => words.away_leaves(time_left(&messages.time, leaves_at, now)),
+            None => words.away_stays().to_owned(),
         },
     }
 }
@@ -132,6 +150,7 @@ fn party(world: &World) -> Option<&PartyShown> {
 fn frame(
     ui: &mut Ui,
     world: &mut World,
+    messages: &Messages,
     party: &PartyShown,
     member: &PartyMemberRow,
     now: Option<UnixMillis>,
@@ -169,13 +188,24 @@ fn frame(
         Standing::Seen { health } => {
             health_over_the_world(ui, Pos2::new(rows.x, foot + BAR_GAP), *health).bottom()
         }
-        Standing::Elsewhere(_) => row(ui, foot, &said(&standing, now), TrackerTone::Plain, "at"),
-        Standing::Away(_) => row(ui, foot, &said(&standing, now), TrackerTone::Timed, "at"),
+        Standing::Elsewhere(_) => row(
+            ui,
+            foot,
+            &said(messages, &standing, now),
+            TrackerTone::Plain,
+            "at",
+        ),
+        Standing::Away(_) => row(
+            ui,
+            foot,
+            &said(messages, &standing, now),
+            TrackerTone::Timed,
+            "at",
+        ),
     };
-    let said = format!(
-        "{}, {}",
-        super::page::named(party, member),
-        said(&standing, now)
+    let said = messages.party.row_named(
+        super::page::named(&messages.party, party, member),
+        said(messages, &standing, now),
     );
     let entry = Rect::from_min_max(Pos2::new(at.x, top), Pos2::new(at.x + WIDTH, foot));
     ui.interact(entry, id, Sense::hover())

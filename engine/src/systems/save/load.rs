@@ -8,13 +8,13 @@ use crate::core::store::{self, RecordStoreProblem};
 use crate::systems::GameSettings;
 use crate::systems::actor::ActorModel;
 use crate::systems::area;
+use crate::systems::area::Place;
 use crate::systems::class::NodeKey;
 use crate::systems::equipment;
 use crate::systems::item::ItemStack;
 use crate::systems::player::snapshot::{
     AtInitialSpawn, CharacterSnapshot, CharacterStart, SnapshotSpot, start_of,
 };
-use crate::systems::script::Place;
 use crate::systems::skill::Learned;
 use crate::systems::skill::learn::plan;
 

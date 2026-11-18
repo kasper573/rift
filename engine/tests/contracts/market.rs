@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
 use engine::core::units::Seconds;
-use engine::systems::inbox::InboxView;
 use engine::systems::item::{ItemDef, ItemId, ItemStack};
+use engine::systems::mail::InboxView;
 use engine::systems::market::{
     self, ListingRow, ListingSort, MarketAsk, MarketQuery, MarketRequest, MarketView, SortBy,
 };
-use engine::systems::request_sources;
 use engine::systems::staging::{Staging, stage};
+use engine::systems::{request_sources, window};
 use serde_json::json;
 use testkit::{Game, Map};
 
@@ -14,7 +14,7 @@ use crate::saves::{Saves, checkpoint};
 use crate::server::Server;
 
 #[test]
-fn a_listing_holds_its_offer_until_the_first_buyer_pays_its_price() {
+fn a_listing_holds_its_goods_until_the_first_buyer_pays_its_price() {
     let mut host = Host::new(Server::of(game(), request_sources()));
     let [wren, hale, marrow] = host.sign_in_all();
     host.give(wren, "gold", 30);
@@ -64,8 +64,8 @@ fn a_listing_holds_its_offer_until_the_first_buyer_pays_its_price() {
         (&[("potion", 1)], &[("map", 1)], "Tattered Map is bound."),
         (&[("potion", 3)], &[("gold", 50)], "Needs 10 Gold more"),
     ];
-    for (offer, price, said) in refusals {
-        host.list(1, offer, price);
+    for (goods, price, said) in refusals {
+        host.list(1, goods, price);
         assert_eq!(
             (
                 host.errors(1).last().map(String::as_str),
@@ -112,7 +112,7 @@ fn a_listing_holds_its_offer_until_the_first_buyer_pays_its_price() {
     let listing = found[0].clone();
     let buy = MarketAsk::Buy {
         listing: listing.id,
-        offer: listing.offer,
+        goods: listing.goods,
         price: listing.price,
     };
     host.search(3, "sword");
@@ -167,7 +167,7 @@ fn a_listing_holds_its_offer_until_the_first_buyer_pays_its_price() {
     host.server.send(3, MarketRequest::Close);
     host.server.step();
     let staged = Staging::List {
-        offer: host.stacks(&[("potion", 1)]),
+        goods: host.stacks(&[("potion", 1)]),
         price: host.stacks(&[("gold", 1), ("herb", 1)]),
         duration: Seconds(3600.0),
     };
@@ -183,7 +183,7 @@ fn a_listing_holds_its_offer_until_the_first_buyer_pays_its_price() {
     let deals = |host: &mut Host, sort: Option<(Side, &str, bool)>| {
         host.sorted(1, "potion", sort)
             .into_iter()
-            .map(|row| (row.offer, row.price))
+            .map(|row| (row.goods, row.price))
             .collect::<Vec<_>>()
     };
     let (four, two, three, one) = (
@@ -213,8 +213,8 @@ fn a_listing_holds_its_offer_until_the_first_buyer_pays_its_price() {
     );
     assert_eq!(
         (
-            deals(&mut host, Some((SortBy::Offer, "potion", false))),
-            deals(&mut host, Some((SortBy::Offer, "potion", true))),
+            deals(&mut host, Some((SortBy::Goods, "potion", false))),
+            deals(&mut host, Some((SortBy::Goods, "potion", true))),
         ),
         (
             vec![one.clone(), two.clone(), three.clone(), four.clone()],
@@ -230,7 +230,7 @@ fn a_listing_holds_its_offer_until_the_first_buyer_pays_its_price() {
         (
             vec![one, three, two, four],
             Some(vec![
-                SortBy::Offer(host.stack("potion", 1).item),
+                SortBy::Goods(host.stack("potion", 1).item),
                 SortBy::Price(host.stack("gold", 1).item),
                 SortBy::Price(host.stack("herb", 1).item),
             ])
@@ -300,7 +300,7 @@ fn a_listing_nobody_buys_goes_back_to_its_seller_wherever_they_are() {
 /// Stacks as a test names them: each item by its name, with how many of it.
 type Stacks<'a> = &'a [(&'a str, u32)];
 
-/// The side of a listing a test sorts by: its offer or its price.
+/// The side of a listing a test sorts by: its goods or its price.
 type Side = fn(ItemId) -> SortBy;
 
 /// A server whose village has the market, and what its players do with it.
@@ -312,7 +312,7 @@ impl Host {
     fn new(mut server: Server) -> Host {
         for sim in [&mut server.village, &mut server.forest] {
             sim.accept::<MarketRequest>()
-                .add((market::requests, market::hold));
+                .add((market::requests, window::hold::<market::MarketVisit>));
         }
         Host { server }
     }
@@ -338,9 +338,9 @@ impl Host {
         self.server.step();
     }
 
-    fn list(&mut self, client: u32, offer: Stacks, price: Stacks) {
+    fn list(&mut self, client: u32, goods: Stacks, price: Stacks) {
         let ask = MarketAsk::List {
-            offer: self.stacks(offer),
+            goods: self.stacks(goods),
             price: self.stacks(price),
             duration: Seconds(3600.0),
         };
@@ -398,10 +398,10 @@ impl Host {
         self.server.view(client).listings
     }
 
-    /// Each of `rows`' offer and price, and whether the player shown it listed it.
+    /// Each of `rows`' goods and price, and whether the player shown it listed it.
     fn shown(&self, rows: &[ListingRow]) -> Vec<(Vec<ItemStack>, Vec<ItemStack>, bool)> {
         rows.iter()
-            .map(|row| (row.offer.clone(), row.price.clone(), row.mine))
+            .map(|row| (row.goods.clone(), row.price.clone(), row.mine))
             .collect()
     }
 
@@ -474,17 +474,18 @@ fn game() -> Game {
         .edit("item", "map", |map| map["name"] = json!("Tattered Map"))
         .edit_settings(|settings| {
             settings["lingers_for"] = json!(0.0);
-            settings["messages"] = json!({
+            settings["mail"] = json!({
                 "inbox": 5, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
             });
             settings["market"] = json!({
                 "default_currency": testkit::path("item", "herb"),
                 "deposit_currency": testkit::path("item", "gold"),
-                "max_offer_items": 2,
+                "max_goods_items": 2,
                 "max_price_items": 2,
                 "durations": [3600.0, 7200.0],
                 "deposit": 20,
                 "max_listings": 2,
+                "page_rows": 50,
             });
         })
 }

@@ -4,7 +4,7 @@ use engine::systems::actor::skeleton::EquipmentSlot;
 use engine::systems::equipment::{self, Equipment, EquipmentPlace, UnequipRequest};
 use engine::systems::item::{self, DropItemRequest, ItemDef, UseItemRequest};
 use engine::systems::player::{ArrivalHold, CommandLock};
-use engine::systems::{script, stat};
+use engine::systems::stat;
 use serde_json::json;
 use testkit::{BODY, Game, Map, Sim};
 
@@ -53,9 +53,9 @@ fn camp() -> (Sim, Entity) {
         .accept::<DropItemRequest>()
         .accept::<UnequipRequest>()
         .add((item::use_item, item::drop_item, equipment::unequip))
-        .plan(script::RunFlows::default())
+        .plan(engine::core::script::run::FlowRunner::default())
         .plan(stat::SettleVitals::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
     (sim, player)
 }

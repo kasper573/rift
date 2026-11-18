@@ -23,6 +23,7 @@ pub const MAX_PROP_MATERIALS: usize = 2;
 pub const MAX_EFFECTS: usize = 4;
 pub const MIN_POLYGON_POINTS: usize = 3;
 pub const MAX_POLYGON_POINTS: usize = 64;
+pub const MAX_POLYGON_PARTS: usize = 32;
 /// How many props an area stands at most on a square of its ground, scattered ones included: a
 /// draw budget.
 pub const MAX_PROPS: usize = 2000;
@@ -82,13 +83,15 @@ pub enum Footprint {
         depth: Meters,
     },
     Polygon {
-        #[schemars(with = "Vec<serial::PosRow>")]
+        /// The simple polygons that together are the footprint, each going round its corners:
+        /// an arch takes the ground under each leg and not between them.
+        #[schemars(with = "Vec<Vec<serial::PosRow>>")]
         #[serde(
-            serialize_with = "serial::points",
-            deserialize_with = "serial::points_from"
+            serialize_with = "serial::parts",
+            deserialize_with = "serial::parts_from"
         )]
-        points: Vec<Pos<Meters>>,
-        /// The hash of the model the points were fitted to, when the editor fitted them: a model
+        parts: Vec<Vec<Pos<Meters>>>,
+        /// The hash of the model the parts were fitted to, when the editor fitted them: a model
         /// changed since is reported, so a footprint never silently stops matching its mesh.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fitted_to: Option<ModelHash>,
@@ -156,21 +159,31 @@ impl ContentFile for PropDef {
                 cx.range("/footprint/width", width.0, 0.05, 64.0, "m");
                 cx.range("/footprint/depth", depth.0, 0.05, 64.0, "m");
             }
-            Footprint::Polygon { points, .. } => {
+            Footprint::Polygon { parts, .. } => {
                 cx.count(
-                    "/footprint/points",
-                    points.len(),
-                    MIN_POLYGON_POINTS,
-                    MAX_POLYGON_POINTS,
-                    "points",
+                    "/footprint/parts",
+                    parts.len(),
+                    1,
+                    MAX_POLYGON_PARTS,
+                    "parts",
                 );
-                if points.len() >= MIN_POLYGON_POINTS && !is_simple(points) {
-                    cx.error(
-                        "/footprint/points",
-                        "polygon crosses itself",
-                        "edges that cross",
-                        "a simple polygon, its edges meeting only at their ends",
+                for (index, points) in parts.iter().enumerate() {
+                    let pointer = format!("/footprint/parts/{index}");
+                    cx.count(
+                        &pointer,
+                        points.len(),
+                        MIN_POLYGON_POINTS,
+                        MAX_POLYGON_POINTS,
+                        "points",
                     );
+                    if points.len() >= MIN_POLYGON_POINTS && !is_simple(points) {
+                        cx.error(
+                            pointer,
+                            "polygon crosses itself",
+                            "edges that cross",
+                            "a simple polygon, its edges meeting only at their ends",
+                        );
+                    }
                 }
             }
         }
@@ -183,16 +196,21 @@ impl Footprint {
     }
 
     /// The ground a model of `triangles` takes from a walker who stands `tall`: a polygon round
-    /// all of it the walker would meet, however little of it touches the ground, that remembers
-    /// the model it was `fitted_to`. None for a model with no ground to stand on.
+    /// every connected piece of it the walker would meet, however little of it touches the ground,
+    /// that remembers the model it was `fitted_to`. A model of more pieces than a footprint holds
+    /// keeps the widest. None for a model with no ground to stand on.
     pub fn fitted(triangles: &[Triangle], tall: Meters, fitted_to: ModelHash) -> Option<Footprint> {
-        let points = gltf::footing(triangles, tall);
-        if points.len() < MIN_POLYGON_POINTS {
-            return None;
-        }
-        let step = points.len().div_ceil(MAX_POLYGON_POINTS);
-        Some(Footprint::Polygon {
-            points: points.into_iter().step_by(step).collect(),
+        let mut parts: Vec<Vec<Pos<Meters>>> = gltf::footing(triangles, tall)
+            .into_iter()
+            .map(|points| {
+                let step = points.len().div_ceil(MAX_POLYGON_POINTS);
+                points.into_iter().step_by(step).collect()
+            })
+            .collect();
+        parts.sort_by(|a, b| area_of(b).total_cmp(&area_of(a)));
+        parts.truncate(MAX_POLYGON_PARTS);
+        (!parts.is_empty()).then_some(Footprint::Polygon {
+            parts,
             fitted_to: Some(fitted_to),
         })
     }
@@ -207,36 +225,47 @@ impl Footprint {
             Footprint::Box { width, depth } => {
                 local.x.abs() <= width.0 / 2.0 && local.y.abs() <= depth.0 / 2.0
             }
-            Footprint::Polygon { points, .. } => inside_polygon(points, Pos::origin() + local),
+            Footprint::Polygon { parts, .. } => parts
+                .iter()
+                .any(|points| inside_polygon(points, Pos::origin() + local)),
         }
     }
 
-    /// The corners of the footprint as placed, going round it; none for a prop taking no ground.
-    pub fn outline(&self, at: Pos<Meters>, yaw: Degrees, scale: f32) -> Vec<Pos<Meters>> {
+    /// The corners of each part of the footprint as placed, going round it; none for a prop taking
+    /// no ground.
+    pub fn outlines(&self, at: Pos<Meters>, yaw: Degrees, scale: f32) -> Vec<Vec<Pos<Meters>>> {
         let place = |local: Pos<Meters>| at + yaw.rotate(local.to_vector() * scale);
         match self {
             Footprint::None => Vec::new(),
-            Footprint::Circle { radius } => (0..24)
-                .map(|step| {
-                    let angle = std::f32::consts::TAU * step as f32 / 24.0;
-                    place(Pos::new(angle.cos() * radius.0, angle.sin() * radius.0))
-                })
-                .collect(),
+            Footprint::Circle { radius } => vec![
+                (0..24)
+                    .map(|step| {
+                        let angle = std::f32::consts::TAU * step as f32 / 24.0;
+                        place(Pos::new(angle.cos() * radius.0, angle.sin() * radius.0))
+                    })
+                    .collect(),
+            ],
             Footprint::Box { width, depth } => {
                 let (w, d) = (width.0 / 2.0, depth.0 / 2.0);
-                [(-w, -d), (w, -d), (w, d), (-w, d)]
-                    .into_iter()
-                    .map(|(x, y)| place(Pos::new(x, y)))
-                    .collect()
+                vec![
+                    [(-w, -d), (w, -d), (w, d), (-w, d)]
+                        .into_iter()
+                        .map(|(x, y)| place(Pos::new(x, y)))
+                        .collect(),
+                ]
             }
-            Footprint::Polygon { points, .. } => points.iter().map(|point| place(*point)).collect(),
+            Footprint::Polygon { parts, .. } => parts
+                .iter()
+                .map(|points| points.iter().map(|point| place(*point)).collect())
+                .collect(),
         }
     }
 
     /// How far the footprint reaches from the prop's origin; none for a prop taking no ground.
     pub fn reach(&self) -> Option<Meters> {
-        self.outline(Pos::origin(), Degrees(0.0), 1.0)
+        self.outlines(Pos::origin(), Degrees(0.0), 1.0)
             .into_iter()
+            .flatten()
             .map(|corner| corner.to_vector().length())
             .reduce(f32::max)
             .map(Meters)
@@ -244,7 +273,11 @@ impl Footprint {
 
     /// The box around the footprint as placed; none for a prop taking no ground.
     pub fn bounds(&self, at: Pos<Meters>, yaw: Degrees, scale: f32) -> Option<Rect<Meters>> {
-        let outline = self.outline(at, yaw, scale);
+        let outline: Vec<Pos<Meters>> = self
+            .outlines(at, yaw, scale)
+            .into_iter()
+            .flatten()
+            .collect();
         let first = *outline.first()?;
         Some(
             outline
@@ -396,7 +429,7 @@ impl Scatter {
     }
 }
 
-/// A polygon fitted to a model that has changed since is reported at the prop: its points no longer
+/// A polygon fitted to a model that has changed since is reported at the prop: its parts no longer
 /// follow the mesh.
 pub fn check_fitted(loading: &mut Loading) {
     let content = loading.content();
@@ -439,6 +472,18 @@ fn check_mesh(info: &GltfInfo, weight: Option<FileSize>, cx: &mut RowCheck) {
     }
     cx.range("", info.triangles, 1, MAX_PROP_TRIANGLES, "triangles");
     cx.range("", info.materials.len(), 0, MAX_PROP_MATERIALS, "materials");
+}
+
+fn area_of(points: &[Pos<Meters>]) -> f32 {
+    let count = points.len();
+    (0..count)
+        .map(|index| {
+            let (a, b) = (points[index], points[(index + 1) % count]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum::<f32>()
+        .abs()
+        / 2.0
 }
 
 fn inside_polygon(points: &[Pos<Meters>], point: Pos<Meters>) -> bool {

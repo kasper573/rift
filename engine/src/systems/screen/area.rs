@@ -18,18 +18,21 @@ use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
 };
 use crate::core::render::world::readying;
-use crate::core::text::{self, StyledLine, TextLook, TextPiece};
+use crate::core::text::{self, LineText, TextLook};
 use crate::core::time;
 use crate::core::units::{Meters, Radians, Seconds};
 use crate::systems::actor::Actor;
 use crate::systems::area::rain::{self, RainHeard};
+use crate::systems::area::sky::SkyCondition;
+use crate::systems::area::sky::SkyNow;
 use crate::systems::area::{self, AreaId, AreaTag, scenery};
 use crate::systems::identity::GlobalId;
-use crate::systems::input::map::{self, InputAction};
+use crate::systems::input::map::InputAction;
+use crate::systems::input::scope;
+use crate::systems::messages;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session::{self, MyCharacter};
 use crate::systems::player::{ARRIVAL_PATIENCE, AreaDrawn};
-use crate::systems::script::{SkyCondition, SkyNow};
 
 pub struct AreaScreenPlugin;
 
@@ -252,11 +255,14 @@ fn death_notice(world: &mut World) {
     if !session::is_dead(world) {
         return;
     }
-    let line = StyledLine::new(vec![
-        TextPiece::text("You died! Press "),
-        map::input(InputAction::Respawn),
-        TextPiece::text(" to respawn"),
-    ]);
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).screen;
+    let line = if scope::reads(world, InputAction::Respawn) {
+        words.died_keyed(InputAction::Respawn)
+    } else {
+        LineText::plain(words.died())
+    }
+    .styled(&content);
     let area = egui::Area::new(egui::Id::new("death"))
         .order(Band::Notices.order())
         .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)

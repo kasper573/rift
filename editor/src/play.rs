@@ -17,6 +17,7 @@ use engine::core::content::{
     Content, ContentFile, ContentScope, LoadReport, version, with_content,
 };
 use engine::systems::GameSettings;
+use engine::systems::area::Place;
 use engine::systems::class::ClassDef;
 use engine::systems::launch::{
     self, BUILD_INFO_FLAG, BuildInfo, CLIENT_ENV_PREFIX, ClientConfig, ReadyLine,
@@ -24,7 +25,6 @@ use engine::systems::launch::{
     fake_token,
 };
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
-use engine::systems::script::Place;
 use process_wrap::std::{ChildWrapper, CommandWrap};
 use tempfile::TempDir;
 use ui::controls::{self, Pill};
@@ -585,13 +585,13 @@ pub(crate) fn banner(editor: &mut Editor, ui: &mut Ui) {
                     if controls::primary(ui, "Copy output").clicked() {
                         copy = true;
                     }
-                    if ui.button("Save to file…").clicked() {
+                    if controls::button(ui, "Save to file…").clicked() {
                         save = true;
                     }
                     if controls::marked(ui, Mark::Play, "Play again").clicked() {
                         again = true;
                     }
-                    if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                    if controls::remove(ui, "Remove")
                         .on_hover_text("Hide")
                         .clicked()
                     {
@@ -892,10 +892,10 @@ pub(crate) fn binaries_body(editor: &mut Editor, ui: &mut Ui) -> bool {
                 close = true;
             }
         } else {
-            if ui.button("Choose another folder").clicked() {
+            if controls::button(ui, "Choose another folder").clicked() {
                 pick = true;
             }
-            if ui.button("Use the ones next to the editor").clicked() {
+            if controls::button(ui, "Use the ones next to the editor").clicked() {
                 next_to = true;
             }
             if ui

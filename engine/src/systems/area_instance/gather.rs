@@ -8,26 +8,28 @@ use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, Vec2};
 use ui::face::TextRole;
 use ui::{controls, dialog, face, ink, sheet};
 
+use super::InstanceMessages;
 use super::roster::{
     CallAnswer, CallReply, CallRequest, CallRowShown, InstanceCallShown, RosterRowShown,
 };
 use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::core::text::TextLook;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
-use crate::systems::hud::{self, HudWidget, Sizing, WindowFrame};
+use crate::systems::hud::{self, Centred, HudWidget, WindowKey};
 use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::input::scope;
 use crate::systems::item::inline;
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::Placed;
 use crate::systems::social_request::card::time_left;
 use crate::systems::society::SocietyView;
-use crate::systems::text::LineText;
 
-pub const WINDOW_KEY: &str = "instance_roster";
 pub const INSTANCE_CALL: &str = "instance_call";
 
 pub(crate) fn plugin(app: &mut App) {
@@ -37,41 +39,37 @@ pub(crate) fn plugin(app: &mut App) {
 /// The roster window: a sheet up for a leader while their call is open. Closing it calls the
 /// party off.
 pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
-    let leading = call(world).filter(|call| call.leads);
-    let Some(pose) = hud::sheet_pose(world, gui, WINDOW_KEY, leading.is_some()) else {
-        return;
-    };
-    let Some(shown) = hud::lifting(world, leading.clone()) else {
-        return;
-    };
     let Some(now) = time::server_now(world) else {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let title = format!("{} · party roster", shown.area.get(&content).name);
-    let screen = gui.content_rect();
-    let size = sheet::titled_size(Vec2::new(WIDTH + 2.0 * sheet::PANE_PAD.x, BODY_HEIGHT));
-    let frame = WindowFrame {
-        key: WINDOW_KEY,
+    let window = Centred {
+        key: WindowKey::Roster,
         of: Placed::Roster,
-        title: Some(&title),
-        start: Rect::from_min_size(
-            Pos2::new(screen.center().x - size.x / 2.0, screen.top() + 120.0),
-            size,
-        ),
-        sizing: Sizing::Fixed,
+        body: Vec2::new(WIDTH, BODY_HEIGHT),
+        top: 120.0,
     };
-    let mut stays = leading.is_some();
-    let mut asked = None;
-    hud::window(world, gui, frame, pose, &mut stays, |ui, _| {
-        if leading.is_none() {
-            ui.disable();
-        }
-        asked = roster(ui, &content, &shown, now);
-    });
-    if leading.is_some() && !stays {
-        asked = Some(CallRequest::CallOff);
-    }
+    let title = |leading: &InstanceCallShown| {
+        messages::of(&content)
+            .instance
+            .roster_title(&leading.area.get(&content).name)
+    };
+    let drawn = hud::centred(
+        world,
+        gui,
+        window,
+        call(world).filter(|call| call.leads),
+        title,
+        |ui, _, leading| roster(ui, &content, leading, now),
+    );
+    let Some(drawn) = drawn else {
+        return;
+    };
+    let asked = if drawn.closed {
+        Some(CallRequest::CallOff)
+    } else {
+        drawn.inner
+    };
     if let Some(asked) = asked {
         world.write_message(asked);
     }
@@ -88,10 +86,11 @@ fn roster(
     let mut asked = None;
     let padding = egui::Margin::symmetric(sheet::PANE_PAD.x as i8, sheet::PANE_PAD.y as i8);
     egui::Frame::NONE.inner_margin(padding).show(ui, |ui| {
-        let closes = format!("Closes in {}", time_left(shown.ends, now));
+        let messages = &messages::of(content).instance;
+        let closes = messages.closes_in(time_left(&messages::of(content).time, shown.ends, now));
         controls::pill(ui, &closes, controls::Pill::Ink);
         ui.add_space(6.0);
-        let free = shown.taken < shown.characters.most;
+        let free = shown.taken < shown.players.most;
         for row in &shown.rows {
             if let Some(request) = roster_row(ui, content, row, free) {
                 asked = Some(request);
@@ -100,28 +99,26 @@ fn roster(
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let ready = shown.ready >= shown.characters.least;
+                let ready = shown.ready >= shown.players.least;
                 if ui
-                    .add_enabled_ui(ready, |ui| controls::primary(ui, "Enter"))
+                    .add_enabled_ui(ready, |ui| controls::primary(ui, messages.enter()))
                     .inner
                     .clicked()
                 {
                     asked = Some(CallRequest::Enter);
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    let full = if free { "" } else { " · full" };
-                    let slots = format!("{} of {} slots{full}", shown.taken, shown.characters.most);
+                    let slots = if free {
+                        messages.slots(shown.players.most, shown.taken)
+                    } else {
+                        messages.slots_full(shown.players.most, shown.taken)
+                    };
                     ui.label(face::bold(slots));
                 });
             });
         });
-        if shown.ready < shown.characters.least {
-            let needs = format!(
-                "Needs at least {} characters. {} {} ready.",
-                shown.characters.least,
-                shown.ready,
-                if shown.ready == 1 { "is" } else { "are" }
-            );
+        if shown.ready < shown.players.least {
+            let needs = messages.needs_ready(shown.ready, shown.players.least);
             ui.with_layout(Layout::top_down(Align::Max), |ui| {
                 ui.label(face::small(needs).color(ink::VERMILION));
             });
@@ -147,32 +144,41 @@ impl HudWidget for CallCardWidget {
         let row = call.rows.first()?.clone();
         let now = time::server_now(world)?;
         let content = world.resource::<Content>().clone();
-        let settings = world.resource::<GameSettings>();
-        let words = settings.words.clone();
-        let lasts = settings
+        let messages = &messages::of(&content).instance;
+        let lasts = world
+            .resource::<GameSettings>()
             .party
             .map_or(Seconds(1.0), |party| party.call_lasts);
         let keys = world.resource::<InputMap>();
+        let cap = |action| {
+            scope::reads(world, action)
+                .then(|| keys.cap(action))
+                .flatten()
+        };
         let (join_key, decline_key) = (
-            keys.cap(InputAction::AcceptRequest),
-            keys.cap(InputAction::DenyRequest),
+            cap(InputAction::AcceptRequest),
+            cap(InputAction::DenyRequest),
         );
         let leader = call.leader.name.clone();
         let area = Mention::Area(call.area).span(&content);
         let mut replied = None;
         dialog::note(ui, WIDTH, |ui| {
             ui.horizontal(|ui| {
-                ui.label(face::small("INSTANCE CALL").color(ink::INK3));
+                ui.label(face::small(messages.call_heading()).color(ink::INK3));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(face::small_faint(time_left(call.ends, now)));
+                    ui.label(face::small_faint(time_left(
+                        &messages::of(&content).time,
+                        call.ends,
+                        now,
+                    )));
                 });
             });
-            let mut says = LineText::plain(words.instance_call.as_str())
-                .filling("{leader}", leader.clone())
-                .filling("{area}", area.clone());
-            if row.answer == CallAnswer::Deciding {
-                says = says.then(format!(" Up to {} go.", call.characters.most));
-            }
+            let says = match row.answer {
+                CallAnswer::Deciding => {
+                    messages.call_open(area.clone(), &leader, call.players.most)
+                }
+                _ => messages.call(area.clone(), &leader),
+            };
             let look = TextLook::role(TextRole::Body, ink::INK);
             inline::show_line(ui, world, &says, look, None);
             if row.answer == CallAnswer::Deciding {
@@ -180,38 +186,36 @@ impl HudWidget for CallCardWidget {
                 ui.add(egui::ProgressBar::new(left).desired_height(6.0));
             }
             ui.add_space(4.0);
-            let (pill, note) = state(&row, &words.instance_benched, &words.instance_out_of_sight);
+            let (pill, note) = state(messages, &row, &leader);
             ui.horizontal_wrapped(|ui| {
                 if let Some((said, look)) = pill {
                     controls::pill(ui, said, look);
                 }
                 if let Some(note) = note {
-                    let note = LineText::plain(note).filling("{leader}", leader.clone());
                     let look = TextLook::role(TextRole::Small, ink::INK2);
-                    inline::show_line(ui, world, &note, look, None);
+                    inline::show_line(ui, world, &LineText::plain(note), look, None);
                 }
             });
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if row.answer != CallAnswer::Declined {
                         let label = match row.answer {
-                            CallAnswer::Deciding => "Not this time",
-                            _ => "Withdraw",
+                            CallAnswer::Deciding => messages.not_this_time(),
+                            _ => messages.withdraw(),
                         };
                         if controls::keyed(ui, label, decline_key.as_ref(), true).clicked() {
                             replied = Some(CallReply::Decline);
                         }
                     }
                     if !matches!(row.answer, CallAnswer::Joined { .. })
-                        && controls::keyed(ui, "Join", join_key.as_ref(), true).clicked()
+                        && controls::keyed(ui, messages.join(), join_key.as_ref(), true).clicked()
                     {
                         replied = Some(CallReply::Join);
                     }
                 });
             });
             if row.answer == CallAnswer::Deciding {
-                let note = "You can change your answer until the party enters.";
-                ui.label(face::small(note).color(ink::INK3));
+                ui.label(face::small(messages.change_answer()).color(ink::INK3));
             }
         });
         if let Some(replied) = replied {
@@ -227,8 +231,13 @@ pub fn card_up(world: &World) -> bool {
 }
 
 /// Calls off the call the player leads, if they lead one.
+/// Whether the player leads a call they can call off.
+pub fn leads_call(world: &World) -> bool {
+    call(world).is_some_and(|call| call.leads)
+}
+
 pub fn call_off(world: &mut World) -> bool {
-    if call(world).is_none_or(|call| !call.leads) {
+    if !leads_call(world) {
         return false;
     }
     world.write_message(CallRequest::CallOff);
@@ -293,8 +302,8 @@ pub fn shown(world: &World) -> Option<ShownInstanceCall> {
         leader: call.leader.name.clone(),
         leads: call.leads,
         left: call.ends.since(now),
-        least: call.characters.least,
-        most: call.characters.most,
+        least: call.players.least,
+        most: call.players.most,
         taken: call.taken,
         ready: call.ready,
         rows: call
@@ -344,6 +353,7 @@ fn roster_row(
     row: &CallRowShown,
     free: bool,
 ) -> Option<CallRequest> {
+    let messages = &messages::of(content).instance;
     let mut asked = None;
     let far = matches!(
         row.shown,
@@ -356,70 +366,76 @@ fn roster_row(
             match (row.shown, row.answer) {
                 (RosterRowShown::Leading, _) => {}
                 (_, CallAnswer::Joined { picked: true }) => {
-                    if controls::button(ui, "Unpick").clicked() {
+                    if controls::button(ui, messages.unpick()).clicked() {
                         asked = Some(CallRequest::Unpick(number));
                     }
                 }
                 (RosterRowShown::Benched, _) => {
-                    let picks = ui.add_enabled_ui(free, |ui| controls::button(ui, "Pick"));
+                    let picks = ui.add_enabled_ui(free, |ui| controls::button(ui, messages.pick()));
                     if picks.inner.clicked() {
                         asked = Some(CallRequest::Pick(number));
                     }
                 }
                 _ => {}
             }
-            let (said, look) = row_pill(row.shown);
+            let (said, look) = row_pill(messages, row.shown);
             controls::pill(ui, said, look);
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let name = match (row.shown, far) {
                     (RosterRowShown::Leading, _) => {
-                        face::bold(format!("{} (you)", row.character.name))
+                        face::bold(messages.you_named(&row.character.name))
                     }
-                    (RosterRowShown::TooFar { area }, _) => face::body(format!(
-                        "{} · {}",
-                        row.character.name,
-                        area.get(content).name
-                    ))
-                    .color(ink::INK3),
+                    (RosterRowShown::TooFar { area }, _) => {
+                        face::body(messages.in_area(&area.get(content).name, &row.character.name))
+                            .color(ink::INK3)
+                    }
                     (_, true) => face::body(row.character.name.as_str()).color(ink::INK3),
                     (_, false) => face::body(row.character.name.as_str()),
                 };
-                ui.add(egui::Label::new(name).truncate());
+                ui.add(
+                    egui::Label::new(name)
+                        .truncate()
+                        .show_tooltip_when_elided(false),
+                );
             });
         });
     });
     asked
 }
 
-fn row_pill(shown: RosterRowShown) -> (&'static str, controls::Pill) {
+fn row_pill(messages: &InstanceMessages, shown: RosterRowShown) -> (&str, controls::Pill) {
     use controls::Pill;
     match shown {
-        RosterRowShown::Leading => ("Going · leader", Pill::Verdigris),
-        RosterRowShown::Going => ("Going", Pill::Verdigris),
-        RosterRowShown::Benched => ("On the bench", Pill::Gold),
-        RosterRowShown::Deciding { .. } => ("Deciding…", Pill::Ink),
-        RosterRowShown::NotGoing => ("Not going", Pill::Ink),
-        RosterRowShown::TooFar { .. } => ("Too far", Pill::Gold),
-        RosterRowShown::Away => ("Away", Pill::Ink),
-        RosterRowShown::Fallen => ("Fallen", Pill::Rubric),
+        RosterRowShown::Leading => (messages.going_leader(), Pill::Verdigris),
+        RosterRowShown::Going => (messages.going(), Pill::Verdigris),
+        RosterRowShown::Benched => (messages.on_bench(), Pill::Gold),
+        RosterRowShown::Deciding { .. } => (messages.deciding(), Pill::Ink),
+        RosterRowShown::NotGoing => (messages.not_going(), Pill::Ink),
+        RosterRowShown::TooFar { .. } => (messages.too_far(), Pill::Gold),
+        RosterRowShown::Away => (messages.away_from_game(), Pill::Ink),
+        RosterRowShown::Fallen => (messages.fallen(), Pill::Rubric),
     }
 }
 
 /// What a member's card says of where they stand: a pill, and a line beside it where one is due.
-fn state<'w>(
+fn state<'m>(
+    messages: &'m InstanceMessages,
     row: &CallRowShown,
-    benched: &'w str,
-    out_of_sight: &'w str,
-) -> (Option<(&'static str, controls::Pill)>, Option<&'w str>) {
+    leader: &str,
+) -> (Option<(&'m str, controls::Pill)>, Option<String>) {
     use controls::Pill;
     match row.shown {
         RosterRowShown::Deciding { .. } => (None, None),
-        RosterRowShown::Going => (Some(("You're going", Pill::Verdigris)), None),
-        RosterRowShown::Benched => (Some(("On the bench", Pill::Gold)), Some(benched)),
-        RosterRowShown::TooFar { .. } | RosterRowShown::Away => {
-            (Some(("Too far", Pill::Gold)), Some(out_of_sight))
-        }
-        shown => (Some(row_pill(shown)), None),
+        RosterRowShown::Going => (Some((messages.you_go(), Pill::Verdigris)), None),
+        RosterRowShown::Benched => (
+            Some((messages.on_bench(), Pill::Gold)),
+            Some(messages.benched(leader)),
+        ),
+        RosterRowShown::TooFar { .. } | RosterRowShown::Away => (
+            Some((messages.too_far(), Pill::Gold)),
+            Some(messages.out_of_sight(leader)),
+        ),
+        shown => (Some(row_pill(messages, shown)), None),
     }
 }
 

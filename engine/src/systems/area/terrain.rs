@@ -1,3 +1,4 @@
+use crate::systems::area::stages::COVER;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +14,6 @@ use crate::core::content::{
 use crate::core::math::Rgba;
 use crate::core::render::world::terrain::{GROUND_PICTURE, WetLook};
 use crate::core::units::Meters;
-use crate::core::vfx::shader::Stage;
 use crate::core::vfx::{ParamFill, VfxShaderId};
 use crate::systems::area::prop::PropId;
 
@@ -294,7 +294,7 @@ pub fn check_all(loading: &mut Loading) {
         };
         let mut check = RowCheck::default();
         let shader = cover.shader.get(&content);
-        if shader.stage != Stage::Cover {
+        if shader.stage != COVER {
             check.error(
                 "/cover/shader",
                 "a shader of another stage",

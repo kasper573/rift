@@ -32,8 +32,8 @@ use engine::core::jobs;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
+use engine::systems::area::Place;
 use engine::systems::area::{AreaDef, sixteenth};
-use engine::systems::script::Place;
 use ui::egui::Ui;
 use ui::sheet::Tab;
 

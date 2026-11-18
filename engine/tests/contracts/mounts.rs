@@ -3,6 +3,7 @@ use engine::core::content::Content;
 use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::Pos;
 use engine::core::units::{MeterPos, Meters, Seconds};
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::item::{self, UseItemRequest};
@@ -14,10 +15,9 @@ use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, S
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::probe::{ProbeGame, ProbeGameQuestion, answer};
 use engine::systems::resource::{self, GatherRequest, ResourceDef, StopGathering, Working};
-use engine::systems::script::Place;
 use engine::systems::skill::{self, CastAim, SkillDef, UseSkillRequest};
 use engine::systems::stat::{self, StatKind};
-use engine::systems::{actor, reach, request_sources, script, status};
+use engine::systems::{actor, reach, request_sources, status};
 use serde_json::{Value, json};
 use testkit::{APEX, BODY, Game, HEIGHTS, Map, Sim, path, rig_clips};
 
@@ -889,8 +889,8 @@ fn server_of(game: Game) -> Server {
             ))
             .plan(skill::casting::StepCasts::default())
             .plan((
-                script::query::ListRoster::default(),
-                script::RunFlows::default(),
+                engine::systems::roster::ListRoster::default(),
+                engine::core::script::run::FlowRunner::default(),
                 movement::AdvanceWalks::default(),
             ))
             .plan(mount::UnseatFallen::default())
@@ -902,7 +902,7 @@ fn server_of(game: Game) -> Server {
                 skill::hotbar::settle_basic_attack,
             ))
             .plan(actor::SettleActions::default());
-        script::spawn_stateless(&mut sim.world);
+        engine::systems::spawn_scripts(&mut sim.world);
     }
     server
 }

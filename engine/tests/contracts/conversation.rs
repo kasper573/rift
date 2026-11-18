@@ -1,21 +1,23 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Fixture;
 use engine::core::math::{Offset, Pos};
+use engine::core::script::DialogueCamera;
+use engine::core::script::EventKind;
+use engine::core::script::Instances;
 use engine::core::script::Value as Recalled;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters, Radians};
 use engine::systems::actor::render::RenderActor;
 use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
-use engine::systems::dialogue::camera::DialogueCamera;
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
+use engine::systems::interact::Interacted;
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, moving, position};
 use engine::systems::player::commands_locked;
 use engine::systems::player::session::MyCharacter;
 use engine::systems::region;
-use engine::systems::script::{self, EventKind, RiftInstances};
 use engine::systems::stat::{self, Immortal, StatKind};
 use engine::systems::{combat, npc};
 use serde_json::{Value, json};
@@ -289,10 +291,11 @@ fn a_conversation_an_npc_starts_replaces_the_one_in_progress() {
     sim.talk(1, "keeper");
 
     let crier = sim.npc("crier");
-    let owner = script::owner_of(&sim.world, crier).expect("the crier runs scripts");
-    sim.world.resource_mut::<RiftInstances>().raise(
+    let owner =
+        engine::systems::area::script::owner_of(&sim.world, crier).expect("the crier runs scripts");
+    sim.world.resource_mut::<Instances>().raise(
         owner,
-        EventKind::Interacted,
+        EventKind::of::<Interacted>(),
         Some(player),
         Vec::new(),
         |_| true,
@@ -428,9 +431,9 @@ fn inn() -> Sim {
         ))
         .add(movement::file_by_chunk)
         .plan((
-            script::query::ListRoster::default(),
+            engine::systems::roster::ListRoster::default(),
             npc::ApproachWatchers::default(),
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
@@ -441,7 +444,7 @@ fn inn() -> Sim {
             actor::SettleActions::default(),
             attention::MarkAttention::default(),
         ));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }

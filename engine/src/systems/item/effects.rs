@@ -1,33 +1,38 @@
+use crate::core::content::ContentFile;
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::Vocabulary;
+use crate::systems::item::ItemDef;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use bevy_replication::ToClient;
 
+use super::deliver::{self, DeliveryReason};
 use super::{DroppedItem, Inventory, ItemId, ItemShown, ItemStack};
 use crate::core::content::Content;
 use crate::core::content::{SchemaMark, serial};
 use crate::core::math::Pos;
 use crate::core::script::compile::Bound;
 use crate::core::script::{
-    Arrow, Compiler, EffectDef, EffectStep, Eval, Fill, FlowCx, NEXT, REFUSED, ScriptFault,
+    Arrow, Compiler, DONE, EffectDef, EffectStep, Eval, Fill, FlowCx, NEXT, REFUSED, ScriptFault,
     ValueType, VariableType,
 };
+use crate::core::script::{EffectCall, Expr};
+use crate::core::text::LineText;
 use crate::core::units::{MeterPos, Meters, Seconds};
+use crate::systems::aim::{self as effects, Reaching};
+use crate::systems::area::Place;
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::command;
 use crate::systems::equipment;
-use crate::systems::history::HistoryTopic;
-use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::movement::{Position, position};
-use crate::systems::notification::{self, Notification};
-use crate::systems::payout::{self, PayoutReason};
 use crate::systems::player::PlayedBy;
-use crate::systems::script::RowRef;
-use crate::systems::script::effect::{self as effects, Reaching};
-use crate::systems::script::{Condition, EffectCall, EffectReach, Place, RiftScripting};
-use crate::systems::text::LineText;
 use crate::systems::visibility::Presence;
+
+const USED: &str = "used";
 
 /// Takes items, all or nothing, and pays what it gives: what has no room in the bag is sent as a
 /// message.
@@ -36,7 +41,7 @@ use crate::systems::visibility::Presence;
 pub struct Items {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub take: Vec<ItemStackFill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -75,11 +80,11 @@ impl ItemStackFill {
         }
     }
 
-    fn item(&self, cx: &Compiler<RiftScripting>) -> Option<ItemId> {
+    fn item(&self, cx: &Compiler) -> Option<ItemId> {
         cx.peek(&self.item, item_bound)
     }
 
-    fn filled(&self, cx: &mut Compiler<RiftScripting>) -> Result<ItemStack, ScriptFault> {
+    fn filled(&self, cx: &mut Compiler) -> Result<ItemStack, ScriptFault> {
         let item = cx.fill(&self.item, VariableType::Row, item_bound)?;
         let count = cx.fill(&self.count, VariableType::Integer, |bound| match bound {
             Bound::Integer(count) => u32::try_from(*count).ok(),
@@ -89,9 +94,9 @@ impl ItemStackFill {
     }
 }
 
-fn item_bound(bound: &Bound<RiftScripting>) -> Option<ItemId> {
+fn item_bound(bound: &Bound) -> Option<ItemId> {
     match bound {
-        Bound::Row(RowRef::Item(item)) => Some(*item),
+        Bound::Row(row) if row.table == ItemDef::TABLE => Some(ItemId::new(row.raw)),
         _ => None,
     }
 }
@@ -115,21 +120,18 @@ impl Items {
 pub struct ShowItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub item: Fill<ItemId>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for ShowItem {
+impl EffectDef for ShowItem {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let item = cx.fill(&self.item, VariableType::Row, item_bound)?;
         Ok(Box::new(move |world, flow, cx| {
@@ -152,9 +154,6 @@ impl EffectDef<RiftScripting> for ShowItem {
             )
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
-    }
 }
 
 /// Uses an item as the player would.
@@ -163,7 +162,7 @@ impl EffectDef<RiftScripting> for ShowItem {
 pub struct UseItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub item: ItemId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub used: Arrow,
@@ -178,7 +177,7 @@ pub struct UseItem {
 pub struct Equip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub item: ItemId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
@@ -193,7 +192,7 @@ pub struct Equip {
 pub struct Unequip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub item: ItemId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
@@ -208,10 +207,10 @@ pub struct Unequip {
 pub struct DropItems {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub item: ItemId,
     #[schemars(transform = SchemaMark::Count.with(true))]
-    pub count: Condition,
+    pub count: Expr,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
     #[schemars(transform = SchemaMark::Fails.with(true))]
@@ -232,7 +231,7 @@ pub struct SpawnGroundItems {
     /// Without one, as long as the game's drops last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(transform = SchemaMark::Value.with("number"))]
-    pub seconds: Option<Condition>,
+    pub seconds: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
@@ -244,7 +243,7 @@ pub struct ClearGroundItems {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<Spot>,
     #[schemars(extend("default" = 3.0))]
-    pub within: Condition,
+    pub within: Expr,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
@@ -254,9 +253,9 @@ pub struct ClearGroundItems {
 #[schemars(transform = SchemaMark::System.with("item"))]
 pub struct MoveItems {
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub from: Condition,
+    pub from: Expr,
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub to: Condition,
+    pub to: Expr,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<ItemStack>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -271,7 +270,7 @@ pub struct MoveItems {
 pub enum Spot {
     Place(Place),
     #[schemars(extend("default" = {"type": "subject"}))]
-    Actor(Condition),
+    Actor(Expr),
 }
 
 #[derive(JsonSchema, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -281,15 +280,12 @@ pub enum GroundItemsFor {
     Anyone,
 }
 
-impl EffectDef<RiftScripting> for Items {
+impl EffectDef for Items {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
-    crate::outputs!("done" => done, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    crate::outputs!(DONE => done, REFUSED => refused);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let take = self
             .take
@@ -302,184 +298,178 @@ impl EffectDef<RiftScripting> for Items {
             .map(|stack| stack.filled(cx))
             .collect::<Result<Vec<_>, _>>()?;
         let refused = self.refused.clone();
-        let reason = PayoutReason::Given(cx.owner_row());
+        let reason = DeliveryReason::Given(cx.owner_row());
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
             let (take, give, reason) = (take.clone(), give.clone(), reason.clone());
+            let nobody = messages::of(world.resource::<Content>())
+                .item
+                .nobody_to_trade()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
                 cx,
                 aimed,
                 Reaching {
-                    done: "done",
+                    done: DONE,
                     refused: Some(&refused),
-                    nobody: Some("Nobody to trade with"),
+                    nobody: Some(&nobody),
                 },
                 move |world, actor| {
                     exchange(world, actor, &take, &[])?;
-                    let paid = payout::pay(world, actor, &give, reason);
-                    let content = world.resource::<Content>().clone();
-                    if let Some(sent) = paid.overflow(&content) {
-                        let told = Notification::feed(HistoryTopic::Item, sent);
-                        notification::notify(world, actor, None, told);
-                    }
+                    deliver::to_character(world, actor, &give, reason);
                     Ok(())
                 },
             )
         }))
     }
-    fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+    fn reach(&self, cx: &Compiler) -> Vec<Reach> {
         let takes = self.take.iter().filter_map(|stack| stack.item(cx));
         let gives = self.give.iter().filter_map(|stack| stack.item(cx));
-        let pays = (!self.give.is_empty()).then_some(EffectReach::PaysItems);
+        let pays = (!self.give.is_empty()).then_some(Reach::new(PaysItems));
         takes
-            .map(EffectReach::Takes)
-            .chain(gives.map(EffectReach::Gives))
+            .map(|item| Reach::new(Takes(item)))
+            .chain(gives.map(|item| Reach::new(Gives(item))))
             .chain(pays)
             .collect()
     }
 }
 
-impl EffectDef<RiftScripting> for UseItem {
+impl EffectDef for UseItem {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
-    crate::outputs!("used" => used, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    crate::outputs!(USED => used, REFUSED => refused);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let (item, refused) = (self.item, self.refused.clone());
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let nobody = messages::of(world.resource::<Content>())
+                .item
+                .nobody_to_use()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
                 cx,
                 aimed,
                 Reaching {
-                    done: "used",
+                    done: USED,
                     refused: Some(&refused),
-                    nobody: Some("Nobody to use it"),
+                    nobody: Some(&nobody),
                 },
                 move |world, actor| super::use_held(world, actor, item),
             )
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Takes(self.item)]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Takes(self.item))]
     }
 }
 
-impl EffectDef<RiftScripting> for Equip {
+impl EffectDef for Equip {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
-    crate::outputs!("done" => done, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    crate::outputs!(DONE => done, REFUSED => refused);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let (item, refused) = (self.item, self.refused.clone());
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let nobody = messages::of(world.resource::<Content>())
+                .item
+                .nobody_to_equip()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
                 cx,
                 aimed,
                 Reaching {
-                    done: "done",
+                    done: DONE,
                     refused: Some(&refused),
-                    nobody: Some("Nobody to equip"),
+                    nobody: Some(&nobody),
                 },
                 move |world, actor| equipment::equip_from_bag(world, actor, item),
             )
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
-    }
 }
 
-impl EffectDef<RiftScripting> for Unequip {
+impl EffectDef for Unequip {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
-    crate::outputs!("done" => done, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    crate::outputs!(DONE => done, REFUSED => refused);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let (item, refused) = (self.item, self.refused.clone());
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let nobody = messages::of(world.resource::<Content>())
+                .item
+                .nobody_to_unequip()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
                 cx,
                 aimed,
                 Reaching {
-                    done: "done",
+                    done: DONE,
                     refused: Some(&refused),
-                    nobody: Some("Nobody to unequip"),
+                    nobody: Some(&nobody),
                 },
                 move |world, actor| equipment::unequip_item(world, actor, item),
             )
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
-    }
 }
 
-impl EffectDef<RiftScripting> for DropItems {
+impl EffectDef for DropItems {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
-    crate::outputs!("done" => done, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    crate::outputs!(DONE => done, REFUSED => refused);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let count = cx.expr(&self.count, ValueType::Integer)?;
         let (item, refused) = (self.item, self.refused.clone());
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
             let count = count(world, cx).as_int().clamp(0, i64::from(u32::MAX)) as u32;
+            let nobody = messages::of(world.resource::<Content>())
+                .item
+                .nobody_to_drop()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
                 cx,
                 aimed,
                 Reaching {
-                    done: "done",
+                    done: DONE,
                     refused: Some(&refused),
-                    nobody: Some("Nobody to drop them"),
+                    nobody: Some(&nobody),
                 },
                 move |world, actor| drop_held(world, actor, ItemStack::new(item, count)),
             )
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Drops(self.item)]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Drops(self.item))]
     }
 }
 
-impl EffectDef<RiftScripting> for SpawnGroundItems {
+impl EffectDef for SpawnGroundItems {
     fn needs_subject(&self) -> bool {
         self.for_whom == GroundItemsFor::Subject || self.at.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let at = spot(cx, self.at.as_ref())?;
         let seconds = cx.opt_expr(self.seconds.as_ref(), ValueType::Number)?;
         let (items, for_whom) = (self.items.clone(), self.for_whom);
@@ -504,23 +494,20 @@ impl EffectDef<RiftScripting> for SpawnGroundItems {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
         self.items
             .iter()
-            .map(|stack| EffectReach::Drops(stack.item))
+            .map(|stack| Reach::new(Drops(stack.item)))
             .collect()
     }
 }
 
-impl EffectDef<RiftScripting> for ClearGroundItems {
+impl EffectDef for ClearGroundItems {
     fn needs_subject(&self) -> bool {
         self.at.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let at = spot(cx, self.at.as_ref())?;
         let within = effects::number(cx, &self.within)?;
         Ok(Box::new(move |world, _, cx| {
@@ -545,20 +532,14 @@ impl EffectDef<RiftScripting> for ClearGroundItems {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
-    }
 }
 
-impl EffectDef<RiftScripting> for MoveItems {
+impl EffectDef for MoveItems {
     fn needs_subject(&self) -> bool {
         false
     }
-    crate::outputs!("done" => done, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    crate::outputs!(DONE => done, REFUSED => refused);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let from = cx.expr(&self.from, ValueType::Actor)?;
         let to = cx.expr(&self.to, ValueType::Actor)?;
         let (items, refused) = (self.items.clone(), self.refused.clone());
@@ -567,7 +548,12 @@ impl EffectDef<RiftScripting> for MoveItems {
                 effects::aimed_character(world, cx, &from),
                 effects::aimed_character(world, cx, &to),
             ) else {
-                return effects::refuse(world, cx, &refused, "Nobody to trade between");
+                let nobody = LineText::from(
+                    messages::of(world.resource::<Content>())
+                        .item
+                        .nobody_to_trade_between(),
+                );
+                return effects::refuse(world, cx, &refused, nobody);
             };
             match move_between(world, from, to, &items) {
                 Ok(()) => EffectStep::Done,
@@ -575,15 +561,10 @@ impl EffectDef<RiftScripting> for MoveItems {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
         self.items
             .iter()
-            .flat_map(|stack| {
-                [
-                    EffectReach::Takes(stack.item),
-                    EffectReach::Gives(stack.item),
-                ]
-            })
+            .flat_map(|stack| [Reach::new(Takes(stack.item)), Reach::new(Gives(stack.item))])
             .collect()
     }
 }
@@ -597,7 +578,7 @@ pub fn exchange(
     let content = world.resource::<Content>().clone();
     let mut inventory = world
         .get_mut::<Inventory>(actor)
-        .ok_or_else(|| "Has no bag".to_owned())?;
+        .ok_or_else(|| LineText::from(messages::of(&content).item.no_bag()))?;
     inventory
         .exchange(&content, take, give)
         .map_err(|refusal| refusal.line(&content))
@@ -611,19 +592,13 @@ pub fn move_between(
 ) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     if from == to {
-        return Err("Nothing to move".into());
+        return Err(LineText::from(
+            messages::of(&content).item.nothing_to_move(),
+        ));
     }
-    if let Some(bound) = items.iter().find(|stack| stack.item.get(&content).bound()) {
-        return Err(ItemStack::bound_line(bound.item, &content));
-    }
-    let mut giving = world
-        .get::<Inventory>(from)
-        .cloned()
-        .ok_or_else(|| LineText::plain("Has no bag"))?;
-    let mut taking = world
-        .get::<Inventory>(to)
-        .cloned()
-        .ok_or_else(|| LineText::plain("Has no bag"))?;
+    ItemStack::refuse_bound(items, &content)?;
+    let mut giving = bag_of(world, from, &content)?;
+    let mut taking = bag_of(world, to, &content)?;
     giving
         .exchange(&content, items, &[])
         .map_err(|refusal| refusal.line(&content))?;
@@ -635,12 +610,23 @@ pub fn move_between(
     Ok(())
 }
 
+/// Takes `stacks` out of `actor`'s bag to hand them to someone else, unless one of them can't
+/// change hands.
+pub fn give_away(world: &mut World, actor: Entity, stacks: &[ItemStack]) -> Result<(), LineText> {
+    ItemStack::refuse_bound(stacks, world.resource::<Content>())?;
+    exchange(world, actor, stacks, &[])
+}
+
+fn bag_of(world: &World, owner: Entity, content: &Content) -> Result<Inventory, LineText> {
+    world
+        .get::<Inventory>(owner)
+        .cloned()
+        .ok_or_else(|| LineText::from(messages::of(content).item.no_bag()))
+}
+
 type SpotEval = Box<dyn Fn(&World, &FlowCx) -> Option<(AreaId, Pos<Meters>)> + Send + Sync>;
 
-fn spot<'c>(
-    cx: &mut Compiler<'c, RiftScripting>,
-    at: Option<&'c Spot>,
-) -> Result<SpotEval, ScriptFault> {
+fn spot<'c>(cx: &mut Compiler<'c>, at: Option<&'c Spot>) -> Result<SpotEval, ScriptFault> {
     Ok(match at {
         Some(Spot::Place(place)) => {
             let place = *place;
@@ -662,18 +648,44 @@ fn standing(world: &World, who: Entity) -> Option<(AreaId, Pos<Meters>)> {
 }
 
 fn drop_held(world: &mut World, actor: Entity, stack: ItemStack) -> Result<(), LineText> {
-    let content = world.resource::<Content>().clone();
-    if stack.item.get(&content).bound() {
-        return Err(Mention::Item(stack.item)
-            .line(&content)
-            .then(" is bound to you"));
-    }
-    let mut inventory = world
-        .get_mut::<Inventory>(actor)
-        .ok_or_else(|| LineText::plain("Has no bag"))?;
-    inventory
-        .exchange(&content, &[stack], &[])
-        .map_err(|refusal| refusal.line(&content))?;
+    give_away(world, actor, &[stack])?;
     super::scatter_drop(world, actor, &[(stack.item, stack.count)], None, None);
     Ok(())
+}
+
+/// A script that may take items from someone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Takes(pub ItemId);
+
+impl ReachDef for Takes {}
+
+/// A script that may give someone items.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gives(pub ItemId);
+
+impl ReachDef for Gives {}
+
+/// A script that may drop items on the ground.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drops(pub ItemId);
+
+impl ReachDef for Drops {}
+
+/// A script that may pay someone items, sending what has no room in their bag as a message.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaysItems;
+
+impl ReachDef for PaysItems {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .effect::<Items>("items")
+        .effect::<UseItem>("use_item")
+        .effect::<Equip>("equip")
+        .effect::<Unequip>("unequip")
+        .effect::<DropItems>("drop_items")
+        .effect::<SpawnGroundItems>("spawn_ground_items")
+        .effect::<ClearGroundItems>("clear_ground_items")
+        .effect::<MoveItems>("move_items")
+        .effect::<ShowItem>("show_item");
 }

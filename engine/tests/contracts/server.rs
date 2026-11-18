@@ -8,8 +8,8 @@ use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::chat::{self, ChatSpeaker};
 use engine::systems::friend::{self, AskFriendship, CharactersFound, FindCharacters, RemoveFriend};
 use engine::systems::history::HistoryNews;
-use engine::systems::inbox::{
-    self, DeleteMessage, MessageAnswered, MessageText, OpenMessage, SendMessage, TakeAttached,
+use engine::systems::mail::{
+    self, DeleteLetter, LetterAnswered, LetterText, OpenLetter, SendLetter, TakeAttached,
 };
 use engine::systems::party::{self, PartyRequest};
 use engine::systems::player::snapshot::JoinAs;
@@ -211,18 +211,18 @@ pub fn serving(content: &Content, area: &str) -> Sim {
     sim.serve(area)
         .message::<ToClient<HistoryNews>>()
         .message::<ToClient<CharactersFound>>()
-        .message::<ToClient<MessageText>>()
-        .message::<ToClient<MessageAnswered>>()
+        .message::<ToClient<LetterText>>()
+        .message::<ToClient<LetterAnswered>>()
         .accept::<AnswerSocialRequest>()
         .accept::<BlockCharacter>()
         .accept::<ChooseAcceptsRequests>()
         .accept::<AskFriendship>()
         .accept::<RemoveFriend>()
         .accept::<FindCharacters>()
-        .accept::<SendMessage>()
-        .accept::<OpenMessage>()
+        .accept::<SendLetter>()
+        .accept::<OpenLetter>()
         .accept::<TakeAttached>()
-        .accept::<DeleteMessage>()
+        .accept::<DeleteLetter>()
         .accept::<PartyRequest>()
         .accept::<TerminalInput>()
         .message::<TerminalSaid>()
@@ -240,8 +240,8 @@ pub fn serving(content: &Content, area: &str) -> Sim {
             society::view::greet,
             social_request::requests,
             friend::requests,
-            inbox::requests,
-            inbox::overflow,
+            mail::requests,
+            mail::overflow,
             party::requests,
             player::linger,
         ));

@@ -14,12 +14,15 @@ use ui::egui::{self, Color32, CursorIcon, Id, Response, Sense, Ui, Vec2};
 use ui::face::TextRole;
 use ui::ink::Ground;
 
-use super::{ItemDef, ItemId, ItemStack, card};
+use super::{ItemId, ItemStack, card};
 use crate::core::content::Content;
 use crate::core::gui::ImageSource;
-use crate::core::text::{self, ShownLine, StyledLine, StyledSpan, TextLook, TextPiece};
+use crate::core::text::{
+    self, KeyNames, LineText, LinkKey, PluggedSpan, ShownLine, SpanDef, SpanKinds, SpanText,
+    StyledLine, StyledSpan, TextLook, TextPiece,
+};
 use crate::systems::input::map::{self, InputAction};
-use crate::systems::text::{LineText, SpanText};
+use crate::systems::messages::{self, Line, Number};
 
 /// An item as a line names it, and how it shows there.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -40,11 +43,11 @@ pub enum ItemAmount {
     Share(f32),
 }
 
-impl ItemAmount {
-    fn said(self) -> String {
-        match self {
-            ItemAmount::Whole(count) => count.to_string(),
-            ItemAmount::Share(share) => format!("{share:.1}"),
+impl From<ItemAmount> for Number {
+    fn from(amount: ItemAmount) -> Number {
+        match amount {
+            ItemAmount::Whole(count) => count.into(),
+            ItemAmount::Share(share) => share.into(),
         }
     }
 }
@@ -83,15 +86,6 @@ impl InlineItem {
         }
     }
 
-    /// What it reads as in plain words: how many, and the item's name, whether it shows or not.
-    pub fn words(self, content: &Content) -> String {
-        let name = &self.item.get(content).name;
-        match self.amount {
-            Some(amount) => format!("{} {name}", amount.said()),
-            None => name.clone(),
-        }
-    }
-
     /// Its parts in the order they read, the same for a line and for `draw`.
     fn parts(self) -> Vec<Part> {
         let amount = self.amount.map(Part::Amount);
@@ -101,25 +95,41 @@ impl InlineItem {
             std::iter::once(Part::Icon).chain(amount).collect()
         }
     }
+}
 
-    pub(crate) fn pieces(self, content: &Content) -> Vec<TextPiece> {
+impl SpanDef for InlineItem {
+    fn pieces(&self, content: &Content) -> Vec<TextPiece> {
         let def = self.item.get(content);
         let color = Color32::from(def.rarity.get(content).gradient.from);
         let shown = self.parts().into_iter().map(|part| match part {
-            Part::Amount(amount) if self.named => TextPiece::text(format!("{} ", amount.said())),
-            Part::Amount(amount) => TextPiece::text(amount.said()),
+            Part::Amount(amount) if self.named => {
+                TextPiece::text(format!("{} ", messages::of(content).item.amount(amount)))
+            }
+            Part::Amount(amount) => TextPiece::text(messages::of(content).item.amount(amount)),
             Part::Icon => TextPiece::Image(def.icon.path().into()),
             Part::Name => StyledSpan::plain(def.name.clone()).legible(color).into(),
         });
         let link = ItemLink {
-            item: self.item.path(content).to_owned(),
+            item: self.item,
             named: self.named,
         };
-        let key = serde_json::to_string(&link).expect("a serializable link");
-        std::iter::once(TextPiece::LinkStart(key.into()))
-            .chain(shown)
-            .chain([TextPiece::LinkEnd])
-            .collect()
+        let name = self.words(content, None);
+        std::iter::once(TextPiece::LinkStart {
+            key: link.key(),
+            name,
+        })
+        .chain(shown)
+        .chain([TextPiece::LinkEnd])
+        .collect()
+    }
+
+    /// How many, and the item's name, whether it shows or not.
+    fn words(&self, content: &Content, _: Option<&KeyNames>) -> String {
+        let name = &self.item.get(content).name;
+        match self.amount {
+            Some(amount) => messages::of(content).item.counted(amount, name),
+            None => name.clone(),
+        }
     }
 }
 
@@ -131,14 +141,25 @@ impl From<ItemStack> for InlineItem {
 
 impl From<InlineItem> for SpanText {
     fn from(item: InlineItem) -> SpanText {
-        SpanText::Item(item)
+        SpanText::Part(PluggedSpan::new(item))
+    }
+}
+
+impl From<InlineItem> for Line {
+    fn from(item: InlineItem) -> Line {
+        LineText::from(item).into()
     }
 }
 
 impl From<InlineItem> for LineText {
     fn from(item: InlineItem) -> LineText {
-        LineText(vec![SpanText::Item(item)])
+        SpanText::from(item).into()
     }
+}
+
+/// Registers the inline item as a kind of span.
+pub fn spans(kinds: &mut SpanKinds) {
+    kinds.add::<InlineItem>("item");
 }
 
 /// How an inline item standing on its own is lettered.
@@ -181,7 +202,8 @@ pub fn draw(
             for part in item.parts() {
                 match part {
                     Part::Amount(amount) => {
-                        ui.label(look.role.rich(amount.said()).color(look.color));
+                        let said = messages::of(content).item.amount(amount);
+                        ui.label(look.role.rich(said).color(look.color));
                     }
                     Part::Icon => match images.image(&def.icon) {
                         Some(icon) => {
@@ -195,14 +217,18 @@ pub fn draw(
                         let rarity = Color32::from(def.rarity.get(content).gradient.from);
                         let name = look.role.rich(def.name.as_str());
                         let name = name.color(look.ground.legible(rarity));
-                        ui.add(egui::Label::new(name).truncate());
+                        ui.add(
+                            egui::Label::new(name)
+                                .truncate()
+                                .show_tooltip_when_elided(false),
+                        );
                     }
                 }
             }
         })
         .response;
     let response = ui.interact(shown.rect, shown.id.with("inline item"), Sense::click());
-    let words = item.words(content);
+    let words = item.words(content, None);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &words));
     response
 }
@@ -220,12 +246,16 @@ pub fn draw_line(
         ui.spacing_mut().item_spacing.x = 0.0;
         let mut drawn = Vec::new();
         for span in &line.0 {
-            match span {
-                &SpanText::Item(item) => {
+            let item = match span {
+                SpanText::Part(part) => part.downcast_ref::<InlineItem>().copied(),
+                _ => None,
+            };
+            match item {
+                Some(item) => {
                     let shown = ui.scope(|ui| draw(ui, images, content, item, look)).inner;
                     drawn.push((shown, item));
                 }
-                span => {
+                None => {
                     let words = LineText(vec![span.clone()]).plain_words(content);
                     ui.label(look.role.rich(words).color(look.color));
                 }
@@ -278,6 +308,18 @@ pub fn show_line(
     show_styled(ui, world, &styled, look, shown)
 }
 
+/// Draws `line` with its inline items answering nothing, where the line stands in a row whose
+/// own tile carries the item's tooltip.
+pub fn show_plain_line(
+    ui: &mut Ui,
+    world: &mut World,
+    line: &LineText,
+    look: TextLook,
+) -> Response {
+    let styled = line.styled(world.resource::<Content>());
+    text::show(ui, world, &styled, look, None)
+}
+
 /// Draws `line` where a click on it belongs elsewhere, as `tooltip` has its inline items answer.
 pub fn show_line_with_tooltips(
     ui: &mut Ui,
@@ -315,10 +357,23 @@ enum Part {
 
 /// What a line's link to an inline item holds as its key: the item, and whether its name shows
 /// beside it, which says whether its tooltip names it.
-#[derive(Serialize, Deserialize)]
 struct ItemLink {
-    item: String,
+    item: ItemId,
     named: bool,
+}
+
+impl ItemLink {
+    fn key(self) -> LinkKey {
+        LinkKey::new::<ItemLink>(u64::from(self.item.raw()) << 1 | u64::from(self.named))
+    }
+
+    fn of(key: LinkKey) -> Option<ItemLink> {
+        let id = key.id_in::<ItemLink>()?;
+        Some(ItemLink {
+            item: ItemId::new((id >> 1) as u32),
+            named: id & 1 == 1,
+        })
+    }
 }
 
 /// Whose a click on an inline item is.
@@ -335,7 +390,7 @@ fn inspect_item(world: &mut World, response: &Response, item: ItemId, named: boo
         card::open(world, item, Some(response.rect));
     }
     card::chat_shortcut(world, response, &[item]);
-    let hint = StyledLine::new(card::inspect_hint());
+    let hint = card::inspect_hint(world);
     item_tooltip(world, response, item, named, Some(&hint));
 }
 
@@ -368,16 +423,12 @@ fn draw_styled(
 }
 
 fn answer(ui: &mut Ui, world: &mut World, drawn: &ShownLine, clicks: Clicks) {
-    let content = world.resource::<Content>().clone();
-    for (index, (key, rect)) in drawn.links.iter().enumerate() {
-        let Ok(link) = serde_json::from_str::<ItemLink>(key) else {
+    for (index, shown) in drawn.links.iter().enumerate() {
+        let Some(link) = ItemLink::of(shown.key) else {
             continue;
         };
-        let Some(item) = content.by_path::<ItemDef>(&link.item) else {
-            continue;
-        };
+        let (item, rect, name) = (link.item, &shown.row, &shown.name);
         let id = Id::new((drawn.response.id, "inline item", index));
-        let name = &item.get(&content).name;
         match clicks {
             Clicks::Item => {
                 let response = ui

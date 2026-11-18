@@ -1,5 +1,11 @@
+use engine::systems::area::AREA_RUNNER;
+use engine::systems::area::BLUEPRINT_RUNNER;
+use engine::systems::area::OBJECT_RUNNER;
+use engine::systems::area::Started;
+use engine::systems::area::spawnable::SPAWNABLE_RUNNER;
+use engine::systems::interact::Interacted;
+use engine::systems::npc::NPC_RUNNER;
 use std::collections::{BTreeMap, BTreeSet};
-use std::str::FromStr;
 use std::time::Duration;
 use ui::draft;
 use ui::egui;
@@ -10,17 +16,25 @@ use ui::panel;
 use ui::sheet;
 use ui::theme;
 
+use crate::reaches::{item_reach, quest_reach};
 use bevy::ecs::message::{MessageCursor, Messages};
 use bevy::prelude::{Entity, World};
 use bevy::time::TimeUpdateStrategy;
 use bevy_replication::ToClient;
 use engine::core::content::{Content, ContentFile, ContentScope, FolderReader};
 use engine::core::math::Pos;
+use engine::core::script::EventKind;
+use engine::core::script::Instances;
+use engine::core::script::Node;
+use engine::core::script::Owner;
+use engine::core::script::Scripts;
+use engine::core::script::{FlowKey, FlowTrace, Reach, TraceStep};
 use engine::core::script::{FlowSteering, Pause, Value as ScriptValue, ValueType};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::HourOfDay;
 use engine::core::units::Meters;
 use engine::systems::actor::Name;
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaId, AreaModule, AreaObject, spawnable};
 use engine::systems::class::{self, Class, ClassDef, ClassId};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
@@ -35,15 +49,11 @@ use engine::systems::player::{AreaDrawn, ClientId, Xp};
 use engine::systems::quest::{
     ActiveQuest, FinishedQuest, QuestDef, QuestId, QuestLog, QuestResult,
 };
-use engine::systems::script::{
-    EffectReach, EventKind, FlowKey, FlowTrace, Node, Owner, Place, RiftInstances, RiftScripts,
-    RunnerKind, TraceStep,
-};
 use engine::systems::{self, GameSettings, TICK_HZ};
 use strum::VariantArray;
 use ui::controls;
 use ui::egui::{RichText, Ui};
-use ui::glyph::{self, Mark};
+use ui::glyph::Mark;
 
 use super::nodes::{self, NodeReads};
 use super::panel::{ScriptBinding, bindings};
@@ -80,7 +90,7 @@ pub(crate) struct RunSetup {
 impl Default for RunSetup {
     fn default() -> RunSetup {
         RunSetup {
-            event: EventKind::Interacted.name().to_owned(),
+            event: EventKind::of::<Interacted>().name().to_owned(),
             owner: 0,
             character: None,
             hour: 12.0,
@@ -271,15 +281,13 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
             if controls::marked(ui, Mark::Reload, "Restart").clicked() {
                 start = true;
             }
-            if ui
-                .button(("Step", Mark::CaretRight.text(12.0)))
+            if controls::marked(ui, Mark::CaretRight, "Step")
                 .on_hover_text("One tick at a time")
                 .clicked()
             {
                 step = true;
             }
-            if ui
-                .button((Mark::Stop.text(12.0), "Stop"))
+            if controls::marked(ui, Mark::Stop, "Stop")
                 .on_hover_text(EditorKey::Cancel.name())
                 .clicked()
             {
@@ -302,7 +310,7 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                     .unit("h")
                     .show(ui);
             });
-            ui.checkbox(&mut setup.step, "pause at every node");
+            controls::check(ui, &mut setup.step, "pause at every node");
             for (name, outputs) in &randoms {
                 ui.horizontal(|ui| {
                     ui.label(theme::muted(format!("{name} takes")));
@@ -467,7 +475,7 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                     skip = true;
                 }
                 if matches!(run.state, ScriptRunState::Stepping | ScriptRunState::Paused { .. })
-                    && ui.button((Mark::Play.text(12.0), "Run on")).clicked()
+                    && controls::marked(ui, Mark::Play, "Run on").clicked()
                 {
                     resume = true;
                 }
@@ -534,7 +542,7 @@ pub(crate) fn conversation_box(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc
                 );
                 for line in &conversation.lines {
                     let who = dialogue::speaker_name(run.world(), run.subject, line.by);
-                    let text = line.text.words(&content, &inputs);
+                    let text = line.text.words(&content, &inputs.key_names());
                     let Some(who) = who else {
                         ui.add(
                             egui::Label::new(
@@ -555,8 +563,11 @@ pub(crate) fn conversation_box(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc
                 }
                 ui.add_space(6.0);
                 for (index, choice) in conversation.choices.iter().enumerate() {
-                    let mut text =
-                        format!("{}  {}", index + 1, choice.label.words(&content, &inputs));
+                    let mut text = format!(
+                        "{}  {}",
+                        index + 1,
+                        choice.label.words(&content, &inputs.key_names())
+                    );
                     if let Some(warn) = &choice.warn {
                         text.push_str(&format!("  ({warn})"));
                     }
@@ -612,10 +623,10 @@ pub fn inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) -> bool {
     };
     let bound = bindings(editor, doc);
     let setup = editor.views.script.setup_of(&row_key);
-    let reaches: Vec<EffectReach> = bound
+    let reaches: Vec<Reach> = bound
         .get(setup.owner)
         .or(bound.first())
-        .map(|b| content.built::<RiftScripts>().may_do(b.row).reaches)
+        .map(|b| content.built::<Scripts>().may_do(b.row).reaches)
         .unwrap_or_default();
     let read_memories = NodeReads::of(&doc.reader, doc.nodes()).memories;
     let state_names = inspect::names_of(&doc.script.state);
@@ -624,10 +635,7 @@ pub fn inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) -> bool {
         return false;
     };
     let label = run.label.split(" · ").next().unwrap_or("").to_owned();
-    let flows = run
-        .world()
-        .resource::<RiftInstances>()
-        .live_flows(run.owner);
+    let flows = run.world().resource::<Instances>().live_flows(run.owner);
     let waiting = match &run.state {
         ScriptRunState::Dialogue => run
             .visited
@@ -787,7 +795,7 @@ fn memories_card(ui: &mut Ui, run: &mut ScriptRun, content: &Content, read: &[St
                         if !is_set {
                             ui.label(theme::muted("unset").size(13.0));
                         }
-                        if ui.checkbox(&mut on, "").changed() {
+                        if controls::tick(ui, &mut on).changed() {
                             changed = Some(ScriptValue::Bool(on));
                         }
                     }
@@ -835,7 +843,7 @@ fn memories_card(ui: &mut Ui, run: &mut ScriptRun, content: &Content, read: &[St
                     memory::set(run.world_mut(), subject, id, value);
                 }
                 if is_set
-                    && glyph::button(ui, Mark::Cross, 12.0, theme::FAINT, "Remove")
+                    && controls::remove(ui, "Remove")
                         .on_hover_text("Forget it · reads as unset")
                         .clicked()
                     && let Some(mut memory) = run.world_mut().get_mut::<Memory>(subject)
@@ -855,7 +863,7 @@ fn quests_card(
     ui: &mut Ui,
     run: &mut ScriptRun,
     content: &Content,
-    reaches: &[EffectReach],
+    reaches: &[Reach],
     open: &mut Option<EditorTab>,
 ) {
     let subject = run.subject;
@@ -866,15 +874,8 @@ fn quests_card(
         .unwrap_or_default();
     let mut shown: Vec<String> = reaches
         .iter()
-        .filter_map(|reach| match reach {
-            EffectReach::Offers(q)
-            | EffectReach::Accepts(q)
-            | EffectReach::TurnsIn(q)
-            | EffectReach::Completes(q)
-            | EffectReach::Decides(q)
-            | EffectReach::Fails(q) => Some(q.path(content).to_owned()),
-            _ => None,
-        })
+        .filter_map(quest_reach)
+        .map(|(_, quest)| quest.path(content).to_owned())
         .collect();
     shown.dedup();
     for key in log
@@ -932,7 +933,7 @@ fn bag_card(
     ui: &mut Ui,
     run: &mut ScriptRun,
     content: &Content,
-    reaches: &[EffectReach],
+    reaches: &[Reach],
     open: &mut Option<EditorTab>,
 ) {
     let subject = run.subject;
@@ -943,12 +944,8 @@ fn bag_card(
         .unwrap_or_default();
     let mut shown: Vec<String> = reaches
         .iter()
-        .filter_map(|reach| match reach {
-            EffectReach::Takes(i) | EffectReach::Gives(i) | EffectReach::Drops(i) => {
-                Some(i.path(content).to_owned())
-            }
-            _ => None,
-        })
+        .filter_map(item_reach)
+        .map(|(_, item)| item.path(content).to_owned())
         .collect();
     shown.dedup();
     for key in held
@@ -1134,10 +1131,10 @@ fn start_run(
     run.visited.clear();
     run.log.clear();
     let event =
-        EventKind::from_str(&setup.event).map_err(|_| format!("unknown event {}", setup.event))?;
-    let subject = (event != EventKind::Started).then_some(run.subject);
+        EventKind::named(&setup.event).ok_or_else(|| format!("unknown event {}", setup.event))?;
+    let subject = (event != EventKind::of::<Started>()).then_some(run.subject);
     let raised_on = run.owner;
-    run.world_mut().resource_mut::<RiftInstances>().raise(
+    run.world_mut().resource_mut::<Instances>().raise(
         raised_on,
         event,
         subject,
@@ -1154,22 +1151,22 @@ fn start_run(
 fn area_for(content: &Content, owner: &ScriptBinding) -> Option<(AreaId, Pos<Meters>)> {
     let spawn = content.built::<GameSettings>().initial_spawn;
     match owner.row.kind {
-        RunnerKind::Area | RunnerKind::Object | RunnerKind::Blueprint => {
+        AREA_RUNNER | OBJECT_RUNNER | BLUEPRINT_RUNNER => {
             let area: AreaId = owner.row.id();
             let placed = area::placed(content, area);
             let near = match (owner.row.kind, owner.row.object) {
-                (RunnerKind::Object, Some(index)) => match &placed.get(index as usize)?.module {
+                (OBJECT_RUNNER, Some(index)) => match &placed.get(index as usize)?.module {
                     AreaModule::Object(object) => object.shape.bounds().center(),
                     _ => area::load(content, area).center(),
                 },
-                (RunnerKind::Blueprint, Some(ordinal)) => {
+                (BLUEPRINT_RUNNER, Some(ordinal)) => {
                     area::placements(content, area).get(ordinal as usize)?.at
                 }
                 _ => area::load(content, area).center(),
             };
             Some((area, near))
         }
-        RunnerKind::Npc => {
+        NPC_RUNNER => {
             let home = area::residence(content, owner.row.id()).unwrap_or(spawn);
             Some((home.area, home.at))
         }
@@ -1184,8 +1181,8 @@ fn locate_owner(
     at: Pos<Meters>,
 ) -> Result<Owner, String> {
     Ok(match owner.row.kind {
-        RunnerKind::Area => Owner::Row(RunnerKind::Area, area_id.raw()),
-        RunnerKind::Object => {
+        AREA_RUNNER => Owner::Row(AREA_RUNNER, area_id.raw()),
+        OBJECT_RUNNER => {
             let index = owner.row.object.ok_or("an object without an index")?;
             let entity = world
                 .query::<(Entity, &AreaObject)>()
@@ -1193,9 +1190,9 @@ fn locate_owner(
                 .find(|(_, object)| object.index == Some(index))
                 .map(|(entity, _)| entity)
                 .ok_or("the object is not in its area")?;
-            Owner::Entity(RunnerKind::Object, entity)
+            Owner::Entity(OBJECT_RUNNER, entity)
         }
-        RunnerKind::Npc => {
+        NPC_RUNNER => {
             let def: NpcId = owner.row.id();
             let found = world
                 .query::<(Entity, &Npc)>()
@@ -1206,15 +1203,13 @@ fn locate_owner(
                 Some(entity) => entity,
                 None => npc::spawn(world, def, at, area_id, None),
             };
-            Owner::Entity(RunnerKind::Npc, entity)
+            Owner::Entity(NPC_RUNNER, entity)
         }
-        RunnerKind::Blueprint => {
-            Owner::Row(RunnerKind::Blueprint, owner.row.object.unwrap_or_default())
-        }
-        RunnerKind::Spawnable => {
+        BLUEPRINT_RUNNER => Owner::Row(BLUEPRINT_RUNNER, owner.row.object.unwrap_or_default()),
+        SPAWNABLE_RUNNER => {
             let entity = spawnable::spawn(world, owner.row.id(), at)
                 .ok_or("nowhere near to stand the spawnable")?;
-            Owner::Entity(RunnerKind::Object, entity)
+            Owner::Entity(OBJECT_RUNNER, entity)
         }
         kind => Owner::Row(kind, owner.row.row),
     })
@@ -1340,7 +1335,11 @@ impl ScriptRun {
                 .read(messages)
                 .filter(|message| message.client == conn)
                 .map(|message| {
-                    let text = message.message.notification.text.words(content, inputs);
+                    let text = message
+                        .message
+                        .notification
+                        .text
+                        .words(content, &inputs.key_names());
                     RunLogLine::Note(format!("notice: {text}"))
                 })
                 .collect()
@@ -1348,7 +1347,7 @@ impl ScriptRun {
         self.log.extend(notices);
         self.conversation = self.world().get::<Conversation>(self.subject).cloned();
         let now = self.world().resource::<bevy::time::Time>().elapsed();
-        let instances = self.world().resource::<RiftInstances>();
+        let instances = self.world().resource::<Instances>();
         let live = instances.live_flows(self.owner);
         let pause = self.flow.and_then(|key| instances.pause_of(key));
         self.state = if self.conversation.is_some() {

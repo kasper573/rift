@@ -34,6 +34,7 @@ impl BenchDesktop {
             ])
             .arg(format!("--width={}", SCREEN.0))
             .arg(format!("--height={}", SCREEN.1))
+            .arg(format!("--refresh-rate={REFRESH_MILLIHERTZ}"))
             .arg(format!("--socket={name}"))
             .arg(format!("--log={}", folder.join("compositor.log").display()))
             .stdout(Stdio::null())
@@ -123,6 +124,10 @@ impl BenchDesktop {
 }
 
 pub const SCREEN: (u32, u32) = (2560, 1440);
+
+// The compositor hands a frame's buffer back to the client only as it refreshes, so a refresh far
+// above any frame rate the bench measures keeps the screen from capping it.
+const REFRESH_MILLIHERTZ: u32 = 1_000_000;
 /// How long xdotool may wait for a window, which never shows if its program has died.
 const WINDOW_WITHIN: Duration = Duration::from_secs(60);
 const READY_WITHIN: Duration = Duration::from_secs(20);

@@ -16,9 +16,9 @@ use super::{ActorModel, Hitbox, ModelId};
 use crate::core::content::SchemaMark;
 use crate::core::content::{Content, RowCheck};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
+use crate::core::script::{EffectCall, RunnerKind};
 use crate::systems::item::{ItemId, Wear, WornLook};
-use crate::systems::script::event::NPC;
-use crate::systems::script::{EffectCall, EffectReach, RiftScripting, RunnerKind};
+use crate::systems::npc::NPC_RUNNER;
 
 /// An actor's own look without its gear: a model, parts of the model's skeleton laid over the
 /// model's, and colours painted over the model's.
@@ -236,18 +236,15 @@ pub struct SetAppearance {
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for SetAppearance {
+impl EffectDef for SetAppearance {
     fn owners(&self) -> &'static [RunnerKind] {
-        NPC
+        &[NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let mut fits = RowCheck::default();
         check(cx.content, &self.appearance, "/appearance", &mut fits);
         if let Some(error) = fits.into_errors().into_iter().next() {
@@ -260,9 +257,6 @@ impl EffectDef<RiftScripting> for SetAppearance {
             }
             EffectStep::Done
         }))
-    }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
     }
 }
 

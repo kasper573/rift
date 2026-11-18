@@ -8,8 +8,8 @@ pub(crate) use card::{
     raise_pinned, unpin,
 };
 pub(crate) use panel::{
-    SizedPiece, Sizing, WindowFrame, grab_sized, grab_spot, lifting, sheet_pose, sized_rect,
-    widget, window,
+    Centred, Seat, SizedPiece, Sizing, WindowKey, centred, drawn_rect, grab_sized, grab_spot,
+    mark_drawn, panel_id, placed_spot, sheet_pose, sized_rect, tabs, viewed, widget,
 };
 
 use std::collections::HashSet;
@@ -28,24 +28,25 @@ use ui::{controls, ink, paint, sheet};
 use crate::core::content::Content;
 use crate::core::content::ImageRef;
 use crate::core::gui::{self, Band, ImageSource, WidgetRects};
+use crate::core::text::LineText;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::area_map::minimap;
 use crate::systems::input::map::{InputAction, InputMap};
 use crate::systems::item::inline;
+use crate::systems::item::transfer::TransferId;
 use crate::systems::item::widget::SlotRarity;
-use crate::systems::item::{Inventory, ItemId, ItemStack};
+use crate::systems::item::{ItemId, ItemStack};
+use crate::systems::messages::{self, Messages, messages};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
-use crate::systems::text::LineText;
 use crate::systems::{
-    area_instance, equipment, item, market, mount, party, quest, skill, social_request, trade,
+    area_instance, equipment, item, market, mount, party, quest, social_request, trade,
 };
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
 pub(crate) const MARGIN: f32 = 8.0;
 const CARRIED: f32 = 40.0;
-const CONFIRM: &str = "confirm";
 const NOTE: Vec2 = Vec2::new(400.0, 170.0);
 
 pub struct HudPlugin;
@@ -55,6 +56,7 @@ impl Plugin for HudPlugin {
         menu::plugin(app);
         app.init_resource::<panel::Arranging>()
             .init_resource::<panel::SheetClocks>()
+            .init_resource::<panel::Afterimages>()
             .init_resource::<WindowsDrawn>()
             .init_resource::<Confirming>()
             .init_resource::<Lifting>()
@@ -65,7 +67,9 @@ impl Plugin for HudPlugin {
                     draw_hud
                         .in_set(Band::Hud)
                         .run_if(in_state(ClientScreen::Area)),
-                    draw_confirm.in_set(Band::Modal),
+                    draw_confirm
+                        .in_set(Band::Modal)
+                        .run_if(resource_exists::<Content>),
                     draw_carried
                         .in_set(Band::Pointer)
                         .run_if(in_state(ClientScreen::Area)),
@@ -107,33 +111,6 @@ pub(crate) struct Tell {
     pub dismiss: String,
 }
 
-/// A choice put to the player among a few ways on, each open or shut with a note under it:
-/// answered with the one picked, and with none for the cancelling button or a dismissal.
-pub(crate) struct Choose {
-    pub title: LineText,
-    /// Short facts shown as chips under the title.
-    pub chips: Vec<String>,
-    pub body: Vec<LineText>,
-    pub options: Vec<ChoiceOption>,
-    /// What is said under the options.
-    pub after: Vec<LineText>,
-    pub cancel: String,
-    /// The option that has the focus first, and that the default key picks: none for the
-    /// cancelling button.
-    pub focus: Option<usize>,
-    pub answer: ChooseAnswer,
-}
-
-#[derive(Clone)]
-pub(crate) struct ChoiceOption {
-    pub label: String,
-    /// What it does, or why it is shut.
-    pub note: Option<LineText>,
-    pub open: bool,
-}
-
-pub(crate) type ChooseAnswer = Box<dyn FnOnce(&mut World, Option<usize>) + Send + Sync>;
-
 /// A question of how many, put to the player with a slider over `amounts`: answered with the
 /// amount chosen for the confirming button, and with none for the cancelling one or a dismissal.
 pub(crate) struct AmountQuestion {
@@ -159,9 +136,9 @@ pub(crate) enum Carried {
         from: HotbarSlot,
         entry: HotbarEntry,
     },
-    /// The stack at `index` of the slots of the window items move between that `from` names.
+    /// The stack at `index` of the slots of the window `from` names, one items move between.
     Moved {
-        from: &'static str,
+        from: TransferId,
         index: usize,
         stack: ItemStack,
     },
@@ -186,13 +163,6 @@ pub(crate) fn confirm(world: &mut World, confirm: Confirm) {
 pub(crate) fn tell(world: &mut World, tell: Tell) {
     world.resource_mut::<Confirming>().0 = Some(Pending {
         asked: Asked::Tell(tell),
-        focused: false,
-    });
-}
-
-pub(crate) fn choose(world: &mut World, choose: Choose) {
-    world.resource_mut::<Confirming>().0 = Some(Pending {
-        asked: Asked::Choose(choose),
         focused: false,
     });
 }
@@ -227,19 +197,20 @@ pub(crate) fn is_piece(name: &str) -> bool {
 
 pub(crate) fn keeps_place(name: &str) -> bool {
     let cards = [
-        item::card::WINDOW_KEY,
-        skill::card::WINDOW_KEY,
-        quest::card::WINDOW_KEY,
+        WindowKey::ItemCard,
+        WindowKey::SkillCard,
+        WindowKey::QuestCard,
+        WindowKey::QuestOffer,
     ];
-    is_piece(name) || cards.contains(&name)
+    is_piece(name) || cards.iter().any(|card| card.name() == name)
 }
 
-pub(crate) fn window_layer(key: &'static str) -> LayerId {
+pub(crate) fn window_layer(key: WindowKey) -> LayerId {
     panel::layer(key)
 }
 
 pub(crate) fn confirm_layer() -> LayerId {
-    LayerId::new(Band::Modal.order(), Id::new(CONFIRM))
+    LayerId::new(Band::Modal.order(), Id::new(WindowKey::Confirm.name()))
 }
 
 /// Where every widget and window of the interface stood when last drawn.
@@ -303,10 +274,6 @@ pub(crate) fn tooltip_marked(
     });
 }
 
-pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -> egui::Response {
-    sized(ui, gui::image_file(world, file), size)
-}
-
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     (minimap::MINIMAP, &minimap::MinimapWidget),
     (
@@ -324,10 +291,6 @@ static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     ),
     (mount::plate::MOUNT_PLATE, &mount::plate::MountPlateWidget),
     (
-        area_instance::plate::INSTANCE_PLATE,
-        &area_instance::plate::InstancePlateWidget,
-    ),
-    (
         area_instance::gather::INSTANCE_CALL,
         &area_instance::gather::CallCardWidget,
     ),
@@ -335,8 +298,8 @@ static WIDGETS: &[(&str, &dyn HudWidget)] = &[
 
 #[derive(Resource, Default)]
 struct WindowsDrawn {
-    last: HashSet<&'static str>,
-    now: HashSet<&'static str>,
+    last: HashSet<WindowKey>,
+    now: HashSet<WindowKey>,
 }
 
 #[derive(Resource, Default)]
@@ -354,15 +317,6 @@ struct NoteText {
     confirm: Option<String>,
     cancel: String,
     amount: Option<NoteAmount>,
-    choices: Option<NoteChoices>,
-}
-
-#[derive(Clone)]
-struct NoteChoices {
-    chips: Vec<String>,
-    options: Vec<ChoiceOption>,
-    after: Vec<LineText>,
-    focus: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -372,7 +326,7 @@ struct NoteAmount {
 }
 
 impl NoteText {
-    fn of(asked: &Asked) -> NoteText {
+    fn of(asked: &Asked, messages: &Messages) -> NoteText {
         match asked {
             Asked::Confirm(confirm) => NoteText {
                 title: confirm.title.clone(),
@@ -380,30 +334,15 @@ impl NoteText {
                 confirm: Some(confirm.confirm.clone()),
                 cancel: confirm.cancel.clone(),
                 amount: None,
-                choices: None,
             },
             Asked::Amount { question, chosen } => NoteText {
                 title: question.title.clone(),
                 body: vec![(question.says)(*chosen).into()],
-                confirm: Some("Confirm".to_owned()),
-                cancel: "Cancel".to_owned(),
+                confirm: Some(messages.hud.confirm().to_owned()),
+                cancel: messages.interface.cancel().to_owned(),
                 amount: Some(NoteAmount {
                     chosen: *chosen,
                     amounts: question.amounts.clone(),
-                }),
-                choices: None,
-            },
-            Asked::Choose(choose) => NoteText {
-                title: choose.title.clone(),
-                body: choose.body.clone(),
-                confirm: None,
-                cancel: choose.cancel.clone(),
-                amount: None,
-                choices: Some(NoteChoices {
-                    chips: choose.chips.clone(),
-                    options: choose.options.clone(),
-                    after: choose.after.clone(),
-                    focus: choose.focus,
                 }),
             },
             Asked::Tell(tell) => NoteText {
@@ -412,7 +351,6 @@ impl NoteText {
                 confirm: None,
                 cancel: tell.dismiss.clone(),
                 amount: None,
-                choices: None,
             },
         }
     }
@@ -429,7 +367,6 @@ enum Asked {
         question: AmountQuestion,
         chosen: u32,
     },
-    Choose(Choose),
     Tell(Tell),
 }
 
@@ -440,21 +377,13 @@ impl Asked {
             Asked::Amount { question, chosen } => {
                 (question.answer)(world, confirmed.then_some(chosen));
             }
-            Asked::Choose(choose) => (choose.answer)(world, None),
             Asked::Tell(_) => {}
-        }
-    }
-
-    fn chose(self, world: &mut World, chosen: Option<usize>) {
-        match self {
-            Asked::Choose(choose) => (choose.answer)(world, chosen),
-            other => other.answer(world, false),
         }
     }
 }
 
 /// The menu and the cards that are up, as they are stacked, the one in front first.
-pub(crate) fn sheets_front_first(world: &World) -> Vec<&'static str> {
+pub(crate) fn sheets_front_first(world: &World) -> Vec<WindowKey> {
     gui::context(world).map_or_else(Vec::new, |gui| panel::sheets_front_first(world, &gui))
 }
 
@@ -491,11 +420,15 @@ fn draw_confirm(world: &mut World) {
         return;
     };
     let pending = world.resource_mut::<Confirming>().0.take();
-    let shown_text = pending.as_ref().map(|pending| NoteText::of(&pending.asked));
+    let content = world.resource::<Content>().clone();
+    let messages = messages::of(&content);
+    let shown_text = pending
+        .as_ref()
+        .map(|pending| NoteText::of(&pending.asked, messages));
     if let Some(text) = &shown_text {
         world.resource_mut::<Lifting>().0 = Some(text.clone());
     }
-    let Some(pose) = panel::sheet_pose(world, &gui, CONFIRM, pending.is_some()) else {
+    let Some(pose) = panel::sheet_pose(world, &gui, WindowKey::Confirm, pending.is_some()) else {
         world.resource_mut::<Lifting>().0 = None;
         return;
     };
@@ -507,11 +440,10 @@ fn draw_confirm(world: &mut World) {
         .shortcut(InputAction::TakeDefault);
     let mut pending = pending;
     let mut decided = None;
-    let mut chosen: Option<Option<usize>> = None;
     let screen = gui.content_rect();
     let rest = Rect::from_center_size(screen.center(), NOTE);
     gui.set_transform_layer(confirm_layer(), pose.transform(&gui, rest, rest.min));
-    let modal = egui::Modal::new(Id::new(CONFIRM))
+    let modal = egui::Modal::new(Id::new(WindowKey::Confirm.name()))
         .backdrop_color(ink::ink_wash(0.3 * pose.opacity))
         .frame(egui::Frame::NONE)
         .show(&gui, |ui| {
@@ -527,16 +459,6 @@ fn draw_confirm(world: &mut World) {
                 let title = TextLook::role(TextRole::NoteTitle, ink::INK);
                 inline::show_line_with_tooltips(ui, world, &text.title, title);
                 ui.add_space(dialog::TITLE_GAP);
-                if let Some(choices) = &text.choices
-                    && !choices.chips.is_empty()
-                {
-                    ui.horizontal_wrapped(|ui| {
-                        for chip in &choices.chips {
-                            controls::pill(ui, chip, controls::Pill::Ink);
-                        }
-                    });
-                    ui.add_space(6.0);
-                }
                 let said = text
                     .body
                     .iter()
@@ -556,66 +478,6 @@ fn draw_confirm(world: &mut World) {
                     };
                     (slider, chosen)
                 });
-                if let Some(choices) = &text.choices {
-                    let default_pressed =
-                        default_key.is_some_and(|key| ui.input_mut(|i| i.consume_shortcut(&key)));
-                    if default_pressed {
-                        chosen = Some(choices.focus);
-                    }
-                    for (index, option) in choices.options.iter().enumerate() {
-                        ui.add_space(8.0);
-                        let focused = choices.focus == Some(index);
-                        let picked = ui
-                            .add_enabled_ui(option.open, |ui| {
-                                if focused {
-                                    controls::primary(ui, option.label.as_str())
-                                } else {
-                                    controls::button(ui, option.label.as_str())
-                                }
-                            })
-                            .inner;
-                        if let Some(note) = &option.note {
-                            let color = if option.open {
-                                ink::INK3
-                            } else {
-                                ink::VERMILION
-                            };
-                            let look = TextLook::role(TextRole::Small, color);
-                            inline::show_line_with_tooltips(ui, world, note, look);
-                        }
-                        if focused
-                            && let Some(pending) = pending.as_mut()
-                            && !pending.focused
-                        {
-                            picked.request_focus();
-                            pending.focused = true;
-                        }
-                        if picked.clicked() {
-                            chosen = Some(Some(index));
-                        }
-                    }
-                    for line in &choices.after {
-                        ui.add_space(6.0);
-                        let look = TextLook::role(TextRole::Body, ink::INK2);
-                        inline::show_line_with_tooltips(ui, world, line, look);
-                    }
-                    ui.add_space(12.0);
-                    let row = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
-                    let across = egui::Layout::right_to_left(egui::Align::Center);
-                    ui.allocate_ui_with_layout(row, across, |ui| {
-                        let cancel = controls::button(ui, text.cancel.as_str());
-                        if let Some(pending) = pending.as_mut()
-                            && !pending.focused
-                        {
-                            cancel.request_focus();
-                            pending.focused = true;
-                        }
-                        if cancel.clicked() {
-                            chosen = Some(None);
-                        }
-                    });
-                    return;
-                }
                 let answers = ui.min_rect().top() + NOTE.y - padding - controls::CONTROL_HEIGHT;
                 ui.add_space((answers - ui.cursor().top()).max(12.0));
                 let row = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
@@ -671,10 +533,6 @@ fn draw_confirm(world: &mut World) {
     let Some(pending) = pending else {
         return;
     };
-    if let Some(chosen) = chosen {
-        pending.asked.chose(world, chosen);
-        return;
-    }
     if modal.should_close() && decided.is_none() {
         decided = Some(false);
     }
@@ -696,8 +554,7 @@ fn draw_carried(world: &mut World) {
     let carried = match carried {
         Carried::Skill(skill) => CarriedThing::Skill(skill),
         Carried::BagSlot(slot) => {
-            let Some(stack) = session::my_character(world)
-                .and_then(|me| me.get::<Inventory>())
+            let Some(stack) = item::my_bag(world)
                 .and_then(|inventory| inventory.slots.get(slot as usize).copied())
             else {
                 return;
@@ -762,5 +619,39 @@ fn sized(ui: &mut Ui, image: Option<gui::GuiImage>, size: f32) -> egui::Response
     match image {
         Some(image) => ui.add(image.widget(Vec2::splat(size))),
         None => ui.allocate_exact_size(Vec2::splat(size), Sense::hover()).1,
+    }
+}
+
+messages! {
+    /// What the game says on the parts of the screen around play.
+    pub struct HudMessages {
+        /// The button that confirms an amount the player picked with a slider.
+        confirm,
+        /// What a screen reader names the menu window's title bar, which the player drags to move it.
+        menu,
+        /// What the key that steps out of the menu does, as the menu's key hints say it.
+        closes,
+        /// The title of the menu's tab for the player's character.
+        tab_character,
+        /// The title of the menu's tab for skills.
+        tab_skills,
+        /// The title of the menu's tab for quests.
+        tab_quests,
+        /// The title of the menu's tab for the map.
+        tab_map,
+        /// The title of the menu's tab for what has happened to the player.
+        tab_history,
+        /// The title of the menu's tab for friends, parties and societies.
+        tab_social,
+        /// The title of the menu's tab for settings.
+        tab_settings,
+        /// What a menu tab's badge shows of how many are waiting, `{count}` being the number.
+        badge_count(count: Number),
+        /// What a menu tab's badge shows when more are waiting than it counts, `{most}` being the most it counts.
+        badge_over(most: Number),
+        /// What a screen reader says of the day clock when no time of day is named: the hour `{hour}`.
+        clock_hour(hour: Number),
+        /// What a screen reader says of the day clock: the hour `{hour}` and the name of the time of day `{time}`.
+        clock_time(hour: Number, time: Text),
     }
 }

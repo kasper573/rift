@@ -315,9 +315,9 @@ pub fn centered(painter: &Painter, at: Pos2, text: &str, font: FontId, color: Co
     drawn.translate(from.to_vec2())
 }
 
+/// A mark drawn beside words that say what it means, so a screen reader passes over it.
 pub fn show(ui: &mut Ui, mark: Mark, size: f32, color: Color32) -> Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, mark.word()));
     if ui.is_rect_visible(rect) {
         mark.paint(ui.painter(), rect, color);
     }

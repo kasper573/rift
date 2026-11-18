@@ -6,11 +6,13 @@ use engine::core::content::{
 };
 use engine::core::math::Pos;
 use engine::core::script::Value;
+use engine::core::text::LineText;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Appearance, Name};
 use engine::systems::area::AreaDef;
+use engine::systems::area::Place;
 use engine::systems::area::transition::Discovered;
 use engine::systems::class::{Class, ClassDef, NodeKey};
 use engine::systems::command::{CommandCooldowns, TerminalCommandDef};
@@ -22,20 +24,18 @@ use engine::systems::movement::Position;
 use engine::systems::player::snapshot::{
     AtInitialSpawn, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, JoinOrigin, MemoryValue,
     QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCommandCooldown, SnapshotCooldown,
-    SnapshotMemory, SnapshotQuest, SnapshotRecord, SnapshotShop, SnapshotSkill, SnapshotSlot,
-    SnapshotStatus,
+    SnapshotInstanceCooldown, SnapshotMemory, SnapshotQuest, SnapshotRecord, SnapshotShop,
+    SnapshotSkill, SnapshotSlot, SnapshotStatus,
 };
 use engine::systems::player::{CharacterState, SpawnPoint, SpawnPolicy, SpawnRules, Xp};
 use engine::systems::quest::{QuestDef, QuestLog, QuestResult};
-use engine::systems::script::Place;
 use engine::systems::shop::{Sale, ShopDef, ShopLedger};
 use engine::systems::skill::{
     self, BasicAttack, Cooldowns, HotbarEntry, HotbarSlot, Rank, SkillDef,
 };
 use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::status::{self, StatusEffectDef, Statuses};
-use engine::systems::text::LineText;
-use engine::systems::{GameSettings, dialogue, script};
+use engine::systems::{GameSettings, dialogue};
 use serde_json::json;
 use testkit::{Declared, Game, Map, Sim};
 
@@ -566,8 +566,8 @@ fn returning_to(area: &str) -> Sim {
             status::aspect::SettleAspects::default(),
             status::aspect::TickAspects::default(),
         ))
-        .plan(script::RunFlows::default());
-    script::spawn_stateless(&mut sim.world);
+        .plan(engine::core::script::run::FlowRunner::default());
+    engine::systems::spawn_scripts(&mut sim.world);
     sim.world.insert_resource(WallClock {
         now: UnixMillis(1_000_000_000),
         reset: UtcHour::MIDNIGHT,
@@ -642,7 +642,7 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         shops: vec![SnapshotShop {
             shop: id(content, "wares"),
             stock: vec![ShopStock {
-                offer: 1,
+                ware: 1,
                 left: 2,
                 restocks_in: Seconds(400.0),
             }],
@@ -662,6 +662,11 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         command_cooldowns: vec![SnapshotCommandCooldown {
             command: id(content, "wave"),
             left: Seconds(300.0),
+        }]
+        .into(),
+        instance_cooldowns: vec![SnapshotInstanceCooldown {
+            area: id(content, "forest"),
+            left: Seconds(900.0),
         }]
         .into(),
         rises_at: None,

@@ -1,3 +1,5 @@
+use engine::systems::npc::NPC_RUNNER;
+use engine::systems::skill::SKILL_RUNNER;
 use std::sync::Arc;
 use ui::egui;
 
@@ -6,11 +8,14 @@ use editor::project::RowSelection;
 use editor::tabs::EditorTab;
 use editor::views::script::{self, ScriptDoc, ScriptRow};
 use editor::views::spreadsheet;
+use engine::core::script::ScriptDef;
 use engine::core::script::node::NEXT_EXIT;
 use engine::core::script::{Fill, Node, Target, VariableType};
+use engine::systems::area::warp::Warp;
+use engine::systems::combat::effects::Heal;
 use engine::systems::combat::effects::HealBy;
+use engine::systems::dialogue::ScriptLine;
 use engine::systems::npc::NpcDef;
-use engine::systems::script::{RiftEffect, RunnerKind, ScriptDef};
 use serde_json::json;
 use testkit::path;
 
@@ -104,7 +109,7 @@ fn duplicating_several_selected_nodes_copies_every_one_of_them() {
         script
             .nodes
             .values()
-            .filter(|node| matches!(node, Node::Dialogue(dialogue) if dialogue.lines.iter().any(|line| editor::spans::plain(&line.text) == said)))
+            .filter(|node| matches!(node, Node::Dialogue(dialogue) if dialogue.lines.iter().any(|line| editor::spans::plain(&line.downcast_ref::<ScriptLine>().expect("a script line").text) == said)))
             .count()
     };
     assert_eq!((saying("Well?"), saying("Fine.")), (2, 2));
@@ -146,7 +151,14 @@ fn enter_on_a_line_keeps_what_was_typed_into_it_and_adds_one_after() {
         let shown: Vec<String> = ask
             .lines
             .iter()
-            .map(|line| editor::spans::plain(&line.text))
+            .map(|line| {
+                editor::spans::plain(
+                    &line
+                        .downcast_ref::<ScriptLine>()
+                        .expect("a script line")
+                        .text,
+                )
+            })
             .collect();
         assert_eq!(shown, lines, "{caret:?}");
     }
@@ -308,10 +320,7 @@ fn every_node_a_script_offers_lands_after_its_event_or_is_refused_for_what_it_is
     });
     let wolf = json!([{ "type": "script", "script": path("script", "wolf_hunting") }]);
     let mut refused = Vec::new();
-    for (name, kind) in [
-        ("lunge_used", RunnerKind::Skill),
-        ("wolf_hunting", RunnerKind::Npc),
-    ] {
+    for (name, kind) in [("lunge_used", SKILL_RUNNER), ("wolf_hunting", NPC_RUNNER)] {
         let scratch = tempfile::tempdir().expect("scratch");
         let game = support::game()
             .file("icons/cap.png", testkit::png(16, 16))
@@ -323,11 +332,12 @@ fn every_node_a_script_offers_lands_after_its_event_or_is_refused_for_what_it_is
                 settings["market"] = json!({
                     "default_currency": path("item", "coin"),
                     "deposit_currency": path("item", "coin"),
-                    "max_offer_items": 3,
+                    "max_goods_items": 3,
                     "max_price_items": 3,
                     "durations": [3600.0],
                     "deposit": 5,
                     "max_listings": 10,
+                    "page_rows": 50,
                 });
             })
             .npc("wolf", 10.0, wolf.clone())
@@ -444,9 +454,10 @@ fn a_node_field_made_a_variable_gives_the_script_that_variable_and_the_field_its
         .expect("a project")
         .expect("the script reads");
     assert_eq!(script.variables["to"].ty, VariableType::Place);
-    let Node::Effect(RiftEffect::Warp(warp)) = &script.nodes["warp"] else {
-        panic!("warp is a warp");
+    let Node::Effect(effect) = &script.nodes["warp"] else {
+        panic!("warp is an effect");
     };
+    let warp = effect.downcast_ref::<Warp>().expect("warp is a warp");
     assert!(matches!(&warp.to, Fill::Var { var } if var == "to"));
 }
 
@@ -575,9 +586,10 @@ fn a_heal_heals_fully_or_by_an_expression_picked_in_its_inspector() {
         .read::<ScriptDef>(&at.key)
         .expect("a project")
         .expect("the script reads");
-    let Node::Effect(RiftEffect::Heal(heal)) = &script.nodes["heal"] else {
-        panic!("heal is a heal");
+    let Node::Effect(effect) = &script.nodes["heal"] else {
+        panic!("heal is an effect");
     };
+    let heal = effect.downcast_ref::<Heal>().expect("heal is a heal");
     assert!(matches!(heal.by, HealBy::Amount(_)));
 }
 

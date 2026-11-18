@@ -17,6 +17,7 @@ use super::filters::{ColorBy, ColorField, MapLens};
 use super::{MapPart, OpenWorldMap, select};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
+use ui::controls;
 use ui::input;
 
 const SEARCH_WIDTH: f32 = 300.0;
@@ -46,10 +47,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
                         ui.close();
                     }
                 });
-                if ui.button(RichText::new("Arrange…").size(12.5)).clicked() {
+                if controls::button(ui, RichText::new("Arrange…").size(12.5)).clicked() {
                     super::arrange::open(editor);
                 }
-                if ui.button(RichText::new("Fit").size(12.5)).clicked() {
+                if controls::button(ui, RichText::new("Fit").size(12.5)).clicked() {
                     editor.views.world.request_fit();
                 }
                 ui.label(
@@ -103,7 +104,7 @@ fn layer_rows(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
         ),
     ] {
         ui.horizontal(|ui| {
-            ui.checkbox(on, "");
+            controls::tick(ui, on);
             ui.label(RichText::new(label).size(13.0));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(theme::faint(count.to_string()).monospace().size(12.0));

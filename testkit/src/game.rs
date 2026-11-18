@@ -24,8 +24,8 @@ use engine::core::text::{
 use engine::core::units::{Degrees, Radians, RadiansPerSec};
 use engine::core::units::{Meters, MetersPerSec, Stops};
 use engine::core::units::{Millis, Seconds};
-use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
-use engine::systems::GameWords;
+use engine::core::vfx::Stage;
+use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::actor::Action;
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
@@ -141,6 +141,9 @@ pub fn path(table: &str, name: &str) -> String {
     content_path("", name, table, shape)
 }
 
+/// Where every test game keeps the catalog of what it says.
+const MESSAGES_FILE: &str = "fixtures/game.messages.json";
+
 impl Game {
     pub fn new() -> Game {
         let mut game = Game {
@@ -194,9 +197,22 @@ impl Game {
     }
 
     /// The game's own settings, read from `fixtures/game.config.json`, at the content version this
-    /// build reads unless they name one.
+    /// build reads unless they name one, and the catalog of what it says, `fixtures/game.messages.json`.
     pub fn settings(mut self, settings: Value) -> Game {
         self.settings = Some(settings);
+        self.put(MESSAGES_FILE, include_bytes!("messages.json").to_vec());
+        self
+    }
+
+    /// Changes the catalog of what the game says, declared with its settings.
+    pub fn edit_messages(mut self, change: impl FnOnce(&mut Value)) -> Game {
+        let bytes = self
+            .files
+            .get(MESSAGES_FILE)
+            .expect("the catalog comes with the settings");
+        let mut catalog: Value = serde_json::from_slice(bytes).expect("the catalog is json");
+        change(&mut catalog);
+        self.put(MESSAGES_FILE, json_bytes(&catalog));
         self
     }
 
@@ -239,7 +255,7 @@ impl Game {
                 "corpses_linger": 5.0,
                 "claims_last": 60.0,
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },
-                "messages": {
+                "mail": {
                     "inbox": 20, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 6
                 },
                 "drops": {
@@ -273,8 +289,12 @@ impl Game {
                     },
                 },
                 "reading": { "glance": 2.0, "per_word": 0.3 },
-                "notices": { "pops_last": 1.0, "intro_after": 0.3 },
-                "words": words(),
+                "notices": {
+                    "pops_last": 1.0,
+                    "intro_after": 0.3,
+                    "feed_rows": 5,
+                    "budget": { "burst": 10.0, "refill_per_second": 2.0 },
+                },
                 "typing": typing(),
                 "lettering": lettering(),
                 "speech": speech(),
@@ -286,13 +306,16 @@ impl Game {
                     "friendly": "ally",
                     "npcs_apart": "enemy",
                 },
-                "history_merges_within": 10.0,
+                "history": { "merges_within": 10.0, "kept": 500 },
+                "unsaved_told_after": 3,
                 "suggestions": 10,
+                "search_letters": 2,
                 "lingers_for": 0.0,
                 "requests": { "card_shows": 20.0, "new_accounts_accept": "everyone" },
                 "chat": {
                     "lines": 5,
                     "within": 10.0,
+                    "kept_lines": 200,
                     "name_colors": [[230, 120, 120], [120, 200, 230], [150, 220, 130]],
                 },
                 "look": look(),
@@ -588,24 +611,13 @@ impl Game {
 
     /// A visual effect shader that draws nothing, of no parameters, on a billboard.
     pub fn shader(self, name: &str) -> Game {
-        self.shader_on(name, Stage::Billboard)
+        self.shader_on(name, Stage::BILLBOARD)
     }
 
     /// A visual effect shader that draws nothing, of no parameters, on `stage`; a cover or a prop
     /// that holds still.
     pub fn shader_on(self, name: &str, stage: Stage) -> Game {
-        let mut source =
-            String::from("fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n");
-        match stage {
-            Stage::Cover => source.push_str(
-                "fn sway(world: vec3<f32>, tip: f32) -> vec3<f32> {\n    return world;\n}\n",
-            ),
-            Stage::Prop => source.push_str(
-                "fn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {\n    return world;\n}\n",
-            ),
-            _ => {}
-        }
-        self.shader_of(name, stage, &source)
+        self.shader_of(name, stage, stage.spec().blank)
     }
 
     /// A visual effect shader of no parameters on `stage`, written as `source`.
@@ -995,169 +1007,6 @@ pub fn typing() -> Typing {
         slowest: CharactersPerSecond(15.0),
         fastest: CharactersPerSecond(120.0),
         slow_by: 2.5,
-    }
-}
-
-/// What every test game says where the engine has the game word it.
-fn words() -> GameWords {
-    GameWords {
-        accept_quest: "Accept".to_owned(),
-        decline_quest: "Decline".to_owned(),
-        not_yet: "Not yet.".to_owned(),
-        locked: "You can't do that yet.".to_owned(),
-        no_longer: "You can't do that any more.".to_owned(),
-        quest_log_full: "Your quest log is full.".to_owned(),
-        needs_more: "Needs {items} more".to_owned(),
-        needs_a_slot: "Needs 1 free slot".to_owned(),
-        needs_slots: "Needs {slots} free slots".to_owned(),
-        needs_tool: "Needs a {tool}".to_owned(),
-        no_room: "No room".to_owned(),
-        bag_room: "No room in your bag".to_owned(),
-        ran_out: "It ran out".to_owned(),
-        confirm: "Confirm".to_owned(),
-        craft: "Craft".to_owned(),
-        cancel_craft: "Cancel".to_owned(),
-        recipes: "Recipes".to_owned(),
-        no_recipe: "No recipe".to_owned(),
-        choose_result: "Choose a result".to_owned(),
-        craft_failed: "Crafting failed".to_owned(),
-        requires_mastery: "Requires mastery".to_owned(),
-        unknown_command: "There is no command {command}".to_owned(),
-        command_needs: "{usage} needs its {input}".to_owned(),
-        command_refuses: "{value} is no {input}".to_owned(),
-        command_takes: "{usage} takes no more than that".to_owned(),
-        command_cooling: "{command} can be used again in {left}.".to_owned(),
-        game_changed: "The game has changed since you were here".to_owned(),
-        gone: "The {kind} {name} is no longer in the game.".to_owned(),
-        kept_aside: "Kept aside for you, in case it returns.".to_owned(),
-        stack_did_not_fit: "Your inventory now holds {slots}. One stack did not fit.".to_owned(),
-        stacks_did_not_fit: "Your inventory now holds {slots}. {stacks} stacks did not fit."
-            .to_owned(),
-        skills_rearranged: "The {class}'s skills were rearranged.".to_owned(),
-        points_returned: "Your {points} skill points are yours to spend again.".to_owned(),
-        carry_on: "Carry on".to_owned(),
-        away: "Away".to_owned(),
-        not_saving: "The game cannot save right now".to_owned(),
-        not_saving_since: "What you have done since {time} may be lost if the server stops."
-            .to_owned(),
-        play_on: "You can go on playing.".to_owned(),
-        saved: "Saved".to_owned(),
-        saved_again: "Everything up to now is kept.".to_owned(),
-        not_taking_requests: "{name} is not taking requests".to_owned(),
-        you_blocked: "You have blocked {name}".to_owned(),
-        not_here: "{name} is not here".to_owned(),
-        friendship_asks: "{name} wants to be your friend".to_owned(),
-        friendship_asked: "You asked {name} to be your friend".to_owned(),
-        friendship_sent: "Friend request sent to {name}".to_owned(),
-        friendship_accepted: "{name} is now your friend".to_owned(),
-        already_friends: "{name} is already your friend".to_owned(),
-        friends_full: "Your friends list is full".to_owned(),
-        too_many_friend_requests: "You have too many friend requests waiting".to_owned(),
-        message_needs_title: "Give it a title".to_owned(),
-        only_to_friends: "You can only write to friends and party members".to_owned(),
-        not_taking_messages: "{name} is not taking messages".to_owned(),
-        inbox_full: "{name}'s inbox is full".to_owned(),
-        writing_too_fast: "Wait a moment before writing again".to_owned(),
-        stays_with_you: "{item} stays with you".to_owned(),
-        message_sent: "Message sent to {name}".to_owned(),
-        message_arrived: "{name} wrote to you: {title}. {key} opens it".to_owned(),
-        took_some: "{taken} of {attached} taken. The rest found no room and waits here".to_owned(),
-        did_not_fit_title: "What your inventory had no room for".to_owned(),
-        did_not_fit_text:
-            "Your inventory had no room for these. They wait here until you take them.".to_owned(),
-        sent_in_a_message: "It was sent to you in a message".to_owned(),
-        party_invite_asks: "{name} invites you to their party".to_owned(),
-        party_invite_asked: "You invited {name} to your party".to_owned(),
-        instance_call_sent: "Party called into {area}".to_owned(),
-        party_invite_sent: "Party invite sent to {name}".to_owned(),
-        party_invite_denied: "{name} denied your invitation".to_owned(),
-        party_invite_lapsed: "{name} did not answer your invitation".to_owned(),
-        party_full: "The party is full".to_owned(),
-        in_a_party: "{name} is in a party".to_owned(),
-        party_joined: "{name} joined the party".to_owned(),
-        party_left: "{name} left the party".to_owned(),
-        party_removed: "{name} was removed from the party".to_owned(),
-        you_were_removed: "You were removed from the party".to_owned(),
-        party_disbanded: "{name} disbanded the party".to_owned(),
-        party_leads: "{name} leads the party now".to_owned(),
-        you_joined_party: "You joined {name}'s party".to_owned(),
-        you_left_party: "You left the party".to_owned(),
-        chat_too_fast: "You are writing too fast".to_owned(),
-        mount_barred_here: "This area does not allow mounts".to_owned(),
-        no_water_in_reach: "No water deep enough within reach".to_owned(),
-        step_off_first: "Step off first".to_owned(),
-        no_ground_in_reach: "No ground to step onto within reach".to_owned(),
-        spot_too_far: "That spot is too far away".to_owned(),
-        not_from_mount: "Not from the {mount}".to_owned(),
-        mount_not_here: "The {mount} can't go where you arrived. You're on foot.".to_owned(),
-        instances_busy: "There is no room right now".to_owned(),
-        instance_timed_out: "Time ran out in {area}".to_owned(),
-        instance_go_alone: "Go alone".to_owned(),
-        instance_gather: "Gather the party".to_owned(),
-        instance_leader_only: "Only {leader} can take the party in.".to_owned(),
-        instance_needs_characters: "{area} needs at least {least} characters.".to_owned(),
-        instance_form_party: "Form a party of {least} or more, and its leader can take it in."
-            .to_owned(),
-        instance_already_inside:
-            "Your party is inside {area}. A copy can't be joined once it opens.".to_owned(),
-        instance_call: "{leader} is taking the party into {area}.".to_owned(),
-        instance_benched: "{leader} picks who goes. You're on the bench.".to_owned(),
-        instance_out_of_sight: "Go back to {leader} to be counted.".to_owned(),
-        instance_went_without: "The party went into {area} without you.".to_owned(),
-        instance_went_too_far:
-            "The party went into {area} without you. You were too far from {leader}.".to_owned(),
-        instance_called_off: "{leader} called off {area}.".to_owned(),
-        instance_call_ran_out: "The call to {area} ran out of time.".to_owned(),
-        instance_call_lost_lead: "{leader} no longer leads the party. The call to {area} ended."
-            .to_owned(),
-        instance_call_left_door: "{leader} walked away from the entrance. The call ended."
-            .to_owned(),
-        instance_leave_warning:
-            "You can't come back, and get no reward if this copy is cleared after you leave."
-                .to_owned(),
-        instance_member_left: "{name} left {area}.".to_owned(),
-        instance_ended_away: "{area} ended while you were away. You're back in {place}.".to_owned(),
-        instance_rewards_title: "Your rewards from {area}".to_owned(),
-        instance_rewards_text: "Your bag had no room for these.".to_owned(),
-        payout_overflow: "No room in your bag for {items}: sent to your messages.".to_owned(),
-        quest_rewards_title: "Your rewards for {quest}".to_owned(),
-        quest_rewards_text: "Your bag had no room for these.".to_owned(),
-        given_items_title: "Items from {source}".to_owned(),
-        given_items_text: "Your bag had no room for these.".to_owned(),
-        trade_asks: "{name} wants to trade with you.".to_owned(),
-        trade_asked: "You asked {name} to trade.".to_owned(),
-        trade_sent: "Trade request sent to {name}".to_owned(),
-        trade_denied: "{name} doesn't want to trade.".to_owned(),
-        trade_busy: "{name} is busy trading.".to_owned(),
-        trade_too_far: "You stand too far apart to trade.".to_owned(),
-        trade_cancelled_by: "{name} cancelled the trade.".to_owned(),
-        trade_ended: "The trade with {name} ended: {why}.".to_owned(),
-        trade_why_apart: "you moved too far apart".to_owned(),
-        trade_why_fell: "{who} fell".to_owned(),
-        trade_why_left: "{who} left".to_owned(),
-        trade_why_mounted: "{who} got on a mount".to_owned(),
-        trade_why_offer_gone: "an offered item left {who}'s bag".to_owned(),
-        trade_offer_changed: "{name} changed their offer.".to_owned(),
-        trade_overflow_title: "Items from your trade with {name}".to_owned(),
-        trade_overflow_text: "Your bag had no room for these.".to_owned(),
-        item_bound: "{item} is bound.".to_owned(),
-        market_listed: "Listing for {offer} created".to_owned(),
-        market_bought: "You got {offer} for {price}.".to_owned(),
-        market_sold: "Your listing of {offer} was bought. You got {price}.".to_owned(),
-        market_expired: "Your listing of {offer} ended unbought.".to_owned(),
-        market_cancelled: "{offer} came back from the market.".to_owned(),
-        market_gone: "Someone bought the listing of {offer} just before you.".to_owned(),
-        market_too_many: "You already have {listings} listings up.".to_owned(),
-        market_message: "From the market.".to_owned(),
-        market_bought_title: "Bought on the market".to_owned(),
-        market_sold_title: "Sold on the market".to_owned(),
-        market_returned_title: "Back from the market".to_owned(),
-        market_no_offer: "Offer something.".to_owned(),
-        market_no_price: "Set a price.".to_owned(),
-        market_offer_too_many: "An offer has at most {items} items.".to_owned(),
-        market_price_too_many: "A price has at most {items} items.".to_owned(),
-        market_named_twice: "Name each item once.".to_owned(),
-        market_needs_amount: "{item} needs an amount.".to_owned(),
     }
 }
 

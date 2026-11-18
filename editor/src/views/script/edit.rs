@@ -9,9 +9,10 @@ use crate::app::Editor;
 use crate::modal::{ConfirmAction, ConfirmDialog, ModalDialog};
 use crate::project::{ContentEdit, RowSelection};
 use engine::core::content::ContentFile;
-use engine::core::script::{Arrow, Choice, Exit, RunnerKindDef};
-use engine::systems::script::{Node, ScriptDef};
-use engine::systems::text::plain;
+use engine::core::script::Node;
+use engine::core::script::ScriptDef;
+use engine::core::script::{Arrow, Choice, ChoiceLabel, Exit};
+use engine::systems::dialogue::span::ScriptSpan;
 use std::collections::HashSet;
 use std::time::Instant;
 use ui::egui::Pos2;
@@ -92,7 +93,7 @@ pub fn act(editor: &mut Editor, doc: &ScriptDoc, action: ScriptGraphAction) {
             if let Some(Node::Dialogue(dialogue)) = script.nodes.get_mut(&name)
                 && let Some(line) = dialogue.lines.get_mut(index)
             {
-                line.text = text;
+                nodes::line_of_mut(line).text = text;
             }
             let label = format!("Edit line {} of {name} · {}", index + 1, at.title());
             write(editor, doc, script, label);
@@ -114,7 +115,7 @@ pub fn add_choice(node: &mut Node) {
     };
     dialogue.next.point(None);
     dialogue.choices.push(Choice {
-        label: vec![plain("…")],
+        label: ChoiceLabel::new(vec![ScriptSpan::plain("…")]),
         requires: None,
         reveal: Vec::new(),
         warn: None,

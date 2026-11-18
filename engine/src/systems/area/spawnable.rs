@@ -1,3 +1,9 @@
+use crate::core::content::fields_file;
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::ScriptSite;
+use crate::core::script::Vocabulary;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -12,14 +18,13 @@ use crate::core::math::Pos;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault, ValueType,
 };
+use crate::core::script::{EffectCall, Expr, OwnerRow, RunnerKind, ScriptModule, ScriptedRow};
+use crate::core::text::LineText;
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{Degrees, Meters, Seconds};
-use crate::systems::WorldArea;
+use crate::systems::aim as effects;
 use crate::systems::movement;
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, OwnerRow, RiftScripting, RunnerKind, ScriptModule,
-    ScriptedRow, effect as effects,
-};
+use crate::systems::{WorldArea, messages};
 
 pub type SpawnableId = ContentId<SpawnableDef>;
 
@@ -53,7 +58,7 @@ pub struct SpawnObject {
     pub spawnable: SpawnableId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub at: Option<Condition>,
+    pub at: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
     #[schemars(transform = SchemaMark::Fails.with(true))]
@@ -106,15 +111,12 @@ pub fn expire(world: &mut World, spawned: &mut QueryState<(Entity, &SpawnedObjec
     }
 }
 
-impl EffectDef<RiftScripting> for SpawnObject {
+impl EffectDef for SpawnObject {
     fn needs_subject(&self) -> bool {
         self.at.is_none()
     }
     crate::outputs!(NEXT => next, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let at = match &self.at {
             Some(expr) => {
                 let (eval, ty) = cx.typed(expr)?;
@@ -139,12 +141,19 @@ impl EffectDef<RiftScripting> for SpawnObject {
             });
             match point.and_then(|point| spawn(world, spawnable, point)) {
                 Some(_) => EffectStep::Done,
-                None => effects::refuse(world, cx, &refused, "Nothing can stand there"),
+                None => {
+                    let said = LineText::from(
+                        messages::of(world.resource::<Content>())
+                            .map
+                            .nothing_can_stand(),
+                    );
+                    effects::refuse(world, cx, &refused, said)
+                }
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::SpawnsObject(self.spawnable)]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(SpawnsObject(self.spawnable))]
     }
 }
 
@@ -191,11 +200,35 @@ impl ModuleSet for SpawnableDef {
 }
 
 impl ScriptedRow for SpawnableDef {
-    const OWNER: RunnerKind = RunnerKind::Spawnable;
+    const OWNER: RunnerKind = SPAWNABLE_RUNNER;
 
     fn script(module: &SpawnableModule) -> Option<&ScriptModule> {
         match module {
             SpawnableModule::Script(script) => Some(script),
         }
     }
+}
+
+pub const SPAWNABLE_RUNNER: RunnerKind = RunnerKind::new("spawnable");
+
+/// A script that may spawn an object.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpawnsObject(pub SpawnableId);
+
+impl ReachDef for SpawnsObject {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .runner(
+            SPAWNABLE_RUNNER,
+            RunnerSpec::at(
+                |content, row| ScriptSite {
+                    file: fields_file(row.id::<SpawnableDef>().path(content)),
+                    pointer: "/modules".to_owned(),
+                },
+                |content, row| Some(row.id::<SpawnableDef>().get(content).title.clone()),
+            ),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<SpawnableDef>(loading, content))
+        .effect::<SpawnObject>("spawn_object");
 }

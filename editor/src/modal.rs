@@ -13,6 +13,9 @@ use crate::views::area::ResizeDialog;
 use crate::views::script::{LinkNodeDialog, RenameNodeDialog, ScriptRow};
 use crate::views::world::ArrangeDialog;
 
+/// The words of the button that backs out of a dialog.
+pub const CANCEL: &str = "Cancel";
+
 pub enum ModalDialog {
     NewGame(NewGameDialog),
     Confirm(ConfirmDialog),

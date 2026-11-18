@@ -7,7 +7,7 @@ use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::stat::{self, StatKind};
-use engine::systems::{actor, script, skill};
+use engine::systems::{actor, skill};
 use serde_json::json;
 use strum::VariantArray;
 use testkit::{APEX, BODY, CLIP, Game, Map, Sim, clip, rig_clips};
@@ -194,14 +194,14 @@ fn fight() -> (Sim, Entity) {
         .add((combat::request, actor::playing::progress))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
     sim.equip(player, "sword");
     sim.tick();

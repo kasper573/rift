@@ -9,8 +9,10 @@ use engine::core::audio::mix::AudioCategory;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
 use engine::core::math::{Pos, Rect, Rgb, Size};
+use engine::core::script::ScriptModule;
 use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::actor::Pose;
+use engine::systems::area::Place;
 use engine::systems::area::blueprint::Placement;
 use engine::systems::area::lighting::PointLightDef;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
@@ -19,9 +21,9 @@ use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{
     AreaModule, AreaModuleKind, FogBank, Resident, SafeZone, SoundChannel, SoundscapeDef,
 };
-use engine::systems::script::{Place, ScriptModule};
 use engine::systems::spawner::Spawner;
 use ui::egui::{Pos2, RichText, Ui, Vec2};
+use ui::menu;
 
 use super::select::start_paste;
 use super::{AreaAction, AreaFrame, AreaTool, AreaViewState, nodes, pick, pins, placement, shapes};
@@ -155,12 +157,11 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
         ui.add_enabled_ui(in_area, |ui| {
             ui.menu_button("Play here as…", |ui| {
                 for other in play::test_characters(editor) {
-                    if ui
-                        .button(format!(
-                            "{} · level {} · {}",
-                            other.key, other.level, other.area
-                        ))
-                        .clicked()
+                    if menu::entry(
+                        ui,
+                        format!("{} · level {} · {}", other.key, other.level, other.area),
+                    )
+                    .clicked()
                     {
                         editor.play.character = Some(other.key.clone());
                         editor.settings.last_play = Some(other.key);
@@ -181,14 +182,16 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
             ui.close();
         }
         ui.separator();
-        if in_area && ui.button("Set the game's spawn here").clicked() {
+        if in_area && menu::entry(ui, "Set the game's spawn here").clicked() {
             action = Some(MenuAction::SetSpawn);
             ui.close();
         }
         if in_area
-            && ui
-                .button(format!("Listen here ({} click)", EditorKey::Listen.name()))
-                .clicked()
+            && menu::entry(
+                ui,
+                format!("Listen here ({} click)", EditorKey::Listen.name()),
+            )
+            .clicked()
         {
             action = Some(MenuAction::Listen);
             ui.close();
@@ -257,17 +260,17 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
                             action = Some(MenuAction::EditInPlace(node.clone()));
                             ui.close();
                         }
-                        if ui.button("Unpack").clicked() {
+                        if menu::entry(ui, "Unpack").clicked() {
                             action = Some(MenuAction::Area(AreaAction::Unpack(node.clone())));
                             ui.close();
                         }
-                        if ui.button("Replace with…").clicked() {
+                        if menu::entry(ui, "Replace with…").clicked() {
                             action = Some(MenuAction::Area(AreaAction::Replace(node.clone())));
                             ui.close();
                         }
                     }
                     if matches!(module, AreaModule::Object(_))
-                        && ui.button("Return door…").clicked()
+                        && menu::entry(ui, "Return door…").clicked()
                     {
                         action = Some(MenuAction::Area(AreaAction::ReturnDoor(node.clone())));
                         ui.close();
@@ -417,13 +420,16 @@ pub fn module_template(
                 when: None,
             }],
         }),
-        AreaModuleKind::Spawner => AreaModule::Spawner(Spawner {
-            respawn: Some(Seconds(60.0)),
-            ..Spawner::of(
+        AreaModuleKind::Spawner => {
+            let mut spawner = Spawner::of(
                 super::spawner::spawned(reader, named).ok_or_else(unnamed)?,
                 at.map(spot_rect),
-            )
-        }),
+            );
+            for population in &mut spawner.populations {
+                population.respawn = Some(Seconds(60.0));
+            }
+            AreaModule::Spawner(spawner)
+        }
         AreaModuleKind::Resident => AreaModule::Resident(Resident {
             npc: reader.id_of(named).ok_or_else(unnamed)?,
             at: at.ok_or_else(placed)?,

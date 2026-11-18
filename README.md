@@ -67,6 +67,7 @@ folder, and starts the other binaries from its own binaries folder when a comman
 | [`rift fit <game> <prop>…`](#fitting-footprints) | Shapes props' footprints to their models. |
 | [`rift ask <game>`](#asking-about-a-game) | Answers the probe's questions about the game, without a client. |
 | [`rift render area <game> <shot> <out>`](#rendering-an-area) | Draws a picture of an area off screen. |
+| [`rift render dialogue <game> <out>`](#rendering-the-dialogue) | Draws the dialogue in every style it sets, over many grounds. |
 | [`rift bench [game]`](#benching) | Measures the server's capacity, and on a game also the client's and the editor's frame rates and memory. |
 | [`rift loadtest --http <url> [count]`](#load-testing-a-server) | Connects simulated players to a running game server. |
 | [`rift profile --out <dir> [game]`](#profiling-the-server) | Samples the game server under load. |
@@ -118,6 +119,19 @@ looks against a reference picture. The shot is a JSON file that names the area, 
 bodies standing in it. The same shot draws the same picture every time, and `--check-determinism`
 proves it: it draws the shot twice, each in a process of its own, and fails when the two pictures
 differ by more than the eye can tell.
+
+### Rendering the dialogue
+
+```sh
+rift render dialogue <game> <out> [--over <picture>…]
+```
+
+Draws the game's dialogue off screen into the folder `<out>`, once for every style a line is set in
+(each ink, voice and motion, alone and together, keys, a narrator, a line part typed) and every state
+a choice and its tags show, over the lightest, darkest and most saturated grounds and bands of all of
+them side by side, and over each picture `--over` names, such as frames of the game. Each picture is
+named `<ground>-<specimen>.png`, so how the dialogue reads over whatever a game puts behind it is seen
+in one go.
 
 ### Benching
 

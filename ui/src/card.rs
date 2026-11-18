@@ -208,7 +208,8 @@ pub struct Card<'a> {
     pub tally: Option<&'a str>,
     pub name: &'a str,
     pub picture: Option<TextureId>,
-    pub closable: bool,
+    /// The cross that closes the card, by the name a screen reader says, where it has one.
+    pub close: Option<&'a str>,
     pub action: Option<CardAction<'a>>,
     pub depth: Depth,
     pub dress: CardDress<'a>,
@@ -302,14 +303,14 @@ pub struct CardResponse {
 }
 
 impl<'a> Card<'a> {
-    pub fn new(kind: CardKind, name: &'a str) -> Card<'a> {
+    pub fn new(kind: CardKind, band: &'a str, name: &'a str) -> Card<'a> {
         Card {
             kind,
-            band: kind.word(),
+            band,
             tally: None,
             name,
             picture: None,
-            closable: false,
+            close: None,
             action: None,
             depth: Depth::Front,
             dress: CardDress::PLAIN,
@@ -364,7 +365,7 @@ impl<'a> Card<'a> {
         if let Some(strip) = strip {
             self.paint_strip(&painter, strip);
         }
-        let close = self.closable.then(|| {
+        let close = self.close.map(|said| {
             let rect = Rect::from_min_size(
                 Pos2::new(
                     outer_min.x + WIDTH - CROSS_AT.x - sheet::CROSS,
@@ -372,12 +373,8 @@ impl<'a> Card<'a> {
                 ),
                 Vec2::splat(sheet::CROSS),
             );
-            let response = inner.interact(rect, inner.id().with("close"), Sense::click());
-            response.widget_info(|| {
-                WidgetInfo::labeled(WidgetType::Button, inner.is_enabled(), "Close")
-            });
-            sheet::cross(&painter, rect, response.hovered());
-            response
+            let id = inner.id();
+            crate::panel::close_button(&mut inner, id, rect, said)
         });
         let action = self.action.map(|action| {
             let right = band_rect.right() - self.cross_room() - ACTION_GAP;
@@ -442,7 +439,7 @@ impl<'a> Card<'a> {
 
     /// How much of the far end of the band the cross that closes the card takes.
     fn cross_room(&self) -> f32 {
-        if self.closable {
+        if self.close.is_some() {
             sheet::CROSS + 2.0
         } else {
             0.0

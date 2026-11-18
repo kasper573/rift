@@ -12,6 +12,7 @@ use engine::core::content::media::GltfInfos;
 use engine::systems::area::{Picture, Pictured};
 use engine::systems::item::card::{self as item_card, CardLook};
 use engine::systems::item::{self, CARD_SIZE, ICON_SIZE, ItemDef, Wear, widget};
+use engine::systems::messages;
 use ui::egui::{self, Sense, Ui, Vec2};
 use ui::face;
 use ui::{chip, form, panel, sheet, theme};
@@ -178,7 +179,11 @@ fn shown(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 closable: false,
                 ..CardLook::PINNED
             };
-            let face = item::card::face_of(&content, &mut images, item, look);
+            let band = item
+                .get(&content)
+                .category()
+                .named(&messages::of(&content).item);
+            let face = item::card::face_of(&content, &mut images, item, look, &band);
             face.show(ui, |ui, plate| {
                 item::card::summary(ui, &content, item, plate);
                 item::card::details(ui, &content, item, |_| None);

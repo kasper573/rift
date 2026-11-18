@@ -9,7 +9,7 @@ use engine::systems::player::Xp;
 use engine::systems::quest::{self, QuestDef, QuestLog, QuestRequest, QuestResult};
 use engine::systems::region;
 use engine::systems::shop::{self, ShopRequest};
-use engine::systems::{combat, movement, npc, rewards, script, stat};
+use engine::systems::{combat, movement, npc, reward, stat, window};
 use serde_json::{Value, json};
 use testkit::{BODY, Game, Map, Sim, dialogue, path, said};
 
@@ -205,11 +205,14 @@ fn a_full_bag_takes_the_hand_in_and_sends_the_reward_that_has_no_room_by_message
         Some(QuestResult::Completed),
         "a full bag never holds a quest back"
     );
-    let told = sim.told(1);
-    assert_eq!(
-        told.last().map(|told| told.text.plain_words(sim.content())),
-        Some("Tusks · No room in your bag for 1 shield: sent to your messages.".to_owned()),
-        "the quest's own notification tells what went to messages"
+    let told: Vec<String> = sim
+        .told(1)
+        .iter()
+        .map(|told| told.text.plain_words(sim.content()))
+        .collect();
+    assert!(
+        told.contains(&"No room in your bag for 1 shield: sent to your mail.".to_owned()),
+        "the player is told what went to their mail: {told:?}"
     );
 }
 
@@ -526,7 +529,7 @@ fn harbour() -> Sim {
                     { "type": "deliver", "item": "letter.item.json" },
                     { "type": "hand_in", "items": [{ "item": "letter.item.json" }] },
                     { "type": "hand_over", "text": ["The giver asked me to bring you this."] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 10 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 10 }] },
                 ]),
             ),
         )
@@ -539,7 +542,7 @@ fn harbour() -> Sim {
                     { "type": "hold", "item": "key.item.json" },
                     { "type": "hand_in", "items": [{ "item": "key.item.json" }] },
                     { "type": "hand_over", "text": ["Here's your key."] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 25 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 25 }] },
                     { "type": "drop", "from": "bat.npc.json", "item": "key.item.json", "chance": 10.0, "grows": 15.0 },
                 ]),
             ),
@@ -551,7 +554,7 @@ fn harbour() -> Sim {
                     { "type": "shown", "condition": not(json!({ "type": "memory", "memory": "sided.memory.json" })) },
                     { "type": "hold", "item": "tusk.item.json", "count": 5 },
                     { "type": "hand_in", "items": [{ "item": "tusk.item.json", "count": 5 }] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 35 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 35 }] },
                     { "type": "pick_one", "items": [{ "item": "shield.item.json" }, { "item": "helm.item.json" }] },
                 ]),
             ),
@@ -563,7 +566,7 @@ fn harbour() -> Sim {
                     { "type": "hold", "item": "bone.item.json", "count": 10 },
                     { "type": "hand_in", "items": [{ "item": "bone.item.json", "count": 10 }] },
                     { "type": "hand_over", "text": ["Here are today's bones."] },
-                    { "type": "reward", "items": [{ "item": "token.item.json", "count": 6 }] },
+                    { "type": "reward", "items": [{ "item": "token.item.json", "amount": 6 }] },
                     { "type": "daily" },
                 ]),
             ),
@@ -575,7 +578,7 @@ fn harbour() -> Sim {
                     { "type": "hold", "item": "steak.item.json", "count": 3 },
                     { "type": "hand_in", "items": [{ "item": "steak.item.json", "count": 3 }] },
                     { "type": "hand_over", "text": ["Here are the steaks."] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 15 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 15 }] },
                     { "type": "time_limit", "seconds": 600.0 },
                 ]),
             ),
@@ -638,22 +641,27 @@ fn harbour() -> Sim {
             shop::requests,
             quest::requests,
         ))
-        .add((rewards::grant, quest::credit, npc::defeated))
+        .add((
+            combat::credit::credit,
+            reward::kills,
+            quest::credit,
+            npc::defeated,
+        ))
         .plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
-            shop::hold,
+            window::hold::<shop::ShopVisit>,
             shop::refresh,
         ))
         .plan(quest::AnnounceQuests::default())
         .plan(stat::SettleVitals::default())
         .add(combat::defeats);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }
@@ -750,7 +758,7 @@ fn shaman() -> Value {
 }
 
 fn quest(title: &str, modules: Value) -> Value {
-    json!({ "title": title, "category": "Errands", "blurb": title, "xp": 10, "modules": modules })
+    json!({ "title": title, "category": "Errands", "blurb": title, "modules": modules })
 }
 
 fn bats_open() -> Value {

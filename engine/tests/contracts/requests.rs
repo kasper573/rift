@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
+use engine::core::content::Content;
 use engine::core::units::Seconds;
-use engine::systems::GameSettings;
 use engine::systems::friend;
 use engine::systems::player::Xp;
 use engine::systems::social_request::{
@@ -30,7 +30,7 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     );
     assert_eq!(
         server.cards(2),
-        [("Wren invites you to their crew".to_owned(), false)],
+        [("Wren invites you to their party".to_owned(), false)],
         "and the player asked sees who asks, wherever they are"
     );
     assert_eq!(
@@ -242,7 +242,7 @@ fn a_blocked_player_is_kept_away_until_it_is_undone() {
     assert_eq!(
         (server.cards(1), server.cards(2)),
         (
-            vec![("Marrow invites you to their crew".to_owned(), false)],
+            vec![("Marrow invites you to their party".to_owned(), false)],
             vec![]
         ),
         "every request between the two is gone, whoever asked, and no other"
@@ -326,7 +326,7 @@ fn what_an_account_set_blocked_befriended_and_was_asked_is_kept_from_one_server_
     );
 }
 
-/// How many crews `character` was taken into.
+/// How many parties `character` was taken into.
 fn joined(server: &Server, character: Entity) -> u32 {
     server
         .village
@@ -340,14 +340,14 @@ fn joined(server: &Server, character: Entity) -> u32 {
 fn sources() -> Vec<SocialRequestSource> {
     fn joins(
         settling: &mut Settling,
-        _: &GameSettings,
+        _: &Content,
         request: &SocialRequest,
     ) -> Result<(), RequestUnaccepted> {
-        let gone = || RequestUnaccepted::Over("The asker is gone".to_owned());
+        let gone = || RequestUnaccepted::Over("The asker is gone".into());
         let (world, asker) = settling.reach(&request.asker).ok_or_else(gone)?;
         let mut joined = world.get_mut::<Xp>(asker).ok_or_else(gone)?;
         if joined.amount > 0 {
-            return Err(RequestUnaccepted::Over("Every place is taken".to_owned()));
+            return Err(RequestUnaccepted::Over("Every place is taken".into()));
         }
         joined.gain(1);
         Ok(())
@@ -357,12 +357,12 @@ fn sources() -> Vec<SocialRequestSource> {
             kind: SocialRequestKind::PartyInvitation,
             lasts: |settings| Some(settings.requests.card_shows),
             reaches_offline: false,
-            words: |_| SocialRequestWords {
-                asks: "{name} invites you to their {about}",
-                asked: "You invited {name}",
-                sent: "Invite sent to {name}",
-                accepted: Some("{name} joined you"),
-                denied: Some("{name} denied"),
+            words: SocialRequestWords {
+                asks: |_, name| format!("{name} invites you to their party"),
+                asked: |_, name| format!("You invited {name}"),
+                sent: |_, name| format!("Invite sent to {name}"),
+                accepted: Some(|_, name| format!("{name} joined you")),
+                denied: Some(|_, name| format!("{name} denied")),
                 lapsed: None,
             },
             may_send: |_, _, _, _| Ok(()),

@@ -1,7 +1,12 @@
+mod line;
 mod paint;
+mod span;
 
+pub use line::{LineText, SpanText, TextFx, TextInk};
 pub use paint::{Hand, ShownLine, TextLook, measure, show, show_linked};
+pub use span::{Equatable, PluggedSpan, SpanDef, SpanKinds};
 
+use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -31,11 +36,42 @@ pub enum TextPiece {
     Image(Cow<'static, str>),
     /// Opens a run of the line that stands for `key`, up to the next `LinkEnd`: drawing the line
     /// tells where the run landed, so whoever draws it can let the run be pointed at and clicked.
-    LinkStart(Cow<'static, str>),
+    /// The run is read out as `name`, which says all it stands for where its letters show only
+    /// part of it, as an icon does.
+    LinkStart {
+        key: LinkKey,
+        name: String,
+    },
     LinkEnd,
     /// Room this many points wide before the next letter, which whoever draws the line paints
     /// into.
     Room(f32),
+    /// Opens the run of the line that types out, up to the next `TypingEnd`: the rest of the line
+    /// is out from the start. A line with no such run types out whole.
+    TypingStart,
+    TypingEnd,
+}
+
+/// What a run of a line stands for: which `Owner` type made the link and which of its things it
+/// is, so each system answers its own links and no other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LinkKey {
+    owner: TypeId,
+    id: u64,
+}
+
+impl LinkKey {
+    pub fn new<Owner: 'static>(id: u64) -> LinkKey {
+        LinkKey {
+            owner: TypeId::of::<Owner>(),
+            id,
+        }
+    }
+
+    /// Which of `Owner`'s things the link is, none for another owner's link.
+    pub fn id_in<Owner: 'static>(self) -> Option<u64> {
+        (self.owner == TypeId::of::<Owner>()).then_some(self.id)
+    }
 }
 
 /// A key drawn as a cap in a line: an input as it is bound now, or a cap given outright.
@@ -62,6 +98,8 @@ pub struct StyledSpan {
     pub voice: Option<TextVoice>,
     pub motion: Option<TextMotion>,
     pub slow: bool,
+    /// Set in the heavy weight of the book face.
+    pub bold: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,19 +285,32 @@ impl StyledLine {
         StyledLine::new(vec![TextPiece::text(text)])
     }
 
+    /// The line as it is read out: its letters, each key by its name and each link by its own.
     pub fn plain(&self, keys: &KeyNames) -> String {
-        self.pieces
-            .iter()
-            .filter_map(|piece| match piece {
-                TextPiece::Span(span) => Some(span.text.as_ref()),
+        let mut in_link = false;
+        let mut plain = String::new();
+        for piece in &self.pieces {
+            match piece {
+                TextPiece::LinkStart { name, .. } => {
+                    in_link = true;
+                    plain.push_str(name);
+                }
+                TextPiece::LinkEnd => in_link = false,
+                _ if in_link => {}
+                TextPiece::Span(span) => plain.push_str(&span.text),
+                TextPiece::Key(key) => {
+                    if let Some(cap) = key.cap(keys) {
+                        plain.push_str(&cap.name);
+                    }
+                }
                 TextPiece::Pause(_)
                 | TextPiece::Image(_)
-                | TextPiece::LinkStart(_)
-                | TextPiece::LinkEnd
-                | TextPiece::Room(_) => None,
-                TextPiece::Key(key) => key.cap(keys).map(|cap| cap.name.as_str()),
-            })
-            .collect()
+                | TextPiece::TypingStart
+                | TextPiece::TypingEnd
+                | TextPiece::Room(_) => {}
+            }
+        }
+        plain
     }
 }
 
@@ -281,6 +332,7 @@ impl StyledSpan {
             voice: None,
             motion: None,
             slow: false,
+            bold: false,
         }
     }
 
@@ -314,6 +366,11 @@ impl StyledSpan {
         self
     }
 
+    pub fn bold(mut self) -> StyledSpan {
+        self.bold = true;
+        self
+    }
+
     pub fn slow(mut self) -> StyledSpan {
         self.slow = true;
         self
@@ -334,7 +391,11 @@ pub fn reveal_times(pieces: &[TextPiece], pace: TypingPace) -> Vec<Duration> {
     for piece in pieces {
         match piece {
             TextPiece::Pause(pause) => clock += *pause,
-            TextPiece::LinkStart(_) | TextPiece::LinkEnd | TextPiece::Room(_) => {}
+            TextPiece::LinkStart { .. }
+            | TextPiece::LinkEnd
+            | TextPiece::TypingStart
+            | TextPiece::TypingEnd
+            | TextPiece::Room(_) => {}
             TextPiece::Span(span) => {
                 let slowness = if span.slow { pace.slow_by } else { 1.0 };
                 for _ in span.text.chars() {

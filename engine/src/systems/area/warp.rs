@@ -3,20 +3,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::transition::Crossing;
-use super::{AreaId, AreaTag, ObjectShape};
+use super::{AreaId, AreaTag, ObjectShape, Warps};
 use crate::core::content::{Content, SchemaMark};
 use crate::core::math::Pos;
-use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault};
+use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault, Vocabulary};
+use crate::core::script::{EffectCall, Expr, Fill, OwnerRow, Reach, Scripts};
+use crate::core::text::LineText;
 use crate::core::units::Meters;
+use crate::systems::aim::{self as effects, Aimed, Reaching};
+use crate::systems::area::Place;
 use crate::systems::area_instance::AreaInstanceWorld;
+use crate::systems::messages;
 use crate::systems::npc::Npc;
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{self, SpawnPoint};
-use crate::systems::script::effect::{self as effects, Aimed, Reaching};
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, Fill, OwnerRow, Place, RiftScripting, RiftScripts,
-};
-use crate::systems::text::LineText;
 use crate::systems::{area_instance, dialogue, mount, movement, reach, region};
 
 pub struct WarpObject {
@@ -25,17 +25,14 @@ pub struct WarpObject {
     pub to: Place,
 }
 
-pub fn warp_objects(content: &Content, scripts: &RiftScripts, area: AreaId) -> Vec<WarpObject> {
+pub fn warp_objects(content: &Content, scripts: &Scripts, area: AreaId) -> Vec<WarpObject> {
     super::objects(super::placed(content, area))
         .filter_map(|(index, object)| {
             let to = scripts
                 .may_do(OwnerRow::of_object(area, index))
-                .reaches
-                .iter()
-                .find_map(|reach| match reach {
-                    EffectReach::Warp(place) => Some(*place),
-                    _ => None,
-                })?;
+                .reaching::<Warps>()
+                .next()
+                .map(|warps| warps.0)?;
             Some(WarpObject {
                 name: object.name.clone().unwrap_or_default(),
                 shape: object.shape,
@@ -51,21 +48,18 @@ pub fn warp_objects(content: &Content, scripts: &RiftScripts, area: AreaId) -> V
 pub struct Warp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub to: Fill<Place>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for Warp {
+impl EffectDef for Warp {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let to = cx.place(&self.to)?;
         if to.area.get(cx.content).instance.is_some() {
@@ -76,6 +70,10 @@ impl EffectDef<RiftScripting> for Warp {
         }
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_anywhere(world, cx, &who);
+            let nobody = messages::of(world.resource::<Content>())
+                .map
+                .nobody_to_warp()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
@@ -84,15 +82,15 @@ impl EffectDef<RiftScripting> for Warp {
                 Reaching {
                     done: NEXT,
                     refused: None,
-                    nobody: Some("Nobody to warp"),
+                    nobody: Some(nobody.as_str()),
                 },
                 move |world, actor| warp(world, actor, to),
             )
         }))
     }
-    fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+    fn reach(&self, cx: &Compiler) -> Vec<Reach> {
         cx.peek_place(&self.to)
-            .map(EffectReach::Warp)
+            .map(|place| Reach::new(Warps(place)))
             .into_iter()
             .collect()
     }
@@ -106,23 +104,24 @@ impl EffectDef<RiftScripting> for Warp {
 pub struct ReturnToSpawn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for ReturnToSpawn {
+impl EffectDef for ReturnToSpawn {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_anywhere(world, cx, &who);
+            let nobody = messages::of(world.resource::<Content>())
+                .map
+                .nobody_to_warp()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
@@ -131,21 +130,19 @@ impl EffectDef<RiftScripting> for ReturnToSpawn {
                 Reaching {
                     done: NEXT,
                     refused: None,
-                    nobody: Some("Nobody to warp"),
+                    nobody: Some(nobody.as_str()),
                 },
                 |world, actor| {
                     let spawn = world.get::<SpawnPoint>(actor).map(|spawn| spawn.0);
                     let area = world.get::<AreaTag>(actor).map(|tag| tag.area);
                     let (Some(at), Some(area)) = (spawn, area) else {
-                        return Err("Has no spawn point".into());
+                        let words = &messages::of(world.resource::<Content>()).map;
+                        return Err(LineText::from(words.no_spawn_point()));
                     };
                     warp(world, actor, Place { area, at })
                 },
             )
         }))
-    }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
     }
 }
 
@@ -156,21 +153,18 @@ impl EffectDef<RiftScripting> for ReturnToSpawn {
 pub struct WarpToActor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
-    pub to: Condition,
+    pub who: Option<Expr>,
+    pub to: Expr,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for WarpToActor {
+impl EffectDef for WarpToActor {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let to = cx.actor_anywhere(Some(&self.to))?;
         Ok(Box::new(move |world, flow, cx| {
@@ -182,6 +176,10 @@ impl EffectDef<RiftScripting> for WarpToActor {
                     .and_then(|roster| roster.place_of(client)),
                 Aimed::Nobody => None,
             };
+            let nobody = messages::of(world.resource::<Content>())
+                .map
+                .nobody_to_warp()
+                .to_owned();
             effects::reach(
                 world,
                 flow,
@@ -190,25 +188,30 @@ impl EffectDef<RiftScripting> for WarpToActor {
                 Reaching {
                     done: NEXT,
                     refused: None,
-                    nobody: Some("Nobody to warp"),
+                    nobody: Some(nobody.as_str()),
                 },
-                move |world, actor| warp(world, actor, stands.ok_or("Nobody to warp to")?),
+                move |world, actor| {
+                    let Some(stands) = stands else {
+                        let words = &messages::of(world.resource::<Content>()).map;
+                        return Err(LineText::from(words.nobody_to_warp_to()));
+                    };
+                    warp(world, actor, stands)
+                },
             )
         }))
-    }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
     }
 }
 
 pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), LineText> {
     let here = world.get::<AreaTag>(actor).map(|tag| tag.area);
     if here != Some(to.area) && world.get::<Npc>(actor).is_some() {
-        return Err("Npcs stay in their area".into());
+        let words = &messages::of(world.resource::<Content>()).map;
+        return Err(LineText::from(words.npcs_stay()));
     }
     let instanced = to.area.get(world.resource::<Content>()).instance.is_some();
     if here != Some(to.area) && instanced {
-        return Err("Nobody is followed into an instance".into());
+        let words = &messages::of(world.resource::<Content>()).map;
+        return Err(LineText::from(words.no_following_into_instance()));
     }
     dialogue::close_for(world, actor);
     area_instance::entrance::close(world, actor);
@@ -259,4 +262,11 @@ fn standing(world: &World, actor: Entity) -> Option<Place> {
         area: world.get::<AreaTag>(actor)?.area,
         at: movement::position(world, actor)?,
     })
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .effect::<Warp>("warp")
+        .effect::<WarpToActor>("warp_to_actor")
+        .effect::<ReturnToSpawn>("return_to_spawn");
 }

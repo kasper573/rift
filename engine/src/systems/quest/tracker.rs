@@ -9,13 +9,13 @@ use super::{Parties, QuestId, QuestLog, QuestResult, ready_mark};
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::core::gui;
+use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
 use crate::systems::area_map::minimap;
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::item::Inventory;
 use crate::systems::player::session;
 use crate::systems::settings::UserSettings;
-use crate::systems::text::LineText;
 
 const UNDER_THE_MAP: f32 = 6.0;
 const MARK: f32 = 16.0;
@@ -53,10 +53,19 @@ impl HudWidget for QuestTrackerWidget {
             .unwrap_or_default();
         let folded = world.resource::<Folded>().0;
         let opacity = world.resource::<UserSettings>().tracker_backing();
-        let heading = TrackerHeading {
-            title: "Quests",
-            listed: entries.len(),
-            lists: "tracked quests",
+        let content = world.resource::<Content>().clone();
+        let words = super::words(&content);
+        let folded_title = words.tracker_folded(entries.len());
+        let heading = if folded {
+            TrackerHeading {
+                title: &folded_title,
+                said: words.tracker_show(),
+            }
+        } else {
+            TrackerHeading {
+                title: words.tracker_title(),
+                said: words.tracker_hide(),
+            }
         };
         let shown = tracker::show(ui, heading, folded, opacity.0 / 100.0, |ui, at| {
             entries.iter().fold(at.y, |foot, entry| {
@@ -88,6 +97,7 @@ enum Count {
 
 fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry, at: Pos2) -> f32 {
     let content = world.resource::<Content>().clone();
+    let words = super::words(&content);
     let mut top = at.y + tracker::ENTRY_GAP;
     tracker::bullet(ui, Pos2::new(at.x, top));
     let mut left = at.x + INDENT;
@@ -112,17 +122,17 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry, at:
         let count = match count {
             Count::Hidden => None,
             Count::Fixed(count) => Some(count.clone()),
-            Count::Live(shows) => shows.label(log, entry.quest, super::card::clock_now()),
+            Count::Live(shows) => shows.label(&content, log, entry.quest, super::card::clock_now()),
         };
         let said = match count {
-            Some(count) => label.clone().then(format!(" {count}")),
+            Some(count) => words.row_counted(label.clone(), count),
             None => label.clone(),
         };
         (said, *tone)
     });
     let left_on_the_clock = entry
         .timed
-        .then(|| Countdown::LeftDetail.label(log, entry.quest, super::card::clock_now()))
+        .then(|| Countdown::LeftDetail.label(&content, log, entry.quest, super::card::clock_now()))
         .flatten()
         .map(|left| (LineText::plain(left), TrackerTone::Timed));
     for (said, tone) in rows.chain(left_on_the_clock) {
@@ -161,6 +171,7 @@ fn row(ui: &mut Ui, world: &World, at: Pos2, said: &LineText, tone: TrackerTone)
 fn entries(world: &World) -> Vec<Entry> {
     let content = world.resource::<Content>();
     let parties = world.resource::<Parties>();
+    let words = super::words(content);
     let seen = session::me(world);
     let Some(log) = seen.and_then(|seen| world.get::<QuestLog>(seen)) else {
         return Vec::new();
@@ -189,7 +200,7 @@ fn entries(world: &World) -> Vec<Entry> {
                     .into_iter()
                     .map(|progress| {
                         let count = if progress.counted {
-                            Count::Fixed(format!("{} of {}", progress.have, progress.need))
+                            Count::Fixed(words.of(progress.have, progress.need))
                         } else {
                             Count::Hidden
                         };
@@ -211,12 +222,16 @@ fn entries(world: &World) -> Vec<Entry> {
             let finished = log.finished(quest)?;
             let rows = match finished.result {
                 QuestResult::Completed => vec![(
-                    "Done for today".into(),
+                    LineText::plain(words.done_today()),
                     Count::Live(Countdown::Resets),
                     TrackerTone::Done,
                 )],
                 QuestResult::Failed => vec![
-                    ("Failed".into(), Count::Hidden, TrackerTone::Bad),
+                    (
+                        LineText::plain(words.failed()),
+                        Count::Hidden,
+                        TrackerTone::Bad,
+                    ),
                     (
                         def.retry_hint(content, parties, quest),
                         Count::Hidden,

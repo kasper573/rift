@@ -18,10 +18,12 @@ use ui::ink::Ground;
 use super::{NotificationSent, window_visible};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, Tier};
-use crate::core::text::{self, KeyNames, StyledLine, TextLook, TextPiece};
+use crate::core::text::{self, KeyNames, LineText, StyledLine, TextLook};
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
-use crate::systems::input::map::{self, InputAction};
+use crate::systems::input::map::InputAction;
+use crate::systems::input::scope;
+use crate::systems::messages;
 use crate::systems::screen::ClientScreen;
 use ui::motion::{Transit, TransitMove, TransitPose, Transits};
 use ui::paint;
@@ -193,7 +195,7 @@ pub(super) fn draw_captions(world: &mut World, gui: &egui::Context, top: f32) ->
     let width = measured
         .iter()
         .map(|(line, _, size)| {
-            let label = label_width(gui, &label_text(&line.label, line.replaced));
+            let label = label_width(gui, &label_text(world, &line.label, line.replaced));
             size.x.max(label)
         })
         .fold(0.0, f32::max)
@@ -274,6 +276,7 @@ pub(super) fn draw_milestones(world: &mut World, gui: &egui::Context, top: f32) 
 }
 
 pub(super) fn count_chip(ui: &mut Ui, world: &World, more: u32) -> egui::Response {
+    let text = more_text(world, more);
     egui::Frame::new()
         .fill(SLATE_40.gamma_multiply(0.55))
         .corner_radius(8.0)
@@ -282,7 +285,7 @@ pub(super) fn count_chip(ui: &mut Ui, world: &World, more: u32) -> egui::Respons
             let size = text::measure(
                 ui.ctx(),
                 world,
-                &more_text(more),
+                &text,
                 look(CAPTION, SLATE_90.gamma_multiply(0.75)),
                 f32::INFINITY,
             );
@@ -290,7 +293,7 @@ pub(super) fn count_chip(ui: &mut Ui, world: &World, more: u32) -> egui::Respons
             text::show(
                 ui,
                 world,
-                &more_text(more),
+                &text,
                 look(CAPTION, SLATE_90.gamma_multiply(0.75)),
                 None,
             );
@@ -298,12 +301,15 @@ pub(super) fn count_chip(ui: &mut Ui, world: &World, more: u32) -> egui::Respons
         .response
 }
 
-pub(super) fn more_text(more: u32) -> StyledLine {
-    StyledLine::new(vec![
-        TextPiece::text(format!("+{more} more \u{b7} ")),
-        map::input(InputAction::OpenHistory),
-        TextPiece::text(" history"),
-    ])
+pub(super) fn more_text(world: &World, more: u32) -> StyledLine {
+    let content = world.resource::<Content>();
+    let words = &messages::of(content).notification;
+    if scope::reads(world, InputAction::OpenHistory) {
+        words.more_keyed(more, InputAction::OpenHistory)
+    } else {
+        LineText::plain(words.more(more))
+    }
+    .styled(content)
 }
 
 pub(super) fn hovered(world: &World, rects: &[Rect]) -> bool {
@@ -343,7 +349,7 @@ pub(super) fn look(size: f32, color: Color32) -> TextLook {
 }
 
 pub(super) fn label_font() -> FontId {
-    Face::BookBold.id(LABEL)
+    Face::SmallCapsBold.id(LABEL)
 }
 
 /// Where a notice stacks among what else is on screen.
@@ -567,7 +573,7 @@ fn chip_area(
 fn caption_row(ui: &mut Ui, world: &World, line: &LabelledLine, size: Vec2) {
     ui.spacing_mut().item_spacing.y = LINE_GAP;
     ui.label(
-        RichText::new(label_text(&line.label, line.replaced))
+        RichText::new(label_text(world, &line.label, line.replaced))
             .font(label_font())
             .color(WHITE.gamma_multiply(0.7)),
     );
@@ -593,7 +599,7 @@ fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: TransitPo
     let shift = TSTransform::new(row.offset, row.scale);
     let label = dusk::label(
         ui,
-        &label_text(&line.label, line.replaced),
+        &label_text(world, &line.label, line.replaced),
         label_font(),
         WHITE.gamma_multiply(0.85),
         dusk::TEXT_SHADOW,
@@ -611,10 +617,12 @@ fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: TransitPo
     label.rect.union(words.rect)
 }
 
-fn label_text(label: &str, replaced: u32) -> String {
+fn label_text(world: &World, label: &str, replaced: u32) -> String {
     match replaced {
-        0 => label.to_uppercase(),
-        replaced => format!("{} +{replaced}", label.to_uppercase()),
+        0 => label.to_owned(),
+        replaced => messages::of(world.resource::<Content>())
+            .notification
+            .replaced_header(label, replaced),
     }
 }
 

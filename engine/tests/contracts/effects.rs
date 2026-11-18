@@ -5,8 +5,10 @@ use engine::core::content::Content;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{Meters, Seconds};
 use engine::core::vfx::{VfxDef, VfxInstance, VfxSite};
+use engine::systems::actor;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
+use engine::systems::area::vfx;
 use engine::systems::class::NodeKey;
 use engine::systems::combat::{self, Attitude};
 use engine::systems::equipment::{self, EquipmentPlace, UnequipRequest};
@@ -19,7 +21,6 @@ use engine::systems::skill::{
 };
 use engine::systems::stat::{self, StatKind};
 use engine::systems::status::{self, StatusCategory, StatusEffectDef, Statuses};
-use engine::systems::{actor, script, vfx};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -442,14 +443,14 @@ fn clinic() -> (Sim, Entity) {
         .add((skill::casting::request, skill::hotbar::requests))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
     sim.run(0.5);
     (sim, player)

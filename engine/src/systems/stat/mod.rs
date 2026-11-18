@@ -1,14 +1,17 @@
+pub mod query;
 mod vital;
 pub mod widget;
 
 pub use vital::{
-    Immortal, SettleVitals, apply_damage, current, current_health, dead, drain, heal, is_dead,
-    max_health, most, refill, restore, revive, stands,
+    Immortal, SettleVitals, VitalVfx, apply_damage, check_vfx, current, current_health, dead,
+    drain, heal, is_dead, max_health, most, refill, restore, revive, stands,
 };
 
 use crate::core::content::SchemaMark;
+use crate::core::script::Vocabulary;
 use std::collections::BTreeMap;
 
+use crate::systems::messages::messages;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
@@ -47,8 +50,22 @@ pub enum StatKind {
 }
 
 impl StatKind {
-    pub fn label(self) -> &'static str {
-        self.into()
+    /// Its name among `words`, the name a game gives each stat.
+    pub fn named(self, words: &StatMessages) -> &str {
+        match self {
+            StatKind::Health => words.health(),
+            StatKind::MaxHealth => words.max_health(),
+            StatKind::Mana => words.mana(),
+            StatKind::MaxMana => words.max_mana(),
+            StatKind::Damage => words.damage(),
+            StatKind::AttackSpeed => words.attack_speed(),
+            StatKind::AttackDelay => words.attack_delay(),
+            StatKind::MovementSpeed => words.movement_speed(),
+            StatKind::Range => words.range(),
+            StatKind::GatheringSpeed => words.gathering_speed(),
+            StatKind::GatheringEfficiency => words.gathering_efficiency(),
+            StatKind::CraftingSpeed => words.crafting_speed(),
+        }
     }
 
     pub const fn of(self, value: f32) -> Stat {
@@ -69,6 +86,34 @@ impl StatKind {
             | StatKind::AttackSpeed
             | StatKind::GatheringSpeed => None,
         }
+    }
+}
+
+messages! {
+    /// What the game calls each stat.
+    pub struct StatMessages {
+        health,
+        max_health,
+        mana,
+        max_mana,
+        damage,
+        attack_speed,
+        attack_delay,
+        movement_speed,
+        range,
+        gathering_speed,
+        gathering_efficiency,
+        crafting_speed,
+        /// The player sheet's row for the player's name.
+        name,
+        /// The player sheet's row for the player's class.
+        class,
+        /// The player sheet's row for the player's level.
+        level,
+        /// A number `{value}` the player sheet shows for a stat or the level.
+        figure(value: Number),
+        /// A number `{value}` the player sheet shows for a stat measured in a unit, `{unit}`.
+        figure_with_unit(unit: Text, value: Number),
     }
 }
 
@@ -111,12 +156,6 @@ pub struct Stat {
     #[serde(rename = "stat")]
     pub kind: StatKind,
     pub value: f32,
-}
-
-impl Stat {
-    pub fn label(self) -> &'static str {
-        self.kind.label()
-    }
 }
 
 #[derive(Component, JsonSchema, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -215,4 +254,8 @@ fn schema_with_units(schema: &mut schemars::Schema) {
             property.insert(SchemaMark::Unit.key().to_owned(), unit.into());
         }
     }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
 }

@@ -1,9 +1,9 @@
 use engine::core::audio::mix::AudioCategory;
 use engine::core::content::{AssetKind, AudioRef};
 use engine::systems::area::{SoundChannel, SoundscapeDef};
+use ui::controls;
 use ui::egui::{Align, Layout, Ui};
 use ui::form;
-use ui::glyph::{self, Mark};
 use ui::sheet;
 use ui::theme;
 
@@ -25,7 +25,7 @@ pub(super) fn soundscape_extras(
         ui.horizontal(|ui| {
             ui.label(theme::strong(format!("channel {}", channel.channel)).monospace());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                if controls::remove(ui, "Remove")
                     .on_hover_text("Remove the channel")
                     .clicked()
                 {

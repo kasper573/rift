@@ -12,10 +12,10 @@ use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::account::AccountId;
 use crate::systems::actor::Name;
+use crate::systems::area::Place;
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::area_instance::{AreaInstanceId, AreaInstanceWorld};
 use crate::systems::movement::Position;
-use crate::systems::script::Place;
 
 /// Everyone playing on the server, world by world, as they stood when its worlds last
 /// conferred: one roster, which every world of the server holds.

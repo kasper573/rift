@@ -18,6 +18,7 @@ use crate::systems::GameSettings;
 use crate::systems::actor::ActorModel;
 use crate::systems::actor::skeleton::BuildName;
 use crate::systems::actor::stance::{self, StanceId};
+use crate::systems::area::Place;
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, PropId};
 use crate::systems::area_instance::AreaInstanceRules;
 use crate::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers, WheelTurn};
@@ -27,7 +28,6 @@ use crate::systems::mount::{self, MountDef, MountId, MountKind};
 use crate::systems::movement::Bodies;
 use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
-use crate::systems::script::Place;
 use crate::systems::skill::{SkillDef, SkillId};
 use crate::systems::spawner::{SpawnSurface, Spawns};
 
@@ -238,15 +238,28 @@ pub struct ProbeResident {
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeSpawner {
-    /// What an entry may be, each as likely as its share of the weights.
-    pub spawns: Vec<ProbeSpawnShare>,
-    pub count: u32,
-    /// How long a freed entry stays empty; never filled again without one.
-    pub respawn: Option<Seconds>,
+    /// The name the area's scripts hear it by.
+    pub name: Option<String>,
+    /// What it spawns, one population at a time, numbered from 1 in this order.
+    pub populations: Vec<ProbePopulation>,
+    /// Whether it spawns nothing until a script wakes it.
+    pub dormant: bool,
     #[schemars(with = "RectSchema")]
     pub over: Rect<Meters>,
     /// What its entries are placed on.
     pub on: SpawnSurface,
+}
+
+/// One population of a spawner.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbePopulation {
+    /// What an entry may be, each as likely as its share of the weights.
+    pub spawns: Vec<ProbeSpawnShare>,
+    /// How many it spawns in all; endless without one.
+    pub size: Option<u32>,
+    pub max_spawned_at_once: u32,
+    /// How long a freed entry stays empty; never filled again without one.
+    pub respawn: Option<Seconds>,
 }
 
 /// One thing a spawner's entries may be, and its weight beside the others.
@@ -465,7 +478,7 @@ fn game(content: &Content) -> ProbeGame {
                     .bindings(action)
                     .iter()
                     .map(|binding| ProbeBinding {
-                        name: binding.name(),
+                        name: binding.name(inputs.words()),
                         gesture: (*binding).into(),
                     })
                     .collect(),
@@ -545,16 +558,25 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
     let spawners = area::modules(content, id)
         .filter_map(|module| match module {
             AreaModule::Spawner(spawner) => Some(ProbeSpawner {
-                spawns: spawner
-                    .spawns
+                name: spawner.name.clone(),
+                populations: spawner
+                    .populations
                     .iter()
-                    .map(|share| ProbeSpawnShare {
-                        what: share.what,
-                        weight: share.weight,
+                    .map(|population| ProbePopulation {
+                        spawns: population
+                            .spawns
+                            .iter()
+                            .map(|share| ProbeSpawnShare {
+                                what: share.what,
+                                weight: share.weight,
+                            })
+                            .collect(),
+                        size: population.size,
+                        max_spawned_at_once: population.max_spawned_at_once,
+                        respawn: population.respawn,
                     })
                     .collect(),
-                count: spawner.count,
-                respawn: spawner.respawn,
+                dormant: spawner.dormant,
                 over: spawner.within.unwrap_or_else(|| Rect::from_size(area.size)),
                 on: spawner.on,
             }),

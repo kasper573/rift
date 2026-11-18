@@ -16,6 +16,7 @@ use engine::systems::class::{
 use engine::systems::skill::{Rank, SkillDef};
 use strum::VariantArray;
 use ui::egui::{Color32, CursorIcon, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use ui::menu;
 use ui::{glyph, ink};
 
 use super::{edit, node_of, select_node};
@@ -98,7 +99,13 @@ pub(crate) fn node_skills(project: &Project, tree: &SkillTree) -> BTreeMap<NodeK
                 needs: node
                     .requires
                     .iter()
-                    .map(|requirement| requirement.describe(project, tree))
+                    .map(|requirement| {
+                        project
+                            .content
+                            .as_ref()
+                            .map(|content| requirement.line(content, tree).plain_words(content))
+                            .unwrap_or_default()
+                    })
                     .collect(),
             };
             (key.clone(), shown)
@@ -169,7 +176,7 @@ fn toolbar(
         shapes.shape_of(ClassDef::TABLE),
         |cx| {
             ui.horizontal(|ui| {
-                ui.checkbox(&mut snap, "snap to grid")
+                controls::check(ui, &mut snap, "snap to grid")
                     .on_hover_text("A dragged node lands on the grid under the pointer");
                 ui.add_space(12.0);
                 ui.label(theme::muted("add node").size(12.5));
@@ -248,11 +255,10 @@ fn backdrop_bar(
                     })
                     .response
                     .on_hover_text("How the image meets its frame: shown whole, cropped to fill it, or stretched");
-                framed = ui
-                    .button("frame the nodes")
+                framed = controls::button(ui, "frame the nodes")
                     .on_hover_text("Sizes the frame to the nodes, with room around them")
                     .clicked();
-                removed = ui.button("remove").clicked();
+                removed = controls::button(ui, "remove").clicked();
             }
         });
     });
@@ -523,7 +529,7 @@ fn canvas(
                     );
                 });
                 response.context_menu(|ui| {
-                    if ui.button("Remove node").clicked() {
+                    if menu::entry(ui, "Remove node").clicked() {
                         removed = Some(node_key.clone());
                         ui.close();
                     }

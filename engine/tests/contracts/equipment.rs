@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use engine::systems::actor::skeleton::EquipmentSlot;
-use engine::systems::equipment::{self, Equipment, EquipmentPlace, UnequipRequest};
-use engine::systems::item::{ItemDef, ItemId};
+use engine::systems::equipment::{self, EquipRequest, Equipment, EquipmentPlace, UnequipRequest};
+use engine::systems::item::{self, ItemDef, ItemId};
 use engine::systems::stat::{self, StatKind, Stats, Vital};
-use engine::systems::{script, status};
+use engine::systems::status;
 use serde_json::json;
 use testkit::{BODY, Game, Map, Sim};
 
@@ -65,19 +65,31 @@ fn wearing_one_of_a_stack_leaves_the_rest_in_the_bag() {
 }
 
 #[test]
-fn an_item_for_a_slot_the_body_lacks_stays_in_the_bag() {
-    let (mut sim, player) = wardrobe();
-    sim.give(player, "boots", 1);
-    let boots = sim.id::<ItemDef>("boots");
+fn an_item_the_body_cannot_wear_stays_in_the_bag_unused() {
+    for (name, refusal) in [
+        ("boots", "boots can't be worn by this body"),
+        ("potion", "potion can't be worn"),
+    ] {
+        let (mut sim, player) = wardrobe();
+        sim.give(player, name, 1);
+        let item = sim.id::<ItemDef>(name);
 
-    let refused = equipment::equip_from_bag(&mut sim.world, player, boots).expect_err("refused");
+        let refused = equipment::equip_from_bag(&mut sim.world, player, item).expect_err("refused");
+        let slot = item::bag_slot(&sim.world, player, item).expect("in the bag");
+        let conn = sim.conn(1);
+        sim.send(
+            conn,
+            EquipRequest {
+                slot: slot as u32,
+                hand: None,
+            },
+        );
+        sim.tick();
 
-    assert_eq!(
-        refused.plain_words(sim.content()),
-        "boots can't be worn by this body"
-    );
-    assert_eq!(sim.count(player, "boots"), 1);
-    assert!(!equipment::wears(&sim.world, player, boots));
+        assert_eq!(refused.plain_words(sim.content()), refusal);
+        assert_eq!(sim.count(player, name), 1, "{name} stays in the bag");
+        assert!(!equipment::wears(&sim.world, player, item));
+    }
 }
 
 fn wardrobe() -> (Sim, Entity) {
@@ -85,6 +97,7 @@ fn wardrobe() -> (Sim, Entity) {
         .area("room", &Map::open(5, 5), json!([]))
         .hero("room", 2.0, 2.0)
         .slots(BODY, &["head"])
+        .sfx("ui_refuse")
         .item(
             "rock",
             json!({
@@ -95,6 +108,18 @@ fn wardrobe() -> (Sim, Entity) {
         .item(
             "boots",
             json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "feet" } }),
+        )
+        .item(
+            "potion",
+            json!({
+                "kind": { "type": "usable" },
+                "modules": [{ "type": "script", "script": "potion_drunk.script.json" }],
+            }),
+        )
+        .script(
+            "potion_drunk",
+            "item",
+            json!({ "used": { "type": "on", "event": "used", "next": "heal" }, "heal": { "type": "heal", "by": "full" } }),
         )
         .script(
             "rock_lower",
@@ -109,15 +134,16 @@ fn wardrobe() -> (Sim, Entity) {
     let mut sim = Sim::new(content);
     sim.serve("room")
         .accept::<UnequipRequest>()
+        .accept::<EquipRequest>()
         .add(status::expire)
-        .add(equipment::unequip)
+        .add((equipment::unequip, equipment::equip_requested))
         .plan((
             status::aspect::SettleAspects::default(),
             status::aspect::TickAspects::default(),
         ))
-        .plan(script::RunFlows::default())
+        .plan(engine::core::script::run::FlowRunner::default())
         .plan(stat::SettleVitals::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
     (sim, player)
 }

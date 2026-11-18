@@ -352,7 +352,7 @@ fn chip(ui: &mut Ui, cx: &mut FormCx, source: &dyn PickSource, pick: &PickedKey)
     let empty = pick.is_empty();
     input::frame()
         .show(ui, |ui| {
-            let row = egui::vec2(ui.available_width(), input::row_height(ui));
+            let row = egui::vec2(ui.available_width(), input::ROW_HEIGHT);
             ui.allocate_ui_with_layout(row, Layout::right_to_left(Align::Center), |ui| {
                 ui.label(Mark::CaretDown.text(11.0).color(theme::MUTED));
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {

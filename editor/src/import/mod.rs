@@ -125,9 +125,7 @@ pub fn import(editor: &mut Editor, incoming: Vec<Incoming>) -> Result<Vec<String
 
 pub fn dialog(editor: &mut Editor, ctx: &Context, mut dialog: ImportDialog) -> Option<ModalDialog> {
     let mut outcome = None;
-    let mut pressed = dialog::Keys::default();
     dialog::card(ctx, "import", 760.0, |ui| {
-        pressed = dialog::keys(ui);
         dialog::title(
             ui,
             &format!("Import into {}", content_tree::folder_title(&dialog.folder)),
@@ -139,22 +137,17 @@ pub fn dialog(editor: &mut Editor, ctx: &Context, mut dialog: ImportDialog) -> O
         }
         ui.add_space(8.0);
         let picked = dialog.files.iter().filter(|file| file.take).count();
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(picked > 0, |ui| {
-                if controls::primary(ui, format!("Import {}", words::counted(picked, "file")))
-                    .clicked()
-                {
-                    outcome = Some(true);
-                }
-            });
-            if ui.button("Cancel").clicked() {
-                outcome = Some(false);
-            }
-        });
+        let label = format!("Import {}", words::counted(picked, "file"));
+        match dialog::AnswerRow::new(&label, crate::modal::CANCEL)
+            .enabled(picked > 0)
+            .confirm_key(false)
+            .show(ui)
+        {
+            Some(dialog::Answer::Confirm) => outcome = Some(true),
+            Some(dialog::Answer::Cancel) => outcome = Some(false),
+            None => {}
+        }
     });
-    if pressed.cancel {
-        outcome = Some(false);
-    }
     match outcome {
         Some(true) => {
             let folder = dialog.folder.clone();
@@ -209,21 +202,21 @@ fn listing(ui: &mut Ui, dialog: &mut ImportDialog) {
         let search = dialog.search.to_lowercase();
         let shown =
             |file: &Incoming| file.refused.is_none() && file.path.to_lowercase().contains(&search);
-        if ui.button("Pick all").clicked() {
+        if controls::button(ui, "Pick all").clicked() {
             dialog
                 .files
                 .iter_mut()
                 .filter(|file| shown(file))
                 .for_each(|file| file.take = true);
         }
-        if ui.button("Pick none").clicked() {
+        if controls::button(ui, "Pick none").clicked() {
             dialog
                 .files
                 .iter_mut()
                 .filter(|file| shown(file))
                 .for_each(|file| file.take = false);
         }
-        if existing > 0 && ui.button("Skip those already in the game").clicked() {
+        if existing > 0 && controls::button(ui, "Skip those already in the game").clicked() {
             dialog
                 .files
                 .iter_mut()
@@ -245,7 +238,7 @@ fn listing(ui: &mut Ui, dialog: &mut ImportDialog) {
                 let file = &mut dialog.files[index];
                 ui.horizontal(|ui| {
                     ui.add_enabled_ui(file.refused.is_none(), |ui| {
-                        ui.checkbox(&mut file.take, "");
+                        controls::tick(ui, &mut file.take);
                     });
                     let shown = file
                         .path

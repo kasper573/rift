@@ -23,10 +23,45 @@ use crate::core::store::{
 };
 use crate::core::time::UnixMillis;
 use crate::core::units::Seconds;
+use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 pub use crate::systems::player::snapshot::{GameChange, SavedCharacter};
 use crate::systems::player::{self, Departure, Players};
 use crate::systems::status::Statuses;
+
+use crate::systems::messages::messages;
+
+messages! {
+    /// What the game says of saving and of what the game changing did.
+    pub struct SaveMessages {
+        /// What the history says of one change: `{what}` happened, and `{became}` of it.
+        change_entry(what: Text, became: Text),
+        /// The heading over what a player is told the game changing did to their character.
+        game_changed,
+        /// What a player is told of something they had that the game no longer has: the file `{name}` of the type `{kind}`.
+        gone(kind: Text, name: Text),
+        /// What became of something the game has no place for: it is kept, and returns when it has.
+        kept_aside,
+        /// What a player is told as their bag, now `{slots}` slots, is `{stacks}` stacks short of what they carried.
+        stacks_did_not_fit(slots: Number, stacks: Number),
+        /// What a player is told as the class `{class}` no longer allows the skills they had learned.
+        skills_rearranged(class: Text),
+        /// What became of skills a class no longer allows: all `{points}` points are handed back.
+        points_returned(points: Number),
+        /// The button a player puts away what they were told the game changing did with.
+        carry_on,
+        /// The heading of what players are told while the game cannot save.
+        not_saving,
+        /// What players are told is at stake while the game cannot save: everything since `{time}`.
+        not_saving_since(time: Text),
+        /// What players are told they may do while the game cannot save.
+        play_on,
+        /// The heading of what players are told as the game saves again.
+        saved,
+        /// What players are told as the game saves again.
+        saved_again,
+    }
+}
 
 impl Record for SavedCharacter {
     const KIND: &'static str = "character";
@@ -89,6 +124,7 @@ struct StoreLink {
     store: RecordStore,
     runtime: tokio::runtime::Handle,
     scope: ContentScope,
+    told_after: u32,
     results: Sender<Written>,
     written: Receiver<Written>,
 }
@@ -127,9 +163,6 @@ struct Departed {
     left: Instant,
 }
 
-/// How many checkpoints fail in a row before players are told the game is not being saved.
-const TOLD_AFTER: u32 = 3;
-
 impl Checkpoints {
     /// Saving nothing: what a server with no store keeps of it.
     pub fn none() -> Checkpoints {
@@ -165,6 +198,7 @@ impl Checkpoints {
                 store,
                 runtime,
                 scope: ContentScope::of(content),
+                told_after: content.built::<GameSettings>().unsaved_told_after,
                 results,
                 written,
             }),
@@ -231,7 +265,8 @@ impl Checkpoints {
     /// How saving stands, as every world tells its players.
     pub fn saving(&self) -> ServerSaving {
         ServerSaving {
-            failing_since: (self.failures >= TOLD_AFTER)
+            failing_since: (self.link.as_ref())
+                .is_some_and(|link| self.failures >= link.told_after)
                 .then(|| self.last_saved.or(self.began))
                 .flatten(),
         }

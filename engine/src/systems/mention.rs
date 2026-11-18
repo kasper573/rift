@@ -11,17 +11,65 @@ use ui::ink::{Ground, Prose};
 use ui::suggest::DrawnSuggestion;
 
 use crate::core::card::CardStyleDef;
+use serde::{Deserialize, Serialize};
+
 use crate::core::content::{Content, Fixture, ImageRef};
 use crate::core::math::Rgb;
-use crate::core::text::{self, StyledLine, TextLook};
+use crate::core::text::{
+    self, KeyNames, LineText, PluggedSpan, SpanDef, SpanKinds, SpanText, StyledLine, StyledSpan,
+    TextLook, TextPiece,
+};
 use crate::systems::area::AreaId;
 use crate::systems::area_map::{self, MapSight};
 use crate::systems::interface::InterfaceIcon;
-use crate::systems::item::inline::{self, InlineItem};
+use crate::systems::item::inline::InlineItem;
 use crate::systems::item::{self, ItemId};
+use crate::systems::messages;
 use crate::systems::quest::{self, QuestId};
 use crate::systems::skill::{self, SkillId};
-use crate::systems::text::{LineText, NameMark, SpanText};
+
+/// Registers the kinds of span this system draws.
+pub fn spans(kinds: &mut SpanKinds) {
+    kinds.add::<NamedSpan>("named");
+}
+
+/// A name in a line, marked as one of a kind.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct NamedSpan {
+    pub name: String,
+    pub mark: NameMark,
+}
+
+/// What marks a name as one of a kind: the kind's icon before it, and the kind's colour where
+/// the ground is dark enough to show it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+#[serde(deny_unknown_fields)]
+pub struct NameMark {
+    pub icon: Option<ImageRef>,
+    pub color: Rgb,
+}
+
+impl SpanDef for NamedSpan {
+    fn pieces(&self, _: &Content) -> Vec<TextPiece> {
+        let icon = self
+            .mark
+            .icon
+            .as_ref()
+            .map(|icon| TextPiece::Image(icon.path().into()));
+        let name = StyledSpan::plain(self.name.clone()).lit(self.mark.color.into());
+        icon.into_iter().chain([name.into()]).collect()
+    }
+
+    fn words(&self, _: &Content, _: Option<&KeyNames>) -> String {
+        self.name.clone()
+    }
+}
+
+impl From<NamedSpan> for SpanText {
+    fn from(named: NamedSpan) -> SpanText {
+        SpanText::Part(PluggedSpan::new(named))
+    }
+}
 
 /// One of the things a line can name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -43,13 +91,14 @@ pub struct ShownMention {
 impl ShownMention {
     /// The thing as a line of text names it: its icon, then its name in its colour.
     pub fn span(self) -> SpanText {
-        SpanText::Named {
+        NamedSpan {
             name: self.name,
             mark: NameMark {
-                icon: Some(self.icon.path()),
+                icon: Some(self.icon),
                 color: self.color,
             },
         }
+        .into()
     }
 }
 
@@ -108,13 +157,14 @@ impl Mention {
             return InlineItem::of(item).into();
         }
         let shown = self.shown(content);
-        SpanText::Named {
+        NamedSpan {
             name: shown.name,
             mark: NameMark {
                 icon: None,
                 color: shown.color,
             },
         }
+        .into()
     }
 
     /// A line that names the thing and says nothing else.
@@ -172,7 +222,30 @@ pub fn dropdown<T: Into<Mention> + Copy + PartialEq>(
         .iter()
         .map(|&choice| (None, choice, choice.into()))
         .collect();
-    pick(ui, world, id_salt, picked, &listed)
+    let mut chosen = Some(*picked);
+    let response = pick(ui, world, id_salt, &mut chosen, &listed, None);
+    if let Some(chosen) = chosen {
+        *picked = chosen;
+    }
+    response
+}
+
+/// A combo box that picks one of `choices` into `picked`, drawn as [`dropdown`] draws them, whose
+/// list is narrowed by typing as it opens; `words` its hint and what it says when nothing matches.
+pub fn search_dropdown<T: Into<Mention> + Copy + PartialEq>(
+    ui: &mut Ui,
+    world: &mut World,
+    id_salt: impl ui::egui::AsIdSalt,
+    picked: &mut Option<T>,
+    choices: &[T],
+    words: controls::SearchWords,
+    width: f32,
+) -> Response {
+    let listed: Vec<(Option<&str>, T, Mention)> = choices
+        .iter()
+        .map(|&choice| (None, choice, choice.into()))
+        .collect();
+    pick(ui, world, id_salt, picked, &listed, Some((words, width)))
 }
 
 /// A dropdown that picks into `picked` one of the choices of `groups`, each a run of the list
@@ -192,7 +265,12 @@ pub fn grouped_dropdown<T: Copy + PartialEq>(
                 .map(move |&(choice, mention)| (Some(*heading), choice, mention))
         })
         .collect();
-    pick(ui, world, id_salt, picked, &listed)
+    let mut chosen = Some(*picked);
+    let response = pick(ui, world, id_salt, &mut chosen, &listed, None);
+    if let Some(chosen) = chosen {
+        *picked = chosen;
+    }
+    response
 }
 
 /// What a mention dropdown shows of each of its choices: in words, on its button and in its list,
@@ -245,10 +323,12 @@ fn pick<T: Copy + PartialEq>(
     ui: &mut Ui,
     world: &mut World,
     id_salt: impl ui::egui::AsIdSalt,
-    picked: &mut T,
+    picked: &mut Option<T>,
     listed: &[(Option<&str>, T, Mention)],
+    search: Option<(controls::SearchWords, f32)>,
 ) -> Response {
     let content = world.resource::<Content>().clone();
+    let messages = messages::of(&content);
     let world_ref: &World = world;
     let mut choices = MentionChoices {
         world: world_ref,
@@ -263,8 +343,8 @@ fn pick<T: Copy + PartialEq>(
         let row = mention.line(&content);
         let (name, button) = match heading {
             Some(heading) => (
-                format!("{heading}: {name}"),
-                LineText::plain(format!("{heading}: ")).then(row.clone()),
+                messages.interface.grouped_choice(heading, &name),
+                messages.interface.grouped_choice_line(heading, row.clone()),
             ),
             None => (name, row.clone()),
         };
@@ -280,21 +360,15 @@ fn pick<T: Copy + PartialEq>(
     }
     let selected = listed
         .iter()
-        .position(|(_, choice, _)| choice == picked)
-        .unwrap_or(0);
-    let combo = controls::drawn_combo(ui, id_salt, &choices, selected);
-    let pointed = combo
-        .pointed
-        .map(|(place, row)| (row, place))
-        .into_iter()
-        .chain([(combo.response.clone(), selected)]);
-    for (response, place) in pointed {
-        if let Some((_, _, Mention::Item(item))) = listed.get(place) {
-            inline::tooltip(world, &response, InlineItem::of(*item));
+        .position(|(_, choice, _)| Some(*choice) == *picked);
+    let combo = match search {
+        Some((words, width)) => {
+            controls::search_combo(ui, id_salt, &choices, selected, words, Some(width))
         }
-    }
+        None => controls::drawn_combo(ui, id_salt, &choices, selected.unwrap_or(0)),
+    };
     if let Some((_, choice, _)) = combo.picked.and_then(|place| listed.get(place)) {
-        *picked = *choice;
+        *picked = Some(*choice);
     }
     combo.response
 }

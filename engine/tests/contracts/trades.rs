@@ -1,18 +1,20 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{MeterPos, Meters, Seconds};
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef};
-use engine::systems::inbox::InboxView;
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
+use engine::systems::mail::InboxView;
+use engine::systems::mount::{self, MountDef};
 use engine::systems::movement::{self, position};
 use engine::systems::player::{ClientId, Players};
-use engine::systems::script::Place;
+use engine::systems::skill::CastAim;
 use engine::systems::social_request::RequestAnswer;
-use engine::systems::trade::{self, TradeRequest, TradeView};
+use engine::systems::trade::{self, TradeAsk, TradeRequest, TradeView};
 use engine::systems::{combat, request_sources};
 use serde_json::json;
-use testkit::{Game, Map};
+use testkit::{BODY, Game, Map, rig_clips};
 
 use crate::server::Server;
 
@@ -28,7 +30,7 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
     host.give(2, "sword", 1);
     host.give(2, "dagger", 1);
 
-    host.send(1, TradeRequest::Ask { with: hale });
+    host.send(1, TradeAsk { with: hale });
     for _ in 0..400 {
         if !host.server.cards(2).is_empty() {
             break;
@@ -53,14 +55,14 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
         "accepting opens the trade for both"
     );
 
-    host.send(1, TradeRequest::Offer(host.stack("map", 1)));
-    host.send(1, TradeRequest::Offer(host.stack("gold", 200)));
+    host.send(1, TradeRequest::Give(host.stack("map", 1)));
+    host.send(1, TradeRequest::Give(host.stack("gold", 200)));
     assert_eq!(
         (host.mine(1), host.errors(1).last().cloned()),
         (vec![], Some("Tattered Map is bound.".to_owned())),
         "a bound item can't be offered, nor more than the bag holds"
     );
-    host.send(1, TradeRequest::Offer(host.stack("gold", 30)));
+    host.send(1, TradeRequest::Give(host.stack("gold", 30)));
     let seen = host.view(2).expect("Hale's trade");
     assert_eq!(
         (
@@ -92,7 +94,7 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
     host.send(1, TradeRequest::Accept(version));
     assert!(host.view(1).expect("a trade").i_accept);
 
-    host.send(2, TradeRequest::Offer(host.stack("sword", 1)));
+    host.send(2, TradeRequest::Give(host.stack("sword", 1)));
     let changed = host.view(1).expect("a trade");
     assert_eq!(
         (changed.i_accept, {
@@ -112,7 +114,7 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
     );
 
     let version = changed.version;
-    host.send(2, TradeRequest::Offer(host.stack("dagger", 1)));
+    host.send(2, TradeRequest::Give(host.stack("dagger", 1)));
     host.send(2, TradeRequest::Withdraw(host.stack("dagger", 1)));
     let version_now = host.view(1).expect("a trade").version;
     assert_ne!(version, version_now, "taking back is a change too");
@@ -138,7 +140,7 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
     );
     host.fill_bag(1);
     host.open_trade();
-    host.send(2, TradeRequest::Offer(host.stack("dagger", 1)));
+    host.send(2, TradeRequest::Give(host.stack("dagger", 1)));
     host.server.later(3.0);
     let version = host.view(1).expect("a trade").version;
     host.send(1, TradeRequest::Accept(version));
@@ -161,7 +163,7 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
                 "Items from your trade with Hale".to_owned(),
                 vec![host.stack("dagger", 1)]
             )),
-            Some("No room in your bag for 1 Dagger: sent to your messages.".to_owned())
+            Some("No room in your bag for 1 Dagger: sent to your mail.".to_owned())
         ),
         "what a full bag has no room for is sent as a message, and the player is told"
     );
@@ -170,7 +172,7 @@ fn a_trade_swaps_both_offers_once_both_accept_the_same_deal() {
 #[test]
 fn a_trade_ends_for_both_when_either_cancels_or_can_no_longer_trade() {
     type Ending = fn(&mut Host);
-    let endings: [(&str, &[&str], &[&str], Ending); 6] = [
+    let endings: [(&str, &[&str], &[&str], Ending); 7] = [
         ("cancelled", &["Hale cancelled the trade."], &[], |host| {
             host.send(2, TradeRequest::Cancel);
         }),
@@ -210,9 +212,20 @@ fn a_trade_ends_for_both_when_either_cancels_or_can_no_longer_trade() {
             |host| host.server.village.disconnect(2),
         ),
         (
+            "mounted",
+            &["The trade with Hale ended: Hale got on a mount."],
+            &["The trade with Wren ended: Hale got on a mount."],
+            |host| {
+                let hale = host.character(2);
+                let horse = host.server.village.id::<MountDef>("horse");
+                mount::call(&mut host.server.village.world, hale, horse, CastAim::None)
+                    .expect("a horse to ride");
+            },
+        ),
+        (
             "offer gone",
-            &["The trade with Hale ended: an offered item left Hale's bag."],
-            &["The trade with Wren ended: an offered item left Hale's bag."],
+            &["The trade with Hale ended: an offered item left Hale's inventory."],
+            &["The trade with Wren ended: an offered item left Hale's inventory."],
             |host| {
                 let hale = host.character(2);
                 let sword = host.stack("sword", 1);
@@ -233,8 +246,8 @@ fn a_trade_ends_for_both_when_either_cancels_or_can_no_longer_trade() {
         host.give(1, "gold", 50);
         host.give(2, "sword", 1);
         host.open_trade();
-        host.send(1, TradeRequest::Offer(host.stack("gold", 50)));
-        host.send(2, TradeRequest::Offer(host.stack("sword", 1)));
+        host.send(1, TradeRequest::Give(host.stack("gold", 50)));
+        host.send(2, TradeRequest::Give(host.stack("sword", 1)));
         let before = (host.errors(1).len(), host.errors(2).len());
         end(&mut host);
         host.run(2);
@@ -268,7 +281,7 @@ fn a_trade_ends_for_both_when_either_cancels_or_can_no_longer_trade() {
     host.open_trade();
     host.send(
         3,
-        TradeRequest::Ask {
+        TradeAsk {
             with: host.character(2),
         },
     );
@@ -288,7 +301,8 @@ impl Host {
     fn new() -> Host {
         let mut server = Server::of(game(), request_sources());
         for sim in [&mut server.village, &mut server.forest] {
-            sim.accept::<TradeRequest>()
+            sim.accept::<TradeAsk>()
+                .accept::<TradeRequest>()
                 .add((trade::requests, trade::hold))
                 .plan(movement::AdvanceWalks::default())
                 .add(trade::approach);
@@ -311,7 +325,7 @@ impl Host {
     fn open_trade(&mut self) {
         self.put(1, Pos::new(HALE_AT.x - 2.0, HALE_AT.y));
         let hale = self.character(2);
-        self.send(1, TradeRequest::Ask { with: hale });
+        self.send(1, TradeAsk { with: hale });
         self.run(3);
         self.server.answer(2, RequestAnswer::Accept);
         self.run(2);
@@ -408,7 +422,13 @@ impl Host {
 /// stacks.
 fn game() -> Game {
     let single = json!({ "kind": { "type": "resource" } });
+    let mut clips = rig_clips();
+    clips.push(("sit", Seconds(0.4)));
     Game::new()
+        .skeleton_of(BODY, &clips, json!({}))
+        .edit("skeleton", BODY, |body| {
+            body["base"]["moves"] = json!({ "sit": testkit::clip("sit") });
+        })
         .area("village", &Map::open(18, 9), json!([]))
         .area("forest", &Map::open(9, 9), json!([]))
         .hero("village", 2.0, 4.0)
@@ -430,10 +450,23 @@ fn game() -> Game {
         .edit("item", "sword", |sword| sword["name"] = json!("Iron Sword"))
         .edit("item", "dagger", |dagger| dagger["name"] = json!("Dagger"))
         .edit("item", "map", |map| map["name"] = json!("Tattered Map"))
+        .model("horse", 2.0, json!([]))
+        .row(
+            "mount",
+            "horse",
+            json!({
+                "name": "Horse",
+                "look": testkit::path("model", "horse"),
+                "travels": { "type": "riding" },
+                "reach": 3.0,
+                "rider": { "joint": "body", "rides": "sit", "may": [] },
+                "barred": "refuse",
+            }),
+        )
         .edit_settings(|settings| {
             settings["lingers_for"] = json!(30.0);
             settings["slots"]["bag"] = json!(4);
-            settings["messages"] = json!({
+            settings["mail"] = json!({
                 "inbox": 5, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
             });
             settings["trade"] = json!({ "reach": 6.0, "slots": 2, "accept_waits": 3.0 });

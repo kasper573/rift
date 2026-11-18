@@ -7,19 +7,23 @@ use ui::egui;
 use ui::face::TextRole;
 use ui::{float, ink, paint, slip};
 
-use super::{Left, Resource, ResourceAfloat, ResourceId, StopGathering, Working, workers};
+use super::{
+    Left, Resource, ResourceAfloat, ResourceId, ResourceMessages, StopGathering, Working, workers,
+};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{ground_height, surface_height, window_point, world_point};
-use crate::core::text::{self, StyledLine, TextLook, TextPiece};
+use crate::core::text::{self, LineText, TextLook};
 use crate::core::time;
 use crate::core::units::Meters;
 use crate::systems::actor::plate::PlateLabel;
 use crate::systems::actor::{Aloft, Hitbox};
 use crate::systems::hud;
-use crate::systems::input::map::{InputAction, input};
+use crate::systems::input::escape::{self, Dismissal};
+use crate::systems::input::map::InputAction;
+use crate::systems::messages;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -56,8 +60,12 @@ pub fn pointed_at(world: &mut World, pointed: &crate::core::render::Pointed) -> 
 }
 
 /// Ends the work the player's character has under way, if any.
+pub fn working(world: &World) -> bool {
+    session::me(world).is_some_and(|me| world.get::<Working>(me).is_some())
+}
+
 pub fn stop(world: &mut World) -> bool {
-    let working = session::me(world).is_some_and(|me| world.get::<Working>(me).is_some());
+    let working = working(world);
     if working {
         world.write_message(StopGathering);
     }
@@ -89,15 +97,16 @@ pub fn plates(world: &mut World) -> Vec<(Entity, PlateLabel, Pos<Meters>, Hitbox
         .map(|(entity, def, at, hitbox)| {
             let row = def.get(&content);
             let working = workers(world, entity);
-            let label = PlateLabel::resource(&row.name, working, row.max_occupants);
+            let messages = &messages::of(&content).resource;
+            let label = PlateLabel::resource(messages, &row.name, working, row.max_occupants);
             (entity, label, at, hitbox)
         })
         .collect()
 }
 
 /// What a plate says under a resource's name while it is worked.
-pub fn plate_line(working: u32, room: u32) -> Option<String> {
-    (working > 0).then(|| format!("{working} of {room} working"))
+pub fn plate_line(messages: &ResourceMessages, working: u32, room: u32) -> Option<String> {
+    (working > 0).then(|| messages.working_of(room, working))
 }
 
 fn dress(
@@ -193,11 +202,14 @@ fn draw_hint(world: &mut World) {
         .filter(|rect| rect.x_range().contains(middle) && rect.center().y > screen.center().y)
         .map(|rect| rect.top())
         .fold(screen.bottom(), f32::min);
-    let hint = StyledLine::new(vec![
-        TextPiece::text(format!("Working {name} · move or ")),
-        input(InputAction::Dismiss),
-        TextPiece::text(" to stop"),
-    ]);
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).resource;
+    let hint = if escape::dismisses(world) == Some(Dismissal::Work) {
+        words.working_keyed(InputAction::Dismiss, name.as_str())
+    } else {
+        LineText::plain(words.working_unkeyed(name.as_str()))
+    }
+    .styled(&content);
     let world: &World = world;
     float::anchored(
         &gui,

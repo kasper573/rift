@@ -141,7 +141,7 @@ pub fn preview(
         .min(total);
     ui.label(theme::faint(format!("{elapsed:.2} s of {total:.2}")).size(12.0));
     let tried = views.tried.entry(key.to_owned()).or_default();
-    if !specs.is_empty() && ui.button("reset to defaults").clicked() {
+    if !specs.is_empty() && controls::button(ui, "reset to defaults").clicked() {
         tried.clear();
     }
     ui.spacing_mut().slider_width = (ui.available_width() - SLIDER_SURROUND).max(60.0);

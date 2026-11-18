@@ -16,8 +16,8 @@ use crate::core::net::auth::TokenClaims;
 use crate::core::store::RecordStoreAddress;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
 use crate::core::units::{HourOfDay, Seconds};
+use crate::systems::area::Place;
 use crate::systems::player::SpawnPolicy;
-use crate::systems::script::Place;
 use crate::systems::staging::Staging;
 
 pub const BUILD_INFO_FLAG: &str = "--build-info";

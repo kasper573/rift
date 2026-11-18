@@ -5,6 +5,7 @@ use bevy_ecs::prelude::{Entity, World};
 use rayon::prelude::*;
 
 use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::core::time::{UnixMillis, WallClock};
 use crate::systems::WorldArea;
 use crate::systems::area::{AreaDef, AreaId};
@@ -14,7 +15,6 @@ use crate::systems::player::roster::{self, Enrollment, ServerRoster};
 use crate::systems::player::{ClientId, Departure, Players};
 use crate::systems::save::{self, Checkpoints};
 use crate::systems::society::{self, Asked, ServerSociety};
-use crate::systems::text::LineText;
 use crate::systems::{player, stat, step_area};
 
 /// Which of a server's worlds: the one everyone in `area` shares, or an instance of it.

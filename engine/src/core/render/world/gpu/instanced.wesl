@@ -44,7 +44,7 @@ struct InstancedOutput {
     @location(5) color: vec4<f32>,
     @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     @location(6) @interpolate(flat) instance_index: u32,
-    @location(10) @interpolate(flat) shown: vec3<f32>,
+    @location(10) @interpolate(flat) shown: vec2<f32>,
 }
 
 @if(PREPASS_PIPELINE)
@@ -67,7 +67,7 @@ struct InstancedOutput {
     @location(7) @interpolate(flat) instance_index: u32,
     @if(VERTEX_COLORS)
     @location(8) color: vec4<f32>,
-    @location(10) @interpolate(flat) shown: vec3<f32>,
+    @location(10) @interpolate(flat) shown: vec2<f32>,
     @if(PICK)
     @location(11) @interpolate(flat) id: u32,
     @if(MARK)
