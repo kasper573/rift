@@ -1,18 +1,33 @@
 use engine::core::content::{ContentFile, LoadError};
+use engine::core::script::RunnerKind;
+use engine::systems::area::AREA_RUNNER;
+use engine::systems::area::BLUEPRINT_RUNNER;
+use engine::systems::area::OBJECT_RUNNER;
 use engine::systems::area::blueprint::BlueprintDef;
+use engine::systems::area::spawnable::SPAWNABLE_RUNNER;
 use engine::systems::area::spawnable::SpawnableDef;
 use engine::systems::area::{AreaDef, AreaModuleKind};
+use engine::systems::command::COMMAND_RUNNER;
 use engine::systems::command::TerminalCommandDef;
+use engine::systems::crafting::RECIPE_BOOK_RUNNER;
 use engine::systems::crafting::RecipeBookDef;
+use engine::systems::item::ITEM_RUNNER;
 use engine::systems::item::ItemDef;
+use engine::systems::mount::MOUNT_RUNNER;
 use engine::systems::mount::MountDef;
+use engine::systems::npc::NPC_RUNNER;
 use engine::systems::npc::NpcDef;
+use engine::systems::quest::QUEST_RUNNER;
 use engine::systems::quest::QuestDef;
+use engine::systems::resource::RESOURCE_RUNNER;
 use engine::systems::resource::ResourceDef;
-use engine::systems::script::RunnerKind;
+use engine::systems::shop::SHOP_RUNNER;
 use engine::systems::shop::ShopDef;
+use engine::systems::skill::SKILL_RUNNER;
 use engine::systems::skill::SkillDef;
+use engine::systems::status::STATUS_EFFECT_RUNNER;
 use engine::systems::status::StatusEffectDef;
+use ui::controls;
 use ui::egui;
 use ui::egui::{Color32, FontId, Rect, Response, RichText, Sense, Ui, Vec2};
 use ui::glyph;
@@ -83,7 +98,7 @@ impl KindMark {
 pub(crate) fn kind_checkbox(ui: &mut Ui, mark: KindMark, label: &str, on: &mut bool) -> Response {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        let mut response = ui.add(egui::Checkbox::without_text(on));
+        let mut response = controls::tick(ui, on);
         let id = ui.id().with(("kind checkbox", label));
         let text = egui::RichText::new(label).color(mark.color());
         let laid = egui::Button::new((egui::Atom::custom(id, Vec2::splat(KIND_ICON)), text))
@@ -176,21 +191,22 @@ impl Badge {
 /// their icon.
 pub(crate) fn runner_mark(kind: RunnerKind) -> KindMark {
     let table = match kind {
-        RunnerKind::Object => return KindMark::Badge(Badge::of_module(AreaModuleKind::Object)),
-        RunnerKind::Any => return KindMark::Badge(Badge::of_tag(kind.into(), None)),
-        RunnerKind::Npc => NpcDef::TABLE,
-        RunnerKind::Item => ItemDef::TABLE,
-        RunnerKind::Area => AreaDef::TABLE,
-        RunnerKind::Quest => QuestDef::TABLE,
-        RunnerKind::Shop => ShopDef::TABLE,
-        RunnerKind::Resource => ResourceDef::TABLE,
-        RunnerKind::RecipeBook => RecipeBookDef::TABLE,
-        RunnerKind::Skill => SkillDef::TABLE,
-        RunnerKind::StatusEffect => StatusEffectDef::TABLE,
-        RunnerKind::Mount => MountDef::TABLE,
-        RunnerKind::Blueprint => BlueprintDef::TABLE,
-        RunnerKind::Spawnable => SpawnableDef::TABLE,
-        RunnerKind::Command => TerminalCommandDef::TABLE,
+        OBJECT_RUNNER => return KindMark::Badge(Badge::of_module(AreaModuleKind::Object)),
+        RunnerKind::ANY => return KindMark::Badge(Badge::of_tag(kind.name(), None)),
+        NPC_RUNNER => NpcDef::TABLE,
+        ITEM_RUNNER => ItemDef::TABLE,
+        AREA_RUNNER => AreaDef::TABLE,
+        QUEST_RUNNER => QuestDef::TABLE,
+        SHOP_RUNNER => ShopDef::TABLE,
+        RESOURCE_RUNNER => ResourceDef::TABLE,
+        RECIPE_BOOK_RUNNER => RecipeBookDef::TABLE,
+        SKILL_RUNNER => SkillDef::TABLE,
+        STATUS_EFFECT_RUNNER => StatusEffectDef::TABLE,
+        MOUNT_RUNNER => MountDef::TABLE,
+        BLUEPRINT_RUNNER => BlueprintDef::TABLE,
+        SPAWNABLE_RUNNER => SpawnableDef::TABLE,
+        COMMAND_RUNNER => TerminalCommandDef::TABLE,
+        _ => return KindMark::Badge(Badge::of_tag(kind.name(), None)),
     };
     KindMark::Icon(icons::of_table(table))
 }

@@ -1,5 +1,4 @@
 mod attack;
-mod board;
 mod default;
 mod gather;
 mod interact;
@@ -43,8 +42,6 @@ pub enum ClickClaim {
     Pickup(#[schemars(with = "u64")] Entity),
     Gather(#[schemars(with = "u64")] Entity),
     Interact(#[schemars(with = "u64")] Entity),
-    /// Asks the driver of the mount for a seat on it.
-    Board(#[schemars(with = "u64")] Entity),
     Walk(#[schemars(with = "PosSchema")] Pos<Meters>),
     Nothing,
 }
@@ -105,7 +102,6 @@ static CLAIMANTS: &[&dyn Claimant] = &[
     &pickup::PickupClaimant::Item,
     &gather::GatherClaimant,
     &interact::InteractClaimant,
-    &board::BoardClaimant,
     &walk::WalkClaimant,
     &default::DefaultClaimant,
 ];

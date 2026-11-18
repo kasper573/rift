@@ -5,15 +5,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
-use super::ParamValue;
-use super::rain::{LEANING, OPEN_TOP, SHELTER_DEPTH, SHELTER_STEP, SHELTER_STEPS};
-use super::uniform::{LIMBS_PER_TREAD, MAX_PATH_POINTS, TRAIL_EVERY, TRAIL_POINTS, TREADS};
+use super::uniform::MAX_PATH_POINTS;
+use super::{ParamValue, Stage, Stages};
+use crate::core::content::fixture::FixtureLock;
 use crate::core::content::{
     Bundle, ContentFile, ContentId, ContentProblem, ErrorPlace, FileShape, FileWriter, Loading,
     NamedContent, Nearby, PartSpec, Parts, RowCheck,
 };
 use crate::core::math::Rgba;
-use crate::core::render::world::cover::SHORE_REACH;
 
 pub type VfxShaderId = ContentId<VfxShaderDef>;
 
@@ -32,67 +31,6 @@ pub struct VfxShaderDef {
     pub stage: Stage,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<ShaderParam>,
-}
-
-/// Where a shader runs: in the material of the thing it plays on, as a decal on the ground under
-/// it, on a quad facing the camera at it, over the whole screen, in the text of a plate, as the
-/// cover a terrain grows or lies under, in a material of a prop, over an area's whole sky, or as
-/// the rain falling round the eye.
-#[derive(
-    JsonSchema,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    VariantArray,
-    IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum Stage {
-    Surface,
-    Ground,
-    Billboard,
-    Screen,
-    Text,
-    Cover,
-    Prop,
-    Sky,
-    Rain,
-}
-
-impl Stage {
-    /// Whether a layer on this stage plays on a site of `kind`: a surface needs a mesh, the ground
-    /// and a billboard a place in the world, the screen and the text their own sites.
-    pub fn takes(self, site: SiteKind) -> bool {
-        match self {
-            Stage::Surface => matches!(site, SiteKind::Actor | SiteKind::Object),
-            Stage::Ground | Stage::Billboard => matches!(
-                site,
-                SiteKind::Actor | SiteKind::Object | SiteKind::Area | SiteKind::Path
-            ),
-            Stage::Screen => site == SiteKind::Screen,
-            Stage::Text => site == SiteKind::Text,
-            Stage::Cover | Stage::Prop | Stage::Sky | Stage::Rain => false,
-        }
-    }
-
-    /// The stages a site of `kind` takes, named.
-    pub fn taken_by(site: SiteKind) -> String {
-        Stage::VARIANTS
-            .iter()
-            .filter(|stage| stage.takes(site))
-            .map(|stage| stage.label())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-
-    pub fn label(self) -> &'static str {
-        self.into()
-    }
 }
 
 pub const SHADER_SOURCE: PartSpec = PartSpec::File {
@@ -213,11 +151,6 @@ pub struct ParamSlot {
 /// text the load validated.
 pub struct CompiledVfxShaders(pub HashMap<VfxShaderId, String>);
 
-/// The bind group a material's own bindings sit in, for a quad drawn in the world or over the
-/// presented frame.
-const WORLD_GROUP: u32 = 3;
-const PRESENT_GROUP: u32 = 2;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShaderError {
     pub place: ErrorPlace,
@@ -250,6 +183,17 @@ impl ParamKind {
 }
 
 impl ShaderParam {
+    /// A parameter of `kind` that holds its kind's blank value until something fills it.
+    pub fn of(name: &str, kind: ParamKind) -> ShaderParam {
+        ShaderParam {
+            name: name.to_owned(),
+            kind,
+            default: kind.blank(),
+            min: None,
+            max: None,
+        }
+    }
+
     /// The range a number parameter is set within; a flag or a color has none.
     pub fn range(&self) -> Option<(f32, f32)> {
         Some((self.min?, self.max?))
@@ -257,6 +201,38 @@ impl ShaderParam {
 }
 
 impl VfxShaderDef {
+    /// What the engine reads of the file of a fixture shader that runs on `stage` and reads
+    /// `params`: content tunes the rest, but never takes these away.
+    pub fn fixture_locks(stage: Stage, params: &[ShaderParam]) -> Vec<FixtureLock> {
+        let stage = FixtureLock::field(crate::field!(VfxShaderDef, stage), &stage);
+        std::iter::once(stage)
+            .chain(params.iter().map(|param| {
+                FixtureLock::entry(
+                    crate::field!(VfxShaderDef, params),
+                    param,
+                    &[
+                        crate::field!(ShaderParam, name),
+                        crate::field!(ShaderParam, kind),
+                    ],
+                )
+            }))
+            .collect()
+    }
+
+    /// What a designer's fixture shader holds where it is missing: a fresh shader that runs on
+    /// `stage` and reads `params`.
+    pub fn fixture_fresh(
+        near: &Nearby,
+        stage: Stage,
+        params: Vec<ShaderParam>,
+    ) -> Result<VfxShaderDef, String> {
+        Ok(VfxShaderDef {
+            stage,
+            params,
+            ..VfxShaderDef::fresh(near)?
+        })
+    }
+
     pub fn param(&self, name: &str) -> Option<&ShaderParam> {
         self.params.iter().find(|param| param.name == name)
     }
@@ -317,16 +293,7 @@ impl VfxShaderDef {
     /// lines keep their numbers, then the header of the stage it runs on, the prelude, the site's
     /// constants and the struct its parameters are read through.
     pub fn compose(&self, source: &str) -> String {
-        self.composed(&self.stage.header(), source)
-    }
-
-    /// Whether the composed shader is WESL, importing the engine's own shader libraries, rather
-    /// than plain WGSL.
-    pub fn composes_wesl(&self) -> bool {
-        matches!(
-            self.stage,
-            Stage::Surface | Stage::Cover | Stage::Prop | Stage::Sky | Stage::Rain
-        )
+        self.composed(&(self.stage.spec().header)(), source)
     }
 
     /// The source goes first so its lines keep their numbers in what the validator reports; a WESL
@@ -368,7 +335,7 @@ impl VfxShaderDef {
     }
 
     pub fn check_source(&self, source: &str) -> Result<String, ShaderError> {
-        for required in self.stage.required_functions() {
+        for required in self.stage.spec().required {
             if !source.contains(&format!("fn {required}(")) {
                 return Err(ShaderError {
                     place: ErrorPlace::WholeFile,
@@ -376,7 +343,7 @@ impl VfxShaderDef {
                 });
             }
         }
-        let checked = self.composed(&self.stage.check_header(), source);
+        let checked = self.composed(&(self.stage.spec().check_header)(), source);
         let own_lines = source.lines().count();
         validate(&checked).map_err(|error| ShaderError {
             place: match error.place {
@@ -389,49 +356,14 @@ impl VfxShaderDef {
     }
 }
 
-/// Every name the prelude and the composed constants give a shader to read: what an editor
-/// highlights as the vfx vocabulary.
+/// Every name the prelude, the composed constants and the headers of the stages give a shader to
+/// read: what an editor highlights as the vfx vocabulary.
 pub fn prelude_names() -> Vec<String> {
-    let mut names = vec![
-        "vfx".to_owned(),
-        "site".to_owned(),
-        "params".to_owned(),
-        "sample".to_owned(),
-        "sway".to_owned(),
-        "weather".to_owned(),
-        "weight".to_owned(),
-        "tip".to_owned(),
-        "depth".to_owned(),
-        "seed".to_owned(),
-        "piece".to_owned(),
-        "mark".to_owned(),
-        "wind_gust".to_owned(),
-        "wind_lean".to_owned(),
-        "tread_push".to_owned(),
-        "lean".to_owned(),
-        "root".to_owned(),
-        "position".to_owned(),
-        "local".to_owned(),
-        "origin".to_owned(),
-        "size".to_owned(),
-        "tint".to_owned(),
-        "screen_right".to_owned(),
-        "screen_up".to_owned(),
-        "light".to_owned(),
-        "albedo".to_owned(),
-        "normal".to_owned(),
-        "toward_eye".to_owned(),
-        "look".to_owned(),
-        "light_way".to_owned(),
-        "light_color".to_owned(),
-        "moon_way".to_owned(),
-        "night".to_owned(),
-        "cloud_base".to_owned(),
-        "cloud_drift".to_owned(),
-        "cloud_at".to_owned(),
-        "eye".to_owned(),
-        "sky_light".to_owned(),
-    ];
+    let mut names: Vec<String> = ["vfx", "site", "params", "sample"]
+        .into_iter()
+        .chain(Stages::get().names())
+        .map(str::to_owned)
+        .collect();
     for line in prelude().lines() {
         let declared = line
             .strip_prefix("fn ")
@@ -466,7 +398,7 @@ impl ContentFile for VfxShaderDef {
     fn fresh(near: &Nearby) -> Result<VfxShaderDef, String> {
         Ok(VfxShaderDef {
             name: near.name(),
-            stage: Stage::Billboard,
+            stage: Stage::BILLBOARD,
             params: Vec::new(),
         })
     }
@@ -642,35 +574,13 @@ const PRELUDE: &str = include_str!("prelude.wgsl");
 const QUAD_HEADER: &str = include_str!("quad.wgsl");
 /// The header of a shader run in the material of the thing it plays on.
 const SURFACE_HEADER: &str = include_str!("surface.wesl");
-const COVER_HEADER: &str = include_str!("cover.wesl");
-const COVER_CHECK_HEADER: &str = include_str!("cover_check.wgsl");
-const PROP_HEADER: &str = include_str!("prop.wesl");
-const PROP_CHECK_HEADER: &str = include_str!("prop_check.wgsl");
-const SKY_HEADER: &str = include_str!("sky.wesl");
-const SKY_CHECK_HEADER: &str = include_str!("sky_check.wgsl");
-const RAIN_HEADER: &str = include_str!("rain.wesl");
-const RAIN_CHECK_HEADER: &str = include_str!("rain_check.wgsl");
-/// What a shader under the open sky reads of it, the sky's and the rain's alike: the light, the
-/// moon and the clouds; and the light the sky sheds, at run time.
-const HEAVENS: &str = include_str!("heavens.wgsl");
-const SKY_LIGHT: &str = include_str!("sky_light.wesl");
-const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
-/// Numbers drawn from seeds, which the prelude and the weather's helpers both read.
+/// Numbers drawn from seeds, which the prelude and the helpers of features read alike.
 const HASH_HELPERS: &str = include_str!("hash.wgsl");
 /// The frame's globals as the validator sees them, where the runtime headers import bevy's.
-const CLOCK_CHECK: &str = "struct Globals {\n    time: f32,\n    delta_time: f32,\n    frame_count: u32,\n}\n@group(0) @binding(11) var<uniform> globals: Globals;";
-/// What a cover's blades bend by, on top of the weather.
-const TREAD_HELPERS: &str = include_str!("tread.wgsl");
+pub const CLOCK_CHECK: &str = "struct Globals {\n    time: f32,\n    delta_time: f32,\n    frame_count: u32,\n}\n@group(0) @binding(11) var<uniform> globals: Globals;";
 
-/// The weather's helpers, as every shader that reads the weather is composed with them.
-pub(crate) fn weather_helpers() -> String {
-    format!(
-        "{WEATHER_HELPERS}\n// How far under a roof's or a canopy's top a point lies wholly sheltered, in metres.\nconst SHELTER_DEPTH: f32 = {SHELTER_DEPTH:?};\n// The top of a cell of the shelter where nothing stands over the ground.\nconst OPEN_TOP: f32 = {OPEN_TOP:?};\n// How the rain's way down to a point is followed for what shelters it.\nconst SHELTER_STEPS: i32 = {SHELTER_STEPS};\nconst SHELTER_STEP: f32 = {SHELTER_STEP:?};\nconst LEANING: f32 = {LEANING:?};",
-    )
-}
-
-/// The hashes the weather's helpers draw on, for a shader composed with them and no prelude.
-pub(crate) fn hash_helpers() -> &'static str {
+/// The hashes helpers of features may draw on, for a shader composed with them and no prelude.
+pub fn hash_helpers() -> &'static str {
     HASH_HELPERS
 }
 
@@ -681,67 +591,12 @@ fn prelude() -> String {
     )
 }
 
-fn cover_helpers() -> String {
-    let treads = TREAD_HELPERS
-        .replace("LIMBS_PER_TREAD", &format!("{LIMBS_PER_TREAD}u"))
-        .replace("TRAIL_POINTS", &format!("{TRAIL_POINTS}u"))
-        .replace("TRAIL_EVERY", &format!("{TRAIL_EVERY:?}"))
-        .replace("TREADS", &format!("{TREADS}u"));
-    let shore = format!(
-        "// How far from the shore `shore` tells a point lies at most, in metres.\nconst SHORE_REACH: f32 = {:?};",
-        SHORE_REACH.0
-    );
-    format!("{}\n{treads}\n{shore}", weather_helpers())
-}
-
-fn quad_header(group: u32) -> String {
+pub(super) fn quad_header(group: u32) -> String {
     QUAD_HEADER.replace("GROUP", &group.to_string())
 }
 
-impl Stage {
-    fn header(self) -> String {
-        match self {
-            Stage::Surface => SURFACE_HEADER.to_owned(),
-            Stage::Cover => format!("{COVER_HEADER}\n{}", cover_helpers()),
-            Stage::Prop => format!("{PROP_HEADER}\n{}", weather_helpers()),
-            Stage::Sky => format!(
-                "{SKY_HEADER}\n{SKY_LIGHT}\n{HEAVENS}\n{}",
-                weather_helpers()
-            ),
-            Stage::Rain => format!(
-                "{RAIN_HEADER}\n{SKY_LIGHT}\n{HEAVENS}\n{}",
-                weather_helpers()
-            ),
-            Stage::Ground | Stage::Billboard => quad_header(WORLD_GROUP),
-            Stage::Screen | Stage::Text => quad_header(PRESENT_GROUP),
-        }
-    }
-
-    /// The header the validator composes a shader of the stage with: plain WGSL that declares
-    /// what the runtime header declares and calls what the shader must define.
-    fn check_header(self) -> String {
-        match self {
-            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{CLOCK_CHECK}\n{}", cover_helpers()),
-            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{CLOCK_CHECK}\n{}", weather_helpers()),
-            Stage::Sky => format!(
-                "{SKY_CHECK_HEADER}\n{HEAVENS}\n{CLOCK_CHECK}\n{}",
-                weather_helpers()
-            ),
-            Stage::Rain => format!(
-                "{RAIN_CHECK_HEADER}\n{HEAVENS}\n{CLOCK_CHECK}\n{}",
-                weather_helpers()
-            ),
-            _ => quad_header(WORLD_GROUP),
-        }
-    }
-
-    /// The functions a shader of the stage must define.
-    fn required_functions(self) -> &'static [&'static str] {
-        match self {
-            Stage::Cover | Stage::Prop => &["vfx", "sway"],
-            _ => &["vfx"],
-        }
-    }
+pub(super) fn surface_header() -> String {
+    SURFACE_HEADER.to_owned()
 }
 
 fn layout(params: &[ShaderParam]) -> Vec<ParamSlot> {

@@ -72,6 +72,8 @@ impl Playtest {
             profile_dir: profile.to_path_buf(),
             exit_on_stdin_eof: true,
             probe: Some(listener.local_addr().expect("a bound probe port")),
+            releases_url: None,
+            updated_from: None,
         };
         let desktop = BenchDesktop::open(folder.path());
         let log = File::create(folder.path().join(CLIENT_LOG)).expect("a client log");

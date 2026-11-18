@@ -3,9 +3,9 @@ use bevy_ecs::prelude::*;
 use engine::core::units::Seconds;
 use engine::systems::area::AreaDef;
 use engine::systems::combat;
+use engine::systems::combat::credit::{self, KillCredited};
 use engine::systems::movement::position;
 use engine::systems::npc::{self, NpcDef};
-use engine::systems::rewards::{self, KillCredited};
 use engine::systems::{item, stat};
 use serde_json::json;
 use testkit::{Game, Map, Sim};
@@ -45,7 +45,7 @@ fn field() -> (Sim, Entity) {
         .load();
     let mut sim = Sim::new(content);
     sim.serve("field")
-        .add(rewards::grant)
+        .add(credit::credit)
         .plan(stat::SettleVitals::default())
         .add(combat::defeats);
     let player = sim.join(1);

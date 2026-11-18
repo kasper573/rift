@@ -1,13 +1,16 @@
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::Vocabulary;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, FlowCx, NEXT, ScriptFault};
+use crate::core::script::{EffectCall, Expr};
+use crate::systems::aim::{self as effects, AimedAll, Reaching};
 use crate::systems::combat;
 use crate::systems::npc::Npc;
-use crate::systems::script::effect::{self as effects, AimedAll, Reaching};
-use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting};
 use crate::systems::stat::{self, Vital};
 
 /// Restores health, or mana, up to its maximum.
@@ -16,7 +19,7 @@ use crate::systems::stat::{self, Vital};
 pub struct Heal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Vital::is_health")]
     pub restores: Vital,
     pub by: HealBy,
@@ -29,7 +32,7 @@ pub struct Heal {
 pub enum HealBy {
     Full(Fully),
     #[schemars(extend("default" = 10.0))]
-    Amount(Condition),
+    Amount(Expr),
 }
 
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
@@ -44,24 +47,21 @@ pub enum Fully {
 pub struct Damage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Vital::is_health")]
     pub takes: Vital,
     #[schemars(extend("default" = 5.0))]
-    pub by: Condition,
+    pub by: Expr,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for Heal {
+impl EffectDef for Heal {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_all_anywhere(cx, &self.who)?;
         let by = match &self.by {
             HealBy::Amount(amount) => Some(effects::number(cx, amount)?),
@@ -95,20 +95,17 @@ impl EffectDef<RiftScripting> for Heal {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Heals]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Heals)]
     }
 }
 
-impl EffectDef<RiftScripting> for Damage {
+impl EffectDef for Damage {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_all_anywhere(cx, &self.who)?;
         let by = effects::number(cx, &self.by)?;
         let takes = self.takes;
@@ -141,8 +138,8 @@ impl EffectDef<RiftScripting> for Damage {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Damages]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Damages)]
     }
 }
 
@@ -169,4 +166,20 @@ fn attacker(world: &World, cx: &FlowCx, target: Entity) -> Option<Entity> {
     cx.owner
         .filter(|owner| world.get::<Npc>(*owner).is_some())
         .or_else(|| cx.subject.filter(|subject| *subject != target))
+}
+
+/// A script that may heal someone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Heals;
+
+impl ReachDef for Heals {}
+
+/// A script that may hurt someone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Damages;
+
+impl ReachDef for Damages {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary.effect::<Heal>("heal").effect::<Damage>("damage");
 }

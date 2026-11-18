@@ -14,17 +14,19 @@ pub use view::{FriendRow, RequestCard, SocietyMember, SocietyView};
 
 use crate::core::content::{Content, ContentScope};
 use crate::core::store::{self, Record, RecordStore, RecordStoreProblem};
+use crate::core::text::LineText;
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::account::{AccountId, AccountIdentity};
 use crate::systems::area::AreaId;
-use crate::systems::area_instance::{self, AreaInstanceEntry, AreaInstances};
+use crate::systems::area_instance::{self, AreaInstances, InstanceAsk};
 use crate::systems::chat::ChatSaid;
 use crate::systems::friend::{self, FriendAsk, Friendship, Friendships};
-use crate::systems::inbox::{self, InboxAsk, InboxMessage, InboxReads, Inboxes};
-use crate::systems::mount;
+use crate::systems::item::deliver::Overflow;
+use crate::systems::mail::{self, InboxAsk, InboxReads, Inboxes, Letter};
+use crate::systems::market::{self, Listing, Market, MarketAsk};
 use crate::systems::notification::{self, Notification};
-use crate::systems::party::{self, PartyRequest, PlayerParties, PlayerParty};
+use crate::systems::party::{self, CharacterParties, CharacterParty, PartyRequest};
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
 use crate::systems::save::Unwritten;
@@ -33,7 +35,7 @@ use crate::systems::social_request::{
     SocialRequestAsk, SocialRequestKind, SocialRequestSource, SocialRequests,
 };
 use crate::systems::visibility;
-use crate::systems::worlds::AboveWorlds;
+use crate::systems::worlds::{AboveWorlds, WorldName};
 
 /// Where an account's character stands, and whether its player is away from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,8 +51,9 @@ pub struct Society {
     pub(crate) blocks: BlockLists,
     pub(crate) requests: SocialRequests,
     pub(crate) inboxes: Inboxes,
-    pub(crate) parties: PlayerParties,
+    pub(crate) parties: CharacterParties,
     pub(crate) instances: AreaInstances,
+    pub(crate) market: Market,
     sources: Vec<SocialRequestSource>,
     /// The accounts whose characters stand in a world, and where.
     playing: HashMap<AccountId, Playing>,
@@ -77,7 +80,7 @@ impl Society {
         sources: Vec<SocialRequestSource>,
     ) -> Result<Society, RecordStoreProblem> {
         let scope = &ContentScope::of(content);
-        let reads = match content.built::<GameSettings>().messages {
+        let reads = match content.built::<GameSettings>().mail {
             Some(_) => InboxReads::from(
                 store.clone(),
                 tokio::runtime::Handle::current(),
@@ -85,14 +88,15 @@ impl Society {
             ),
             None => InboxReads::default(),
         };
-        let messages = all::<InboxMessage>(store, &scope.clone().setting_aside()).await?;
+        let messages = all::<Letter>(store, &scope.clone().setting_aside()).await?;
         Ok(Society {
             accounts: Accounts::of(all::<Account>(store, scope).await?),
             friends: Friendships::of(all::<Friendship>(store, scope).await?),
             blocks: BlockLists::of(all::<Block>(store, scope).await?),
             requests: SocialRequests::of(all::<SocialRequest>(store, scope).await?),
             inboxes: Inboxes::counted(messages, reads),
-            parties: PlayerParties::of(all::<PlayerParty>(store, scope).await?),
+            parties: CharacterParties::of(all::<CharacterParty>(store, scope).await?),
+            market: Market::of(all::<Listing>(store, &scope.clone().setting_aside()).await?),
             sources,
             ..Society::default()
         })
@@ -128,8 +132,12 @@ impl Society {
         &self.inboxes
     }
 
-    pub fn parties(&self) -> &PlayerParties {
+    pub fn parties(&self) -> &CharacterParties {
         &self.parties
+    }
+
+    pub fn market(&self) -> &Market {
+        &self.market
     }
 
     /// Who `account` takes requests from, in a game with these `settings`.
@@ -148,6 +156,12 @@ impl Society {
             AcceptsRequestsFrom::Party => self.parties.together(asked, asker),
             AcceptsRequestsFrom::Nobody => false,
         }
+    }
+
+    /// Whether the two are friends or in one party: the ties that let a player reach another
+    /// beyond what a stranger may.
+    pub fn close(&self, one: &AccountId, other: &AccountId) -> bool {
+        self.friends.are(one, other) || self.parties.together(one, other)
     }
 
     /// `account` as other players know it.
@@ -184,7 +198,7 @@ impl Society {
         if roster.moved() {
             let mut playing: HashMap<AccountId, Playing> = HashMap::new();
             let mut called: Vec<(AccountId, String)> = Vec::new();
-            roster.each(|enrolled| {
+            roster.each(|enrolled, _| {
                 if let Some(account) = &enrolled.account {
                     let playing_as = Playing {
                         area: enrolled.area,
@@ -223,7 +237,7 @@ impl Society {
                 let friends = self.friends.of_account(account);
                 let party = self.parties.of_account(account);
                 let watching: Vec<AccountId> = friends
-                    .chain(party.into_iter().flat_map(PlayerParty::accounts))
+                    .chain(party.into_iter().flat_map(CharacterParty::accounts))
                     .cloned()
                     .collect();
                 self.changed.extend(watching);
@@ -250,7 +264,7 @@ impl Society {
         let friends = self.friends.of_account(account);
         let party = self.parties.of_account(account);
         let listing: Vec<AccountId> = friends
-            .chain(party.into_iter().flat_map(PlayerParty::accounts))
+            .chain(party.into_iter().flat_map(CharacterParty::accounts))
             .cloned()
             .collect();
         self.changed.extend(listing);
@@ -317,33 +331,67 @@ pub enum SocietyAsk {
     Party(PartyRequest),
     /// A line said to the party the player is in.
     PartyLine(ChatSaid),
-    /// To be let into their instance of an area.
-    EnterInstance(AreaInstanceEntry),
+    /// Of instances: an instance of their own, a call to their party, or an answer to one.
+    Instance(InstanceAsk),
+    Market(MarketAsk),
 }
 
-/// What a world's players asked of society since the server's worlds last conferred.
+/// What a world asked of society since the server's worlds last conferred: what its players
+/// asked, and what its deliveries had no room for.
 #[derive(Resource, Default)]
-pub struct SocietyAsks(Vec<(ClientId, SocietyAsk)>);
+pub struct SocietyAsks {
+    asked: Vec<(ClientId, SocietyAsk)>,
+    delivered: Vec<Overflow>,
+}
+
+impl SocietyAsks {
+    fn is_empty(&self) -> bool {
+        self.asked.is_empty() && self.delivered.is_empty()
+    }
+}
+
+/// What a world asked of society, as the worlds confer.
+#[derive(Default)]
+pub struct Asked {
+    pub asked: Vec<(ClientId, SocietyAsk)>,
+    /// Settled whatever became of the player they are for, so nothing paid goes missing.
+    pub delivered: Vec<Overflow>,
+}
+
+impl Asked {
+    pub fn append(&mut self, other: &mut Asked) {
+        self.asked.append(&mut other.asked);
+        self.delivered.append(&mut other.delivered);
+    }
+}
 
 /// Asks society for `ask`, for the player `by`. It is settled when the worlds next confer.
 pub fn ask(world: &mut World, by: ClientId, ask: SocietyAsk) {
-    world.resource_mut::<SocietyAsks>().0.push((by, ask));
+    world.resource_mut::<SocietyAsks>().asked.push((by, ask));
 }
 
-/// What the players of `world` asked of society since the worlds last conferred, leaving it
-/// nothing asked, in a world that holds `society` from here on.
-pub fn take_asks(world: &mut World, society: &ServerSociety) -> Vec<(ClientId, SocietyAsk)> {
+/// Has society write `overflow` as a message when the worlds next confer.
+pub fn send_overflow(world: &mut World, overflow: Overflow) {
+    world.resource_mut::<SocietyAsks>().delivered.push(overflow);
+}
+
+/// What `world` asked of society since the worlds last conferred, leaving it nothing asked, in a
+/// world that holds `society` from here on.
+pub fn take_asks(world: &mut World, society: &ServerSociety) -> Asked {
     let Some(asks) = world.get_resource::<SocietyAsks>() else {
-        return Vec::new();
+        return Asked::default();
     };
-    let asked = !asks.0.is_empty();
+    let asked = !asks.is_empty();
     if !world.resource::<ServerSociety>().is(society) {
         world.insert_resource(society.clone());
     }
-    if asked {
-        std::mem::take(&mut world.resource_mut::<SocietyAsks>().0)
-    } else {
-        Vec::new()
+    if !asked {
+        return Asked::default();
+    }
+    let mut asks = world.resource_mut::<SocietyAsks>();
+    Asked {
+        asked: std::mem::take(&mut asks.asked),
+        delivered: std::mem::take(&mut asks.delivered),
     }
 }
 
@@ -362,6 +410,15 @@ impl Settling<'_, '_> {
     /// The world the character of `account` stands in, and the character.
     pub fn reach(&mut self, account: &AccountId) -> Option<(&mut World, Entity)> {
         reach(self.views, self.roster, account)
+    }
+
+    /// The world `name`, while the server runs it.
+    pub fn world(&mut self, name: WorldName) -> Option<&mut World> {
+        self.views
+            .iter_mut()
+            .flatten()
+            .find(|world| WorldName::of(world) == Some(name))
+            .map(|world| &mut **world)
     }
 
     /// What `account` is called.
@@ -394,7 +451,7 @@ impl Settling<'_, '_> {
     }
 
     /// Tells the player of `account` that what they asked for was refused, and why.
-    pub fn refuse(&mut self, account: &AccountId, why: String) {
+    pub fn refuse(&mut self, account: &AccountId, why: impl Into<LineText>) {
         if let Some((world, character)) = self.reach(account) {
             notification::error(world, character, why);
         }
@@ -408,7 +465,7 @@ impl Settling<'_, '_> {
 pub fn settle(
     views: &mut [Option<&mut World>],
     above: &mut AboveWorlds,
-    asked: Vec<(ClientId, SocietyAsk)>,
+    asked: Asked,
     now: UnixMillis,
 ) {
     let game: Option<Content> = views
@@ -424,30 +481,34 @@ pub fn settle(
         unwritten: &mut above.checkpoints.unwritten,
         now,
     };
-    area_instance::look(&mut settling);
-    for (by, ask) in asked {
+    for overflow in asked.delivered {
+        overflow.settle(&mut settling);
+    }
+    if let Some(content) = &game {
+        area_instance::look(&mut settling, content);
+    }
+    for (by, ask) in asked.asked {
         let Some(content) = &game else {
             break;
         };
         let Some(by) = settling.roster.player(by).and_then(|player| player.account) else {
             continue;
         };
-        let settings = content.built::<GameSettings>();
         match ask {
-            SocietyAsk::Request(ask) => social_request::settle(&mut settling, settings, &by, ask),
+            SocietyAsk::Request(ask) => social_request::settle(&mut settling, content, &by, ask),
             SocietyAsk::Block(ask) => {
                 if let Some(blocked) = social_request::block::settle(&mut settling, &by, ask) {
                     friend::part(&mut settling, &by, &blocked);
-                    mount::seat::part(&mut settling, &by, &blocked);
                 }
             }
-            SocietyAsk::Friend(ask) => friend::settle(&mut settling, settings, &by, ask),
-            SocietyAsk::Inbox(ask) => inbox::settle(&mut settling, settings, &by, ask),
-            SocietyAsk::Party(ask) => party::settle(&mut settling, settings, &by, ask),
+            SocietyAsk::Friend(ask) => friend::settle(&mut settling, content, &by, ask),
+            SocietyAsk::Inbox(ask) => mail::settle(&mut settling, content, &by, ask),
+            SocietyAsk::Party(ask) => party::settle(&mut settling, content, &by, ask),
             SocietyAsk::PartyLine(said) => party::say(&mut settling, &by, &said),
-            SocietyAsk::EnterInstance(entry) => {
-                area_instance::enter(&mut settling, content, &by, entry);
+            SocietyAsk::Instance(ask) => {
+                area_instance::roster::settle(&mut settling, content, &by, ask);
             }
+            SocietyAsk::Market(ask) => market::settle(&mut settling, content, &by, ask),
             SocietyAsk::Accepts(from) => {
                 let chosen = settling.society.accounts.change(&by, |account| {
                     account.accepts_requests_from = Some(from);
@@ -460,13 +521,14 @@ pub fn settle(
         }
     }
     if let Some(content) = game {
-        let settings = content.built::<GameSettings>();
-        social_request::lapse(&mut settling, settings);
-        party::keep(&mut settling, settings);
+        social_request::lapse(&mut settling, &content);
+        party::keep(&mut settling, &content);
         for source in settling.society.sources.clone() {
             social_request::end_unless(&mut settling, source.kind, source.stands);
         }
+        area_instance::roster::keep(&mut settling, &content);
         area_instance::keep(&mut settling, &content);
+        market::keep(&mut settling, &content);
     }
     for account in std::mem::take(&mut settling.society.changed) {
         if let Some((world, character)) = reach(settling.views, settling.roster, &account) {
@@ -475,7 +537,7 @@ pub fn settle(
     }
     for account in settling.society.inboxes.changed() {
         if let Some((world, character)) = reach(settling.views, settling.roster, &account) {
-            inbox::show(world, character, &account, settling.society);
+            mail::show(world, character, &account, settling.society);
         }
     }
 }
@@ -486,10 +548,9 @@ fn reach<'v>(
     account: &AccountId,
 ) -> Option<(&'v mut World, Entity)> {
     let client = roster.account(account)?.client;
-    views.iter_mut().flatten().find_map(|world| {
-        let character = *world.get_resource::<Players>()?.0.get(&client)?;
-        Some((&mut **world, character))
-    })
+    let world = views.get_mut(roster.world_of(client)?)?.as_deref_mut()?;
+    let character = *world.get_resource::<Players>()?.0.get(&client)?;
+    Some((world, character))
 }
 
 async fn all<R: Record>(

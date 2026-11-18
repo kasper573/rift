@@ -1,6 +1,10 @@
 //! Menus: a button that opens one, an entry that opens another beside it, one at the pointer.
 
-use egui::{InnerResponse, Rect, Response, RichText, Ui, Vec2, WidgetText};
+use egui::containers::menu::menu_style;
+use egui::{
+    Align, Context, Id, InnerResponse, LayerId, Layout, PopupCloseBehavior, PopupKind, Pos2, Rect,
+    Response, RichText, Ui, Vec2, WidgetText,
+};
 
 use crate::glyph::Mark;
 use crate::theme;
@@ -47,6 +51,38 @@ pub fn at_pointer<R>(response: &Response, open: bool, add: impl FnOnce(&mut Ui) 
     egui::Popup::menu(response)
         .open_memory(command)
         .at_pointer_fixed()
+        .show(add)
+        .map(|shown| shown.inner)
+}
+
+/// An entry of an open menu, which picking closes.
+pub fn entry(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
+    ui.button(text)
+}
+
+/// An entry of an open menu that may be picked only while `enabled`.
+pub fn entry_if(ui: &mut Ui, enabled: bool, text: impl Into<WidgetText>) -> Response {
+    ui.add_enabled(enabled, egui::Button::new(text))
+}
+
+/// A menu standing at `position` on `layer`, laid out as a right-click menu is, for as long as
+/// `open` holds: it clears once the pointer presses outside the menu, and an entry that closes
+/// the menu clears it too.
+pub fn at<R>(
+    gui: &Context,
+    id: Id,
+    layer: LayerId,
+    position: Pos2,
+    open: &mut bool,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    egui::Popup::new(id, gui.clone(), position, layer)
+        .kind(PopupKind::Menu)
+        .layout(Layout::top_down_justified(Align::Min))
+        .style(menu_style)
+        .gap(0.0)
+        .open_bool(open)
+        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
         .show(add)
         .map(|shown| shown.inner)
 }

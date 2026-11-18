@@ -80,7 +80,7 @@ use crate::core::render::world::RenderProgress;
 use crate::core::render::world::cover::{CoverMaterial, SHORE_REACH, SheetOn};
 use crate::core::render::world::lod::{GRAIN_PIXELS, horizon_band};
 use crate::core::units::{GROUND_ORIGIN, Meters};
-use crate::core::vfx::shader::{hash_helpers, weather_helpers};
+use crate::core::vfx::shader::hash_helpers;
 
 /// The cells along a patch's side: a patch is a grid of a point more than this each way.
 pub const PATCH_CELLS: u32 = 128;
@@ -108,12 +108,12 @@ pub struct GroundSheet {
 /// What a terrain's ground is painted with: the terrains' pictures as one stack, white at the
 /// bottom for a terrain that has none; for each terrain its colour and tile in the first row of
 /// `layers`, its picture's place in the stack in the second and how it looks soaked in the third;
-/// the weather, which wets it; and how rough and how reflective it lies dry.
+/// the shader board its lit shader reads; and how rough and how reflective it lies dry.
 #[derive(Clone, Debug)]
 pub struct GroundPaint {
     pub pictures: Handle<Image>,
     pub layers: Handle<Image>,
-    pub weather: Handle<Image>,
+    pub board: Handle<Image>,
     pub roughness: f32,
     pub reflectance: f32,
 }
@@ -154,21 +154,21 @@ impl GroundPatch {
     }
 }
 
-/// The lit shader of the ground, composed as the world starts with the weather it reads.
+/// The lit shader of the ground, which whoever publishes the board it reads composes with the
+/// helpers that read it.
 pub const GROUND_LIT_SHADER: Handle<Shader> = Handle::Uuid(
     Uuid::from_u128(0x7269_6674_6772_6f75_6e64_0000_0000_0002),
     std::marker::PhantomData,
 );
 
-/// The ground's lit shader: its own text, then the weather's helpers it reads the rain by and
-/// the hashes those draw on.
-pub fn ground_lit_shader() -> Shader {
+/// The ground's lit shader: its own text, then the helpers `board_helpers` reads the world's board
+/// with, which it reads the rain by, and the hashes those draw on.
+pub fn ground_lit_shader(board_helpers: &str) -> Shader {
     Shader::from_wesl(
         format!(
-            "{}\n{}\n{}",
+            "{}\n{}\n{board_helpers}",
             include_str!("terrain_lit.wesl"),
             hash_helpers(),
-            weather_helpers()
         ),
         "engine/core/render/world/gpu/terrain_lit.wesl",
     )
@@ -181,10 +181,6 @@ impl Plugin for GroundDrawPlugin {
         bevy::shader::load_shader_library!(app, "terrain.wesl");
         bevy::shader::load_shader_library!(app, "sheet.wesl");
         bevy::asset::embedded_asset!(app, "terrain_depth.wesl");
-        let _ = app
-            .world_mut()
-            .resource_mut::<Assets<Shader>>()
-            .insert(GROUND_LIT_SHADER.id(), ground_lit_shader());
         app.add_plugins(ExtractComponentPlugin::<GroundDraw>::default())
             .add_systems(PostUpdate, find_sheet_patches);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -1052,18 +1048,18 @@ fn bind_grounds(
         finish.write_buffer(&device, &queue);
         let painted = match (
             images.get(&paint.pictures),
-            images.get(&paint.weather),
+            images.get(&paint.board),
             images.get(&paint.layers),
             finish.binding(),
         ) {
-            (Some(pictures), Some(weather), Some(layers), Some(finish)) => {
+            (Some(pictures), Some(board), Some(layers), Some(finish)) => {
                 Some(device.create_bind_group(
                     "ground_paint",
                     &cache.get_bind_group_layout(&pipeline.paint),
                     &BindGroupEntries::with_indices((
                         (100, &pictures.texture_view),
                         (101, &pictures.sampler),
-                        (102, &weather.texture_view),
+                        (102, &board.texture_view),
                         (103, &layers.texture_view),
                         (104, finish),
                         (105, atlas.view(AtlasTexture::OverviewCanopy)),

@@ -1,6 +1,7 @@
 use crate::widgets::Badge;
 use engine::core::content::FileSize;
 use engine::core::content::NOTE_EXTENSION;
+use ui::controls;
 use ui::egui;
 use ui::egui::{Align, Layout, Sense, Ui};
 use ui::face;
@@ -129,7 +130,7 @@ fn show_note(editor: &Editor, ui: &mut Ui, path: &str) {
     let Some(project) = &editor.project else {
         return;
     };
-    if ui.button("Open in your editor").clicked() {
+    if controls::button(ui, "Open in your editor").clicked() {
         let _ = opener::open(project.root.join(path));
     }
     ui.add_space(6.0);

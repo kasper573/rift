@@ -1,3 +1,4 @@
+use crate::core::script::Vocabulary;
 use std::collections::{HashMap, HashSet};
 
 pub mod appearance;
@@ -5,10 +6,12 @@ pub mod held;
 pub mod layering;
 pub mod material;
 pub mod model;
+pub mod options;
 pub mod part;
 pub mod plate;
 pub mod playing;
 pub mod portrait;
+pub mod query;
 pub mod render;
 pub mod rigging;
 pub mod skeleton;
@@ -41,6 +44,7 @@ use crate::core::render::{Pointed, capsule_hit, ground_height, world_point};
 use crate::core::units::{MeterPos, Meters, MetersPerSec, PlaybackRate, Radians};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
+use crate::systems::messages::messages;
 use crate::systems::movement::{self, Path, Position, RenderPosition};
 use crate::systems::skill::Cooldowns;
 use crate::systems::stat::{self, Stats};
@@ -164,7 +168,7 @@ pub enum Pose {
     Sleep,
 }
 
-/// One live player or npc: where it faces, what it does, how it stands and how fast it moves. Its
+/// One live character or npc: where it faces, what it does, how it stands and how fast it moves. Its
 /// statuses, boosts, aspects and cooldowns start empty with it.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[require(Statuses, Boosts, ActiveAspects, Cooldowns)]
@@ -351,4 +355,30 @@ pub(crate) fn set_action(actor: &mut Mut<Actor>, action: Action) {
     if actor.action != action {
         actor.action = action;
     }
+}
+
+messages! {
+    /// What the game says of the actors in the world, players and NPCs alike.
+    pub struct ActorMessages {
+        /// The option on another player that asks them to trade.
+        trade,
+        /// The option to trade with a player farther off than trading reaches, `{reach}` meters.
+        trade_walks(reach: Number),
+        /// The option on another player that adds them as a friend.
+        add_friend,
+        /// The option on another player that blocks them.
+        block,
+        /// The heading over the options on a player: their name `{name}` and level `{level}`.
+        name_and_level(level: Number, name: Text),
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .effect::<playing::Animate>("animate")
+        .effect::<playing::SetStance>("set_stance")
+        .effect::<playing::SetPose>("set_pose")
+        .effect::<appearance::SetAppearance>("set_appearance")
+        .effect::<held::SetHeld>("set_held");
 }

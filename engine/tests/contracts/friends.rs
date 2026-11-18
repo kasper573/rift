@@ -3,7 +3,7 @@ use bevy_replication::ToClient;
 use engine::core::content::Content;
 use engine::systems::GameSettings;
 use engine::systems::area::AreaDef;
-use engine::systems::friend::{self, AskFriendship, FindPlayers, PlayersFound, RemoveFriend};
+use engine::systems::friend::{self, AskFriendship, CharactersFound, FindCharacters, RemoveFriend};
 use engine::systems::player;
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::social_request::RequestAnswer;
@@ -178,7 +178,7 @@ fn a_player_is_found_by_the_start_of_their_name() {
     }
     let content = server.village.world.resource::<Content>().clone();
     let staged = JoinAs {
-        snapshot: CharacterSnapshot::of_player(&content, "Zofia", player::def(&content)),
+        snapshot: CharacterSnapshot::of_def(&content, "Zofia", player::def(&content)),
         start: content.built::<GameSettings>().initial_spawn,
         origin: JoinOrigin::Staged,
     };
@@ -189,17 +189,17 @@ fn a_player_is_found_by_the_start_of_their_name() {
     server.step();
     let mut heard = MessageCursor::default();
     let mut find = |server: &mut Server, typed: &str| -> (Vec<String>, u32) {
-        server.send(1, FindPlayers(typed.to_owned()));
+        server.send(1, FindCharacters(typed.to_owned()));
         server.step();
         let conn = server.village.conn(1);
-        let found: Vec<ToClient<PlayersFound>> = server.village.read(&mut heard);
+        let found: Vec<ToClient<CharactersFound>> = server.village.read(&mut heard);
         let [found] = found.as_slice() else {
             panic!("one answer to {typed:?}, not {}", found.len());
         };
         assert_eq!((found.client, found.message.starts.as_str()), (conn, typed));
         let names = found
             .message
-            .players
+            .characters
             .iter()
             .map(|player| player.name.clone());
         (names.collect(), found.message.in_all)
@@ -236,7 +236,7 @@ fn friends(server: &mut Server, client: u32) -> Vec<String> {
     let view = server.view(client);
     view.friends
         .into_iter()
-        .map(|friend| friend.player.name)
+        .map(|friend| friend.character.name)
         .collect()
 }
 

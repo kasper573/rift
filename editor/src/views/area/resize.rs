@@ -1,7 +1,6 @@
 use engine::core::content::{ContentFile, table_of};
 use engine::core::ground::{self, GroundSize};
 use engine::systems::area::AreaDef;
-use ui::controls;
 use ui::dialog;
 use ui::egui;
 use ui::egui::RichText;
@@ -45,7 +44,6 @@ pub(crate) fn resize_dialog(
         _ => 1,
     };
     dialog::card(ctx, "resize", 420.0, |ui| {
-        let pressed = dialog::keys(ui);
         ui.label(
             RichText::new(format!("Resize {}", file_title(&dialog.bundle)))
                 .strong()
@@ -86,14 +84,11 @@ pub(crate) fn resize_dialog(
             ui.colored_label(theme::DANGER, error);
         }
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if controls::primary(ui, "Resize").clicked() || pressed.confirm {
-                outcome = Some(true);
-            }
-            if ui.button("Cancel").clicked() || pressed.cancel {
-                outcome = Some(false);
-            }
-        });
+        match dialog::AnswerRow::new("Resize", crate::modal::CANCEL).show(ui) {
+            Some(dialog::Answer::Confirm) => outcome = Some(true),
+            Some(dialog::Answer::Cancel) => outcome = Some(false),
+            None => {}
+        }
     });
     match outcome {
         Some(true) => match resize(editor, &dialog) {

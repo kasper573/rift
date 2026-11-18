@@ -19,35 +19,44 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, KeptAside, SavedCharacter};
 
-use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
+use crate::core::content::{
+    Content, ContentFile, ContentId, FolderReader, ModuleRule, ModuleSet, Nearby, Unreadable,
+};
 use crate::core::math::{Offset, Pos, Rect, Rng};
+use crate::core::script::{EventKind, GlobalPlayerId, PlayerHost, Vocabulary};
+use crate::core::text::LineText;
 use crate::core::time::{self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock};
 use crate::core::units::{HourOfDay, Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::systems::account::{AccountId, AccountIdentity};
-use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
+use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, ModelDef, Name, Pose};
+use crate::systems::area::Place;
+use crate::systems::area::object::Entered;
 use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::weather::ServerSky;
 use crate::systems::area::{self, AreaId, AreaTag};
-use crate::systems::class::{Class, ClassId};
+use crate::systems::area_instance::AreaInstanceWorld;
+use crate::systems::area_instance::InstanceCooldowns;
+use crate::systems::class::{Class, ClassDef, ClassId};
 use crate::systems::combat::{self, VitalRegen};
+use crate::systems::command::CommandCooldowns;
 use crate::systems::crafting::RecipeMasteries;
 use crate::systems::dialogue::{self, Heard};
 use crate::systems::equipment::Equipment;
 use crate::systems::history::History;
 use crate::systems::item::Inventory;
 use crate::systems::memory::Memory;
+use crate::systems::messages::{self, messages};
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{self, HeardMove, Position, Spot};
 use crate::systems::quest::QuestLog;
-use crate::systems::script::{EventKind, Place};
 use crate::systems::shop::{self, ShopLedger};
 use crate::systems::skill::{BasicAttack, Cooldowns, Hotbar, Learned};
 use crate::systems::stat::{self, Immortal, Stats};
 use crate::systems::status::{self, CarriedStatuses, Statuses};
-use crate::systems::text::LineText;
 use crate::systems::visibility;
 use crate::systems::{
-    GameSettings, WorldArea, belongings, drain_requests, notification, reach, region, resource,
+    GameSettings, WorldArea, area_instance, belongings, drain_requests, notification, reach,
+    region, resource,
 };
 
 pub fn register(app: &mut App) {
@@ -192,21 +201,21 @@ pub struct Welcome {
     pub clouds: Offset<Meters>,
 }
 
-pub type PlayerDefId = ContentId<PlayerDef>;
+pub type CharacterDefId = ContentId<CharacterDef>;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-pub struct PlayerDef {
+pub struct CharacterDef {
     pub class: ClassId,
     pub stats: Stats,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub modules: Vec<PlayerModule>,
+    pub modules: Vec<CharacterModule>,
 }
 
-impl ContentFile for PlayerDef {
-    const TABLE: &'static str = "player";
+impl ContentFile for CharacterDef {
+    const TABLE: &'static str = "character";
 
-    fn fresh(near: &Nearby) -> Result<PlayerDef, String> {
-        Ok(PlayerDef {
+    fn fresh(near: &Nearby) -> Result<CharacterDef, String> {
+        Ok(CharacterDef {
             class: near.file()?,
             stats: Stats::default(),
             modules: Vec::new(),
@@ -214,48 +223,58 @@ impl ContentFile for PlayerDef {
     }
 }
 
-impl ModuleSet for PlayerDef {
-    type Module = PlayerModule;
+impl ModuleSet for CharacterDef {
+    type Module = CharacterModule;
 
-    fn modules(&self) -> &[PlayerModule] {
+    fn modules(&self) -> &[CharacterModule] {
         &self.modules
     }
 
-    fn modules_mut(&mut self) -> &mut Vec<PlayerModule> {
+    fn modules_mut(&mut self) -> &mut Vec<CharacterModule> {
         &mut self.modules
     }
 
-    fn rule(_: &PlayerModule) -> ModuleRule {
+    fn rule(_: &CharacterModule) -> ModuleRule {
         ModuleRule::AtMostOne
     }
 }
 
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum PlayerModule {
+pub enum CharacterModule {
     Regen(VitalRegen),
 }
 
-impl PlayerDef {
+impl CharacterDef {
     pub fn regen(&self) -> Option<VitalRegen> {
         self.modules
             .iter()
             .map(|module| match module {
-                PlayerModule::Regen(regen) => *regen,
+                CharacterModule::Regen(regen) => *regen,
             })
             .next()
     }
 }
 
-pub fn def(content: &Content) -> &PlayerDef {
-    content.built::<GameSettings>().player.get(content)
+pub fn def(content: &Content) -> &CharacterDef {
+    content.built::<GameSettings>().character.get(content)
 }
 
-/// How tall the game's player stands: the height of the body they are hit in.
+/// How tall the game's character stands: the height of the body they are hit in.
 pub fn stature(content: &Content) -> Meters {
     ActorModel::get(content, def(content).class.get(content).model)
         .hitbox()
         .height
+}
+
+/// `stature` read from the game folder's files alone, for a tool that must work while the game
+/// doesn't load whole, as when a footprint is fitted to a model that changed.
+pub fn stature_in_folder(reader: &FolderReader) -> Result<Meters, Unreadable> {
+    let settings: GameSettings = reader.settings()?;
+    let character: CharacterDef = read_referenced(reader, settings.character)?;
+    let class: ClassDef = read_referenced(reader, character.class)?;
+    let model: ModelDef = read_referenced(reader, class.model)?;
+    Ok(model.hitbox.height)
 }
 
 #[derive(Resource, Default)]
@@ -487,6 +506,7 @@ pub fn depart(world: &mut World, character: Entity) {
     let Some(client) = world.get::<PlayedBy>(character).map(|played| played.client) else {
         return;
     };
+    area_instance::entrance::close(world, character);
     let left = SavedCharacter::of_live(world, character);
     world.resource_mut::<Players>().0.remove(&client);
     world.despawn(character);
@@ -523,6 +543,7 @@ fn leave_behind(world: &mut World, character: Entity) {
     }
     movement::halt(world, character);
     dialogue::close_for(world, character);
+    area_instance::entrance::close(world, character);
     reach::forget(world, character);
     resource::stop(world, character);
     let until = world.resource::<WallClock>().now.after(lingers_for);
@@ -584,20 +605,39 @@ pub fn join(world: &mut World) {
                 region::hold_around(world, start.at);
                 let mut state = snapshot::materialize(&content, &snapshot, start, clock, taken);
                 state.kept_aside.told = told;
+                if let Some(run) = world.get_resource::<AreaInstanceWorld>() {
+                    state.spawn = SpawnPoint(run.entrance.at);
+                }
+                // Mounts are not saved, so a character saved where only their mount could be
+                // signs in where dying would send them, never on whatever ground is nearest.
+                let ground = area.mesh();
+                let at = if ground.walkable(start.at) {
+                    start.at
+                } else {
+                    state.spawn.0
+                };
+                if at != start.at {
+                    region::hold_around(world, at);
+                }
                 (
-                    movement::place_beside(world, zone, &area.mesh(), start.at),
+                    movement::place_beside(world, zone, &ground, at),
                     state,
                     stand_in,
                 )
             }
             _ => {
-                let name = identity
-                    .as_ref()
-                    .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
+                let name = identity.as_ref().map_or_else(
+                    || {
+                        messages::of(world.resource::<Content>())
+                            .player
+                            .unnamed(client.0)
+                    },
+                    |id| id.name.clone(),
+                );
                 let spawn = spawn_position(world, policy, zone, area);
                 region::hold_around(world, spawn);
                 let at = movement::place_beside(world, zone, &area.mesh(), spawn);
-                let fresh = CharacterSnapshot::of_player(&content, &name, def(&content));
+                let fresh = CharacterSnapshot::of_def(&content, &name, def(&content));
                 let start = Place { area: zone, at };
                 let state = snapshot::materialize(&content, &fresh, start, clock, clock.now);
                 (at, state, false)
@@ -635,7 +675,7 @@ impl Played {
 }
 
 pub fn spawned(world: &mut World, player: Entity) {
-    transition::raise_area(world, EventKind::Entered, player);
+    transition::raise_area(world, EventKind::of::<Entered>(), player);
 }
 
 fn spawn_position(
@@ -685,6 +725,8 @@ pub struct CharacterState {
     pub quests: QuestLog,
     pub history: History,
     pub cooldowns: Cooldowns,
+    pub command_cooldowns: CommandCooldowns,
+    pub instance_cooldowns: InstanceCooldowns,
     pub statuses: Statuses,
     pub carried: CarriedStatuses,
     pub kept_aside: KeptAside,
@@ -718,6 +760,14 @@ impl CharacterState {
             quests: world.get::<QuestLog>(entity).cloned().unwrap_or_default(),
             history: world.get::<History>(entity).cloned().unwrap_or_default(),
             cooldowns: world.get::<Cooldowns>(entity).cloned().unwrap_or_default(),
+            command_cooldowns: world
+                .get::<CommandCooldowns>(entity)
+                .cloned()
+                .unwrap_or_default(),
+            instance_cooldowns: world
+                .get::<InstanceCooldowns>(entity)
+                .cloned()
+                .unwrap_or_default(),
             statuses: world.get::<Statuses>(entity).cloned().unwrap_or_default(),
             carried: status::aspect::carried(world, entity),
             kept_aside: world.get::<KeptAside>(entity).cloned().unwrap_or_default(),
@@ -784,4 +834,80 @@ pub fn respawn(world: &mut World) {
         }
         Ok(())
     });
+}
+
+messages! {
+    /// What the game says of the player's own sheet and bars.
+    pub struct PlayerMessages {
+        /// The name a player gets when their sign-in carries none, `{id}` being their connection's number.
+        unnamed(id: Number),
+        /// What the globe of the player's health is called.
+        health,
+        /// What the globe of the player's mana is called.
+        mana,
+        /// How a screen reader says a globe `{name}` holds `{amount}`.
+        vital_amount(name: Text, now: Number, most: Number),
+        /// The figures on a globe, `{now}` held of `{most}`.
+        vital_figures(now: Number, most: Number),
+        /// The player's level `{level}`, on the experience bar.
+        level_of(level: Number),
+        /// How far the player is toward the next level: `{had}` of `{needed}` experience to level `{next}`.
+        toward(had: Number, needed: Number, next: Number),
+        /// What the experience bar says at the last level.
+        last_level,
+        /// What the experience bar is called.
+        experience,
+        /// The experience `{amount}` the player just gained, as it floats up from the bar.
+        experience_gained(amount: Number),
+        /// The skill points `{count}` the player has to spend, on the button that opens the skill tree.
+        points_to_spend(count: Number),
+        /// The player sheet's hint for the input that uses, wears or takes off an item.
+        use_wear_or_take_off,
+        /// The player sheet's hint for the input that carries an item or puts it on the bar.
+        carry_or_pin,
+        /// The player sheet's hint for the input that drops an item.
+        drop,
+        /// The player sheet's hint for the input that opens an item's card.
+        open_card,
+        /// The heading over the player's stats on the player sheet.
+        stats,
+        /// The heading over what the player wears on the player sheet.
+        equipment,
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary.players(PlayerHost {
+        local: named,
+        global: global_named,
+        global_of: global_of_actor,
+    });
+}
+
+fn global_named(world: &World, name: &str) -> Option<GlobalPlayerId> {
+    let client = match named(world, name) {
+        Some(character) => world.get::<PlayedBy>(character)?.client,
+        None => {
+            world
+                .get_resource::<roster::ServerRoster>()?
+                .named(name)?
+                .client
+        }
+    };
+    Some(GlobalPlayerId(client.0))
+}
+
+fn global_of_actor(world: &World, actor: Entity) -> Option<GlobalPlayerId> {
+    let client = world.get::<PlayedBy>(actor)?.client;
+    Some(GlobalPlayerId(client.0))
+}
+
+fn read_referenced<Row: ContentFile>(
+    reader: &FolderReader,
+    id: ContentId<Row>,
+) -> Result<Row, Unreadable> {
+    let path = reader
+        .path_of(id)
+        .expect("a reference the reader resolved names a file it listed");
+    reader.read(path)
 }

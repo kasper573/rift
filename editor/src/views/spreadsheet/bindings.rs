@@ -1,8 +1,11 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
+use engine::core::content::Content;
+use engine::systems::input::InputMessages;
 use engine::systems::input::map::{
     InputAction, InputBinding, InputBindingKind, InputDef, KeyModifiers, WheelTurn,
 };
+use engine::systems::messages;
 use serde::Deserialize;
 use serde::de::value::{Error as NameError, StrDeserializer};
 use serde_json::Value;
@@ -10,7 +13,6 @@ use ui::chip;
 use ui::controls;
 use ui::egui;
 use ui::egui::{Key, Sense, Ui};
-use ui::glyph::{self, Mark};
 use ui::input;
 use ui::theme;
 
@@ -20,13 +22,17 @@ use crate::keymap::EditorKey;
 use crate::project::ContentEdit;
 
 /// The bindings a cell holds, as the player reads them.
-pub(super) fn names(value: &Value) -> String {
+pub(super) fn names(value: &Value, content: Option<&Content>) -> String {
+    let Some(content) = content else {
+        return String::new();
+    };
+    let words = &messages::of(content).input;
     let bindings: Vec<InputBinding> = serde_json::from_value(value.clone()).unwrap_or_default();
     match bindings.as_slice() {
         [] => "none".to_owned(),
         bindings => bindings
             .iter()
-            .map(InputBinding::name)
+            .map(|binding| binding.name(words))
             .collect::<Vec<_>>()
             .join(", "),
     }
@@ -38,6 +44,14 @@ pub(super) fn cell(editor: &mut Editor, ui: &mut Ui, row: &SpreadsheetRow) -> Ce
     let Ok(action) = InputAction::deserialize(StrDeserializer::<NameError>::new(&row.key)) else {
         return CellEdit::Cancelled;
     };
+    let Some(content) = editor
+        .project
+        .as_ref()
+        .and_then(|project| project.content.clone())
+    else {
+        return CellEdit::Cancelled;
+    };
+    let words = &messages::of(&content).input;
     let Some(Ok(input)) = editor.read::<InputDef>(&row.file) else {
         return CellEdit::Cancelled;
     };
@@ -48,7 +62,7 @@ pub(super) fn cell(editor: &mut Editor, ui: &mut Ui, row: &SpreadsheetRow) -> Ce
         return CellEdit::Cancelled;
     }
     let changed = ui
-        .vertical(|ui| bindings(ui, &mut input, action, capturing_id, capturing))
+        .vertical(|ui| bindings(ui, words, &mut input, action, capturing_id, capturing))
         .inner;
     if changed {
         let label = format!("Edit the bindings of {}", row.key);
@@ -63,6 +77,7 @@ pub(super) fn cell(editor: &mut Editor, ui: &mut Ui, row: &SpreadsheetRow) -> Ce
 
 fn bindings(
     ui: &mut Ui,
+    words: &InputMessages,
     input: &mut InputDef,
     action: InputAction,
     capturing_id: egui::Id,
@@ -86,7 +101,7 @@ fn bindings(
     let mut remove = None;
     ui.horizontal_wrapped(|ui| {
         for (index, binding) in bound.bindings.iter().enumerate() {
-            let name = binding.name();
+            let cap = binding.cap(words);
             let shared_with: Vec<&str> = others
                 .iter()
                 .filter(|(_, bindings)| bindings.contains(binding))
@@ -98,14 +113,14 @@ fn bindings(
                 theme::WARN
             };
             chip::holding(ui, theme::RAISED, border, |ui| {
-                controls::key_hint(ui, &name);
-                if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove").clicked() {
+                controls::key_hint(ui, &cap);
+                if controls::remove(ui, "Remove").clicked() {
                     remove = Some(index);
                 }
             })
             .response
             .on_hover_text(if shared_with.is_empty() {
-                format!("Only this action uses {name}.")
+                format!("Only this action uses {}.", cap.name)
             } else {
                 format!("Also bound to {}.", shared_with.join(", "))
             });
@@ -124,7 +139,7 @@ fn bindings(
     };
     let response = frame
         .show(ui, |ui| {
-            let row = egui::vec2(ui.available_width() - 20.0, input::row_height(ui));
+            let row = egui::vec2(ui.available_width() - 20.0, input::ROW_HEIGHT);
             ui.allocate_ui_with_layout(
                 row,
                 egui::Layout::left_to_right(egui::Align::Center),

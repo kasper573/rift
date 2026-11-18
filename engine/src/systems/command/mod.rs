@@ -4,8 +4,15 @@
 //! what a player may type for each is what the variable's type takes.
 
 pub mod complete;
+pub mod cooldown;
 pub mod input;
+pub mod search;
 
+use crate::core::content::fields_file;
+use crate::core::script::EventDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::ScriptSite;
+use crate::core::script::Vocabulary;
 use std::collections::BTreeMap;
 
 use bevy_ecs::message::Messages;
@@ -19,15 +26,52 @@ use crate::core::content::{
 };
 use crate::core::script::compile::compile_row;
 use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault};
-use crate::systems::GameSettings;
-use crate::systems::account::{AccountIdentity, RoleId};
-use crate::systems::player::{self, Connected, PlayedBy};
-use crate::systems::script::effect::{self as effects, Reaching};
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, EventKind, Owner, OwnerRow, RiftInstances, RiftScripting,
-    RunnerKind, ScriptDef, ScriptId, ScriptModule,
+use crate::core::script::{
+    EffectCall, EventKind, Expr, Instances, Owner, OwnerRow, RunnerKind, ScriptDef, ScriptId,
+    ScriptModule,
 };
+use crate::core::text::LineText;
+use crate::core::time::WallClock;
+use crate::core::units::Seconds;
+use crate::systems::account::{AccountIdentity, RoleId};
+use crate::systems::aim::{self as effects, Reaching};
+use crate::systems::messages::{self, messages};
+use crate::systems::player::{self, Connected, PlayedBy};
+use crate::systems::requirement;
+pub use cooldown::CommandCooldowns;
 use input::{CommandInput, InputRefusal};
+
+messages! {
+    /// What the game says of commands.
+    pub struct CommandMessages {
+        /// What a player is told sending `{command}`, which is no command of theirs.
+        unknown(command: Text),
+        /// What a player is told sending a command without its input `{input}`: `{usage}` spells
+        /// the command out.
+        needs(input: Text, usage: Text),
+        /// What a player is told typing `{value}` for the input `{input}` of a command, which it
+        /// can't be.
+        refuses(input: Text, value: Text),
+        /// What a player is told typing more than a command takes: `{usage}` spells it out.
+        takes(usage: Text),
+        /// What a player is told of `{command}`, cooling down after it ran, for `{left}` more.
+        cooling(command: Text, left: Text),
+        /// What a command that is cooling down is listed with: `{usage}` spells the command out, `{time}` is how long until it may be sent again.
+        ready_in(time: Text, usage: Text),
+        /// What a command with a cooldown is listed with: `{usage}` spells the command out, `{time}` is how long it cools down for.
+        every(usage: Text, time: Text),
+        /// What a command with a cooldown is listed with while it cools: `{usage}` spells the
+        /// command out, `{every}` is how long it cools down for and `{left}` how long until it
+        /// may be sent again.
+        every_ready_in(usage: Text, every: Text, left: Text),
+        /// How far away a player is, `{meters}`, beside their name where a command takes one.
+        distance(meters: Number),
+        /// What a player is told sending `{command}` without what it needs, `{condition}`.
+        needs_condition[command: Line, condition: Line],
+        /// What the line typed is told as it reaches an input: `{input}` is the input, `{usage}` spells the command out.
+        input_usage(input: Text, usage: Text),
+    }
+}
 
 /// A command of the terminal: the file's name is what a player types to send it.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -36,6 +80,12 @@ pub struct TerminalCommandDef {
     /// The roles that may send the command, any one of them; without any, everyone may.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<RoleId>,
+    /// What must hold of whoever sends it. A command refused for it starts no cooldown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<Expr>,
+    /// How long after it runs before the same character may send it again.
+    #[serde(default, skip_serializing_if = "Seconds::is_zero")]
+    pub cooldown: Seconds,
     /// What the command does: run with whoever sent it as its subject.
     pub script: ScriptId,
     /// The script's variables the command line fills, in the order they are typed. One with a
@@ -51,7 +101,7 @@ impl ContentFile for TerminalCommandDef {
 
     fn fresh(near: &Nearby) -> Result<TerminalCommandDef, String> {
         let script = near.file_where("a script run by commands", |script: &ScriptDef| {
-            script.runs_on == RunnerKind::Command
+            script.runs_on == COMMAND_RUNNER
         })?;
         let inputs = near
             .read(script)?
@@ -62,6 +112,8 @@ impl ContentFile for TerminalCommandDef {
             .collect();
         Ok(TerminalCommandDef {
             roles: Vec::new(),
+            requires: None,
+            cooldown: Seconds(0.0),
             script,
             inputs,
         })
@@ -83,6 +135,33 @@ impl TerminalCommandId {
         .trim_end()
         .to_owned()
     }
+
+    /// The command as `/commands` lists it to `character`: its usage, and its cooldown with the
+    /// time left while it cools.
+    pub fn listed(self, world: &World, character: Entity) -> String {
+        let content = world.resource::<Content>();
+        let messages = messages::of(content);
+        let cooldown = self.get(content).cooldown;
+        if cooldown.is_zero() {
+            return self.usage(content);
+        }
+        let usage = self.usage(content);
+        let every = messages.time.exact(cooldown);
+        match cooling(world, character, self) {
+            Some(left) => messages
+                .command
+                .every_ready_in(usage, every, messages.time.rough(left)),
+            None => messages.command.every(usage, every),
+        }
+    }
+}
+
+/// How long until `character` may send `command` again: nothing once they may.
+pub fn cooling(world: &World, character: Entity, command: TerminalCommandId) -> Option<Seconds> {
+    let now = world.resource::<WallClock>().now;
+    world
+        .get::<CommandCooldowns>(character)
+        .and_then(|cooldowns| cooldowns.left(command, now))
 }
 
 /// Every command the connection `conn` may send, by name.
@@ -115,7 +194,8 @@ pub fn run(world: &mut World) {
         .collect();
     for TerminalCommanded { conn, line } in sent {
         if let Err(refusal) = invoke(world, conn, &line) {
-            bevy_terminal::reply_failure(world, conn, refusal);
+            let said = refusal.plain_words(world.resource::<Content>());
+            bevy_terminal::reply_failure(world, conn, said);
         }
     }
 }
@@ -126,7 +206,7 @@ pub fn retire(world: &mut World) {
         return;
     };
     let running = std::mem::take(&mut invocations.running);
-    let mut instances = world.resource_mut::<RiftInstances>();
+    let mut instances = world.resource_mut::<Instances>();
     let still: Vec<Owner> = running
         .into_iter()
         .filter(|&owner| {
@@ -140,34 +220,45 @@ pub fn retire(world: &mut World) {
     world.resource_mut::<Invocations>().running = still;
 }
 
-fn invoke(world: &mut World, conn: Entity, line: &str) -> Result<(), String> {
+fn invoke(world: &mut World, conn: Entity, line: &str) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
-    let words = &content.built::<GameSettings>().words;
+    let words = &messages::of(&content).command;
+    let time = &messages::of(&content).time;
     let typed = input::TypedCommand::of(line);
-    let unknown = || words.unknown_command.replace("{command}", typed.name);
+    let unknown = || LineText::from(words.unknown(typed.name));
     let caller = player::conn_player(world, conn).ok_or_else(unknown)?;
     let command = allowed(world, conn)
         .into_iter()
         .find(|command| command.name(&content) == typed.name)
         .ok_or_else(unknown)?;
     let def = command.get(&content);
+    let named = format!("{COMMAND_PREFIX}{}", command.name(&content));
     let parts: Vec<&str> = typed.parts.iter().map(|part| part.trim()).collect();
     let values =
         input::bind(world, caller, &input::inputs(&content, def), &parts).map_err(|refusal| {
             let usage = command.usage(&content);
-            match refusal {
-                InputRefusal::Needs(input) => words
-                    .command_needs
-                    .replace("{usage}", &usage)
-                    .replace("{input}", &input),
-                InputRefusal::Refuses { input, value } => words
-                    .command_refuses
-                    .replace("{input}", &input)
-                    .replace("{value}", &value),
-                InputRefusal::TooMany => words.command_takes.replace("{usage}", &usage),
-            }
+            LineText::from(match refusal {
+                InputRefusal::Needs(input) => words.needs(input, usage),
+                InputRefusal::Refuses { input, value } => words.refuses(input, value),
+                InputRefusal::TooMany => words.takes(usage),
+            })
         })?;
-    start(world, &content, command, caller, values)
+    if let Some(unmet) = requirement::first_unmet(world, caller, def.requires.iter()) {
+        return Err(words.needs_condition(named.as_str(), unmet));
+    }
+    let cooling_said = |left: Seconds| words.cooling(&named, time.rough(left));
+    if let Some(left) = cooling(world, caller, command) {
+        return Err(cooling_said(left).into());
+    }
+    start(world, &content, command, caller, values)?;
+    if !def.cooldown.is_zero() {
+        let now = world.resource::<WallClock>().now;
+        if let Some(mut cooldowns) = world.get_mut::<CommandCooldowns>(caller) {
+            cooldowns.start(command, now, def.cooldown);
+        }
+        bevy_terminal::reply(world, conn, cooling_said(def.cooldown));
+    }
+    Ok(())
 }
 
 fn start(
@@ -175,14 +266,14 @@ fn start(
     content: &Content,
     command: TerminalCommandId,
     caller: Entity,
-    values: BTreeMap<String, crate::systems::script::VarValue>,
+    values: BTreeMap<String, crate::core::script::VarValue>,
 ) -> Result<(), String> {
     let module = ScriptModule {
         script: command.get(content).script,
         values,
     };
     let row = OwnerRow {
-        kind: RunnerKind::Command,
+        kind: COMMAND_RUNNER,
         row: command.raw(),
         object: None,
     };
@@ -195,13 +286,17 @@ fn start(
         })?;
     let mut invocations = world.get_resource_or_init::<Invocations>();
     invocations.sent = invocations.sent.wrapping_add(1);
-    let owner = Owner::Row(RunnerKind::Command, invocations.sent);
+    let owner = Owner::Row(COMMAND_RUNNER, invocations.sent);
     invocations.running.push(owner);
-    let mut instances = world.resource_mut::<RiftInstances>();
+    let mut instances = world.resource_mut::<Instances>();
     instances.spawn_owner(owner, procedures);
-    instances.raise(owner, EventKind::Invoked, Some(caller), Vec::new(), |_| {
-        true
-    });
+    instances.raise(
+        owner,
+        EventKind::of::<Invoked>(),
+        Some(caller),
+        Vec::new(),
+        |_| true,
+    );
     Ok(())
 }
 
@@ -218,20 +313,17 @@ pub fn connection(world: &World, character: Entity) -> Option<Entity> {
 pub struct ListCommands {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for ListCommands {
+impl EffectDef for ListCommands {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim_anywhere(cx, &self.who)?;
         Ok(Box::new(move |world, flow, cx| {
             let aimed = effects::aimed_character_anywhere(world, cx, &who);
@@ -243,10 +335,9 @@ impl EffectDef<RiftScripting> for ListCommands {
                 Reaching::quietly(NEXT),
                 |world, character| {
                     if let Some(conn) = connection(world, character) {
-                        let content = world.resource::<Content>().clone();
                         let lines: Vec<String> = allowed(world, conn)
                             .into_iter()
-                            .map(|command| command.usage(&content))
+                            .map(|command| command.listed(world, character))
                             .collect();
                         bevy_terminal::reply(world, conn, lines.join("\n"));
                     }
@@ -254,9 +345,6 @@ impl EffectDef<RiftScripting> for ListCommands {
                 },
             )
         }))
-    }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
     }
 }
 
@@ -337,7 +425,7 @@ pub fn check_all(loading: &mut Loading) {
             values,
         };
         let row = OwnerRow {
-            kind: RunnerKind::Command,
+            kind: COMMAND_RUNNER,
             row: command.raw(),
             object: None,
         };
@@ -360,7 +448,7 @@ pub fn check_all(loading: &mut Loading) {
         };
         let answers = procedures
             .iter()
-            .any(|procedure| !procedure.entry(EventKind::Invoked).is_empty());
+            .any(|procedure| !procedure.entry(EventKind::of::<Invoked>()).is_empty());
         if !answers {
             loading.row_error(
                 command,
@@ -373,4 +461,33 @@ pub fn check_all(loading: &mut Loading) {
             );
         }
     }
+}
+
+pub const COMMAND_RUNNER: RunnerKind = RunnerKind::new("command");
+
+/// A player sent the command, its inputs filling the script's variables.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Invoked {}
+
+impl EventDef for Invoked {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[COMMAND_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .runner(
+            COMMAND_RUNNER,
+            RunnerSpec::at(
+                |content, row| ScriptSite {
+                    file: fields_file(row.id::<TerminalCommandDef>().path(content)),
+                    pointer: "/modules".to_owned(),
+                },
+                |_, _| None,
+            )
+            .stateless(),
+        )
+        .event::<Invoked>("invoked")
+        .effect::<ListCommands>("list_commands");
 }

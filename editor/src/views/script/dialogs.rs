@@ -34,7 +34,6 @@ pub fn rename_node_dialog(
     let doc = ScriptDoc::load(editor, &dialog.at)?;
     let mut outcome: Option<Option<String>> = None;
     dialog::card(ctx, "rename-node", 360.0, |ui| {
-        let pressed = dialog::keys(ui);
         ui.label(RichText::new("Rename node").strong().size(18.0));
         ui.add_space(6.0);
         ui.label(theme::muted(format!("{} becomes:", dialog.old)).size(13.5));
@@ -56,15 +55,14 @@ pub fn rename_node_dialog(
         }
         let ok = !taken && engine::core::script::valid_node_name(&dialog.draft);
         ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if ui.add_enabled(ok, egui::Button::new("Rename")).clicked() || (ok && pressed.confirm)
-            {
-                outcome = Some(Some(dialog.draft.clone()));
-            }
-            if ui.button("Cancel").clicked() || pressed.cancel {
-                outcome = Some(None);
-            }
-        });
+        match dialog::AnswerRow::new("Rename", crate::modal::CANCEL)
+            .enabled(ok)
+            .show(ui)
+        {
+            Some(dialog::Answer::Confirm) => outcome = Some(Some(dialog.draft.clone())),
+            Some(dialog::Answer::Cancel) => outcome = Some(None),
+            None => {}
+        }
     });
     match outcome {
         None => Some(dialog),

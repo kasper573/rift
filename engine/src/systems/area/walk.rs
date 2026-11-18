@@ -27,7 +27,7 @@ pub struct Underfoot {
 /// draws as much water as one of the game's `draughts`, over the tiles of ground held: each tile
 /// triangulated as it is first held, and the meshes joined anew over the held tiles whenever the
 /// tiles held change. A tile is held for as long as a [`GroundHold`] wants it, so a
-/// process holds the ground near its players or in its view alone, however wide the area and
+/// process holds the ground near its characters or in its view alone, however wide the area and
 /// however far they have been. A mesh is read without a lock or a count, so every core reads it at
 /// once, and swapped whole when it is laid anew.
 pub struct Meshes {
@@ -40,6 +40,9 @@ pub struct Meshes {
     /// The patches of each tile too shallow for a draught, by the tile and the draught's place.
     shallows: RwLock<BTreeMap<(TileAt, usize), Patches>>,
     meshes: Vec<ArcSwap<NavMesh>>,
+    /// The tiles the meshes cover, swapped in after them: a tile is held only once a mesh over it
+    /// can be read, though a hold takes it while its mesh is still being laid.
+    covered: ArcSwap<BTreeSet<TileAt>>,
     /// Which change of the tiles held the meshes were last joined over. One join runs at a time,
     /// so whoever asks for one while another is under way waits for meshes that cover its tiles.
     joined: Mutex<u64>,
@@ -88,6 +91,7 @@ impl Meshes {
             meshes: (0..KINDS + draughts.len())
                 .map(|_| ArcSwap::from_pointee(NavMesh::join(bounds, std::iter::empty())))
                 .collect(),
+            covered: ArcSwap::from_pointee(BTreeSet::new()),
             draughts,
             shallows: RwLock::new(BTreeMap::new()),
             joined: Mutex::new(0),
@@ -113,20 +117,13 @@ const KINDS: usize = 4;
 
 /// The tiles of `area` held: those its meshes cover.
 pub(super) fn held(area: &Area) -> BTreeSet<TileAt> {
-    area.meshes
-        .held
-        .read()
-        .expect("the held lock")
-        .tiles
-        .keys()
-        .copied()
-        .collect()
+    area.meshes.covered.load().as_ref().clone()
 }
 
 /// Whether every one of `tiles` of `area` is held.
 pub(super) fn holds(area: &Area, tiles: impl IntoIterator<Item = TileAt>) -> bool {
-    let held = area.meshes.held.read().expect("the held lock");
-    tiles.into_iter().all(|at| held.tiles.contains_key(&at))
+    let covered = area.meshes.covered.load();
+    tiles.into_iter().all(|at| covered.contains(&at))
 }
 
 /// Holds `tiles` of `area` for as long as the hold lives, letting go of those `previous` held
@@ -723,10 +720,11 @@ fn join(meshes: &Meshes) {
     let mut joined = meshes.joined.lock().expect("the join lock");
     loop {
         let started = std::time::Instant::now();
-        let (changes, tiles): (u64, Vec<Arc<[TileLayer]>>) = {
+        let (changes, covered, tiles): (u64, BTreeSet<TileAt>, Vec<Arc<[TileLayer]>>) = {
             let held = meshes.held.read().expect("the held lock");
             (
                 held.changes,
+                held.tiles.keys().copied().collect(),
                 held.tiles
                     .values()
                     .map(|tile| tile.layers.clone())
@@ -748,6 +746,7 @@ fn join(meshes: &Meshes) {
         for (kind, mesh) in laid.into_iter().enumerate() {
             meshes.meshes[kind].store(mesh);
         }
+        meshes.covered.store(Arc::new(covered));
         *joined = changes;
         bevy::log::debug!(
             "meshes over {} ground tiles in {:?}",
@@ -771,16 +770,15 @@ pub(super) fn underfoot(content: &Content, terrains: &[TerrainId]) -> Vec<Underf
         .collect()
 }
 
-/// The outline of every prop's footprint, where one blocks the ground.
+/// The outline of every part of every prop's footprint, where one blocks the ground.
 pub(super) fn footprints<'a>(
     content: &Content,
     props: impl Iterator<Item = &'a PropPlacement>,
 ) -> Vec<Vec<Pos<Meters>>> {
     props
-        .filter_map(|placed| {
+        .flat_map(|placed| {
             let def = placed.prop.get(content);
-            (!def.footprint.is_none())
-                .then(|| def.footprint.outline(placed.at, placed.yaw, placed.scale))
+            def.footprint.outlines(placed.at, placed.yaw, placed.scale)
         })
         .collect()
 }

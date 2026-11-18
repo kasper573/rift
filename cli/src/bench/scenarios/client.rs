@@ -4,8 +4,8 @@
 use engine::core::content::Content;
 use engine::core::units::{Degrees, Seconds};
 use engine::systems::GameSettings;
+use engine::systems::area::Place;
 use engine::systems::input::map::InputAction;
-use engine::systems::script::Place;
 use engine::systems::staging::Staging;
 
 use super::ScenarioSlots;

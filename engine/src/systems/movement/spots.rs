@@ -11,23 +11,23 @@ use crate::systems::GameSettings;
 use crate::systems::actor::ModelDef;
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::class::ClassDef;
-use crate::systems::player::PlayerDef;
+use crate::systems::player::CharacterDef;
 use crate::systems::stat;
 
 /// How much ground a walker's body takes: the walk mesh keeps its middle this far from what
 /// blocks, and walkers keep this far from each other's bodies. Every body walks as the body of the
-/// game's player does.
+/// game's character does.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct Bodies {
     pub radius: Meters,
 }
 
 impl Bodies {
-    /// The bodies of `content`'s game: the hitbox of the model its player's class wears, when
-    /// the settings, the player, its class and the model all loaded.
+    /// The bodies of `content`'s game: the hitbox of the model its character's class wears, when
+    /// the settings, the character, its class and the model all loaded.
     pub fn of(content: &Content) -> Option<Bodies> {
-        let player = content.try_built::<GameSettings>()?.player;
-        let class = content.table::<PlayerDef>().get(player)?.class;
+        let player = content.try_built::<GameSettings>()?.character;
+        let class = content.table::<CharacterDef>().get(player)?.class;
         let model = content.table::<ClassDef>().get(class)?.model;
         let hitbox = content.table::<ModelDef>().get(model)?.hitbox;
         Some(Bodies {

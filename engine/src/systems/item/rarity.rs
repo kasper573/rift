@@ -12,7 +12,7 @@ use crate::core::content::{
 };
 use crate::core::math::{ColorGradient, Rgb, Rgba};
 use crate::core::units::Seconds;
-use crate::core::vfx::{ParamKind, ParamValue, VfxId, VfxParams};
+use crate::core::vfx::{ParamKind, ParamValue, SiteKind, VfxId, VfxParams, check_played};
 
 pub type ItemRarityId = ContentId<ItemRarityDef>;
 
@@ -190,6 +190,7 @@ pub fn check_all(loading: &mut Loading) {
             let Some(vfx) = vfx else {
                 continue;
             };
+            check_played(loading, vfx, &[SiteKind::Object], id.path(&content));
             for name in [RARITY_FROM, RARITY_TO] {
                 if let Some(kind) = vfx.get(&content).declares(name)
                     && kind != ParamKind::Color

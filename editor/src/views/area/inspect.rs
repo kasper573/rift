@@ -1,3 +1,4 @@
+use engine::systems::area::OBJECT_RUNNER;
 use std::collections::{BTreeMap, HashSet};
 use ui::chip;
 use ui::controls;
@@ -5,6 +6,7 @@ use ui::egui::Ui;
 use ui::face;
 use ui::form;
 use ui::glyph::Mark;
+use ui::menu;
 use ui::panel;
 use ui::sheet;
 use ui::theme;
@@ -21,13 +23,15 @@ use engine::systems::area::prop::PropDef;
 use strum::VariantArray;
 
 use super::brush::{Brush, LARGEST_RADIUS, SMALLEST_RADIUS, SculptMode};
+use engine::core::script::ScriptModule;
+use engine::core::script::VarValue;
+use engine::core::script::Variable;
 use engine::field;
 use engine::systems::area::blueprint;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::object::ObjectDef;
 use engine::systems::area::scene::{self, ModuleNode, SceneNode, scene_file};
 use engine::systems::area::{AreaDef, AreaModule, SoundscapeDef};
-use engine::systems::script::{RunnerKind, ScriptModule, VarValue, Variable};
 use engine::systems::spawner::Spawner;
 
 use super::clipboard::clipboard_panel;
@@ -35,7 +39,7 @@ use super::nodes::SceneBundle;
 use super::pins::place_pick_panel;
 use super::placement::{self, placement_extras};
 use super::soundscape::soundscape_extras;
-use super::spawner::{from_npc, from_spawned, spawns_card};
+use super::spawner::{from_npc, from_spawned, populations_card};
 use super::{AreaTool, AreaViewState, nodes, scene_tree, stamp};
 use crate::app::Editor;
 use crate::forms::{self, FieldHole, FormAction, FormCx, FormHoles, HoleRequest};
@@ -112,7 +116,7 @@ fn brush_fields(ui: &mut Ui, brush: &mut Brush) {
         if controls::slider(ui, &mut radius, SMALLEST_RADIUS.0..=LARGEST_RADIUS.0).changed() {
             brush.radius = Meters(radius);
         }
-        controls::key_hint_text(ui, &EditorKey::BrushLarger.name(), "grows");
+        controls::key_hint_text(ui, &EditorKey::BrushLarger.cap(), "grows");
     });
     form::kv(ui, "strength", |ui| {
         controls::slider(ui, &mut brush.strength, 0.0..=1.0);
@@ -212,7 +216,7 @@ fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super
             if controls::slider(ui, &mut radius, SMALLEST_RADIUS.0..=LARGEST_RADIUS.0).changed() {
                 view.brush.radius = Meters(radius);
             }
-            controls::key_hint_text(ui, &EditorKey::BrushLarger.name(), "grows");
+            controls::key_hint_text(ui, &EditorKey::BrushLarger.cap(), "grows");
         });
         form::kv(ui, "fray", |ui| {
             controls::slider(ui, &mut view.brush.falloff, 0.0..=1.0)
@@ -246,11 +250,11 @@ fn prop_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, prop: &str) {
         }
         form::kv(ui, "turned", |ui| {
             ui.label(face::mono(format!("{}°", view.place_yaw.0.round())));
-            controls::key_hint_text(ui, &EditorKey::TurnClockwise.name(), "turns");
+            controls::key_hint_text(ui, &EditorKey::TurnClockwise.cap(), "turns");
         });
         form::kv(ui, "snap", |ui| {
             ui.label(theme::muted("half metres").size(12.5));
-            controls::key_hint_text(ui, &EditorKey::Unsnapped.name(), "for 1/16");
+            controls::key_hint_text(ui, &EditorKey::Unsnapped.cap(), "for 1/16");
         });
         form::hint(
             ui,
@@ -307,12 +311,12 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
         }
         ui.add_space(4.0);
         form::kv(ui, "shown", |ui| {
-            if ui.checkbox(&mut !flags.hidden.on(), "").clicked() {
+            if controls::tick(ui, &mut !flags.hidden.on()).clicked() {
                 action = Some(FolderAction::Toggle(scene_tree::RowToggle::Hide));
             }
         });
         form::kv(ui, "locked", |ui| {
-            if ui.checkbox(&mut flags.locked.on(), "").clicked() {
+            if controls::tick(ui, &mut flags.locked.on()).clicked() {
                 action = Some(FolderAction::Toggle(scene_tree::RowToggle::Lock));
             }
         });
@@ -322,10 +326,10 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
         if controls::marked(ui, Mark::Copy, "Make blueprint").clicked() {
             action = Some(FolderAction::MakeBlueprint);
         }
-        if ui.button("Ungroup").clicked() {
+        if controls::button(ui, "Ungroup").clicked() {
             action = Some(FolderAction::Ungroup);
         }
-        if ui.button("Select what's inside").clicked() {
+        if controls::button(ui, "Select what's inside").clicked() {
             action = Some(FolderAction::SelectInside);
         }
     });
@@ -438,7 +442,7 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                     save = true;
                 }
             }
-            controls::key_hint_text(ui, &EditorKey::TurnClockwise.name(), "turns");
+            controls::key_hint_text(ui, &EditorKey::TurnClockwise.cap(), "turns");
         });
         form::kv(ui, "spacing", |ui| {
             let label = match settings.spacing {
@@ -475,7 +479,7 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
         });
         form::kv(ui, "snap", |ui| {
             ui.label(theme::muted("half metres").size(12.5));
-            controls::key_hint_text(ui, &EditorKey::Unsnapped.name(), "for 1/16");
+            controls::key_hint_text(ui, &EditorKey::Unsnapped.cap(), "for 1/16");
         });
         if variables.is_empty() {
             form::kv_text(ui, "values", "none: no variables");
@@ -607,11 +611,11 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
             ui.add_space(4.0);
             panel::tile_across(ui, true, |ui| {
                 panel::header(ui, &format!("{} modules", selected.len()), "", |ui| {
-                    if ui.button("Copy").clicked() {
+                    if menu::entry(ui, "Copy").clicked() {
                         out.actions.push(super::AreaAction::Copy);
                         ui.close();
                     }
-                    if ui.button("Duplicate").clicked() {
+                    if menu::entry(ui, "Duplicate").clicked() {
                         out.actions.push(super::AreaAction::Duplicate);
                         ui.close();
                     }
@@ -643,7 +647,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
             });
             controls::key_hint_text(
                 ui,
-                &EditorKey::MakeBlueprint.name(),
+                &EditorKey::MakeBlueprint.cap(),
                 "makes a blueprint of the selection",
             );
         }
@@ -726,11 +730,11 @@ fn module_inspector(
     let mut changed = false;
     panel::tile_across(ui, true, |ui| {
         panel::header(ui, &shown_kind, "", |ui| {
-            if ui.button("Copy").clicked() {
+            if menu::entry(ui, "Copy").clicked() {
                 out.actions.push(super::AreaAction::Copy);
                 ui.close();
             }
-            if ui.button("Duplicate").clicked() {
+            if menu::entry(ui, "Duplicate").clicked() {
                 out.actions.push(super::AreaAction::Duplicate);
                 ui.close();
             }
@@ -756,7 +760,7 @@ fn module_inspector(
             let preview = view.spawner_previews.entry(path.clone()).or_default();
             form::kv(ui, "preview", |ui| {
                 let mut shown = !preview.hidden;
-                if ui.checkbox(&mut shown, "").changed() {
+                if controls::tick(ui, &mut shown).changed() {
                     preview.hidden = !shown;
                 }
                 if controls::marked(ui, Mark::Reload, "Re-roll").clicked() {
@@ -782,8 +786,12 @@ fn module_inspector(
             placement_extras(ui, cx, placement, out, node);
         }
         AreaModule::Spawner(spawner) => {
-            for share in &spawner.spawns {
-                from_spawned(ui, cx, share.what);
+            let mut shown = Vec::new();
+            for share in spawner.shares() {
+                if !shown.contains(&share.what) {
+                    shown.push(share.what);
+                    from_spawned(ui, cx, share.what);
+                }
             }
         }
         AreaModule::Resident(resident) => {
@@ -801,8 +809,7 @@ fn module_inspector(
         }
         AreaModule::Scatter(scatter) => {
             ui.add_space(4.0);
-            if ui
-                .button("Reseed")
+            if controls::button(ui, "Reseed")
                 .on_hover_text("lays the copies out anew")
                 .clicked()
             {
@@ -849,9 +856,10 @@ fn module_fields(ui: &mut Ui, cx: &mut FormCx, module: &mut AreaModule, path: &s
             &[field!(engine::systems::area::Placement, values)],
         ),
         AreaModule::Spawner(spawner) => {
-            let spawns = spawns_card(ui, cx, spawner, path);
-            let rest = forms::of_type_without(ui, cx, spawner, path, &[field!(Spawner, spawns)]);
-            return spawns || rest.is_some();
+            let rest =
+                forms::of_type_without(ui, cx, spawner, path, &[field!(Spawner, populations)]);
+            let populations = populations_card(ui, cx, spawner, path);
+            return populations || rest.is_some();
         }
         AreaModule::Resident(resident) => forms::of_type(ui, cx, resident, path),
         AreaModule::Script(script) => forms::of_type(ui, cx, script, path),
@@ -862,12 +870,12 @@ fn module_fields(ui: &mut Ui, cx: &mut FormCx, module: &mut AreaModule, path: &s
 /// The scripts of the object at the scene node `node`, each as a card.
 fn object_scripts(ui: &mut Ui, cx: &mut FormCx, object: &mut ObjectDef, node: &str) -> bool {
     let path = format!("{node}{}", field!(ObjectDef, scripts));
-    let held = cx.runner.replace(RunnerKind::Object);
+    let held = cx.runner.replace(OBJECT_RUNNER);
     let changed = crate::row_form::scripts::script_cards(
         ui,
         cx,
         AreaDef::TABLE,
-        RunnerKind::Object,
+        OBJECT_RUNNER,
         &mut object.scripts,
         &path,
         FormAction::NewObjectScript {
@@ -895,15 +903,9 @@ pub(crate) fn new_object_script(
     };
     let name = object.name.clone().unwrap_or_else(|| "object".to_owned());
     let mut edit = ContentEdit::new(String::new());
-    let answering = rows::answering_first(project, bundle, RunnerKind::Object, &HashSet::new())?;
-    let (path, reader, script) = rows::new_script(
-        &mut edit,
-        project,
-        bundle,
-        &name,
-        RunnerKind::Object,
-        answering,
-    )?;
+    let answering = rows::answering_first(project, bundle, OBJECT_RUNNER, &HashSet::new())?;
+    let (path, reader, script) =
+        rows::new_script(&mut edit, project, bundle, &name, OBJECT_RUNNER, answering)?;
     edit.label = format!("New {} run by {name}", file_title(&path));
     read.write_in(&mut edit, &reader, bundle, |nodes, _| {
         if let Some(AreaModule::Object(object)) =
@@ -1124,8 +1126,7 @@ fn object_extras(
     ui.horizontal_wrapped(|ui| {
         for (area, at) in &destinations {
             let where_ = format!("{area} · {}, {}", forms::metres(at.x), forms::metres(at.y));
-            if ui
-                .button("→ Go to destination")
+            if controls::button(ui, "→ Go to destination")
                 .on_hover_text(where_)
                 .clicked()
             {
@@ -1133,7 +1134,7 @@ fn object_extras(
             }
         }
         let hint = "An object with script/warp leading back here, on the nearest walkable cell outside the destination";
-        if ui.button("← Return door").on_hover_text(hint).clicked() {
+        if controls::button(ui, "← Return door").on_hover_text(hint).clicked() {
             out.actions.push(super::AreaAction::ReturnDoor(node.to_owned()));
         }
     });

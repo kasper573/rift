@@ -140,6 +140,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     let mut hands = skeleton_of(&mut editor, &key).hands;
     hands.push(Hand {
         name: "chest".to_owned(),
+        label: None,
         joint: JointName::new("body"),
         offset: Default::default(),
         turn: Default::default(),

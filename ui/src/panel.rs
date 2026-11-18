@@ -198,11 +198,10 @@ pub fn scrolled(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 }
 
 /// The cross that closes a window, at `rect`.
-pub fn close_button(ui: &mut Ui, id: Id, rect: Rect) -> Response {
+pub fn close_button(ui: &mut Ui, id: Id, rect: Rect, said: &str) -> Response {
     let response = ui.interact(rect, id.with("close"), Sense::click());
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Close")
-    });
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), said));
     sheet::cross(ui.painter(), rect, response.hovered());
     response
 }
@@ -214,13 +213,13 @@ pub enum GripCorner {
     TopRight,
 }
 
-/// The grip in a window's curled corner that resizes it.
-pub fn corner_grip(ui: &mut Ui, id: Id, curl: Rect) -> Response {
+/// The grip in a window's curled corner that resizes it, which a screen reader calls `name`.
+pub fn corner_grip(ui: &mut Ui, id: Id, curl: Rect, name: &str) -> Response {
     let response = ui
         .interact(curl, id.with("grip"), Sense::drag())
         .on_hover_cursor(egui::CursorIcon::ResizeNwSe);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::ResizeHandle, ui.is_enabled(), "Resize")
+        egui::WidgetInfo::labeled(egui::WidgetType::ResizeHandle, ui.is_enabled(), name)
     });
     response
 }
@@ -285,7 +284,11 @@ fn card_ink(selected: bool) -> (egui::Color32, egui::Color32) {
 }
 
 fn titled(ui: &mut Ui, title: &str) {
-    ui.add(egui::Label::new(theme::strong(title).monospace()).truncate());
+    ui.add(
+        egui::Label::new(theme::strong(title).monospace())
+            .truncate()
+            .show_tooltip_when_elided(false),
+    );
 }
 
 /// A card's heading: `trailing` and the subtitle at its right, the title in the room they leave.

@@ -208,7 +208,7 @@ fn every_card_is_one_size_whatever_it_holds_and_however_it_is_dressed() {
             ("A long errand", 40, CardDress::PLAIN),
             ("Moon Charm", 1, dress),
         ] {
-            let mut card = Card::new(CardKind::Equipment, name);
+            let mut card = Card::new(CardKind::Equipment, "Equipment", name);
             card.dress = dress;
             let response = card.show(ui, |ui, plate| {
                 card::heading(ui, plate, "grants while worn");
@@ -251,12 +251,13 @@ fn a_card_holding_more_than_it_has_room_for_scrolls_it_by_a_bar_inside_its_frame
         pass(&ctx, |ui| {
             for (name, lines) in [("Rusty Sword", 1), ("A long errand", 40)] {
                 let mut room = Rect::NOTHING;
-                let response = Card::new(CardKind::Equipment, name).show(ui, |ui, _| {
-                    room = ui.max_rect();
-                    for line in 0..lines {
-                        card::fact(ui, &format!("Line {line}"));
-                    }
-                });
+                let response =
+                    Card::new(CardKind::Equipment, "Equipment", name).show(ui, |ui, _| {
+                        room = ui.max_rect();
+                        for line in 0..lines {
+                            card::fact(ui, &format!("Line {line}"));
+                        }
+                    });
                 shown.push((room, response.frame));
             }
         });
@@ -316,7 +317,7 @@ fn a_card_pane_takes_the_same_room_empty_and_full() {
         let full = pane.show(
             ui,
             |ui| {
-                Card::new(CardKind::Equipment, "Rusty Sword").show(ui, |ui, _| {
+                Card::new(CardKind::Equipment, "Equipment", "Rusty Sword").show(ui, |ui, _| {
                     for _ in 0..40 {
                         card::fact(ui, "A long line of facts about the sword.");
                     }
@@ -337,9 +338,11 @@ fn a_card_cuts_a_long_name_and_tells_the_plate_so() {
     let ctx = context();
     let mut cut = Vec::new();
     pass(&ctx, |ui| {
-        Card::new(CardKind::Resource, "Bundle").show(ui, |_, plate| cut.push(plate.name_cut));
+        Card::new(CardKind::Resource, "Resource", "Bundle")
+            .show(ui, |_, plate| cut.push(plate.name_cut));
         Card::new(
             CardKind::Resource,
+            "Resource",
             "A bundle of seventeen very long dried herbs from the far marsh",
         )
         .show(ui, |_, plate| cut.push(plate.name_cut));
@@ -352,11 +355,11 @@ fn a_closable_card_has_a_cross_and_a_page_card_has_none() {
     let ctx = context();
     let mut crosses = Vec::new();
     pass(&ctx, |ui| {
-        let mut closable = Card::new(CardKind::Active, "Cleave");
-        closable.closable = true;
+        let mut closable = Card::new(CardKind::Active, "Active skill", "Cleave");
+        closable.close = Some("Close");
         crosses.push(closable.show(ui, |_, _| {}).close.is_some());
         crosses.push(
-            Card::new(CardKind::Passive, "Thick Skin")
+            Card::new(CardKind::Passive, "Passive skill", "Thick Skin")
                 .show(ui, |_, _| {})
                 .close
                 .is_some(),

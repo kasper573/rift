@@ -13,7 +13,7 @@ use crate::support::game;
 #[test]
 fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     let report = game()
-        .edit_settings(|settings| settings["player"] = json!("heroo.player.json"))
+        .edit_settings(|settings| settings["character"] = json!("heroo.character.json"))
         .sfx("slash")
         .row("sfx", "splash", json!({ "volume": 1.0, "pitch": 1.0 }))
         .file("apprentice.class.json", "{ \"name\": 3 }")
@@ -47,9 +47,9 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
         [
             (
                 SETTINGS_FILE,
-                json(8, 13, "/player"),
+                json(8, 16, "/character"),
                 "missing file",
-                Some("\"hero.player.json\""),
+                Some("\"hero.character.json\""),
             ),
             (
                 "apprentice.class.json",
@@ -82,7 +82,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     );
     let text = report.to_string();
     for at in [
-        "fixtures/game.config.json:8:13  /player",
+        "fixtures/game.config.json:8:16  /character",
         "cove.area/paint/0_0.png  whole file",
         "nearest   \"icons/hero.png\"",
     ] {
@@ -404,7 +404,7 @@ fn a_basic_attack_that_costs_or_cools_down_is_refused() {
 #[test]
 fn a_fixture_shader_without_the_parameter_the_engine_sets_is_refused() {
     let report = Game::new()
-        .shader_on("skill_area", Stage::Ground)
+        .shader_on("skill_area", Stage::GROUND)
         .whole()
         .try_load()
         .err()
@@ -527,21 +527,35 @@ fn a_layer_filling_a_parameter_its_shader_lacks_is_refused() {
 
 #[test]
 fn a_game_file_that_does_not_parse_is_refused_at_its_field() {
-    let report = game()
-        .quest("errand",
-            json!({ "title": "Errand", "category": "Errands", "blurb": "Errand", "xp": 10, "modules": [] }),
+    let unread_settings = game()
+        .quest(
+            "errand",
+            json!({ "title": "Errand", "category": "Errands", "blurb": "Errand", "modules": [] }),
         )
-        .edit_settings(|settings| settings["initial_spawn"] = json!(path("area", "start")))
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == SETTINGS_FILE)
-        .unwrap_or_else(|| panic!("no error in the settings:\n{report}"));
-    assert_eq!(error.problem.rule, "wrong type");
+        .edit_settings(|settings| settings["initial_spawn"] = json!(path("area", "start")));
+    let unread_character = game().row("test_character", "nameless", json!({ "xp": 10 }));
+    for (said, game, file, rule) in [
+        (
+            "the settings",
+            unread_settings,
+            SETTINGS_FILE.to_owned(),
+            "wrong type",
+        ),
+        (
+            "a test character the rules about every character read",
+            unread_character,
+            path("test_character", "nameless"),
+            "missing field",
+        ),
+    ] {
+        let report = game.try_load().err().expect("refused");
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == file)
+            .unwrap_or_else(|| panic!("{said}: no error in {file}:\n{report}"));
+        assert_eq!(error.problem.rule, rule, "{said}");
+    }
 }
 
 #[test]
@@ -653,16 +667,15 @@ fn what_follows_the_sky_or_is_away_by_it_reads_the_sky_alone_by_times_of_day_the
         }])
     };
     let pack = |more: Value| {
-        let mut spawner = json!({
-            "type": "spawner",
-            "count": 2,
+        let mut population = json!({
+            "max_spawned_at_once": 2,
             "spawns": [{ "type": "npc", "npc": path("npc", "wolf"), "when": night.clone() }],
         });
-        spawner
+        population
             .as_object_mut()
-            .expect("the spawner")
+            .expect("the population")
             .extend(more.as_object().expect("fields").clone());
-        json!([spawner])
+        json!([{ "type": "spawner", "populations": [population] }])
     };
     for (modules, refused) in [
         (light(night.clone()), None),
@@ -673,7 +686,7 @@ fn what_follows_the_sky_or_is_away_by_it_reads_the_sky_alone_by_times_of_day_the
         (pack(json!({ "respawn": 30.0 })), None),
         (
             light(json!({ "type": "at_least", "a": { "type": "level" }, "b": 3 })),
-            Some("reads a player"),
+            Some("reads a character"),
         ),
         (
             sound(json!({ "type": "during", "time": "Nite" })),
@@ -955,6 +968,58 @@ fn a_file_that_did_not_load_is_reported_alone() {
             "{case}: only {broken} is reported\n{report}"
         );
     }
+}
+
+#[test]
+fn content_that_pays_out_items_needs_mail_for_what_a_bag_has_no_room_for() {
+    let paying = |mail: bool| {
+        let gift = json!({
+            "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "give" },
+            "give": { "type": "items", "give": [{ "item": path("item", "ore") }] },
+        });
+        let taking = json!({
+            "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "take" },
+            "take": { "type": "items", "take": [{ "item": path("item", "ore") }] },
+        });
+        let errand = json!({
+            "title": "Errand", "category": "Errands", "blurb": "Errand",
+            "modules": [{ "type": "reward", "items": [{ "item": path("item", "ore") }] }],
+        });
+        let script = |name: &str| json!([{ "type": "script", "script": path("script", name) }]);
+        game()
+            .edit_settings(|settings| {
+                if !mail {
+                    let settings = settings.as_object_mut().expect("settings");
+                    settings.remove("mail");
+                }
+            })
+            .item("ore", json!({ "kind": { "type": "resource" } }))
+            .script("gift", "npc", gift)
+            .script("taking", "npc", taking)
+            .npc("giver", 10.0, script("gift"))
+            .npc("taker", 10.0, script("taking"))
+            .quest("errand", errand)
+            .try_load()
+    };
+    let refused = |report: LoadReport| -> Vec<String> {
+        report
+            .errors
+            .into_iter()
+            .filter(|error| error.problem.rule == "delivers items without mail")
+            .map(|error| error.file)
+            .collect()
+    };
+
+    assert_eq!(
+        refused(paying(false).err().expect("refused")),
+        [path("quest", "errand"), path("npc", "giver")],
+        "a script that gives and a quest that rewards items, never one that only takes"
+    );
+    assert_eq!(
+        paying(true).err().map(refused).unwrap_or_default(),
+        Vec::<String>::new(),
+        "with messages, what has no room is sent"
+    );
 }
 
 #[test]

@@ -7,8 +7,8 @@ use bevy_terminal::{TerminalCompletionRequest, TerminalCompletions, TerminalOpti
 
 use super::input::{self, TypedCommand};
 use crate::core::content::Content;
-use crate::systems::GameSettings;
 use crate::systems::player;
+use crate::systems::{GameSettings, messages};
 
 /// Answers every connection that asked how the command it is typing may go on.
 pub fn answer(world: &mut World) {
@@ -35,24 +35,34 @@ pub fn completions(
         return none;
     };
     let content = world.resource::<Content>();
-    let most = content.built::<GameSettings>().suggestions as usize;
+    let settings = content.built::<GameSettings>();
+    let messages = messages::of(content);
+    let most = settings.suggestions as usize;
     let typed = TypedCommand::of(line);
     let commands = super::allowed(world, conn);
     let keeping = |typing: &str| (asked.text.chars().count() - typing.chars().count()) as u32;
     if typed.naming {
+        let caller = player::conn_player(world, conn);
         let names = commands.iter().map(|command| command.name(content));
         let options = best_matches(typed.name, names, most)
             .into_iter()
             .map(|place| commands[place])
             .map(|command| {
                 let takes_inputs = !command.get(content).inputs.is_empty();
+                let cooling = caller.and_then(|caller| super::cooling(world, caller, command));
                 TerminalOption {
                     text: if takes_inputs {
                         format!("{} ", command.name(content))
                     } else {
                         command.name(content).to_owned()
                     },
-                    detail: command.usage(content),
+                    detail: match cooling {
+                        Some(left) => messages
+                            .command
+                            .ready_in(messages.time.rough(left), command.usage(content)),
+                        None => command.usage(content),
+                    },
+                    muted: cooling.is_some(),
                 }
             })
             .collect();
@@ -89,9 +99,10 @@ pub fn completions(
         .map(|place| TerminalOption {
             text: options[place].text.clone(),
             detail: options[place].detail.clone(),
+            muted: false,
         })
         .collect(),
-        usage: format!("{}: {usage}", slot.name()),
+        usage: messages.command.input_usage(slot.name(), &usage),
         ..none
     }
 }

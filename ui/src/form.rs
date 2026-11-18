@@ -23,13 +23,21 @@ pub fn kv(ui: &mut Ui, key: &str, value: impl FnOnce(&mut Ui)) {
 
 pub fn kv_text(ui: &mut Ui, key: &str, value: impl Into<String>) {
     kv(ui, key, |ui| {
-        ui.add(egui::Label::new(value.into()).truncate());
+        ui.add(
+            egui::Label::new(value.into())
+                .truncate()
+                .show_tooltip_when_elided(false),
+        );
     });
 }
 
 pub fn kv_code(ui: &mut Ui, key: &str, value: impl Into<String>) {
     kv(ui, key, |ui| {
-        ui.add(egui::Label::new(face::mono(value.into())).truncate());
+        ui.add(
+            egui::Label::new(face::mono(value.into()))
+                .truncate()
+                .show_tooltip_when_elided(false),
+        );
     });
 }
 

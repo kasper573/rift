@@ -22,6 +22,7 @@ mod picker;
 mod play;
 pub mod probe;
 pub mod project;
+pub mod reaches;
 pub mod row_form;
 pub mod rows;
 pub mod scene_graph;

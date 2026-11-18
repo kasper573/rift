@@ -1,12 +1,12 @@
 {
   "name": "New Game",
-  "content_version": "3db9171e",
+  "content_version": "a3ed7149",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
     "y": 6.0
   },
-  "player": "hero.player.json",
+  "character": "hero.character.json",
   "daylight": {
     "day_length": 1200.0,
     "start": 10.0
@@ -98,105 +98,12 @@
   },
   "notices": {
     "pops_last": 1.0,
-    "intro_after": 0.3
-  },
-  "words": {
-    "accept_quest": "Accept",
-    "decline_quest": "Decline",
-    "not_yet": "Not yet.",
-    "locked": "You can't do that yet.",
-    "no_longer": "You can't do that any more.",
-    "quest_log_full": "Your quest log is full.",
-    "needs_more": "Needs {count} more {item}",
-    "needs_a_slot": "Needs 1 free slot",
-    "needs_slots": "Needs {slots} free slots",
-    "needs_tool": "Needs a {tool} in your tool slot",
-    "no_room": "No room",
-    "bag_room": "Your inventory has no room for what this can drop",
-    "ran_out": "It ran out",
-    "confirm": "Confirm",
-    "craft": "Craft",
-    "cancel_craft": "Cancel",
-    "recipes": "Recipes",
-    "no_recipe": "No recipe",
-    "choose_result": "Choose a result",
-    "craft_failed": "Crafting failed",
-    "requires_mastery": "Requires mastery",
-    "unknown_command": "There is no command {command}",
-    "command_needs": "{usage} needs its {input}",
-    "command_refuses": "{value} is no {input}",
-    "command_takes": "{usage} takes no more than that",
-    "game_changed": "The game has changed since you were here",
-    "gone": "The {kind} {name} is no longer in the game.",
-    "kept_aside": "Kept aside for you, in case it returns.",
-    "stack_did_not_fit": "Your inventory now holds {slots}. One stack did not fit.",
-    "stacks_did_not_fit": "Your inventory now holds {slots}. {stacks} stacks did not fit.",
-    "skills_rearranged": "The {class}'s skills were rearranged.",
-    "points_returned": "Your {points} skill points are yours to spend again.",
-    "carry_on": "Carry on",
-    "away": "Away",
-    "not_saving": "The game cannot save right now",
-    "not_saving_since": "What you have done since {time} may be lost if the server stops.",
-    "play_on": "You can go on playing.",
-    "saved": "Saved",
-    "saved_again": "Everything up to now is kept.",
-    "not_taking_requests": "{name} is not taking requests",
-    "you_blocked": "You have blocked {name}",
-    "not_here": "{name} is not here",
-    "friendship_asks": "{name} wants to be your friend",
-    "friendship_asked": "You asked {name} to be your friend",
-    "friendship_sent": "Friend request sent to {name}",
-    "friendship_accepted": "{name} is now your friend",
-    "already_friends": "{name} is already your friend",
-    "friends_full": "Your friends list is full",
-    "too_many_friend_requests": "You have too many friend requests waiting",
-    "message_needs_title": "Give it a title",
-    "only_to_friends": "You can only write to friends and party members",
-    "not_taking_messages": "{name} is not taking messages",
-    "inbox_full": "{name}'s inbox is full",
-    "writing_too_fast": "Wait a moment before writing again",
-    "stays_with_you": "{item} stays with you",
-    "message_sent": "Message sent to {name}",
-    "message_arrived": "{name} wrote to you: {title}. {key} opens it",
-    "took_some": "{taken} of {attached} taken. The rest found no room and waits here",
-    "did_not_fit_title": "What your inventory had no room for",
-    "did_not_fit_text": "Your inventory had no room for these. They wait here until you take them.",
-    "sent_in_a_message": "It was sent to you in a message",
-    "party_invite_asks": "{name} invites you to their party",
-    "party_invite_asked": "You invited {name} to your party",
-    "party_invite_denied": "{name} denied your invitation",
-    "party_invite_lapsed": "{name} did not answer your invitation",
-    "party_full": "The party is full",
-    "in_a_party": "{name} is in a party",
-    "party_joined": "{name} joined the party",
-    "party_left": "{name} left the party",
-    "party_removed": "{name} was removed from the party",
-    "you_were_removed": "You were removed from the party",
-    "party_disbanded": "{name} disbanded the party",
-    "party_leads": "{name} leads the party now",
-    "you_joined_party": "You joined {name}'s party",
-    "you_left_party": "You left the party",
-    "chat_too_fast": "You are writing too fast",
-    "mount_barred_here": "This area does not allow mounts",
-    "no_water_in_reach": "No water deep enough within reach",
-    "step_off_first": "Step off first",
-    "no_ground_in_reach": "No ground to step onto within reach",
-    "spot_too_far": "That spot is too far away",
-    "not_from_mount": "Not from the {mount}",
-    "seat_asks": "{name} asks for a seat on your {about}",
-    "seat_asked": "You asked {name} for a seat",
-    "seat_denied": "{name} has no seat for you",
-    "seat_lapsed": "{name} did not answer about a seat",
-    "seats_taken": "Every seat is taken",
-    "seat_out_of_reach": "Too far from the mount for a seat",
-    "set_down_by": "{name} set you down",
-    "seat_free": "Seat free",
-    "instance_full": "{area} holds no more than {holds}",
-    "instances_busy": "There is no room right now",
-    "instance_timed_out": "Time ran out in {area}",
-    "instance_not_yours": "You are no longer of this party",
-    "instance_rewards_title": "Your rewards from {area}",
-    "instance_rewards_text": "Your inventory had no room for these."
+    "intro_after": 0.3,
+    "feed_rows": 5,
+    "budget": {
+      "burst": 10.0,
+      "refill_per_second": 2.0
+    }
   },
   "typing": {
     "pace": 45.0,
@@ -401,8 +308,13 @@
     "friendly": "ally",
     "npcs_apart": "enemy"
   },
-  "history_merges_within": 10.0,
+  "history": {
+    "merges_within": 10.0,
+    "kept": 500
+  },
   "suggestions": 10,
+  "search_letters": 2,
+  "unsaved_told_after": 3,
   "lingers_for": 30.0,
   "requests": {
     "card_shows": 20.0,
@@ -457,14 +369,15 @@
         146,
         202
       ]
-    ]
+    ],
+    "kept_lines": 200
   },
   "friends": {
     "most": 100,
     "requests": 20,
     "request_lasts": 604800.0
   },
-  "messages": {
+  "mail": {
     "inbox": 50,
     "attachments": 6,
     "title_length": 60,
@@ -474,11 +387,17 @@
   "party": {
     "size": 5,
     "invite_lasts": 60.0,
+    "call_lasts": 120.0,
     "absent_for": 300.0,
     "experience": {
       "split": "even",
       "range": 40.0,
       "bonus": 0.0
     }
+  },
+  "trade": {
+    "reach": 6.0,
+    "slots": 8,
+    "accept_waits": 3.0
   }
 }

@@ -457,7 +457,12 @@ fn spoken(text: &StyledLine) -> Vec<Spoken> {
                 glyph: Glyph::Char(' '),
                 voice: None,
             }],
-            TextPiece::Pause(_) => Vec::new(),
+            TextPiece::Pause(_)
+            | TextPiece::LinkStart { .. }
+            | TextPiece::LinkEnd
+            | TextPiece::TypingStart
+            | TextPiece::TypingEnd
+            | TextPiece::Room(_) => Vec::new(),
         })
         .collect()
 }

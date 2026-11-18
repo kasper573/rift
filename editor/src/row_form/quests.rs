@@ -1,12 +1,13 @@
 use crate::widgets::Badge;
 use engine::core::content::ContentFile;
+use engine::core::script::ScriptDef;
 use engine::core::script::node::Node;
 use engine::systems::area::AreaModule;
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::scene::SCENE_FILE;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::QuestDef;
-use engine::systems::script::{RiftEffect, ScriptDef};
+use engine::systems::quest::effects::{AcceptQuest, OfferQuest, TurnIn};
 use ui::egui;
 use ui::egui::{Sense, Ui};
 use ui::face;
@@ -93,11 +94,24 @@ fn quest_parties(editor: &Editor, quest: &str) -> (Vec<Party>, Vec<Party>) {
             continue;
         };
         for (name, node) in &script.nodes {
-            let gives = match node {
-                Node::Effect(RiftEffect::OfferQuest(offer)) if offer.quest == quest => true,
-                Node::Effect(RiftEffect::AcceptQuest(accept)) if accept.quest == quest => true,
-                Node::Effect(RiftEffect::TurnIn(turn_in)) if turn_in.quest == quest => false,
-                _ => continue,
+            let Node::Effect(effect) = node else {
+                continue;
+            };
+            let gives = if effect
+                .downcast_ref::<OfferQuest>()
+                .is_some_and(|offer| offer.quest == quest)
+                || effect
+                    .downcast_ref::<AcceptQuest>()
+                    .is_some_and(|accept| accept.quest == quest)
+            {
+                true
+            } else if effect
+                .downcast_ref::<TurnIn>()
+                .is_some_and(|turn_in| turn_in.quest == quest)
+            {
+                false
+            } else {
+                continue;
             };
             for usage in project.usages.of_content(script_path) {
                 let Some((table, key)) = content_of(&usage.file) else {

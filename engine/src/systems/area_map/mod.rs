@@ -19,6 +19,8 @@ use crate::core::gui::{self, GuiImage};
 use crate::core::math::{Pos, Rect};
 use crate::core::render::CameraRig;
 use crate::core::render::world::opacity::Opacity;
+use crate::core::script::Scripts;
+use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
 use crate::core::units::{MeterSize, Meters, Radians};
 use crate::systems::actor::{Action, Actor, Name};
@@ -29,13 +31,12 @@ use crate::systems::hud::menu::{self, MenuTabName};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::{self, DroppedItem, Reservation};
 use crate::systems::mention::Mention;
+use crate::systems::messages::{self, messages};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::party;
 use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
-use crate::systems::script::RiftScripts;
-use crate::systems::text::LineText;
 use crate::systems::{GameSettings, visibility};
 
 pub struct AreaMapPlugin;
@@ -146,8 +147,8 @@ pub struct MapReachStep(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MapMarkKind {
     Townsperson,
-    Player,
-    /// A player of the viewer's party.
+    Character,
+    /// A character of the viewer's party.
     PartyMember,
     WayOut,
     /// An item on the ground whose rarity marks it, drawn as the rarity's icon.
@@ -202,7 +203,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
                     if party.contains(&by.client) {
                         MapMarkKind::PartyMember
                     } else {
-                        MapMarkKind::Player
+                        MapMarkKind::Character
                     },
                     name.map(|name| name.name.clone()).unwrap_or_default(),
                 ),
@@ -227,7 +228,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
             ..mark
         })
         .collect();
-    let scripts = world.resource::<RiftScripts>();
+    let scripts = world.resource::<Scripts>();
     let ways: Vec<MapMark> = area::warp::warp_objects(&content, scripts, area)
         .into_iter()
         .filter(|object| object.to.area != area)
@@ -284,6 +285,7 @@ struct MapView {
     sight: Meters,
     yaw: f32,
     window: MapWindow,
+    content: Content,
     /// Whether the map shows an area its viewer is not in.
     away: bool,
 }
@@ -322,18 +324,16 @@ impl MapView {
             sight: settings.sight,
             yaw: world.get_resource::<CameraRig>()?.yaw().0,
             window: window(at),
+            content: world.resource::<Content>().clone(),
             away: false,
         })
     }
 
-    fn title(&self) -> &'static str {
-        match self.window {
-            MapWindow::Disc { .. } => "Minimap",
-            MapWindow::Sheet { .. } => "Map",
-        }
+    fn messages(&self) -> &MapMessages {
+        &messages::of(&self.content).map
     }
 
-    fn named(&self) -> &'static str {
+    fn key(&self) -> &'static str {
         match self.window {
             MapWindow::Disc { .. } => "minimap",
             MapWindow::Sheet { .. } => "map",
@@ -464,7 +464,7 @@ fn pinned(ui: &mut Ui, view: &MapView, pin: &MapPin) {
         TSTransform::IDENTITY,
     );
     let spot = egui::Rect::from_center_size(head, Vec2::splat(2.0 * HOVER_REACH)).union(name);
-    let said = format!("On the {}: pinned by {}", view.named(), pin.name);
+    let said = view.messages().pinned_by(view.key(), &pin.name);
     ui.interact(spot, ui.id().with("pin"), Sense::hover())
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
 }
@@ -488,7 +488,7 @@ const PIN_TALL: f32 = 15.0;
 const BLANK: Color32 = Color32::from_rgb(0xD9, 0xCB, 0xA3);
 const NO_GROUND: Color32 = Color32::from_rgb(0x4B, 0x43, 0x3A);
 const TOWNSPERSON: Color32 = Color32::from_rgb(0x6F, 0xB8, 0x74);
-const PLAYER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
+const CHARACTER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
 const PARTY_MEMBER: Color32 = Color32::from_rgb(0xE6, 0xC2, 0x5B);
 const PIN: Color32 = Color32::from_rgb(0xD9, 0x4F, 0x4F);
 const EDGE: Color32 = ink::FRAME;
@@ -663,7 +663,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
         MapMarkKind::WayOut,
         MapMarkKind::Loot,
         MapMarkKind::Townsperson,
-        MapMarkKind::Player,
+        MapMarkKind::Character,
         MapMarkKind::PartyMember,
     ] {
         for &(index, mark, at) in on_disc.iter().filter(|(_, mark, _)| mark.kind == kind) {
@@ -673,11 +673,11 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                 MapMarkKind::WayOut => {
                     ui.painter()
                         .add(Shape::convex_polygon(door(at), fill(ink::LIGHT), edge));
-                    format!("Way to {}", mark.name)
+                    view.messages().way_out(view.key(), &mark.name)
                 }
                 MapMarkKind::Townsperson => {
                     ui.painter().circle(at, PERSON, fill(TOWNSPERSON), edge);
-                    mark.name.clone()
+                    view.messages().named_on(view.key(), &mark.name)
                 }
                 MapMarkKind::Loot => {
                     if let Some(icon) = mark.icon.as_ref().and_then(|icon| gui::image(world, icon))
@@ -689,34 +689,43 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                             fill(Color32::WHITE),
                         );
                     }
-                    mark.name.clone()
+                    view.messages().named_on(view.key(), &mark.name)
                 }
-                MapMarkKind::Player | MapMarkKind::PartyMember => {
-                    let (color, said) = match kind {
-                        MapMarkKind::PartyMember => (PARTY_MEMBER, "party member"),
-                        _ => (PLAYER, "player"),
-                    };
+                MapMarkKind::Character | MapMarkKind::PartyMember => {
                     let diamond = [Vec2::UP, Vec2::RIGHT, Vec2::DOWN, Vec2::LEFT]
                         .map(|corner| at + corner * DIAMOND)
                         .to_vec();
+                    let color = if kind == MapMarkKind::PartyMember {
+                        PARTY_MEMBER
+                    } else {
+                        CHARACTER
+                    };
                     ui.painter()
                         .add(Shape::convex_polygon(diamond, fill(color), edge));
                     if kind == MapMarkKind::PartyMember {
                         ui.painter().circle_stroke(at, DIAMOND * 1.5, edge);
                     }
-                    format!("{} · {said}", mark.name)
+                    if kind == MapMarkKind::PartyMember {
+                        view.messages().party_member_on(view.key(), &mark.name)
+                    } else {
+                        view.messages().player_on(view.key(), &mark.name)
+                    }
                 }
             };
             let told = match (kind, mark.mention) {
-                (MapMarkKind::WayOut, Some(place)) => {
-                    LineText::plain("Way to ").then(place.span(&content))
-                }
+                (MapMarkKind::WayOut, Some(place)) => view.messages().way_to(place.span(&content)),
                 (MapMarkKind::Loot, Some(item)) => item.line(&content),
-                _ => LineText::plain(said.clone()),
+                (MapMarkKind::Character, _) => {
+                    LineText::plain(view.messages().player_mark(&mark.name))
+                }
+                (MapMarkKind::PartyMember, _) => {
+                    LineText::plain(view.messages().party_member_mark(&mark.name))
+                }
+                _ => LineText::plain(mark.name.clone()),
             };
             let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * HOVER_REACH));
             let node = ui.interact(spot, ui.id().with(("mark", index)), Sense::hover());
-            let label = format!("On the {}: {said}", view.named());
+            let label = said.clone();
             node.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label.clone())
             });
@@ -746,7 +755,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
         float::tooltip(&topmost, |ui| {
             let look = TextLook::role(TextRole::Tooltip, ui.visuals().text_color());
             for line in &under {
-                text::show(ui, world, &line.styled(), look, None);
+                text::show(ui, world, &line.styled(&content), look, None);
             }
         });
     }
@@ -788,17 +797,21 @@ fn myself(ui: &mut Ui, view: &MapView) {
     let at = view.point(view.at);
     arrow(ui, at, view.faces(), 8.0, Color32::WHITE);
     let spot = egui::Rect::from_center_size(at, Vec2::splat(16.0));
-    let said = format!("On the {}: you", view.named());
+    let said = view.messages().you_here(view.key());
     ui.interact(spot, ui.id().with("me"), Sense::hover())
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
 }
 
 fn north_bead(ui: &mut Ui, world: &mut World, at: Pos2) {
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).map;
     let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * BEAD));
     let bead = ui
         .interact(spot, ui.id().with("north"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    bead.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Face north"));
+    bead.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, words.face_north())
+    });
     let rim = if bead.hovered() {
         ink::GOLD2
     } else {
@@ -808,7 +821,7 @@ fn north_bead(ui: &mut Ui, world: &mut World, at: Pos2) {
         .circle(at, BEAD, ink::FRAME, Stroke::new(1.5, rim));
     glyph::centered(ui.painter(), at, "N", Face::BookBold.id(12.0), ink::GOLD2);
     float::tooltip(&bead, |ui| {
-        ui.label(TextRole::Tooltip.rich("North · click to face it"));
+        ui.label(TextRole::Tooltip.rich(words.north_tip()));
     });
     if bead.clicked()
         && let Some(mut rig) = world.get_resource_mut::<CameraRig>()
@@ -821,14 +834,23 @@ fn reach_buttons(ui: &mut Ui, view: &MapView, places: [Pos2; 2]) -> Option<MapRe
     let closer = (view.step.0 > 0).then(|| MapReachStep(view.step.0 - 1));
     let wider = (view.step < view.last_step).then(|| MapReachStep(view.step.0 + 1));
     let pressed = [
-        (Mark::Plus, "closer", closer),
-        (Mark::Minus, "wider", wider),
+        (
+            "closer",
+            Mark::Plus,
+            view.messages().closer(view.key()),
+            closer,
+        ),
+        (
+            "wider",
+            Mark::Minus,
+            view.messages().wider(view.key()),
+            wider,
+        ),
     ]
     .into_iter()
     .zip(places)
-    .map(|((sign, steps, step), at)| {
-        let said = format!("{} {steps}", view.title());
-        let button = round_button(ui, at, &said, step.is_some());
+    .map(|((key, sign, said, step), at)| {
+        let button = round_button(ui, at, key, &said, step.is_some());
         let spot = egui::Rect::from_center_size(at, Vec2::splat(SIGN));
         sign.paint(ui.painter(), spot, button.ink);
         step.filter(|_| button.response.clicked())
@@ -842,9 +864,15 @@ struct RoundButton {
     ink: Color32,
 }
 
-fn round_button(ui: &mut Ui, at: Pos2, said: &str, enabled: bool) -> RoundButton {
+fn round_button(
+    ui: &mut Ui,
+    at: Pos2,
+    key: &'static str,
+    said: &str,
+    enabled: bool,
+) -> RoundButton {
     let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * BUTTON));
-    let response = ui.interact(spot, ui.id().with(said), Sense::click());
+    let response = ui.interact(spot, ui.id().with(key), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, said));
     let (fill, ink) = match (enabled, response.hovered()) {
         (false, _) => (ink::HONEY2, ink::INK3),
@@ -870,7 +898,7 @@ fn wheeled(ui: &Ui, world: &World, chart: &egui::Response, view: &MapView) -> Op
     (step != i64::from(view.step.0)).then_some(MapReachStep(step as u32))
 }
 
-fn lettered(ui: &mut Ui, name: &str, top: Pos2) {
+fn lettered(ui: &mut Ui, name: &str, top: Pos2) -> egui::Rect {
     let galley =
         ui.painter()
             .layout_no_wrap(name.to_owned(), TextRole::Name.font_id(), Color32::WHITE);
@@ -884,4 +912,55 @@ fn lettered(ui: &mut Ui, name: &str, top: Pos2) {
         dusk::TEXT_SHADOW,
         TSTransform::IDENTITY,
     );
+    rect
+}
+
+messages! {
+    /// What the game says on its map.
+    pub struct MapMessages {
+        /// What a pin on the map is announced as on the minimap or the map, `{view}` being `minimap` or `map` and `{name}` who pinned it.
+        pinned_by(view: Text, name: Text),
+        /// What the player's own arrow is announced as, `{view}` being `minimap` or `map`.
+        you_here(view: Text),
+        /// What a way out is announced as, `{view}` being `minimap` or `map` and `{place}` where it leads.
+        way_out(view: Text, place: Text),
+        /// What a way out says in its tooltip, `{place}` being where it leads.
+        way_to[place: Line],
+        /// What another player is announced as, `{view}` being `minimap` or `map` and `{name}` their name.
+        player_on(view: Text, name: Text),
+        /// What another player says in their tooltip, `{name}` being their name.
+        player_mark(name: Text),
+        /// What a party member is announced as, `{view}` being `minimap` or `map` and `{name}` their name.
+        party_member_on(view: Text, name: Text),
+        /// What a party member says in their tooltip, `{name}` being their name.
+        party_member_mark(name: Text),
+        /// What a townsperson or dropped item is announced as, `{view}` being `minimap` or `map` and `{name}` its name.
+        named_on(view: Text, name: Text),
+        /// What the north bead on the map is announced as.
+        face_north,
+        /// The tooltip of the north bead on the map.
+        north_tip,
+        /// What the button that brings the map in closer is announced as, `{view}` being `minimap` or `map`.
+        closer(view: Text),
+        /// What the button that widens the map is announced as, `{view}` being `minimap` or `map`.
+        wider(view: Text),
+        /// What the screen reader reads of the minimap, `{area}` being the area and `{reach}` how many meters it reaches.
+        minimap_of(area: Text, reach: Number),
+        /// What the screen reader reads of the map, `{area}` being the area and `{reach}` how many meters it reaches.
+        map_of(area: Text, reach: Number),
+        /// The button and tooltip that bring the map back to where the player stands.
+        centre_on_you,
+        /// What a warp says when it finds nobody to move.
+        nobody_to_warp,
+        /// What a warp back to the spawn point says when the player has none.
+        no_spawn_point,
+        /// What a warp says when it would take a non-player out of their area.
+        npcs_stay,
+        /// What a warp says when it would take someone into an instanced area.
+        no_following_into_instance,
+        /// What a warp to another actor says when that actor can't be found.
+        nobody_to_warp_to,
+        /// What spawning an object says when the spot can't hold it.
+        nothing_can_stand,
+    }
 }

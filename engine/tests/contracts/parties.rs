@@ -5,13 +5,14 @@ use engine::core::units::{Meters, Seconds};
 use engine::systems::area::AreaDef;
 use engine::systems::area_map::{self, MapMarkKind};
 use engine::systems::chat::{ChatChannel, ChatChannels, ChatSpeaker};
+use engine::systems::combat::credit::KillCredited;
 use engine::systems::item::{self, DropTaker, Reservation};
 use engine::systems::movement::position;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::party::share::shares;
 use engine::systems::party::{ExperienceSplit, PartyRequest, SharedExperience};
 use engine::systems::player::{ClientId, Xp};
-use engine::systems::rewards::{self, KillCredited};
+use engine::systems::reward;
 use engine::systems::social_request::RequestAnswer;
 use engine::systems::{GameSettings, combat, request_sources, stat};
 use serde_json::json;
@@ -52,7 +53,10 @@ fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
         ),
         "accepting makes one of the two, led by whoever invited, wherever each is"
     );
-    assert_eq!(server.told(1), ["Hale joined the party"]);
+    assert_eq!(
+        server.told(1),
+        ["Party invite sent to Hale", "Hale joined the party"]
+    );
 
     invite(&mut server, 3, "Hale");
     assert_eq!(
@@ -69,7 +73,13 @@ fn a_party_is_made_by_an_invitation_and_run_by_its_leader() {
     );
     server.answer(3, RequestAnswer::Deny);
     server.step();
-    assert_eq!(server.told(2), ["Marrow denied your invitation"]);
+    assert_eq!(
+        server.told(2),
+        [
+            "Party invite sent to Marrow",
+            "Marrow denied your invitation"
+        ]
+    );
     invite(&mut server, 1, "Marrow");
     server.later(61.0);
     assert_eq!(
@@ -212,7 +222,7 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
     let mut server = Server::of(game(), request_sources());
     server
         .village
-        .add(rewards::grant)
+        .add((combat::credit::credit, reward::kills).chain())
         .plan(stat::SettleVitals::default())
         .add(combat::defeats);
     let wren = server.sign_in(1, "Wren", "village");
@@ -241,7 +251,7 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
         marked,
         [
             ("Hale".to_owned(), MapMarkKind::PartyMember),
-            ("Osric".to_owned(), MapMarkKind::Player)
+            ("Osric".to_owned(), MapMarkKind::Character)
         ],
         "a member's map tells the party's players from the rest"
     );
@@ -474,7 +484,7 @@ fn party(server: &mut Server, client: u32) -> Vec<String> {
         .members
         .iter()
         .map(|member| {
-            let leads = if party.leader == member.player.account {
+            let leads = if party.leader == member.character.account {
                 " ★"
             } else {
                 ""
@@ -484,7 +494,7 @@ fn party(server: &mut Server, client: u32) -> Vec<String> {
                 Some(_) => "village",
                 None => "away",
             };
-            format!("{}{leads} {place}", member.player.name)
+            format!("{}{leads} {place}", member.character.name)
         })
         .collect()
 }
@@ -517,6 +527,7 @@ fn game() -> Game {
             settings["party"] = json!({
                 "size": 3,
                 "invite_lasts": 60.0,
+                "call_lasts": 120.0,
                 "absent_for": 300.0,
                 "experience": { "split": "even", "range": 40.0, "bonus": 20.0 },
             });

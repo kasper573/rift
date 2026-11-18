@@ -7,12 +7,12 @@ use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaId;
+use engine::systems::area::Place;
 use engine::systems::from_client;
 use engine::systems::movement::Position;
 use engine::systems::npc::Npc;
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, start_of};
 use engine::systems::player::{ClientId, Players};
-use engine::systems::script::Place;
 use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
 use engine::systems::visibility;
 
@@ -91,7 +91,7 @@ pub fn act(world: &mut World, content: &Content, roster: &[Entity], tick: usize)
     }
 }
 
-fn player_of(world: &World, conn: Entity) -> Option<Entity> {
+pub fn player_of(world: &World, conn: Entity) -> Option<Entity> {
     let client = world.get::<ClientId>(conn)?;
     world.resource::<Players>().0.get(client).copied()
 }

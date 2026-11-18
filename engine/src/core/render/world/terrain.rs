@@ -64,7 +64,7 @@ pub struct GroundPictures {
 pub fn ground_paint(
     layers: &[GroundLayer],
     finish: &SurfaceFinish,
-    weather: Handle<Image>,
+    board: Handle<Image>,
     assets: &AssetServer,
     images: &mut Assets<Image>,
 ) -> (GroundPaint, GroundPictures) {
@@ -75,7 +75,7 @@ pub fn ground_paint(
     let paint = GroundPaint {
         pictures: images.add(stack(1, &[])),
         layers: images.add(layers_image(layers, &vec![0; layers.len()])),
-        weather,
+        board,
         roughness: finish.roughness,
         reflectance: finish.reflectance,
     };

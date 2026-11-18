@@ -3,6 +3,7 @@ use engine::core::math::Pos;
 use engine::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
 use engine::core::units::{HourOfDay, MeterPos, Meters};
 use engine::systems::area::AreaDef;
+use engine::systems::area::Place;
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, MoveRequest, position};
@@ -10,10 +11,9 @@ use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::region;
-use engine::systems::script::Place;
 use engine::systems::staging::{Staging, stage};
 use engine::systems::{
-    GameSettings, ServerClocks, actor, dialogue, npc, reach, script, skill, start_clocks, stat,
+    GameSettings, ServerClocks, actor, dialogue, npc, reach, skill, start_clocks, stat,
 };
 use serde_json::json;
 use testkit::{Game, Map, Sim, hunting, path};
@@ -334,9 +334,9 @@ fn sim() -> Sim {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
+            engine::systems::roster::ListRoster::default(),
             npc::ApproachWatchers::default(),
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
@@ -344,7 +344,7 @@ fn sim() -> Sim {
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     let raider = sim.id::<NpcDef>("raider");
     let area = sim.id::<AreaDef>("yard");

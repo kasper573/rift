@@ -1,13 +1,13 @@
 use crate::tabs::file_title;
 use engine::core::content::ContentFile;
 use engine::core::math::Pos;
+use engine::core::script::ScriptDef;
 use engine::core::units::Meters;
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::npc::NpcDef;
-use engine::systems::script::ScriptDef;
 
 use super::{AreaFrame, modules, nodes, shapes};
 use crate::app::{BottomTab, Editor};

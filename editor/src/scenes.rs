@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
+use engine::core::script::ScriptDef;
 use engine::core::units::{Degrees, HourOfDay, Meters};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
@@ -12,7 +13,6 @@ use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::{MapRegion, Note};
 use engine::systems::class::ClassDef;
 use engine::systems::item::ItemDef;
-use engine::systems::script::ScriptDef;
 use serde::{Deserialize, Serialize};
 use strum::VariantNames;
 

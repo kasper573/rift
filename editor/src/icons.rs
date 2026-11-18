@@ -6,6 +6,7 @@ use engine::core::babble::{BabbleBankDef, BabbleDef};
 use engine::core::card::CardStyleDef;
 use engine::core::content::{AssetKind, ImageRef};
 use engine::core::content::{ContentFile, SETTINGS_FILE, table_of};
+use engine::core::script::ScriptDef;
 use engine::core::vfx::VfxDef;
 use engine::core::vfx::shader::VfxShaderDef;
 use engine::systems::account::RoleDef;
@@ -30,14 +31,14 @@ use engine::systems::interface::{CursorDef, InterfaceIconDef};
 use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::item::{ItemDef, ToolTypeDef};
 use engine::systems::memory::MemoryDef;
+use engine::systems::messages::Messages;
 use engine::systems::mount::MountDef;
 use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
-use engine::systems::player::PlayerDef;
+use engine::systems::player::CharacterDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::QuestDef;
 use engine::systems::resource::ResourceDef;
-use engine::systems::script::ScriptDef;
 use engine::systems::shop::ShopDef;
 use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
@@ -172,7 +173,7 @@ impl KindFamily {
             | SpawnableDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
             NpcDef::TABLE
-            | PlayerDef::TABLE
+            | CharacterDef::TABLE
             | CharacterSnapshot::TABLE
             | ClassDef::TABLE
             | ModelDef::TABLE
@@ -202,6 +203,7 @@ impl KindFamily {
             | AttentionDef::TABLE
             | CardStyleDef::TABLE
             | ChatChannelDef::TABLE
+            | Messages::TABLE
             | TerminalCommandDef::TABLE => KindFamily::Interface,
             _ => return None,
         })
@@ -231,7 +233,7 @@ pub fn of_table(table: &str) -> KindIcon {
         SurfaceDef::TABLE => KindIcon::plain(phosphor::FOOTPRINTS),
         WorldMapDef::TABLE => KindIcon::plain(phosphor::GLOBE_HEMISPHERE_WEST),
         NpcDef::TABLE => KindIcon::plain(phosphor::ROBOT).unpictured(),
-        PlayerDef::TABLE => KindIcon::plain(phosphor::USER).unpictured(),
+        CharacterDef::TABLE => KindIcon::plain(phosphor::USER).unpictured(),
         CharacterSnapshot::TABLE => KindIcon::badged(phosphor::USER, phosphor::FLASK),
         ClassDef::TABLE => KindIcon::plain(phosphor::SHIELD_STAR),
         ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD).unpictured(),
@@ -260,6 +262,7 @@ pub fn of_table(table: &str) -> KindIcon {
         InterfaceIconDef::TABLE => KindIcon::plain(phosphor::APP_WINDOW),
         AttentionDef::TABLE => KindIcon::plain(phosphor::SEAL_WARNING),
         ChatChannelDef::TABLE => KindIcon::plain(phosphor::CHAT_CIRCLE),
+        Messages::TABLE => KindIcon::plain(phosphor::TRANSLATE),
         TerminalCommandDef::TABLE => KindIcon::plain(phosphor::TERMINAL_WINDOW),
         RoleDef::TABLE => KindIcon::plain(phosphor::CROWN),
         SfxDef::TABLE => KindIcon::plain(phosphor::SPEAKER_HIGH),

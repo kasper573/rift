@@ -3,7 +3,7 @@
 //! budget, fitted to the rig it shares clips with, and its clips are known at load, on the server as
 //! on the client.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use bevy::math::{Mat4, Quat, Vec2, Vec3, Vec3Swizzles};
@@ -869,21 +869,37 @@ pub fn triangles(bytes: &[u8]) -> Result<Vec<Triangle>, String> {
     Ok(out)
 }
 
-/// The ground a model takes from whoever stands `tall`: the convex hull, on the ground plane, of
-/// all of it that stands within `tall` of its lowest point, going round counter-clockwise. What
-/// of it stands higher is passed under. Empty for a model with no triangles.
-pub fn footing(triangles: &[Triangle], tall: Meters) -> Vec<Pos<Meters>> {
+/// The ground a model takes from whoever stands `tall`: one convex hull, on the ground plane, for
+/// every connected piece of the model that stands within `tall` of its lowest point, each going
+/// round counter-clockwise. Pieces join where triangles share a corner a walker meets, and pieces
+/// whose hulls overlap become one, so no part overlaps another. What stands higher is passed under,
+/// and the opening of an arch is no part of it. Empty for a model with no triangles.
+pub fn footing(triangles: &[Triangle], tall: Meters) -> Vec<Vec<Pos<Meters>>> {
     let lowest = triangles
         .iter()
         .flat_map(|triangle| triangle.corners)
         .map(|corner| corner.y)
         .fold(f32::INFINITY, f32::min);
     let top = lowest + tall.0;
-    let mut points: Vec<Pos<Meters>> = Vec::new();
+    let mut corners: HashMap<[i64; 3], usize> = HashMap::new();
+    let mut joined: Vec<usize> = Vec::new();
+    let mut touched: Vec<(usize, Vec<Pos<Meters>>)> = Vec::new();
     for triangle in triangles {
+        let mut points: Vec<Pos<Meters>> = Vec::new();
+        let mut met: Option<usize> = None;
         for (index, corner) in triangle.corners.iter().enumerate() {
             if corner.y <= top {
                 points.push(Pos::new(corner.x, corner.z));
+                let key = [corner.x, corner.y, corner.z].map(|axis| (axis * 1.0e4).round() as i64);
+                let next_id = joined.len();
+                let id = *corners.entry(key).or_insert(next_id);
+                if id == next_id {
+                    joined.push(id);
+                }
+                match met {
+                    Some(first) => union(&mut joined, first, id),
+                    None => met = Some(id),
+                }
             }
             let next = triangle.corners[(index + 1) % 3];
             if (corner.y <= top) != (next.y <= top) {
@@ -891,7 +907,78 @@ pub fn footing(triangles: &[Triangle], tall: Meters) -> Vec<Pos<Meters>> {
                 points.push(Pos::new(crossing.x, crossing.z));
             }
         }
+        if let Some(met) = met {
+            touched.push((met, points));
+        }
     }
+    let mut pieces: Vec<(usize, Vec<Pos<Meters>>)> = Vec::new();
+    for (met, points) in touched {
+        let root = find(&mut joined, met);
+        match pieces.iter_mut().find(|(piece, _)| *piece == root) {
+            Some((_, all)) => all.extend(points),
+            None => pieces.push((root, points)),
+        }
+    }
+    let mut hulls: Vec<Vec<Pos<Meters>>> = pieces
+        .into_iter()
+        .map(|(_, points)| convex_hull(points))
+        .filter(|hull| hull.len() >= 3)
+        .collect();
+    while let Some((a, b)) = overlapping(&hulls) {
+        let absorbed = hulls.remove(b);
+        let mut points = std::mem::take(&mut hulls[a]);
+        points.extend(absorbed);
+        hulls[a] = convex_hull(points);
+    }
+    hulls
+}
+
+fn find(parents: &mut [usize], mut id: usize) -> usize {
+    while parents[id] != id {
+        parents[id] = parents[parents[id]];
+        id = parents[id];
+    }
+    id
+}
+
+fn union(parents: &mut [usize], a: usize, b: usize) {
+    let (a, b) = (find(parents, a), find(parents, b));
+    parents[b.max(a)] = b.min(a);
+}
+
+fn overlapping(hulls: &[Vec<Pos<Meters>>]) -> Option<(usize, usize)> {
+    (0..hulls.len())
+        .flat_map(|a| (a + 1..hulls.len()).map(move |b| (a, b)))
+        .find(|&(a, b)| !apart(&hulls[a], &hulls[b]))
+}
+
+/// Whether a line runs between two convex polygons that touch it at most.
+fn apart(a: &[Pos<Meters>], b: &[Pos<Meters>]) -> bool {
+    let separates = |of: &[Pos<Meters>], other: &[Pos<Meters>]| {
+        (0..of.len()).any(|index| {
+            let edge = of[(index + 1) % of.len()] - of[index];
+            let side = |point: &Pos<Meters>| edge.x * point.y - edge.y * point.x;
+            let (low, high) = of
+                .iter()
+                .map(side)
+                .fold((f32::MAX, f32::MIN), |(low, high), at| {
+                    (low.min(at), high.max(at))
+                });
+            let (other_low, other_high) = other
+                .iter()
+                .map(side)
+                .fold((f32::MAX, f32::MIN), |(low, high), at| {
+                    (low.min(at), high.max(at))
+                });
+            other_low >= high || other_high <= low
+        })
+    };
+    separates(a, b) || separates(b, a)
+}
+
+/// The convex hull of `points`, going round counter-clockwise; fewer than three points when they
+/// do not span an area.
+fn convex_hull(mut points: Vec<Pos<Meters>>) -> Vec<Pos<Meters>> {
     points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     points.dedup();
     if points.len() < 3 {

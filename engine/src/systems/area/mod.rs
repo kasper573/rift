@@ -1,16 +1,23 @@
 pub mod blueprint;
 pub mod fog;
+pub mod heavens;
 pub mod lighting;
 pub mod object;
 pub mod prop;
 pub mod prop_material;
+pub mod query;
 pub mod rain;
 pub mod render;
 pub mod scene;
 pub mod scenery;
+pub mod script;
+pub mod shown_weather;
+pub mod sky;
 pub mod spawnable;
+pub mod stages;
 pub mod terrain;
 pub mod transition;
+pub mod vfx;
 pub mod walk;
 pub mod warp;
 pub mod weather;
@@ -23,6 +30,9 @@ pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
 pub use scene::SceneNode;
+pub use script::{
+    AREA_RUNNER, BLUEPRINT_RUNNER, OBJECT_RUNNER, PLACED_RUNNERS, Place, Started, Warps,
+};
 pub use terrain::{SurfaceDef, SurfaceId, TerrainDef, TerrainId, Walk};
 pub use walk::{GroundHold, HeldMesh, Survey, SurveyAnswer, SurveyIsland, SurveyQuestion};
 pub use weather::{
@@ -59,17 +69,17 @@ use crate::core::ground::{
     PaintMap, ShareMap, TILE_SIDE, TileAt, WaterSurface,
 };
 use crate::core::math::{Offset, Pos, Rect, Size};
+use crate::core::script::{Expr, OwnerRow, ScriptModule, Scripts};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, GridDims, MeterSize, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
+use crate::systems::area::sky::SkyCondition;
+use crate::systems::area::sky::SkyTable;
 use crate::systems::area_instance::AreaInstanceRules;
 use crate::systems::mount::MountKind;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
-use crate::systems::script::{
-    self, Condition, EffectReach, OwnerRow, RiftScripts, ScriptModule, SkyCondition, SkyTable,
-};
 use crate::systems::spawner::{SpawnSurface, Spawner};
 use blueprint::{FlattenAt, FlattenError};
 use lighting::MAX_LIGHTS;
@@ -82,6 +92,7 @@ pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
     app.replicate_once::<AreaTag>();
     object::register(app);
+    vfx::register(app);
 }
 
 pub fn content(registry: &mut ContentRegistry) {
@@ -103,6 +114,7 @@ pub fn content(registry: &mut ContentRegistry) {
         .json_part(scene::json_part(BlueprintDef::TABLE))
         .hook(LoadStep::Files, prop::check_fitted)
         .hook(LoadStep::Across, terrain::check_all)
+        .hook(LoadStep::Across, vfx::check_sites)
         .hook(LoadStep::Across, terrain::check_pictures)
         .hook(LoadStep::Across, prop_material::check_all)
         .hook(LoadStep::Across, lighting::check_area_shaders)
@@ -186,7 +198,7 @@ pub struct AreaDef {
     /// arrives on foot.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bars_mounts: Vec<MountKind>,
-    /// With it, the area is never shared: it is only ever entered as an instance, a copy of it
+    /// With it, the area is never shared: it is only ever entered as an instance, an instance of it
     /// that is one party's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<AreaInstanceRules>,
@@ -633,11 +645,20 @@ impl AreaModule {
                 .map(|when| ("/when".to_owned(), when))
                 .collect(),
             AreaModule::Spawner(spawner) => spawner
-                .spawns
+                .populations
                 .iter()
                 .enumerate()
-                .filter_map(|(index, share)| {
-                    Some((format!("/spawns/{index}/when"), share.when.as_ref()?))
+                .flat_map(|(population, held)| {
+                    held.spawns
+                        .iter()
+                        .enumerate()
+                        .map(move |(index, share)| (population, index, share))
+                })
+                .filter_map(|(population, index, share)| {
+                    Some((
+                        format!("/populations/{population}/spawns/{index}/when"),
+                        share.when.as_ref()?,
+                    ))
                 })
                 .collect(),
             _ => Vec::new(),
@@ -788,7 +809,7 @@ pub struct Resident {
     #[serde(default, skip_serializing_if = "is_idle")]
     pub pose: Pose,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shown: Option<Condition>,
+    pub shown: Option<Expr>,
     /// How long after its body goes it stands at its spot again. Without one it stays gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub respawn: Option<Seconds>,
@@ -823,10 +844,10 @@ pub fn modules(content: &Content, area: AreaId) -> impl Iterator<Item = &AreaMod
 }
 
 /// Where an npc lives: the first area that places it as a resident, at its spot there.
-pub fn residence(content: &Content, npc: NpcId) -> Option<script::Place> {
+pub fn residence(content: &Content, npc: NpcId) -> Option<Place> {
     content.ids::<AreaDef>().find_map(|area| {
         modules(content, area).find_map(|module| match module {
-            AreaModule::Resident(resident) if resident.npc == npc => Some(script::Place {
+            AreaModule::Resident(resident) if resident.npc == npc => Some(Place {
                 area,
                 at: resident.at,
             }),
@@ -865,17 +886,17 @@ pub fn residents(modules: &[Flattened]) -> impl Iterator<Item = NpcId> + '_ {
 }
 
 pub fn warp_objects(content: &Content, area: AreaId) -> Vec<(u32, &ObjectDef)> {
-    if !content.has_built::<RiftScripts>() {
+    if !content.has_built::<Scripts>() {
         return Vec::new();
     }
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     objects(placed(content, area))
         .filter(|(index, _)| {
             scripts
                 .may_do(OwnerRow::of_object(area, *index))
-                .reaches
-                .iter()
-                .any(|reach| matches!(reach, EffectReach::Warp(_)))
+                .reaching::<Warps>()
+                .next()
+                .is_some()
         })
         .collect()
 }
@@ -988,7 +1009,7 @@ impl Area {
     }
 
     /// Holds `tiles` in place of what `previous` held, letting go of the ground no hold wants any
-    /// longer: what a holder that moves over the area, such as a player or a view, holds by.
+    /// longer: what a holder that moves over the area, such as a character or a view, holds by.
     pub fn hold_instead(
         &self,
         previous: Option<GroundHold>,
@@ -1779,7 +1800,7 @@ pub enum IslandSite {
 /// nothing enters is left alone.
 pub fn check_islands(
     content: &Content,
-    spawn: script::Place,
+    spawn: Place,
     rechecks: impl Fn(AreaId) -> bool,
 ) -> Vec<(IslandSite, ContentProblem)> {
     let mut problems = Vec::new();
@@ -1911,7 +1932,7 @@ pub fn check_islands(
 
 /// `place` when a character can be put there, else the nearest place of its area where one can:
 /// on walkable ground, outside every warp object. None where the area has no such place.
-pub fn standable(content: &Content, place: script::Place) -> Option<script::Place> {
+pub fn standable(content: &Content, place: Place) -> Option<Place> {
     if check_place(content, place).is_ok() {
         return Some(place);
     }
@@ -1922,13 +1943,13 @@ pub fn standable(content: &Content, place: script::Place) -> Option<script::Plac
         .nearest_where(place.at, area.bodies.spacing(), |at| {
             !warps.iter().any(|(_, object)| object.shape.covers(at))
         })?;
-    Some(script::Place {
+    Some(Place {
         area: place.area,
         at,
     })
 }
 
-pub fn check_place(content: &Content, place: script::Place) -> Result<(), ContentProblem> {
+pub fn check_place(content: &Content, place: Place) -> Result<(), ContentProblem> {
     let Some(area) = loaded(content, place.area) else {
         return Ok(());
     };

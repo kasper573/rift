@@ -6,12 +6,15 @@ use bevy_terminal::TerminalEmbed;
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr, VariantArray};
 
+use super::ChatMessages;
 use crate::core::content::{Content, ContentFile};
 use crate::core::math::Pos;
+use crate::core::text::LineText;
 use crate::core::units::Meters;
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::item::{ItemDef, ItemId};
 use crate::systems::mention::{Mention, ShownMention};
+use crate::systems::messages;
 use crate::systems::movement::position;
 use crate::systems::quest::{QuestDef, QuestId};
 use crate::systems::skill::{SkillDef, SkillId};
@@ -51,22 +54,22 @@ impl ChatEmbedKind {
     }
 
     /// What the things of the kind are called together.
-    pub fn plural(self) -> &'static str {
+    pub fn plural(self, words: &ChatMessages) -> &str {
         match self {
-            ChatEmbedKind::Item => "items",
-            ChatEmbedKind::Quest => "quests",
-            ChatEmbedKind::Skill => "skills",
-            ChatEmbedKind::Location => "locations",
+            ChatEmbedKind::Item => words.items(),
+            ChatEmbedKind::Quest => words.quests(),
+            ChatEmbedKind::Skill => words.skills(),
+            ChatEmbedKind::Location => words.locations(),
         }
     }
 
     /// What a thing of the kind is, in a word or two.
-    pub fn hint(self) -> &'static str {
+    pub fn hint(self, words: &ChatMessages) -> &str {
         match self {
-            ChatEmbedKind::Item => "an item",
-            ChatEmbedKind::Quest => "a quest",
-            ChatEmbedKind::Skill => "a skill",
-            ChatEmbedKind::Location => "where you stand",
+            ChatEmbedKind::Item => words.item_hint(),
+            ChatEmbedKind::Quest => words.quest_hint(),
+            ChatEmbedKind::Skill => words.skill_hint(),
+            ChatEmbedKind::Location => words.location_hint(),
         }
     }
 
@@ -191,6 +194,16 @@ impl ChatEmbed {
 
     /// How it shows in a line: a thing as the interface mentions it anywhere, and a location
     /// as its area is mentioned, with the spot after the area's name.
+    /// The thing as a line names it: an item as its inline item does.
+    pub fn line(self, content: &Content) -> LineText {
+        match self {
+            ChatEmbed::Item(item) => Mention::Item(item).line(content),
+            ChatEmbed::Quest(quest) => Mention::Quest(quest).line(content),
+            ChatEmbed::Skill(skill) => Mention::Skill(skill).line(content),
+            ChatEmbed::Location(_) => self.shown(content).span().into(),
+        }
+    }
+
     pub fn shown(self, content: &Content) -> ShownMention {
         match self {
             ChatEmbed::Item(item) => Mention::Item(item).shown(content),
@@ -199,7 +212,9 @@ impl ChatEmbed {
             ChatEmbed::Location(location) => {
                 let area = Mention::Area(location.area).shown(content);
                 ShownMention {
-                    name: format!("{} ({},{})", area.name, location.x, location.y),
+                    name: messages::of(content)
+                        .chat
+                        .location_spot(&area.name, location.x, location.y),
                     ..area
                 }
             }

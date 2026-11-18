@@ -11,14 +11,14 @@ use engine::systems::actor::stance::{HandIndex, StanceDef};
 use engine::systems::actor::{self, Action, Motion, Playing};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
-use engine::systems::equipment::{self, Equipment, EquipmentPlace, HoldRequest};
+use engine::systems::equipment::{self, EquipRequest, Equipment, EquipmentPlace};
 use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, ItemId};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::skill::{self, SkillDef};
 use engine::systems::stat::{self, StatKind};
-use engine::systems::{GameSettings, rewards, script, status};
+use engine::systems::{GameSettings, reward, status};
 use serde_json::{Value, json};
 use testkit::{APEX, BODY, CLIP, Game, Map, Sim, path, rig_clips};
 
@@ -145,9 +145,9 @@ fn a_player_holds_any_held_item_in_whichever_hand_they_drop_it_on() {
                 item::bag_slot(&sim.world, player, sim.id::<ItemDef>(item)).expect("in the bag");
             sim.send(
                 conn,
-                HoldRequest {
+                EquipRequest {
                     slot: slot as u32,
-                    hand,
+                    hand: Some(hand),
                 },
             );
             sim.tick();
@@ -358,7 +358,7 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
     let content = sim.world.resource::<Content>().clone();
     let settings = content.built::<GameSettings>();
     let mut snapshot =
-        CharacterSnapshot::of_player(&content, "Hero", settings.player.get(&content));
+        CharacterSnapshot::of_def(&content, "Hero", settings.character.get(&content));
     snapshot.equipped = vec![sword, sim.id::<ItemDef>("helm")].into();
     let joined = sim.join_as(
         2,
@@ -520,13 +520,17 @@ fn armed(game: Game) -> (Sim, Entity) {
     let mut sim = Sim::new(game.load());
     sim.serve("field")
         .accept::<AttackRequest>()
-        .accept::<HoldRequest>()
-        .add((combat::request, equipment::hold, actor::playing::progress))
-        .add((status::expire, rewards::grant))
+        .accept::<EquipRequest>()
+        .add((
+            combat::request,
+            equipment::equip_requested,
+            actor::playing::progress,
+        ))
+        .add((status::expire, reward::kills))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan((
@@ -535,7 +539,7 @@ fn armed(game: Game) -> (Sim, Entity) {
         ))
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
     sim.tick();
     (sim, player)
@@ -578,7 +582,7 @@ fn bag(sim: &Sim, player: Entity) -> Vec<(ItemId, u32)> {
         .collect()
 }
 
-/// Whether `played` lasts `length` and lands at `apex` of its clip, at the player's attack speed.
+/// Whether `played` lasts `length` and lands at `apex` of its clip, at the character's attack speed.
 fn assert_timed(
     sim: &Sim,
     player: Entity,

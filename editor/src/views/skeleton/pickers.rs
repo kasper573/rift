@@ -58,22 +58,41 @@ pub(crate) fn clip_picker(
                 let length = rigging.playable(clip).map_or(0.0, |found| found.length.0);
                 format!("{} · {length:.2} s", clip.shown())
             });
-        controls::filtered_combo(ui, id, selected, 260.0, "filter by path", |ui, filter| {
-            let mut picked = false;
-            if let Some(none) = none {
-                picked |= ui.selectable_value(clip, None, none).clicked();
-            }
-            for found in matching(rigging, filter).take(MAX_LISTED) {
-                picked |= ui
-                    .selectable_value(
-                        clip,
-                        Some(found.clip.clone()),
-                        format!("{} · {:.2} s", found.clip, found.length.0),
-                    )
-                    .clicked();
-            }
-            picked
-        });
+        let clips: Vec<&Playable> = rigging.clips.iter().collect();
+        let names: Vec<String> = none
+            .map(str::to_owned)
+            .into_iter()
+            .chain(
+                clips
+                    .iter()
+                    .map(|found| format!("{} · {:.2} s", found.clip, found.length.0)),
+            )
+            .collect();
+        let skipped = usize::from(none.is_some());
+        let at = match clip {
+            Some(clip) => clips
+                .iter()
+                .position(|found| found.clip == *clip)
+                .map(|place| place + skipped),
+            None => none.map(|_| 0),
+        };
+        let combo = controls::search_combo(
+            ui,
+            id,
+            &controls::NamedChoices(&names),
+            at,
+            controls::SearchWords {
+                hint: &selected,
+                none_found: "no clip's path holds that",
+            },
+            Some(260.0),
+        );
+        if let Some(place) = combo.picked {
+            *clip = place
+                .checked_sub(skipped)
+                .and_then(|place| clips.get(place))
+                .map(|found| found.clip.clone());
+        }
     });
 }
 

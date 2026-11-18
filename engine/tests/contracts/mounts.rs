@@ -3,21 +3,21 @@ use engine::core::content::Content;
 use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::Pos;
 use engine::core::units::{MeterPos, Meters, Seconds};
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::item::{self, UseItemRequest};
 use engine::systems::mount::seat::MountRequest;
-use engine::systems::mount::{self, MountDef, MountKind, Riding, SeatIndex};
+use engine::systems::mount::{self, MountDef, MountKind, Riding};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, position};
 use engine::systems::npc::{self, NpcDef};
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, SnapshotSpot};
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::probe::{ProbeGame, ProbeGameQuestion, answer};
 use engine::systems::resource::{self, GatherRequest, ResourceDef, StopGathering, Working};
-use engine::systems::script::Place;
 use engine::systems::skill::{self, CastAim, SkillDef, UseSkillRequest};
-use engine::systems::social_request::RequestAnswer;
 use engine::systems::stat::{self, StatKind};
-use engine::systems::{actor, reach, request_sources, script, status};
+use engine::systems::{actor, reach, request_sources, status};
 use serde_json::{Value, json};
 use testkit::{APEX, BODY, Game, HEIGHTS, Map, Sim, path, rig_clips};
 
@@ -50,7 +50,7 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
     run(&mut server, 0.5);
     assert_eq!(
         (seat(&server, wren), speed(&server)),
-        (Some(("mare", 0)), on_foot + 4.0),
+        (Some("mare"), on_foot + 4.0),
         "an item that casts a mount's skill calls it, and what the mount's script does holds on its driver"
     );
     walk(&mut server, 1, ROCK);
@@ -72,7 +72,7 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
     cast(&mut server, 1, "call_crow", CastAim::None);
     walk(&mut server, 1, ROCK);
     assert!(
-        seat(&server, wren) == Some(("crow", 0)) && at(&server, wren).distance(ROCK) < Meters(0.1),
+        seat(&server, wren) == Some("crow") && at(&server, wren).distance(ROCK) < Meters(0.1),
         "a flying mount goes over what blocks feet"
     );
     walk(&mut server, 1, FAR_OUT);
@@ -87,7 +87,7 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
             server.village.errors(1).last().cloned()
         ),
         (
-            Some(("crow", 0)),
+            Some("crow"),
             Some("No ground to step onto within reach".to_owned())
         ),
         "nobody steps off where no ground is within the mount's reach"
@@ -132,7 +132,7 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
     cast(&mut server, 1, "call_boat", CastAim::Point(OFFSHORE));
     assert_eq!(
         (seat(&server, wren), at(&server, wren), jumps(&server)),
-        (Some(("boat", 0)), OFFSHORE, ashore_jumps),
+        (Some("boat"), OFFSHORE, ashore_jumps),
         "a good spot launches: the caster is on the water there, aboard, with no jump to cut their view for"
     );
     walk(&mut server, 1, BEACH);
@@ -153,7 +153,7 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
             server.village.errors(1).last().cloned()
         ),
         (
-            Some(("boat", 0)),
+            Some("boat"),
             Some("No ground to step onto within reach".to_owned())
         ),
         "afloat, the skill that called the boat picks the ground to step onto, within its reach"
@@ -196,7 +196,7 @@ fn a_mount_is_refused_before_anything_is_spent() {
     cast(&mut server, 1, "call_crow", CastAim::None);
     assert_eq!(
         (seat(&server, wren), server.village.errors(1)),
-        (Some(("mare", 0)), vec!["Step off first".to_owned()]),
+        (Some("mare"), vec!["Step off first".to_owned()]),
         "nobody calls a mount from the back of another"
     );
     cast(&mut server, 1, "call_mare", CastAim::None);
@@ -215,70 +215,25 @@ fn a_mount_is_refused_before_anything_is_spent() {
     cast(&mut server, 1, "call_raft", CastAim::Point(OFFSHORE));
     assert_eq!(
         (seat(&server, wren), server.village.count(wren, "raft")),
-        (Some(("boat", 0)), 0),
+        (Some("boat"), 0),
         "and is spent as it launches"
     );
 }
 
 #[test]
-fn a_seat_is_asked_of_the_driver_and_lets_its_rider_do_what_it_allows() {
+fn a_seat_lets_its_rider_do_what_it_allows() {
     let mut server = server();
-    let wren = server.sign_in(1, "Wren", "village");
     let hale = server.sign_in(2, "Hale", "village");
-    let isolde = server.sign_in(3, "Isolde", "village");
-    let corvin = server.sign_in(4, "Corvin", "village");
-    for (who, spot) in [
-        (hale, BEACH),
-        (wren, Pos::new(4.0, 6.0)),
-        (isolde, Pos::new(11.0, 4.0)),
-        (corvin, Pos::new(11.0, 8.0)),
-    ] {
-        stand(&mut server, who, spot);
+    let wren = server.sign_in(1, "Wren", "village");
+    for who in [hale, wren] {
         server.village.give(who, "tonic", 1);
     }
-    server.village.give(hale, "oar", 1);
-    cast(&mut server, 2, "call_boat", CastAim::Point(OFFSHORE));
-
-    server.send(1, MountRequest::AskSeat { driver: hale });
-    assert_eq!(
-        server.cards(2),
-        [],
-        "a seat is asked for from beside the mount, not from across the beach"
-    );
-    run(&mut server, 4.0);
-    assert!(at(&server, wren).distance(OFFSHORE) <= Meters(4.0));
-    assert_eq!(
-        (server.cards(1), server.cards(2)),
-        (
-            vec![("You asked Hale for a seat".to_owned(), true)],
-            vec![("Wren asks for a seat on your Rowboat".to_owned(), false)]
-        ),
-        "the asker walks into the mount's reach, and the driver is asked there"
-    );
-    assert_eq!(
-        seat(&server, wren),
-        None,
-        "nobody boards unless the driver accepts"
-    );
-    server.answer(2, RequestAnswer::Accept);
-    server.step();
-    assert_eq!(
-        (seat(&server, wren), at(&server, wren)),
-        (Some(("boat", 1)), OFFSHORE),
-        "accepting seats the asker in the first free seat, where the driver is"
-    );
-
-    let onward = Pos::new(18.0, 6.0);
-    walk(&mut server, 1, BEACH);
-    assert_eq!(at(&server, wren), OFFSHORE, "a passenger steers nothing");
-    walk(&mut server, 2, onward);
-    assert_eq!(
-        (at(&server, hale), at(&server, wren)),
-        (onward, onward),
-        "and goes wherever their driver does"
-    );
-    stand(&mut server, hale, OFFSHORE);
-    server.step();
+    stand(&mut server, hale, BEACH);
+    server.village.give(hale, "feather", 1);
+    cast(&mut server, 2, "call_crow", CastAim::None);
+    stand(&mut server, wren, Pos::new(8.0, 9.0));
+    server.village.give(wren, "bridle", 1);
+    cast(&mut server, 1, "call_mare", CastAim::None);
 
     for client in [1, 2] {
         let who = server.village.player(client);
@@ -291,55 +246,17 @@ fn a_seat_is_asked_of_the_driver_and_lets_its_rider_do_what_it_allows() {
             server.village.count(wren, "tonic"),
             server.village.count(hale, "tonic"),
             server.village.errors(2).last().cloned(),
+            seat(&server, wren),
             seat(&server, hale),
         ),
         (
             0,
             1,
-            Some("Not from the Rowboat".to_owned()),
-            Some(("boat", 0))
+            Some("Not from the Stormcrow".to_owned()),
+            Some("mare"),
+            Some("crow")
         ),
         "a seat lets its rider do what it lists, and a mount that refuses the rest leaves them seated"
-    );
-
-    for client in [3, 4] {
-        server.send(client, MountRequest::AskSeat { driver: hale });
-    }
-    run(&mut server, 2.0);
-    assert_eq!(server.cards(2).len(), 2, "two ask for the one seat left");
-    server.answer(2, RequestAnswer::Accept);
-    server.step();
-    server.answer(2, RequestAnswer::Accept);
-    server.step();
-    assert_eq!(
-        (
-            seat(&server, isolde),
-            seat(&server, corvin),
-            server.village.errors(4)
-        ),
-        (
-            Some(("boat", 2)),
-            None,
-            vec!["Every seat is taken".to_owned()]
-        ),
-        "a seat that went meanwhile is not given twice"
-    );
-    server.send(4, MountRequest::AskSeat { driver: hale });
-    assert_eq!(
-        server.village.errors(4),
-        ["Every seat is taken"; 2],
-        "and a full mount is not asked"
-    );
-
-    server.send(2, MountRequest::SetDown { seat: SeatIndex(2) });
-    server.send(3, MountRequest::AskSeat { driver: hale });
-    run(&mut server, 1.0);
-    assert_eq!(server.cards(2).len(), 1);
-    walk(&mut server, 3, Pos::new(4.0, 6.0));
-    assert_eq!(
-        (server.cards(2), seat(&server, isolde)),
-        (Vec::new(), None),
-        "walking out of the mount's reach takes the request back"
     );
 
     let bryn = server.sign_in(5, "Bryn", "village");
@@ -352,7 +269,7 @@ fn a_seat_is_asked_of_the_driver_and_lets_its_rider_do_what_it_allows() {
     let dummy = npc::spawn(
         &mut server.village.world,
         dummy,
-        Pos::new(8.0, 9.0),
+        Pos::new(8.0, 11.0),
         village,
         None,
     );
@@ -362,7 +279,7 @@ fn a_seat_is_asked_of_the_driver_and_lets_its_rider_do_what_it_allows() {
         .entity_mut(dummy)
         .insert(Attitude::Hostile);
     server.step();
-    assert_eq!(seat(&server, bryn), Some(("mare", 0)));
+    assert_eq!(seat(&server, bryn), Some("mare"));
     server.send(5, AttackRequest { target: dummy });
     assert_eq!(
         (
@@ -370,77 +287,45 @@ fn a_seat_is_asked_of_the_driver_and_lets_its_rider_do_what_it_allows() {
             reach::attacking(&server.village.world, bryn)
         ),
         (None, Some(dummy)),
-        "a mount that has its rider step off for what the seat bars sets them down and carries on"
+        "a mount that has its rider step off for what the seat bars lets them off and carries on"
     );
 }
 
 #[test]
-fn everyone_aboard_works_what_is_in_reach_of_their_mount_until_it_moves_on() {
+fn a_rider_works_what_is_in_reach_of_their_mount_until_it_moves_on() {
     let mut server = server();
-    let wren = server.sign_in(1, "Wren", "village");
     let hale = server.sign_in(2, "Hale", "village");
-    let isolde = server.sign_in(3, "Isolde", "village");
-    aboard(&mut server, (2, hale), (1, wren));
-    stand(&mut server, isolde, Pos::new(11.0, 5.0));
-    board(&mut server, (2, hale), (3, isolde));
-    for angler in [wren, hale, isolde] {
-        server.village.give(angler, "lure", 2);
-    }
+    launch(&mut server, 2, hale);
+    server.village.give(hale, "lure", 2);
     let village = server.village.id::<AreaDef>("village");
     let shoal = server.village.id::<ResourceDef>("shoal");
     let [near, far] = [18.5, 23.0]
         .map(|x| resource::spawn(&mut server.village.world, shoal, Pos::new(x, 6.0), village));
-    let working = |server: &Server, who: Entity| {
+    let working = |server: &Server| {
         server
             .village
             .world
-            .get::<Working>(who)
+            .get::<Working>(hale)
             .map(|working| working.resource)
     };
-    let lures = |server: &Server| [wren, hale].map(|angler| server.village.count(angler, "lure"));
 
-    for client in [1, 2, 3] {
-        server.send(client, GatherRequest { target: near });
-    }
+    server.send(2, GatherRequest { target: near });
     run(&mut server, 0.3);
     assert_eq!(
-        (
-            working(&server, hale),
-            working(&server, wren),
-            working(&server, isolde),
-            server.village.errors(3).last().cloned(),
-            at(&server, hale),
-        ),
-        (
-            Some(near),
-            Some(near),
-            None,
-            Some("Not from the Rowboat".to_owned()),
-            OFFSHORE
-        ),
-        "the driver and every passenger whose seat lets them work what the mount is in reach of, from where it lies"
+        (working(&server), at(&server, hale)),
+        (Some(near), OFFSHORE),
+        "a rider whose seat lets them works what the mount is in reach of, from where it lies"
     );
     walk(&mut server, 2, Pos::new(16.5, 6.0));
     assert_eq!(
-        (
-            working(&server, hale),
-            working(&server, wren),
-            lures(&server)
-        ),
-        (None, None, [2, 2]),
-        "the mount moving on ends the work of everyone aboard, and nothing is spent"
+        (working(&server), server.village.count(hale, "lure")),
+        (None, 2),
+        "the mount moving on ends the work, and nothing is spent"
     );
 
-    server.send(1, GatherRequest { target: far });
-    run(&mut server, 1.0);
-    assert_eq!(
-        (working(&server, wren), at(&server, wren)),
-        (None, Pos::new(16.5, 6.0)),
-        "a passenger steers nothing toward what is out of reach"
-    );
     server.send(2, GatherRequest { target: far });
     for _ in 0..40 {
-        if [wren, hale].map(|angler| working(&server, angler)) == [Some(far); 2] {
+        if working(&server) == Some(far) {
             break;
         }
         run(&mut server, 0.2);
@@ -449,137 +334,137 @@ fn everyone_aboard_works_what_is_in_reach_of_their_mount_until_it_moves_on() {
     run(&mut server, ANGLING + 0.3);
     assert_eq!(
         (
-            working(&server, hale),
-            working(&server, wren),
-            lures(&server),
-            [wren, hale].map(|angler| server.village.count(angler, "trout")),
+            working(&server),
+            server.village.count(hale, "lure"),
+            server.village.count(hale, "trout")
         ),
-        (Some(far), Some(far), [1; 2], [1; 2]),
-        "the driver takes the mount into reach, where the passenger who asked works it too, each from their own bag"
+        (Some(far), 1, 1),
+        "the rider takes the mount into reach of what is farther off, and works it there"
     );
 }
 
 #[test]
-fn every_way_off_a_mount_sets_its_rider_on_ground_they_can_stand_on() {
-    enum Leaves {
-        ByChoice,
-        SetDown,
-        Blocking,
-        DriverFalls,
-        DriverGone,
+fn a_rider_leaves_their_mount_only_onto_ground_within_its_reach() {
+    enum Way {
+        StepsOffAfloat,
+        StepsOffAshore,
+        Dismounted,
+        Falls,
         PlayerGone,
     }
     for way in [
-        Leaves::ByChoice,
-        Leaves::SetDown,
-        Leaves::Blocking,
-        Leaves::DriverFalls,
-        Leaves::DriverGone,
-        Leaves::PlayerGone,
+        Way::StepsOffAfloat,
+        Way::StepsOffAshore,
+        Way::Dismounted,
+        Way::Falls,
+        Way::PlayerGone,
     ] {
         let mut server = server();
-        let wren = server.sign_in(1, "Wren", "village");
         let hale = server.sign_in(2, "Hale", "village");
-        aboard(&mut server, (2, hale), (1, wren));
-        walk(&mut server, 2, FAR_OUT);
-        assert_eq!(at(&server, wren), FAR_OUT);
-        let (seated, driving, said) = match way {
-            Leaves::ByChoice => {
-                server.send(1, MountRequest::StepOff { at: None });
-                (true, true, "No ground to step onto within reach")
+        launch(&mut server, 2, hale);
+        let out = match way {
+            Way::StepsOffAshore => OFFSHORE,
+            _ => FAR_OUT,
+        };
+        walk(&mut server, 2, out);
+        let (rides, lands, said, case) = match way {
+            Way::StepsOffAfloat => {
+                server.send(2, MountRequest::StepOff { at: None });
+                (
+                    true,
+                    false,
+                    "No ground to step onto within reach",
+                    "stepping off with no ground within the mount's reach is refused",
+                )
             }
-            Leaves::SetDown => {
-                server.send(2, MountRequest::SetDown { seat: SeatIndex(1) });
-                (false, true, "Hale set you down")
+            Way::StepsOffAshore => {
+                server.send(2, MountRequest::StepOff { at: None });
+                (
+                    false,
+                    true,
+                    "",
+                    "with ground within reach, the rider steps onto it",
+                )
             }
-            Leaves::Blocking => {
-                server.block(1, "Hale", true);
-                server.step();
-                (false, true, "")
+            Way::Dismounted => {
+                server.village.give(hale, "shell", 1);
+                let slot = server.village.slot_of(hale, "shell");
+                server.send(2, UseItemRequest { slot });
+                run(&mut server, 0.5);
+                (
+                    true,
+                    false,
+                    "No ground to step onto within reach",
+                    "a script takes a rider off as stepping off does, and tells them why it can't",
+                )
             }
-            Leaves::DriverFalls => {
+            Way::Falls => {
                 combat::inflict(&mut server.village.world, hale, None, 1_000_000.0);
                 run(&mut server, 0.5);
-                (false, false, "")
+                (
+                    false,
+                    false,
+                    "",
+                    "a fallen rider leaves the mount where they fell, moved nowhere",
+                )
             }
-            Leaves::DriverGone => {
+            Way::PlayerGone => {
                 server.village.disconnect(2);
                 run(&mut server, 0.5);
-                (false, false, "")
-            }
-            Leaves::PlayerGone => {
-                server.village.disconnect(1);
-                run(&mut server, 0.5);
-                (false, true, "")
+                (
+                    true,
+                    false,
+                    "",
+                    "a rider whose player is gone stays where they are, on the mount",
+                )
             }
         };
+        let there = at(&server, hale);
         assert_eq!(
-            (seat(&server, wren).is_some(), seat(&server, hale).is_some()),
-            (seated, driving),
-            "who still rides"
+            (seat(&server, hale).is_some(), walkable(&server, there)),
+            (rides, lands),
+            "{case}"
         );
-        assert_eq!(
-            walkable(&server, at(&server, wren)),
-            !seated,
-            "whoever is set down stands on ground a walker stands on, however far that is"
-        );
+        if !lands {
+            assert_eq!(there, out, "{case}: nobody is moved");
+        }
         if !said.is_empty() {
             assert_eq!(
-                server.told_or_refused(1).last().map(String::as_str),
-                Some(said)
+                server.told_or_refused(2).last().map(String::as_str),
+                Some(said),
+                "{case}"
             );
         }
     }
 }
 
 #[test]
-fn a_warp_takes_a_mount_and_everyone_on_it_or_leaves_the_mount_behind() {
+fn a_warp_keeps_its_rider_mounted_only_where_the_mount_may_be_at_the_spot_it_leads_to() {
     let landing = Pos::new(4.0, 4.0);
     let pace = |sim: &Sim, who: Entity| stat::effective(&sim.world, who, StatKind::MovementSpeed);
+    let told = |sim: &mut Sim, client: u32| -> Option<String> {
+        sim.told(client)
+            .last()
+            .map(|told| told.text.plain_words(sim.content()))
+    };
+    let not_here = "The Grey Mare can't go where you arrived. You're on foot.";
+
     let mut server = server();
-    let wren = server.sign_in(1, "Wren", "village");
     let hale = server.sign_in(2, "Hale", "village");
     let on_foot = pace(&server.village, hale);
     server.village.give(hale, "bridle", 1);
     stand(&mut server, hale, BEACH);
-    stand(&mut server, wren, Pos::new(9.0, 6.0));
     cast(&mut server, 2, "call_mare", CastAim::None);
-    board(&mut server, (2, hale), (1, wren));
     warp(&mut server.village, hale, "forest", landing);
     server.village.hand_over(&mut server.forest);
     server.step();
-    let (hale, wren) = (server.forest.player(2), server.forest.player(1));
+    let hale = server.forest.player(2);
     assert_eq!(
-        (
-            rides(&server.forest, hale),
-            rides(&server.forest, wren),
-            server
-                .forest
-                .world
-                .get::<Riding>(wren)
-                .map(|riding| riding.driver),
-            position(&server.forest.world, wren),
-            pace(&server.forest, hale),
-        ),
-        (
-            Some(("mare", 0)),
-            Some(("mare", 1)),
-            Some(hale),
-            position(&server.forest.world, hale),
-            on_foot + 4.0,
-        ),
-        "a warp takes the driver and every passenger through, each to the seat they held, and what the mount's script does holds on"
+        (rides(&server.forest, hale), pace(&server.forest, hale)),
+        (Some("mare"), on_foot + 4.0),
+        "into an area that allows the mount, onto ground it stands on: still riding, and what its script does holds on"
     );
 
-    warp(&mut server.forest, wren, "forest", Pos::new(8.0, 8.0));
-    server.step();
-    assert_eq!(
-        (rides(&server.forest, hale), rides(&server.forest, wren)),
-        (Some(("mare", 0)), None),
-        "a passenger warped alone leaves their seat, and the mount stays with its driver"
-    );
-
-    let told = server.told(2).len();
     warp(&mut server.forest, hale, "village", FAR_OUT);
     server.forest.hand_over(&mut server.village);
     server.step();
@@ -589,59 +474,105 @@ fn a_warp_takes_a_mount_and_everyone_on_it_or_leaves_the_mount_behind() {
             seat(&server, hale),
             walkable(&server, at(&server, hale)),
             pace(&server.village, hale),
-            server.told(2).len(),
+            told(&mut server.village, 2),
         ),
-        (None, true, on_foot, told),
-        "a mount that cannot stand where its driver lands in another area is left behind with all it did, and nothing is said of it"
+        (None, true, on_foot, Some(not_here.to_owned())),
+        "into an area that allows the mount, onto a spot it can't stand on: on foot, and told why"
     );
 
-    let mut server = server_of(game());
-    let wren = server.sign_in(1, "Wren", "village");
-    let hale = server.sign_in(2, "Hale", "village");
-    aboard(&mut server, (2, hale), (1, wren));
-    let told = [1, 2].map(|client| server.told(client).len());
-    warp(&mut server.village, hale, "village", landing);
-    for client in [1, 2] {
-        server.send(client, AreaDrawn);
-    }
-    for rider in [wren, hale] {
-        assert!(
-            seat(&server, rider).is_none()
-                && walkable(&server, at(&server, rider))
-                && at(&server, rider).distance(landing) < Meters(2.0),
-            "where the mount cannot stand, everyone arrives on foot around the landing"
-        );
-    }
+    launch(&mut server, 2, hale);
+    warp(&mut server.village, hale, "village", FAR_OUT);
+    server.send(2, AreaDrawn);
     assert_eq!(
-        [1, 2].map(|client| server.told(client).len()),
-        told,
-        "and nobody is told a thing about it"
+        (seat(&server, hale), at(&server, hale)),
+        (Some("boat"), FAR_OUT),
+        "within the area, onto water the boat floats on: still afloat"
+    );
+    warp(&mut server.village, hale, "village", landing);
+    server.send(2, AreaDrawn);
+    assert_eq!(
+        (
+            seat(&server, hale),
+            walkable(&server, at(&server, hale)),
+            at(&server, hale).distance(landing) < Meters(2.0),
+            told(&mut server.village, 2),
+        ),
+        (
+            None,
+            true,
+            true,
+            Some("The Rowboat can't go where you arrived. You're on foot.".to_owned())
+        ),
+        "within the area, onto ground: on foot at the landing"
     );
 
     server.village.give(hale, "feather", 1);
     cast(&mut server, 2, "call_crow", CastAim::None);
-    let told = server.told(2).len();
     warp(&mut server.village, hale, "forest", landing);
     assert_eq!(
-        rides(&server.village, hale),
-        None,
-        "a rider who warps into an area that bars their mount is on foot before they leave"
+        (rides(&server.village, hale), told(&mut server.village, 2)),
+        (None, Some("This area does not allow mounts".to_owned())),
+        "into an area that bars the mount's kind: on foot before leaving, and told why"
     );
     server.village.hand_over(&mut server.forest);
     server.step();
     let hale = server.forest.player(2);
-    assert_eq!(
-        (rides(&server.forest, hale), server.told(2).len()),
-        (None, told),
-        "and arrives on foot, told nothing"
-    );
+    assert_eq!(rides(&server.forest, hale), None, "and on foot there");
+}
+
+#[test]
+fn a_character_saved_where_no_walker_stands_signs_in_where_dying_would_send_them() {
+    let content = game().load();
+    let village = content
+        .by_path::<AreaDef>(&path("area", "village"))
+        .expect("the village");
+    let ashore = Pos::new(8.0, 6.0);
+    for (saved, signs_in, case) in [
+        (
+            FAR_OUT,
+            BEACH,
+            "saved out on the lake, signs in at the spawn point",
+        ),
+        (
+            ashore,
+            ashore,
+            "saved on the beach, signs in where they were",
+        ),
+    ] {
+        let mut server = server();
+        let snapshot = CharacterSnapshot {
+            rises_at: Some(SnapshotSpot {
+                x: BEACH.x,
+                y: BEACH.y,
+            }),
+            ..CharacterSnapshot::of_def(&content, "Wren", player::def(&content))
+        };
+        let join_as = JoinAs {
+            snapshot,
+            start: Place {
+                area: village,
+                at: saved,
+            },
+            origin: JoinOrigin::Saved {
+                at: server.now(),
+                told: Vec::new(),
+            },
+        };
+        let wren = server.sign_in_as(1, "Wren", "village", Some(join_as));
+        server.step();
+        assert!(
+            at(&server, wren).distance(signs_in) < Meters(1.0),
+            "{case}: at {:?}",
+            at(&server, wren)
+        );
+    }
 }
 
 #[test]
 fn the_game_answers_where_each_of_its_mounts_goes() {
     let content = game().engine_rows().load();
     let listed: ProbeGame = asked(&content, &ProbeGameQuestion::Game);
-    let mut mounts: Vec<(String, MountKind, usize, Vec<String>)> = listed
+    let mut mounts: Vec<(String, MountKind, Vec<String>)> = listed
         .mounts
         .iter()
         .map(|mount| {
@@ -649,12 +580,7 @@ fn the_game_answers_where_each_of_its_mounts_goes() {
                 .called_by
                 .iter()
                 .map(|skill| skill.get(&content).name.clone());
-            (
-                mount.name.clone(),
-                mount.kind,
-                mount.seats,
-                callers.collect(),
-            )
+            (mount.name.clone(), mount.kind, callers.collect())
         })
         .collect();
     mounts.sort_by(|a, b| a.0.cmp(&b.0));
@@ -664,19 +590,16 @@ fn the_game_answers_where_each_of_its_mounts_goes() {
             (
                 "Grey Mare".to_owned(),
                 MountKind::Riding,
-                2,
                 vec!["call_mare".to_owned()]
             ),
             (
                 "Rowboat".to_owned(),
                 MountKind::Floating,
-                3,
                 vec!["call_boat".to_owned(), "call_raft".to_owned()]
             ),
             (
                 "Stormcrow".to_owned(),
                 MountKind::Flying,
-                1,
                 vec!["call_crow".to_owned()]
             ),
         ]
@@ -806,7 +729,7 @@ fn game() -> Game {
                 "look": path("model", "mare"),
                 "travels": { "type": "riding" },
                 "reach": 3.0,
-                "seats": [seat("body", "sit", json!(["items"])), seat("hand.r", "sit", json!([]))],
+                "rider": seat("body", "sit", json!(["items"])),
                 "barred": "step_off",
                 "modules": [{ "type": "script", "script": path("script", "mare_ridden") }],
             }),
@@ -827,7 +750,7 @@ fn game() -> Game {
                 "look": path("model", "crow"),
                 "travels": { "type": "flying", "height": 6.0, "eases": 1.0 },
                 "reach": 3.0,
-                "seats": [seat("body", "sit", json!([]))],
+                "rider": seat("body", "sit", json!([])),
                 "barred": "refuse",
             }),
         )
@@ -839,11 +762,7 @@ fn game() -> Game {
                 "look": path("model", "boat"),
                 "travels": { "type": "floating", "draught": 0.5 },
                 "reach": 4.0,
-                "seats": [
-                    seat("body", "row", json!(["gather"])),
-                    seat("hand.r", "sit", json!(["items", "skills", "gather"])),
-                    seat("hand.l", "sit", json!(["items", "skills"])),
-                ],
+                "rider": seat("body", "row", json!(["gather", "items"])),
                 "barred": "refuse",
             }),
         )
@@ -882,6 +801,7 @@ fn game() -> Game {
         .item("feather", casts("call_crow"))
         .item("oar", casts("call_boat"))
         .item("raft", casts("call_raft"))
+        .item("shell", casts("tide"))
         .item(
             "tonic",
             json!({
@@ -916,6 +836,19 @@ fn game() -> Game {
         ),
     ]
     .into_iter()
+    .chain([(
+        json!({
+            "name": "tide",
+            "icon": "icons/skill.png",
+            "target": "self",
+            "levels": [{ "cost": 1, "stats": {} }],
+            "modules": [{ "type": "script", "script": path("script", "tide_used") }],
+        }),
+        json!({
+            "used": { "type": "on", "event": "used", "next": "off" },
+            "off": { "type": "dismount" },
+        }),
+    )])
     .fold(game, |game, (row, script)| {
         let name = row["name"].as_str().expect("a skill's name").to_owned();
         game.row("skill", &name, row)
@@ -928,8 +861,8 @@ fn server() -> Server {
     server_of(game())
 }
 
-/// A server of `game` whose two worlds play what mounts take: walks, casts, items, seats, and
-/// the scripts and statuses a mount's own script runs through.
+/// A server of `game` whose two worlds play what mounts take: walks, casts, items, and the scripts
+/// and statuses a mount's own script runs through.
 fn server_of(game: Game) -> Server {
     let mut server = Server::of(game, request_sources());
     for sim in [&mut server.village, &mut server.forest] {
@@ -956,21 +889,20 @@ fn server_of(game: Game) -> Server {
             ))
             .plan(skill::casting::StepCasts::default())
             .plan((
-                script::query::ListRoster::default(),
-                script::RunFlows::default(),
+                engine::systems::roster::ListRoster::default(),
+                engine::core::script::run::FlowRunner::default(),
                 movement::AdvanceWalks::default(),
             ))
-            .plan(mount::CarryRiders::default())
+            .plan(mount::UnseatFallen::default())
             .plan(stat::SettleVitals::default())
             .add((
-                mount::seat::boarding,
                 resource::gathering,
                 resource::work,
                 combat::defeats,
                 skill::hotbar::settle_basic_attack,
             ))
             .plan(actor::SettleActions::default());
-        script::spawn_stateless(&mut sim.world);
+        engine::systems::spawn_scripts(&mut sim.world);
     }
     server
 }
@@ -981,27 +913,17 @@ impl Server {
         let sim = self.village_or_forest(client);
         sim.told(client)
             .into_iter()
-            .map(|told| told.text.plain_words())
+            .map(|told| told.text.plain_words(sim.content()))
             .collect()
     }
 }
 
-/// `driver` launches the boat just off the beach, and `passenger` is given a seat on it.
-fn aboard(server: &mut Server, driver: (u32, Entity), passenger: (u32, Entity)) {
-    stand(server, driver.1, BEACH);
-    stand(server, passenger.1, Pos::new(11.0, 6.0));
-    server.village.give(driver.1, "oar", 1);
-    cast(server, driver.0, "call_boat", CastAim::Point(OFFSHORE));
-    board(server, driver, passenger);
-}
-
-/// `passenger` asks `driver` for a seat from within the mount's reach, and is given it.
-fn board(server: &mut Server, driver: (u32, Entity), passenger: (u32, Entity)) {
-    server.send(passenger.0, MountRequest::AskSeat { driver: driver.1 });
-    run(server, 2.0);
-    server.answer(driver.0, RequestAnswer::Accept);
-    server.step();
-    assert!(seat(server, passenger.1).is_some(), "a passenger aboard");
+/// The player of `client` launches the boat just off the beach, as `who`.
+fn launch(server: &mut Server, client: u32, who: Entity) {
+    stand(server, who, BEACH);
+    server.village.give(who, "oar", 1);
+    cast(server, client, "call_boat", CastAim::Point(OFFSHORE));
+    assert_eq!(seat(server, who), Some("boat"), "a boat launched");
 }
 
 fn run(server: &mut Server, seconds: f32) {
@@ -1043,17 +965,16 @@ fn at(server: &Server, who: Entity) -> Pos<Meters> {
     position(&server.village.world, who).expect("a character in the village")
 }
 
-/// The mount `who` rides in the village and the seat they hold on it.
-fn seat(server: &Server, who: Entity) -> Option<(&'static str, u8)> {
+/// The mount `who` rides in the village.
+fn seat(server: &Server, who: Entity) -> Option<&'static str> {
     rides(&server.village, who)
 }
 
-fn rides(sim: &Sim, who: Entity) -> Option<(&'static str, u8)> {
+fn rides(sim: &Sim, who: Entity) -> Option<&'static str> {
     let riding = sim.world.get::<Riding>(who)?;
-    let mount = ["mare", "crow", "boat"]
+    ["mare", "crow", "boat"]
         .into_iter()
-        .find(|mount| sim.id::<MountDef>(mount) == riding.mount)?;
-    Some((mount, riding.seat.0))
+        .find(|mount| sim.id::<MountDef>(mount) == riding.mount)
 }
 
 fn walkable(server: &Server, at: Pos<Meters>) -> bool {

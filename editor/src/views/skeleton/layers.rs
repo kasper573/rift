@@ -17,6 +17,7 @@ use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::face;
 use ui::input::NumberField;
+use ui::menu;
 use ui::{chip, controls, form, panel, sheet, theme};
 
 use super::preview;
@@ -179,11 +180,7 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
                 .desired_width(120.0),
         );
         let name = view.layers.new_group.trim().to_owned();
-        if ui
-            .add_enabled(
-                !name.is_empty() && joint.is_some(),
-                egui::Button::new("+ Add root"),
-            )
+        if controls::button_if(ui, !name.is_empty() && joint.is_some(), "+ Add root")
             .on_hover_text("the joint and everything under it join the group")
             .clicked()
             && let Some(joint) = &joint
@@ -321,7 +318,7 @@ fn layers(
     if let Some(from) = &from {
         ui.menu_button(format!("+ Add layer at {from}"), |ui| {
             for (label, layer) in fresh_layers(def, rig, from) {
-                if ui.button(label).clicked() {
+                if menu::entry(ui, label).clicked() {
                     added = Some(layer);
                     ui.close();
                 }
@@ -574,7 +571,7 @@ fn fields(
                         legs.remove(index);
                     }
                     if let Some(foot) = from
-                        && ui.button(format!("+ Leg ending at {foot}")).clicked()
+                        && controls::button(ui, format!("+ Leg ending at {foot}")).clicked()
                     {
                         let name = format!("leg {}", legs.len() + 1);
                         legs.push(leg_to(rig, foot, &name));
@@ -594,7 +591,7 @@ fn fields(
                 joint_field(ui, "chain-from", from);
                 ui.end_row();
                 ui.label(theme::muted("follows the path"));
-                ui.checkbox(follow, "");
+                controls::tick(ui, follow);
                 ui.end_row();
                 number(ui, "stiffness", stiffness, 0.0..=4.0);
                 number(ui, "drag", drag, 0.0..=1.0);
@@ -682,7 +679,7 @@ fn fields(
         ui.label(theme::muted("during"));
         for action in CALM {
             let mut on = during.contains(&action);
-            if ui.checkbox(&mut on, action.as_ref()).changed() {
+            if controls::check(ui, &mut on, action.as_ref()).changed() {
                 if on {
                     during.push(action);
                 } else {

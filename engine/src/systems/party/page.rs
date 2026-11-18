@@ -10,31 +10,37 @@ use ui::glyph::{self, Mark};
 use ui::{controls, face, form, ink, input, sheet};
 
 use super::frames::{self, Standing};
-use super::{PartyMemberRow, PartyRequest, PartyShown};
+use super::{PartyMemberRow, PartyMessages, PartyRequest, PartyShown};
 use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
 use crate::systems::class;
-use crate::systems::friend::search::{self, FindPlayers, PlayersFound};
+use crate::systems::friend::search::{self, CharactersFound, FindCharacters};
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::item::inline;
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card::time_left;
 use crate::systems::social_request::{
     AnswerSocialRequest, RequestAnswer, SocialRequestId, SocialRequestKind,
 };
-use crate::systems::society::tab::{PlayerAction, SocialPage};
+use crate::systems::society::tab::{CharacterAction, SocialPage};
 use crate::systems::society::{AccountNumber, RequestCard, SocietyMember, SocietyView};
-use crate::systems::text::LineText;
 
 pub struct PartyPage;
 
 impl SocialPage for PartyPage {
-    fn title(&self) -> &'static str {
-        "Party"
+    fn key(&self) -> &'static str {
+        "party"
+    }
+
+    fn title<'a>(&self, messages: &'a messages::Messages) -> &'a str {
+        messages.party.title()
     }
 
     fn on(&self, world: &World) -> bool {
@@ -45,8 +51,13 @@ impl SocialPage for PartyPage {
         view(world).map_or(0, |view| invitations(&view).count() as u32)
     }
 
-    fn hints(&self, _: &World) -> Vec<(InputAction, &'static str)> {
-        vec![(InputAction::Select, "choose")]
+    fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
+        let messages = messages::of(world.resource::<Content>());
+        let listed = view(world).is_some_and(|view| view.party.is_some());
+        listed
+            .then(|| (InputAction::Select, messages.party.hint_choose().to_owned()))
+            .into_iter()
+            .collect()
     }
 
     fn show(&self, ui: &mut Ui, world: &mut World) {
@@ -54,19 +65,21 @@ impl SocialPage for PartyPage {
             return;
         };
         hear(world);
+        let content = world.resource::<Content>().clone();
+        let words = messages::of(&content);
         let room = ui.available_rect_before_wrap();
         let ([party_at], invite_at) = sheet::columns(ui, room, [PARTY_WIDTH]);
         let mut done = None;
         let area = egui::ScrollArea::vertical().id_salt("party");
         sheet::scroll_pane(ui, party_at, area, |ui| {
             done = done.take().or(match &view.party {
-                Some(party) => members(ui, world, &view, party),
-                None => no_party(ui, world, &view),
+                Some(party) => members(ui, world, words, &view, party),
+                None => no_party(ui, world, words, &view),
             });
         });
         let area = egui::ScrollArea::vertical().id_salt("party invite");
         sheet::scroll_pane(ui, invite_at, area, |ui| {
-            done = done.take().or(invite(ui, world, &view));
+            done = done.take().or(invite(ui, world, words, &view));
         });
         ui.allocate_rect(room, Sense::hover());
         if let Some(done) = done {
@@ -78,9 +91,9 @@ impl SocialPage for PartyPage {
 /// Inviting a player a page lists to the player's party.
 pub struct InviteToParty;
 
-impl PlayerAction for InviteToParty {
-    fn label(&self) -> &'static str {
-        "Invite to party"
+impl CharacterAction for InviteToParty {
+    fn label<'a>(&self, messages: &'a messages::Messages) -> &'a str {
+        messages.party.invite_to_party()
     }
 
     fn on(&self, world: &World) -> bool {
@@ -125,8 +138,8 @@ pub fn shown(world: &World) -> ShownParty {
             .iter()
             .flat_map(|party| party.members.iter().map(move |member| (party, member)))
             .map(|(party, member)| ShownPartyMember {
-                name: member.player.name.clone(),
-                leads: party.leader == member.player.account,
+                name: member.character.name.clone(),
+                leads: party.leader == member.character.account,
                 area: member.area.map(|area| area.get(content).name.clone()),
             })
             .collect(),
@@ -143,19 +156,23 @@ pub(crate) fn plugin(app: &mut App) {
 /// A member's name as the party's lists show it: its leader's wears a crown.
 pub(super) fn name(ui: &mut Ui, party: &PartyShown, member: &PartyMemberRow, name: egui::RichText) {
     ui.horizontal(|ui| {
-        ui.add(egui::Label::new(name).truncate());
-        if party.leader == member.player.account {
+        ui.add(
+            egui::Label::new(name)
+                .truncate()
+                .show_tooltip_when_elided(false),
+        );
+        if party.leader == member.character.account {
             glyph::show(ui, Mark::Crown, CROWN, ink::GOLD);
         }
     });
 }
 
 /// A member's name as the party's lists read it out: its leader's says so.
-pub(super) fn named(party: &PartyShown, member: &PartyMemberRow) -> String {
-    if party.leader == member.player.account {
-        format!("{}, {}", member.player.name, Mark::Crown.word())
+pub(super) fn named(words: &PartyMessages, party: &PartyShown, member: &PartyMemberRow) -> String {
+    if party.leader == member.character.account {
+        words.leader_named(&member.character.name)
     } else {
-        member.player.name.clone()
+        member.character.name.clone()
     }
 }
 
@@ -168,7 +185,7 @@ struct Inviting {
     /// When what is typed last changed, on the interface's clock.
     typed_at: f64,
     asked: Option<String>,
-    found: Option<PlayersFound>,
+    found: Option<CharactersFound>,
     chosen: Option<AccountNumber>,
 }
 
@@ -221,34 +238,36 @@ fn invited(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
 /// Takes what the server found, and asks it for what is typed once the typing has paused.
 fn hear(world: &mut World) {
     let found = world
-        .resource_mut::<Messages<PlayersFound>>()
+        .resource_mut::<Messages<CharactersFound>>()
         .drain()
         .last();
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
+    let content = world.resource::<Content>().clone();
     let mut inviting = world.resource_mut::<Inviting>();
+    let searches = search::searches(&content, &inviting.typed);
     if let Some(found) = found {
         inviting.found = Some(found);
     }
     let paused = now - inviting.typed_at >= TYPING_PAUSE;
     let unasked = inviting.asked.as_deref() != Some(inviting.typed.as_str());
-    if paused && unasked && search::searches(&inviting.typed) {
+    if paused && unasked && searches {
         let typed = inviting.typed.clone();
         inviting.asked = Some(typed.clone());
-        world.write_message(FindPlayers(typed));
+        world.write_message(FindCharacters(typed));
     }
 }
 
-fn no_party(ui: &mut Ui, world: &World, view: &SocietyView) -> Option<Done> {
+fn no_party(
+    ui: &mut Ui,
+    world: &World,
+    words: &messages::Messages,
+    view: &SocietyView,
+) -> Option<Done> {
     let mut done = None;
-    sheet::section(ui, "Your party");
-    ui.add(
-        egui::Label::new(face::body(
-            "You are in no party. A party shares drops, experience and the kills its quests count.",
-        ))
-        .wrap(),
-    );
+    sheet::section(ui, words.party.your_party());
+    ui.add(egui::Label::new(face::body(words.party.no_party())).wrap());
     ui.add_space(GAP);
-    if controls::primary(ui, "Create a party").clicked() {
+    if controls::primary(ui, words.party.create()).clicked() {
         done = Some(Done::Ask(PartyRequest::Create));
     }
     let waiting: Vec<&RequestCard> = invitations(view).collect();
@@ -257,16 +276,19 @@ fn no_party(ui: &mut Ui, world: &World, view: &SocietyView) -> Option<Done> {
     }
     let now = time::server_now(world);
     ui.add_space(GAP);
-    form::section_count(ui, "Invitations", waiting.len());
+    form::section_count(ui, words.party.invitations_heading(), waiting.len());
     for card in waiting {
         let name = &card.other.name;
-        let left = now.map_or_else(String::new, |now| time_left(card.until, now));
+        let left = now.map_or_else(String::new, |now| time_left(&words.time, card.until, now));
         ui.push_id(("invitation", card.id.0), |ui| {
-            line(ui, &format!("{name} · {left}"), false, |ui| {
-                if named_button(controls::button(ui, "Deny"), "Deny", name).clicked() {
+            let said = words.party.invitation_line(&left, name);
+            line(ui, &said, false, |ui| {
+                let deny = words.requests.deny();
+                if named_button(words, controls::button(ui, deny), deny, name).clicked() {
                     done = Some(Done::Answer(card.id, RequestAnswer::Deny));
                 }
-                if named_button(controls::primary(ui, "Accept"), "Accept", name).clicked() {
+                let accept = words.requests.accept();
+                if named_button(words, controls::primary(ui, accept), accept, name).clicked() {
                     done = Some(Done::Answer(card.id, RequestAnswer::Accept));
                 }
             });
@@ -275,61 +297,65 @@ fn no_party(ui: &mut Ui, world: &World, view: &SocietyView) -> Option<Done> {
     done
 }
 
-fn members(ui: &mut Ui, world: &mut World, view: &SocietyView, party: &PartyShown) -> Option<Done> {
+fn members(
+    ui: &mut Ui,
+    world: &mut World,
+    words: &messages::Messages,
+    view: &SocietyView,
+    party: &PartyShown,
+) -> Option<Done> {
     let size = world
         .resource::<GameSettings>()
         .party
         .map_or(0, |rules| rules.size);
     let leads = party.leader == view.account;
-    let heading = format!("Your party · {} of {size}", party.members.len());
+    let heading = words.party.party_of_size(party.members.len(), size);
     sheet::section_with(ui, &heading, |ui| {
         if leads {
-            controls::pill(ui, "You lead", controls::Pill::Ink);
+            controls::pill(ui, words.party.you_lead(), controls::Pill::Ink);
         }
     });
     let now = time::server_now(world);
     let chosen = world.resource::<Inviting>().chosen;
     let chosen = party.members.iter().find(|member| {
-        Some(member.player.account) == chosen && member.player.account != view.account
+        Some(member.character.account) == chosen && member.character.account != view.account
     });
     let mut done = None;
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for member in &party.members {
             let selected =
-                chosen.is_some_and(|chosen| chosen.player.account == member.player.account);
-            ui.push_id(("member", member.player.account.0), |ui| {
-                if member_row(ui, world, party, member, selected, now) {
-                    done = Some(Done::Choose(member.player.account));
+                chosen.is_some_and(|chosen| chosen.character.account == member.character.account);
+            ui.push_id(("member", member.character.account.0), |ui| {
+                if member_row(ui, world, words, party, member, selected, now) {
+                    done = Some(Done::Choose(member.character.account));
                 }
             });
         }
     });
     ui.add_space(GAP);
     if let Some(chosen) = chosen.filter(|_| leads) {
-        let name = &chosen.player.name;
+        let name = &chosen.character.name;
         ui.horizontal(|ui| {
-            if named_button(controls::button(ui, "Make leader"), "Make leader", name).clicked() {
-                done = Some(Done::Ask(PartyRequest::Lead(chosen.player.account)));
+            let make = words.party.make_leader();
+            if named_button(words, controls::button(ui, make), make, name).clicked() {
+                done = Some(Done::Ask(PartyRequest::Lead(chosen.character.account)));
             }
-            let remove = controls::danger(ui, "Remove from party");
-            if named_button(remove, "Remove from party", name).clicked() {
-                done = Some(Done::Ask(PartyRequest::Remove(chosen.player.account)));
+            let kick = words.party.remove_member();
+            if named_button(words, controls::danger(ui, kick), kick, name).clicked() {
+                done = Some(Done::Ask(PartyRequest::Remove(chosen.character.account)));
             }
         });
     } else if !leads {
-        caption(
-            ui,
-            "Any member may invite. Only the leader removes, hands over, and disbands.",
-        );
+        caption(ui, words.party.members_note());
     }
     ui.add_space(GAP * 2.0);
     ui.horizontal(|ui| {
-        if controls::button(ui, "Leave party").clicked() {
+        if controls::button(ui, words.party.leave()).clicked() {
             done = Some(Done::Ask(PartyRequest::Leave));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if leads && controls::danger(ui, "Disband party").clicked() {
+            if leads && controls::danger(ui, words.party.disband()).clicked() {
                 done = Some(Done::Disband);
             }
         });
@@ -341,6 +367,7 @@ fn members(ui: &mut Ui, world: &mut World, view: &SocietyView, party: &PartyShow
 fn member_row(
     ui: &mut Ui,
     world: &mut World,
+    words: &messages::Messages,
     party: &PartyShown,
     member: &PartyMemberRow,
     selected: bool,
@@ -353,17 +380,16 @@ fn member_row(
     let content = world.resource::<Content>().clone();
     let class = seen.and_then(|seen| {
         let class = class::of(world, seen)?.get(&content).name.clone();
-        Some(LineText::plain(format!(
-            "{class} {}",
-            class::level(world, seen)
-        )))
+        Some(LineText::plain(
+            words.party.class_level(&class, class::level(world, seen)),
+        ))
     });
     let place = member.area.map(|area| Mention::Area(area).line(&content));
     let state = match &standing {
-        Standing::Away(_) => LineText::plain(frames::said(&standing, now)),
+        Standing::Away(_) => LineText::plain(frames::said(words, &standing, now)),
         _ => joined([class, place].into_iter().flatten()),
     };
-    let name = named(party, member);
+    let name = named(&words.party, party, member);
     let look = controls::RowLook {
         selected,
         faint: matches!(standing, Standing::Away(_)),
@@ -376,9 +402,14 @@ fn member_row(
                     health_bar(ui, health, BAR_WIDTH);
                 }
                 ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                    self::name(ui, party, member, face::bold(member.player.name.as_str()));
+                    self::name(
+                        ui,
+                        party,
+                        member,
+                        face::bold(member.character.name.as_str()),
+                    );
                     let look = TextLook::role(TextRole::Small, ink::INK3);
-                    text::show(ui, world, &state.styled(), look, None);
+                    inline::show_line(ui, world, &state, look, None);
                 });
             });
         });
@@ -387,20 +418,27 @@ fn member_row(
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| {
-        let said = format!("{name}, {}", state.plain_words());
+        let said = words.party.row_named(&name, state.plain_words(&content));
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, said)
     });
     map::clicked(world, InputAction::Select, &response)
 }
 
 /// Who to invite: anyone by name, and the friends who play right now.
-fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
-    sheet::section(ui, "Invite");
+fn invite(
+    ui: &mut Ui,
+    world: &mut World,
+    words: &messages::Messages,
+    view: &SocietyView,
+) -> Option<Done> {
+    sheet::section(ui, words.party.invite_heading());
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
     let server_now = time::server_now(world);
+    let content = world.resource::<Content>().clone();
     let mut inviting = world.resource_mut::<Inviting>();
     let mut typed = inviting.typed.clone();
-    input::search(ui, &mut typed, "A name, two characters or more", None);
+    let hint = words.friends.search_hint(search::least_letters(&content));
+    input::search(ui, &mut typed, &hint, None);
     if typed != inviting.typed {
         inviting.typed = typed;
         inviting.typed_at = now;
@@ -414,18 +452,21 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
             .as_ref()
             .filter(|found| found.starts == inviting.typed);
         match found {
-            _ if !search::searches(&inviting.typed) => caption(ui, "Two characters or more"),
+            _ if !search::searches(&content, &inviting.typed) => caption(
+                ui,
+                &words.friends.type_more(search::least_letters(&content)),
+            ),
             None => {
-                caption(ui, "Looking");
+                caption(ui, words.friends.looking());
                 ui.ctx().request_repaint();
             }
-            Some(found) if found.players.is_empty() => caption(ui, "Nobody by that name"),
+            Some(found) if found.characters.is_empty() => caption(ui, words.friends.nobody_found()),
             Some(found) => {
-                for player in &found.players {
+                for player in &found.characters {
                     ui.push_id(("found", player.account.0), |ui| {
                         done = done
                             .take()
-                            .or(invite_row(ui, world, view, player, None, server_now));
+                            .or(invite_row(ui, world, words, view, player, None, server_now));
                     });
                 }
             }
@@ -438,25 +479,27 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
         .filter(|friend| friend.online_in.is_some())
         .collect();
     ui.add_space(GAP);
-    form::section_count(ui, "Friends online", online.len());
+    form::section_count(ui, words.party.friends_online(), online.len());
     if online.is_empty() {
-        caption(ui, "None of your friends play right now.");
+        caption(ui, words.party.none_online());
     }
     let content = world.resource::<Content>().clone();
     for friend in online {
         let note = if friend.in_a_party {
-            Some(LineText::plain("in another party"))
+            Some(LineText::plain(words.party.in_another_party()))
         } else {
             friend
                 .online_in
                 .map(|area| Mention::Area(area).line(&content))
         };
-        ui.push_id(("friend", friend.player.account.0), |ui| {
-            let offered = (!friend.in_a_party).then_some(&friend.player);
+        ui.push_id(("friend", friend.character.account.0), |ui| {
+            let offered = (!friend.in_a_party).then_some(&friend.character);
             done = done.take().or(match offered {
-                Some(player) => invite_row(ui, world, view, player, note.as_ref(), server_now),
+                Some(player) => {
+                    invite_row(ui, world, words, view, player, note.as_ref(), server_now)
+                }
                 None => {
-                    line(ui, &friend.player.name, true, |ui| {
+                    line(ui, &friend.character.name, true, |ui| {
                         if let Some(note) = &note {
                             note_label(ui, world, note);
                         }
@@ -474,6 +517,7 @@ fn invite(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
 fn invite_row(
     ui: &mut Ui,
     world: &World,
+    words: &messages::Messages,
     view: &SocietyView,
     player: &SocietyMember,
     note: Option<&LineText>,
@@ -484,22 +528,25 @@ fn invite_row(
         .party
         .iter()
         .flat_map(|party| &party.members)
-        .any(|member| member.player.account == player.account);
+        .any(|member| member.character.account == player.account);
     let waits = invited(view).find(|card| card.other.account == player.account);
     let mut done = None;
     line(ui, name, player.account == view.account, |ui| {
         if player.account == view.account {
-            ui.label(face::small_faint("You"));
+            ui.label(face::small_faint(words.friends.you()));
         } else if member {
-            controls::pill(ui, "In the party", controls::Pill::Verdigris);
+            controls::pill(ui, words.party.in_the_party(), controls::Pill::Verdigris);
         } else if let Some(card) = waits {
-            if named_button(controls::button(ui, "Withdraw"), "Withdraw", name).clicked() {
+            let withdraw = words.friends.withdraw();
+            if named_button(words, controls::button(ui, withdraw), withdraw, name).clicked() {
                 done = Some(Done::Answer(card.id, RequestAnswer::TakeBack));
             }
-            let left = now.map_or_else(String::new, |now| time_left(card.until, now));
-            controls::pill(ui, &format!("Invited · {left}"), controls::Pill::Ink);
+            let left = now.map_or_else(String::new, |now| time_left(&words.time, card.until, now));
+            let invited = words.party.invited(&left);
+            controls::pill(ui, &invited, controls::Pill::Ink);
         } else {
-            if named_button(controls::primary(ui, "Invite"), "Invite", name).clicked() {
+            let invite = words.party.invite();
+            if named_button(words, controls::primary(ui, invite), invite, name).clicked() {
                 done = Some(Done::Ask(PartyRequest::Invite(player.account)));
             }
             if let Some(note) = note {
@@ -512,18 +559,26 @@ fn invite_row(
 
 fn note_label(ui: &mut Ui, world: &World, note: &LineText) {
     let look = TextLook::role(TextRole::Small, ink::INK3);
-    text::show(ui, world, &note.styled(), look, None);
+    text::show(
+        ui,
+        world,
+        &note.styled(world.resource::<Content>()),
+        look,
+        None,
+    );
 }
 
 /// Asks the leader whether to end the party, and ends it once they confirm.
 fn disband(world: &mut World) {
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     hud::confirm(
         world,
         Confirm {
-            title: "Disband the party?".into(),
-            body: vec!["It ends for everyone in it.".into()],
-            confirm: "Disband".to_owned(),
-            cancel: "Keep".to_owned(),
+            title: words.party.disband_title().into(),
+            body: vec![words.party.disband_body().into()],
+            confirm: words.party.disband_confirm().to_owned(),
+            cancel: words.friends.keep().to_owned(),
             answer: Box::new(|world, disbanded| {
                 if disbanded {
                     world.write_message(PartyRequest::Disband);
@@ -543,7 +598,11 @@ fn line(ui: &mut Ui, name: &str, faint: bool, ends: impl FnOnce(&mut Ui)) {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let name = face::body(name);
                 let name = if faint { name.color(ink::INK3) } else { name };
-                ui.add(egui::Label::new(name).truncate());
+                ui.add(
+                    egui::Label::new(name)
+                        .truncate()
+                        .show_tooltip_when_elided(false),
+                );
             });
         });
     });
@@ -557,11 +616,16 @@ fn joined(lines: impl IntoIterator<Item = LineText>) -> LineText {
 }
 
 /// Names a button for what it does and to whom, so two alike in one list are told apart.
-fn named_button(response: egui::Response, does: &str, name: &str) -> egui::Response {
+fn named_button(
+    words: &messages::Messages,
+    response: egui::Response,
+    does: &str,
+    name: &str,
+) -> egui::Response {
     let enabled = response.enabled();
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, format!("{does} {name}"))
-    });
+    let said = words.party.button_for(does, name);
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, said.clone()));
     response
 }
 

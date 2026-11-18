@@ -1,5 +1,13 @@
 pub mod panel;
+pub mod query;
 
+use crate::core::script::EventDef;
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::Scripts;
+use crate::core::script::Vocabulary;
+use crate::systems::area;
 use std::collections::BTreeSet;
 
 use bevy_app::App;
@@ -13,32 +21,92 @@ use crate::core::content::{
 };
 use crate::core::math::Rng;
 use crate::core::script::{
-    Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, Value, ValueType,
+    Arrow, CLOSED, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, Value, ValueType,
 };
+use crate::core::script::{
+    EffectCall, EventKind, Expr, FlowKey, Instances, Owner, RunnerKind, ScriptModule, ScriptedRow,
+};
+use crate::core::text::LineText;
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{Percent, PlaybackRate, Seconds};
 use crate::systems::actor::HandsAtWork;
 use crate::systems::actor::held::ToolInHand;
 use crate::systems::actor::playing::{self, Motion};
 use crate::systems::actor::skeleton::{self, Declared, MoveName};
+use crate::systems::aim as effects;
+use crate::systems::aim::Reaching;
 use crate::systems::attention::AttentionId;
+use crate::systems::dialogue;
+use crate::systems::dialogue::span::ScriptSpan;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
-use crate::systems::mention::Mention;
+use crate::systems::messages::{self, messages};
 use crate::systems::notification;
+use crate::systems::notification::pop::PopShader;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
-use crate::systems::prompt::{self, Asked, CLOSED, PromptKind, PromptStep};
-use crate::systems::script::effect::Reaching;
-use crate::systems::script::{
-    self, Condition, EffectCall, EffectReach, EventKind, FlowKey, Owner, RiftEvent, RiftInstances,
-    RiftScripting, RunnerKind, ScriptModule, ScriptedRow, effect as effects,
-};
+use crate::systems::prompt::{self, Asked, PromptKind};
 use crate::systems::shop::ShopDef;
 use crate::systems::skill;
 use crate::systems::stat::{self, StatKind};
-use crate::systems::text::{self, LineText, Span};
-use crate::systems::vfx::VfxShaderFixture;
-use crate::systems::{GameSettings, dialogue};
+use crate::systems::window::{AnswerCount, OpenWindow, WindowStep};
+
+messages! {
+    /// What the game says of crafting.
+    pub struct CraftingMessages {
+        /// The button crafting what a player placed in a crafting prompt.
+        craft,
+        /// The button calling off the craft a crafting prompt has under way.
+        cancel,
+        /// The heading over the recipes a crafting prompt lists.
+        recipes,
+        /// What a crafting prompt says of items placed that are no recipe of its own.
+        no_recipe,
+        /// What a crafting prompt asks as the items placed are several recipes.
+        choose_result,
+        /// What bursts out of a crafter as a craft of theirs fails.
+        failed,
+        /// What a crafting prompt says of a recipe that requires a mastery its player lacks.
+        requires_mastery,
+        /// What the recipe list says of choosing one of its recipes.
+        choosing_places,
+        /// What a recipe the player has the materials for says of itself.
+        can_make,
+        /// What a recipe the player lacks materials for says of itself.
+        materials_missing,
+        /// How a screen reader names a recipe: `{name}`, and its `{state}`, one of `locked`, `can_make`
+        /// or `missing`.
+        recipe_named(name: Text, state: Text),
+        /// What the result slot says as what is placed makes either of several things.
+        makes_either,
+        /// How a screen reader names what a craft makes, `{result}`.
+        result_named(result: Text),
+        /// How a screen reader names the result slot while it makes nothing.
+        result_nothing,
+        /// What the result slot says while nothing is placed.
+        nothing_yet,
+        /// How many crafts, `{count}`, the materials placed make.
+        crafts(count: Number),
+        /// How often a craft comes off, `{percent}` in a hundred.
+        chance(percent: Number),
+        /// How a screen reader names what a result says of itself: its name `{name}` and a note `{note}`.
+        result_described(name: Text, note: Text),
+        /// What the player is asked before crafting `{result}`, which may fail.
+        confirm_risk[result: Line],
+        /// How likely the `{count}` crafts placed are to come off, each `{percent}` in a hundred,
+        /// where the player is warned of failing.
+        risk(count: Number, percent: Number),
+        /// What failing a craft costs.
+        failing_spends,
+        /// The button that crafts what may fail.
+        craft_anyway,
+        /// The button that backs out of a craft that may fail.
+        keep_materials,
+        /// What the player is told while a craft is under way: `{cancel}` calls it off.
+        nothing_spent(cancel: Text),
+        /// How one of several results is chosen, the input `{key}` where it stands.
+        choose_hint[key: Line],
+    }
+}
 
 pub type RecipeBookId = ContentId<RecipeBookDef>;
 
@@ -231,7 +299,7 @@ impl ModuleSet for RecipeBookDef {
 }
 
 impl ScriptedRow for RecipeBookDef {
-    const OWNER: RunnerKind = RunnerKind::RecipeBook;
+    const OWNER: RunnerKind = RECIPE_BOOK_RUNNER;
 
     fn script(module: &RecipeBookModule) -> Option<&ScriptModule> {
         match module {
@@ -253,25 +321,25 @@ impl RecipeBookDef {
 }
 
 impl Recipe {
-    /// How many times over `offer` is this recipe: every material in the same whole multiple
+    /// How many times over `placed` is this recipe: every material in the same whole multiple
     /// of its amount, and nothing besides.
-    pub fn times(&self, offer: &[ItemStack]) -> Option<u32> {
-        let offered = |item: ItemId| {
-            offer
+    pub fn times(&self, placed: &[ItemStack]) -> Option<u32> {
+        let counted = |item: ItemId| {
+            placed
                 .iter()
                 .filter(|stack| stack.item == item)
                 .fold(0u32, |total, stack| total.saturating_add(stack.count))
         };
         let wanted = |item: ItemId| self.from.iter().any(|material| material.item == item);
-        if offer.iter().any(|stack| !wanted(stack.item)) {
+        if placed.iter().any(|stack| !wanted(stack.item)) {
             return None;
         }
         let first = self.from.first()?;
-        let times = offered(first.item).checked_div(first.count)?;
+        let times = counted(first.item).checked_div(first.count)?;
         let exact = self
             .from
             .iter()
-            .all(|material| material.count.checked_mul(times) == Some(offered(material.item)));
+            .all(|material| material.count.checked_mul(times) == Some(counted(material.item)));
         (times > 0 && exact).then_some(times)
     }
 
@@ -313,29 +381,6 @@ fn scaled(stacks: &[ItemStack], times: u32) -> Vec<ItemStack> {
         .filter(|_| times > 0)
         .map(|stack| ItemStack::new(stack.item, stack.count.saturating_mul(times)))
         .collect()
-}
-
-/// `stacks` as a player reads them, with its count where a stack holds more than one: each item
-/// as the interface mentions one, but for the first `icons` stacks, whose items the line already
-/// stands behind the icons of.
-pub fn stacks_mentioned(content: &Content, stacks: &[ItemStack], icons: usize) -> LineText {
-    stacks
-        .iter()
-        .enumerate()
-        .fold(LineText::default(), |line, (place, stack)| {
-            let item = Mention::Item(stack.item);
-            let item = if place < icons {
-                item.name(content)
-            } else {
-                item.span(content)
-            };
-            let line = line.then(if place == 0 { "" } else { " + " }).then(item);
-            if stack.count > 1 {
-                line.then(format!(" ×{}", stack.count))
-            } else {
-                line
-            }
-        })
 }
 
 /// Where a crafting prompt reads the recipes it makes.
@@ -405,11 +450,11 @@ pub fn craftables<'a>(content: &'a Content, keys: &[RecipeKey]) -> Vec<Craftable
         .collect()
 }
 
-/// The recipes among `recipes` that `offer` is a whole number of times, with that number.
-pub fn matches<'a>(recipes: &[Craftable<'a>], offer: &[ItemStack]) -> Vec<(Craftable<'a>, u32)> {
+/// The recipes among `recipes` that `placed` is a whole number of times, with that number.
+pub fn matches<'a>(recipes: &[Craftable<'a>], placed: &[ItemStack]) -> Vec<(Craftable<'a>, u32)> {
     recipes
         .iter()
-        .filter_map(|craftable| Some((craftable.clone(), craftable.recipe.times(offer)?)))
+        .filter_map(|craftable| Some((craftable.clone(), craftable.recipe.times(placed)?)))
         .collect()
 }
 
@@ -475,21 +520,18 @@ pub fn mastery_fault(content: &Content, key: &RecipeKey) -> Result<(), ScriptFau
 pub struct MasterRecipe {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub recipe: RecipeKey,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for MasterRecipe {
+impl EffectDef for MasterRecipe {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         mastery_fault(cx.content, &self.recipe)?;
         let who = effects::aim_anywhere(cx, &self.who)?;
         let recipe = self.recipe.clone();
@@ -515,9 +557,6 @@ impl EffectDef<RiftScripting> for MasterRecipe {
             )
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
-    }
 }
 
 /// Opens a crafting prompt until it closes: an item prompt whose slots are matched against the
@@ -528,16 +567,16 @@ impl EffectDef<RiftScripting> for MasterRecipe {
 pub struct OpenCrafting {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub title: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub text: Vec<Span>,
+    pub text: Vec<ScriptSpan>,
     pub from: Vec<CraftSource>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub closed: Arrow,
 }
 
-impl EffectDef<RiftScripting> for OpenCrafting {
+impl EffectDef for OpenCrafting {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
@@ -548,10 +587,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
     fn keeps_box(&self) -> bool {
         true
     }
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         for source in &self.from {
             let CraftSource::Subset { book, items } = source else {
                 continue;
@@ -579,7 +615,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
             .ok_or_else(|| ScriptFault::new("no recipes", "a book with a recipe to make"))?;
         let made: Vec<RecipeKey> = known.into_iter().map(|craftable| craftable.key).collect();
         let who = effects::aim(cx, &self.who)?;
-        let values = text::values(&self.text)
+        let values = ScriptSpan::values(&self.text)
             .into_iter()
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
@@ -591,9 +627,10 @@ impl EffectDef<RiftScripting> for OpenCrafting {
             let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
             let asked = Asked {
                 title: title.clone(),
-                text: (!spans.is_empty()).then(|| LineText::spoken(&spans, &spoken)),
+                text: (!spans.is_empty()).then(|| ScriptSpan::said(&spans, &spoken)),
                 slots,
                 camera,
+                on_leave: CLOSED,
             };
             if !prompt::open(world, player, flow, asked, PromptKind::Hosted) {
                 return EffectStep::Done;
@@ -602,17 +639,17 @@ impl EffectDef<RiftScripting> for OpenCrafting {
                 CraftingSession { flow },
                 CraftingView {
                     recipes: made.clone(),
-                    crafted: 0,
+                    answered: AnswerCount::default(),
                     making: None,
                 },
             ));
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
         self.from
             .iter()
-            .map(|source| EffectReach::Crafts(source.book()))
+            .map(|source| Reach::new(Crafts(source.book())))
             .collect()
     }
 }
@@ -622,28 +659,28 @@ impl EffectDef<RiftScripting> for OpenCrafting {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CraftingView {
     pub recipes: Vec<RecipeKey>,
-    pub crafted: u32,
+    pub answered: AnswerCount,
     pub making: Option<CraftUnderWay>,
 }
 
-/// A craft begun and not yet made: `recipe` from `offer`, between two moments of the server's
+/// A craft begun and not yet made: `recipe` from `placed`, between two moments of the server's
 /// clock. Its materials stay in the bag until it is made, so calling it off, or leaving the
 /// prompt, costs nothing.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CraftUnderWay {
     pub recipe: RecipeKey,
-    pub offer: Vec<ItemStack>,
+    pub placed: Vec<ItemStack>,
     pub since: UnixMillis,
     pub until: UnixMillis,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum CraftingRequest {
-    /// Begins crafting `recipe` from `offer`: the one meant, where what is placed is several
+    /// Begins crafting `recipe` from `placed`: the one meant, where what is placed is several
     /// recipes.
     Craft {
-        step: PromptStep,
-        offer: Vec<ItemStack>,
+        step: WindowStep,
+        placed: Vec<ItemStack>,
         recipe: RecipeKey,
     },
     /// Calls off the craft under way.
@@ -669,7 +706,7 @@ pub fn requests(world: &mut World) {
         let making = world
             .get::<CraftingView>(player)
             .is_some_and(|view| view.making.is_some());
-        let (step, offer, recipe) = match request {
+        let (step, placed, recipe) = match request {
             CraftingRequest::Cancel => {
                 if making {
                     finish(world, player);
@@ -679,11 +716,11 @@ pub fn requests(world: &mut World) {
             CraftingRequest::Craft { .. } if making => return Ok(()),
             CraftingRequest::Craft {
                 step,
-                offer,
+                placed,
                 recipe,
-            } => (step, offer, recipe),
+            } => (step, placed, recipe),
         };
-        match prompt::submitted(world, player, step, &offer) {
+        match prompt::submitted(world, player, step, &placed) {
             Ok(Some(asked)) if asked == flow => {}
             Ok(_) => return Ok(()),
             Err(reason) => {
@@ -691,7 +728,7 @@ pub fn requests(world: &mut World) {
                 return Err(reason);
             }
         }
-        let begun = begin(world, player, offer, recipe);
+        let begun = begin(world, player, placed, recipe);
         if begun.is_err() {
             prompt::ask_again(world, player);
         }
@@ -712,7 +749,7 @@ pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static Crafting
         .collect();
     due.sort_unstable_by_key(|(until, player, _)| (*until, *player));
     for (_, player, making) in due {
-        let crafted = craft(world, player, &making.offer, &making.recipe);
+        let crafted = craft(world, player, &making.placed, &making.recipe);
         finish(world, player);
         let crafted = match crafted {
             Ok(crafted) => crafted,
@@ -722,30 +759,29 @@ pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static Crafting
             }
         };
         if let Some(mut view) = world.get_mut::<CraftingView>(player) {
-            view.crafted = view.crafted.wrapping_add(1);
+            view.answered.raise();
         }
         if crafted.failed > 0 {
-            let failed = world
-                .resource::<Content>()
-                .built::<GameSettings>()
-                .words
-                .craft_failed
-                .clone();
-            notification::pop_as(world, player, failed, VfxShaderFixture::FailurePop);
+            let failed = messages::of(world.resource::<Content>())
+                .crafting
+                .failed()
+                .to_owned();
+            notification::pop_as(world, player, failed, PopShader::FailurePop);
         }
         let book = making.recipe.book;
         for made in crafted.made {
-            world.resource_mut::<RiftInstances>().raise(
-                Owner::Row(RunnerKind::RecipeBook, book.raw()),
-                EventKind::Crafted,
+            world.resource_mut::<Instances>().raise(
+                Owner::Row(RECIPE_BOOK_RUNNER, book.raw()),
+                EventKind::of::<ItemCrafted>(),
                 Some(player),
                 vec![
                     Value::Int(i64::from(made.item.raw())),
                     Value::Int(i64::from(made.count)),
                 ],
-                move |event| match event {
-                    RiftEvent::Crafted { item } => item.is_none_or(|item| item == made.item),
-                    _ => false,
+                move |event| {
+                    event
+                        .downcast_ref::<ItemCrafted>()
+                        .is_some_and(|crafted| crafted.item.is_none_or(|item| item == made.item))
                 },
             );
         }
@@ -779,17 +815,12 @@ pub fn moves(world: &mut World, crafters: &mut QueryState<(Entity, &'static Craf
     }
 }
 
-/// Ends the crafting of whoever no longer has the prompt it was opened in.
-pub fn hold(world: &mut World, sessions: &mut QueryState<(Entity, &'static CraftingSession)>) {
-    let over: Vec<Entity> = sessions
-        .iter(world)
-        .filter(|(player, session)| {
-            dialogue::flow_of(world, *player) != Some(session.flow)
-                || !prompt::hosted(world, *player)
-        })
-        .map(|(player, _)| player)
-        .collect();
-    for player in over {
+impl OpenWindow for CraftingSession {
+    fn kept(&self, world: &World, player: Entity) -> bool {
+        dialogue::flow_of(world, player) == Some(self.flow) && prompt::hosted(world, player)
+    }
+
+    fn close(world: &mut World, player: Entity) {
         rest(world, player);
         world
             .entity_mut(player)
@@ -803,19 +834,17 @@ pub(crate) fn marks(
     viewers: &[Entity],
     out: &mut dyn FnMut(Entity, AttentionId),
 ) {
-    let Some(owner) = script::owner_of(world, target) else {
+    let Some(owner) = area::script::owner_of(world, target) else {
         return;
     };
-    let Some(may_do) = world.resource::<RiftInstances>().may_do(owner) else {
+    let Some(may_do) = world.resource::<Instances>().may_do(owner) else {
         return;
     };
     let content = world.resource::<Content>();
-    for reach in &may_do.reaches {
-        if let EffectReach::Crafts(book) = reach {
-            let mark = book.get(content).mark;
-            for &player in viewers {
-                out(player, mark);
-            }
+    for Crafts(book) in may_do.reaching::<Crafts>() {
+        let mark = book.get(content).mark;
+        for &player in viewers {
+            out(player, mark);
         }
     }
 }
@@ -950,11 +979,10 @@ fn profit(content: &Content, shops: &[&ShopDef], recipe: &Recipe) -> Option<Stri
         let price = shops
             .iter()
             .flat_map(|shop| shop.sells())
-            .filter(|offer| offer.item == material.item && offer.count > 0)
-            .map(|offer| {
-                let share = f64::from(material.count) / f64::from(offer.count);
-                offer
-                    .price
+            .filter(|ware| ware.item == material.item && ware.count > 0)
+            .map(|ware| {
+                let share = f64::from(material.count) / f64::from(ware.count);
+                ware.price
                     .iter()
                     .map(|stack| (stack.item, f64::from(stack.count) * share))
                     .collect::<Vec<_>>()
@@ -1025,22 +1053,19 @@ fn amounts_text(content: &Content, amounts: &[(ItemId, f64)]) -> String {
     }
 }
 
-/// Begins crafting `recipe` from `offer` for `player`, when their prompt makes it, the offer is a
-/// whole number of times it and the bag has room for what it makes: due as soon as their crafting
-/// speed makes it.
+/// Begins crafting `recipe` from `placed` for `player`, when their prompt makes it, the placed
+/// items are a whole number of times it and the bag has room for what it makes: due as soon as
+/// their crafting speed makes it.
 fn begin(
     world: &mut World,
     player: Entity,
-    offer: Vec<ItemStack>,
+    placed: Vec<ItemStack>,
     recipe: RecipeKey,
 ) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
-    let (craftable, times) = meant(world, &content, player, &offer, &recipe)?;
-    world
-        .get::<Inventory>(player)
-        .cloned()
-        .unwrap_or_else(Inventory::empty)
-        .exchange(&content, &offer, &craftable.recipe.products(times))
+    let (craftable, times) = meant(world, &content, player, &placed, &recipe)?;
+    Inventory::of(world, player)
+        .exchange(&content, &placed, &craftable.recipe.products(times))
         .map_err(|refusal| refusal.line(&content))?;
     let speed = Percent(stat::effective(world, player, StatKind::CraftingSpeed));
     let since = world.resource::<WallClock>().now;
@@ -1051,7 +1076,7 @@ fn begin(
     if let Some(mut view) = world.get_mut::<CraftingView>(player) {
         view.making = Some(CraftUnderWay {
             recipe,
-            offer,
+            placed,
             since,
             until,
         });
@@ -1080,33 +1105,33 @@ fn rest(world: &mut World, crafter: Entity) {
     }
 }
 
-/// What became of the crafts an offer was: everything those that came off made between them, and
+/// What became of the crafts what was placed was: everything those that came off made between them, and
 /// how many failed.
 struct Crafted {
     made: Vec<ItemStack>,
     failed: u32,
 }
 
-/// Crafts `recipe` from `offer` for `player` in one exchange, when their prompt makes it and the
-/// offer is a whole number of times it. Every craft spends its materials, and those that come
-/// off give what they make.
+/// Crafts `recipe` from `placed` for `player` in one exchange, when their prompt makes it and the
+/// placed items are a whole number of times it. Every craft spends its materials, and those that
+/// come off give what they make.
 fn craft(
     world: &mut World,
     player: Entity,
-    offer: &[ItemStack],
+    placed: &[ItemStack],
     recipe: &RecipeKey,
 ) -> Result<Crafted, LineText> {
     let content = world.resource::<Content>().clone();
-    let (craftable, times) = meant(world, &content, player, offer, recipe)?;
+    let (craftable, times) = meant(world, &content, player, placed, recipe)?;
     let came_off = craftable
         .recipe
         .come_off(times, &mut world.resource_mut::<Rng>());
     let made = craftable.recipe.products(came_off);
-    let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
+    let no_recipe = || LineText::from(messages::of(&content).crafting.no_recipe());
     world
         .get_mut::<Inventory>(player)
         .ok_or_else(no_recipe)?
-        .exchange(&content, offer, &made)
+        .exchange(&content, placed, &made)
         .map_err(|refusal| refusal.line(&content))?;
     Ok(Crafted {
         made,
@@ -1114,24 +1139,88 @@ fn craft(
     })
 }
 
-/// The recipe `recipe` of `player`'s prompt and how many times over `offer` is it, when they
+/// The recipe `recipe` of `player`'s prompt and how many times over `placed` is it, when they
 /// master it or it asks no mastery.
 fn meant<'a>(
     world: &World,
     content: &'a Content,
     player: Entity,
-    offer: &[ItemStack],
+    placed: &[ItemStack],
     recipe: &RecipeKey,
-) -> Result<(Craftable<'a>, u32), String> {
-    let words = &content.built::<GameSettings>().words;
-    let no_recipe = || words.no_recipe.clone();
+) -> Result<(Craftable<'a>, u32), LineText> {
+    let messages = &messages::of(content).crafting;
+    let no_recipe = || LineText::from(messages.no_recipe());
     let view = world.get::<CraftingView>(player).ok_or_else(no_recipe)?;
-    let meant = matches(&craftables(content, &view.recipes), offer)
+    let meant = matches(&craftables(content, &view.recipes), placed)
         .into_iter()
         .find(|(craftable, _)| craftable.key == *recipe)
         .ok_or_else(no_recipe)?;
     if locked(world, player, &meant.0) {
-        return Err(words.requires_mastery.clone());
+        return Err(messages.requires_mastery().into());
     }
     Ok(meant)
+}
+
+pub const RECIPE_BOOK_RUNNER: RunnerKind = RunnerKind::new("recipe_book");
+
+/// A script that may open the crafting of a recipe book.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Crafts(pub RecipeBookId);
+
+impl ReachDef for Crafts {}
+
+/// A player crafted what the recipe book makes, optionally only the item `item`.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct ItemCrafted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<ItemId>,
+}
+
+impl EventDef for ItemCrafted {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[RECIPE_BOOK_RUNNER]
+    }
+
+    fn fields(&self) -> &'static [(&'static str, ValueType)] {
+        &[("item", ValueType::Integer), ("count", ValueType::Integer)]
+    }
+}
+
+/// What a whole game must do with its recipe books: open every one.
+pub fn check_reached(loading: &mut Loading) {
+    let content = loading.content();
+    let scripts = content.built::<Scripts>();
+    let opened: Vec<RecipeBookId> = scripts
+        .reaching::<Crafts>()
+        .into_iter()
+        .map(|reached| reached.reach.0)
+        .collect();
+    for (id, _) in loading.rows::<RecipeBookDef>(&content) {
+        if !opened.contains(&id) {
+            loading.row_error(
+                id,
+                "",
+                ContentProblem::new(
+                    "never opened",
+                    format!("recipe_book/{}", id.path(&content)),
+                    "a script that may reach open_crafting for it",
+                ),
+            );
+        }
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .runner(
+            RECIPE_BOOK_RUNNER,
+            RunnerSpec::unnamed_row::<RecipeBookDef>()
+                .stateless()
+                .starting_with_world(),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<RecipeBookDef>(loading, content))
+        .event::<ItemCrafted>("crafted")
+        .effect::<MasterRecipe>("master_recipe")
+        .effect::<OpenCrafting>("open_crafting");
 }

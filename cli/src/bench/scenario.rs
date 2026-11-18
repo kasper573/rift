@@ -6,8 +6,8 @@
 
 use engine::core::math::Pos;
 use engine::core::units::{Degrees, Meters, Seconds};
+use engine::systems::area::Place;
 use engine::systems::input::map::InputAction;
-use engine::systems::script::Place;
 use engine::systems::staging::Staging;
 use serde::{Deserialize, Serialize};
 

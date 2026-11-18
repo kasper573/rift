@@ -3,15 +3,16 @@ use serde::{Deserialize, Serialize};
 
 use super::{BasicAttack, Hotbar, HotbarEntry, HotbarSlot, ItemId, Learned, SkillId, SkillKind};
 use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::systems::GameSettings;
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::HistoryTopic;
 use crate::systems::item::Inventory;
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
-use crate::systems::text::LineText;
 
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct AssignHotbarRequest {
@@ -55,14 +56,14 @@ pub fn assign(
 ) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     if slot.0 >= content.built::<GameSettings>().slots.hotbar {
-        return Err("No such slot".into());
+        return Err(messages::of(&content).skill.no_such_slot().into());
     }
     match entry {
         HotbarEntry::Empty => {}
         HotbarEntry::Skill(skill) => {
             let def = skill.get(&content);
             if !super::known(world, player).contains_key(&skill) {
-                return Err(unknown(skill, &content));
+                return Err(super::unknown(skill, &content));
             }
             if def.kind == SkillKind::Passive {
                 return Err(super::unslotted(skill, &content));
@@ -70,13 +71,15 @@ pub fn assign(
         }
         HotbarEntry::Item(item) => {
             if !holds_item(world, player, item) {
-                return Err(
-                    LineText::plain("You don't have ").then(Mention::Item(item).span(&content))
-                );
+                return Err(messages::of(&content)
+                    .skill
+                    .item_not_held(Mention::Item(item).span(&content)));
             }
         }
     }
-    let mut hotbar = world.get_mut::<Hotbar>(player).ok_or("No hotbar")?;
+    let mut hotbar = world
+        .get_mut::<Hotbar>(player)
+        .ok_or_else(|| messages::of(&content).skill.no_hotbar().to_owned())?;
     hotbar.set(slot, entry);
     Ok(())
 }
@@ -94,21 +97,21 @@ pub fn assign_basic_attack(
         BasicAttackPick::Skill(skill) => {
             let def = skill.get(&content);
             if !super::known(world, player).contains_key(&skill) {
-                return Err(unknown(skill, &content));
+                return Err(super::unknown(skill, &content));
             }
             if !def.basic_attack {
-                return Err(Mention::Skill(skill)
-                    .line(&content)
-                    .then(" can't be a basic attack"));
+                return Err(messages::of(&content)
+                    .skill
+                    .not_basic_attack(Mention::Skill(skill).line(&content)));
             }
             Some(skill)
         }
         BasicAttackPick::Weapon(item) => {
             let skill =
                 super::first_flagged_grant(&content, std::iter::once(item)).ok_or_else(|| {
-                    Mention::Item(item)
-                        .line(&content)
-                        .then(" has no basic attack")
+                    messages::of(&content)
+                        .skill
+                        .item_no_basic_attack(Mention::Item(item).line(&content))
                 })?;
             if !equipment::wears(world, player, item) {
                 equipment::equip_from_bag(world, player, item)?;
@@ -116,9 +119,12 @@ pub fn assign_basic_attack(
             Some(skill)
         }
     };
-    let mut slot = world
-        .get_mut::<BasicAttack>(player)
-        .ok_or("No basic attack slot")?;
+    let mut slot = world.get_mut::<BasicAttack>(player).ok_or_else(|| {
+        messages::of(&content)
+            .skill
+            .no_basic_attack_slot()
+            .to_owned()
+    })?;
     slot.0 = skill;
     Ok(())
 }
@@ -170,13 +176,11 @@ pub fn settle_basic_attack(
             None,
             Notification::feed(
                 HistoryTopic::Notification,
-                LineText::from(Mention::Skill(skill).name(&content)).then(" is your basic attack"),
+                messages::of(&content)
+                    .skill
+                    .basic_attack_set(Mention::Skill(skill).name(&content)),
             )
-            .icon(def.icon.path()),
+            .icon(def.icon.clone()),
         );
     }
-}
-
-fn unknown(skill: SkillId, content: &Content) -> LineText {
-    LineText::plain("You don't know ").then(Mention::Skill(skill).span(content))
 }

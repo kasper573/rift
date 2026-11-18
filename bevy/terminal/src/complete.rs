@@ -38,6 +38,8 @@ pub struct TerminalOption {
     pub text: String,
     /// What the option is, beside its text.
     pub detail: String,
+    /// Whether taking it now would be refused, for now: shown dimmed, and still there to take.
+    pub muted: bool,
 }
 
 impl TerminalCompletions {

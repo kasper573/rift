@@ -1,6 +1,6 @@
-//! What no player is near stands still: every entity in a chunk out of every player's reach is
-//! disabled, so no mechanic's query finds it and no script of its runs, until a player comes near
-//! again. A land costs only what its players are near, however much of it there is.
+//! What no character is near stands still: every entity in a chunk out of every character's reach is
+//! disabled, so no mechanic's query finds it and no script of its runs, until a character comes near
+//! again. A land costs only what its characters are near, however much of it there is.
 
 use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
@@ -8,27 +8,28 @@ use bevy_platform::collections::HashSet;
 
 use crate::core::chunk::{Chunk, ChunkIndex, ChunkSpan, InChunk};
 use crate::core::content::Content;
+use crate::core::script::Scripts;
 use crate::core::units::Meters;
 use crate::systems::GameSettings;
+use crate::systems::chat::Heard;
 use crate::systems::movement::Position;
+use crate::systems::npc::CameNear;
 use crate::systems::player::PlayedBy;
-use crate::systems::script::RiftScripts;
-use crate::systems::script::event::RiftEvent;
 use crate::systems::skill::SkillDef;
 
-/// The chunks awake, and how far from a player they reach.
+/// The chunks awake, and how far from a character they reach.
 #[derive(Resource)]
 pub struct Sleep {
     reach: Meters,
     stood: Vec<Chunk>,
-    /// The chunks within reach of each player as of the last settle, sorted, each span once: they
+    /// The chunks within reach of each character as of the last settle, sorted, each span once: they
     /// alone decide what is awake.
     reached: Vec<ChunkSpan>,
     awake: HashSet<Chunk>,
 }
 
 impl Sleep {
-    /// The chunks players stood in as of the last settle, sorted, each once.
+    /// The chunks characters stood in as of the last settle, sorted, each once.
     pub fn stood(&self) -> &[Chunk] {
         &self.stood
     }
@@ -43,7 +44,7 @@ impl Sleep {
     }
 }
 
-/// Wakes the chunks a player came within reach of and puts to sleep those every player left, with
+/// Wakes the chunks a character came within reach of and puts to sleep those every character left, with
 /// whatever walked or was put into a chunk asleep.
 pub fn settle(world: &mut World, players: &mut PlayerPositions, filed: &mut Filed) {
     let reach = world.resource::<Sleep>().reach;
@@ -120,15 +121,19 @@ fn acting_reach(content: &Content) -> Meters {
             + skill.area.as_ref().map_or(0.0, |area| area.reach().0);
         reach = Meters(reach.0.max(lands));
     }
-    for (_, procedures) in content.built::<RiftScripts>().owners() {
-        for procedure in procedures {
-            for (_, event) in &procedure.entries {
-                if let RiftEvent::CameNear { within, .. } | RiftEvent::Heard { within, .. } = event
-                {
-                    reach = Meters(reach.0.max(within.0));
-                }
-            }
-        }
+    let scripts = content.built::<Scripts>();
+    let listening = scripts
+        .hearing::<CameNear>()
+        .into_iter()
+        .map(|heard| heard.event.within)
+        .chain(
+            scripts
+                .hearing::<Heard>()
+                .into_iter()
+                .map(|heard| heard.event.within),
+        );
+    for within in listening {
+        reach = Meters(reach.0.max(within.0));
     }
     reach
 }

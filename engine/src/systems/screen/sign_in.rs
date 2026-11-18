@@ -5,14 +5,18 @@ use ui::egui;
 use ui::input::InputField;
 use ui::{controls, ink};
 
-use super::{ClientScreen, frame_as_before, frame_slowly, note, panel, system_screen};
+use super::{
+    ClientScreen, ScreenMessages, frame_as_before, frame_slowly, note, panel, system_screen,
+};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::net::auth::Credentials;
 use crate::core::os::{SignIn, StartParams, sign_in_in_browser};
 use crate::systems::GameSettings;
 use crate::systems::input::map::{InputAction, InputMap};
+use crate::systems::interface::InterfaceMessages;
 use crate::systems::launch::fake_token;
+use crate::systems::messages;
 use oidc::AuthorizationPage;
 
 pub struct SignInPlugin;
@@ -60,25 +64,27 @@ fn sign_in_screen(world: &mut World) {
         .get_resource::<SignInFailure>()
         .map(|failure| failure.0.clone());
     let waiting = world.get_resource::<Waiting>().map(|waiting| waiting.page);
-    let game = world
-        .resource::<Content>()
-        .built::<GameSettings>()
-        .name
-        .clone();
+    let content = world.resource::<Content>().clone();
+    let settings = content.built::<GameSettings>();
+    let messages = messages::of(&content);
+    let words = &messages.screen;
+    let game = &settings.name;
     let mut name = std::mem::take(&mut world.resource_mut::<AccountName>().0);
     let submit = world
         .resource::<InputMap>()
         .shortcut(InputAction::SubmitText);
     let choice = system_screen(&gui, "sign-in", Some(ink::VEIL), |ui| {
-        panel(ui, &game, |ui| match (&sign_in, waiting) {
-            (_, Some(page)) => browser_waits(ui, page),
-            (SignIn::AnyAccount, None) => any_account(ui, &mut name, failure.as_deref(), submit),
-            (SignIn::Browser(_), None) => provider(ui, failure.as_deref()),
+        panel(ui, game, |ui| match (&sign_in, waiting) {
+            (_, Some(page)) => browser_waits(ui, page, words, &messages.interface),
+            (SignIn::AnyAccount, None) => {
+                any_account(ui, &mut name, failure.as_deref(), submit, words)
+            }
+            (SignIn::Browser(_), None) => provider(ui, failure.as_deref(), words),
             (SignIn::Token(_), None) => {
                 if let Some(failure) = &failure {
                     ui.label(failure);
                 }
-                note(ui, "Sign in again where you started the game.");
+                note(ui, words.sign_in_elsewhere());
                 None
             }
         })
@@ -103,24 +109,29 @@ fn sign_in_screen(world: &mut World) {
     }
 }
 
-fn provider(ui: &mut egui::Ui, failure: Option<&str>) -> Option<Choice> {
+fn provider(ui: &mut egui::Ui, failure: Option<&str>, words: &ScreenMessages) -> Option<Choice> {
     if let Some(failure) = failure {
         ui.label(failure);
     }
-    if controls::primary(ui, "Sign in").clicked() {
+    if controls::primary(ui, words.sign_in()).clicked() {
         return Some(Choice::Open(AuthorizationPage::SignIn));
     }
-    controls::button(ui, "Create account")
+    controls::button(ui, words.create_account())
         .clicked()
         .then_some(Choice::Open(AuthorizationPage::SignUp))
 }
 
-fn browser_waits(ui: &mut egui::Ui, page: AuthorizationPage) -> Option<Choice> {
+fn browser_waits(
+    ui: &mut egui::Ui,
+    page: AuthorizationPage,
+    words: &ScreenMessages,
+    interface: &InterfaceMessages,
+) -> Option<Choice> {
     ui.label(match page {
-        AuthorizationPage::SignIn => "Continue in your browser to sign in.",
-        AuthorizationPage::SignUp => "Continue in your browser to create your account.",
+        AuthorizationPage::SignIn => words.continue_to_sign_in(),
+        AuthorizationPage::SignUp => words.continue_to_sign_up(),
     });
-    controls::button(ui, "Cancel")
+    controls::button(ui, interface.cancel())
         .clicked()
         .then_some(Choice::Cancel)
 }
@@ -130,12 +141,13 @@ fn any_account(
     name: &mut String,
     failure: Option<&str>,
     submit: Option<egui::KeyboardShortcut>,
+    words: &ScreenMessages,
 ) -> Option<Choice> {
     if let Some(failure) = failure {
         ui.label(failure);
     }
     let field = InputField::new(name)
-        .hint("Account name")
+        .hint(words.account_name())
         .return_key(submit)
         .show(ui);
     let entered = field.lost_focus()
@@ -143,13 +155,12 @@ fn any_account(
     if ui.memory(|memory| memory.focused().is_none()) {
         field.request_focus();
     }
-    note(
-        ui,
-        "Any name signs in, and the same name again is the same account.",
-    );
+    note(ui, words.any_account());
     let account = name.trim();
     let clicked = ui
-        .add_enabled_ui(!account.is_empty(), |ui| controls::primary(ui, "Sign in"))
+        .add_enabled_ui(!account.is_empty(), |ui| {
+            controls::primary(ui, words.sign_in())
+        })
         .inner
         .clicked();
     ((clicked || entered) && !account.is_empty()).then(|| Choice::Account(account.to_owned()))

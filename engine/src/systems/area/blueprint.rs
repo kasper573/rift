@@ -18,9 +18,10 @@ use crate::core::content::{
 };
 use crate::core::ground::GroundSize;
 use crate::core::math::{Pos, Rect};
-use crate::core::script::{VarValue, Variable, VariableType, Vocabulary};
+use crate::core::script::ScriptModule;
+use crate::core::script::{RowValue, VarValue, Variable, VariableType};
 use crate::core::units::{Degrees, Meters};
-use crate::systems::script::{Place, RiftScripting, ScriptModule};
+use crate::systems::area::Place;
 
 pub type BlueprintId = ContentId<BlueprintDef>;
 
@@ -39,7 +40,7 @@ pub const MAX_VARIABLES: usize = 32;
 pub struct BlueprintDef {
     pub size: GroundSize,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub variables: BTreeMap<String, Variable<RiftScripting>>,
+    pub variables: BTreeMap<String, Variable>,
     #[serde(skip)]
     pub scene: Vec<SceneNode>,
 }
@@ -123,7 +124,7 @@ struct HoleMark {
 /// and kept apart by its pointer. A problem is answered with its pointer in the module.
 pub(super) fn read_module(
     mut json: Value,
-    variables: &BTreeMap<String, Variable<RiftScripting>>,
+    variables: &BTreeMap<String, Variable>,
 ) -> Result<(AreaModule, Holes), Box<(String, ContentProblem)>> {
     let misread = |error: ParseError| Box::new((error.pointer.clone(), shape_problem(&error)));
     let mut found = BTreeMap::new();
@@ -210,8 +211,8 @@ pub(super) fn write_module(
 pub fn fill_module(
     scope: &ContentScope,
     node: &ModuleNode,
-    values: &BTreeMap<String, VarValue<RiftScripting>>,
-    variables: &BTreeMap<String, Variable<RiftScripting>>,
+    values: &BTreeMap<String, VarValue>,
+    variables: &BTreeMap<String, Variable>,
 ) -> Option<AreaModule> {
     if node.holes.0.is_empty() {
         return Some(node.module.clone());
@@ -267,7 +268,7 @@ fn find_holes(json: &Value, pointer: &mut String, found: &mut BTreeMap<String, S
 
 /// A value of the variable's type: its default, or else any value of the type, in the scope being
 /// read in.
-fn stand_in(variable: &Variable<RiftScripting>) -> Option<Value> {
+fn stand_in(variable: &Variable) -> Option<Value> {
     if let Some(default) = &variable.default {
         return serde_json::to_value(default).ok();
     }
@@ -339,7 +340,7 @@ pub struct Placement {
     #[serde(default, skip_serializing_if = "Degrees::is_zero")]
     pub yaw: Degrees,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub values: BTreeMap<String, VarValue<RiftScripting>>,
+    pub values: BTreeMap<String, VarValue>,
 }
 
 /// A module of an area once its scene is flattened: folders dissolved and placed blueprints
@@ -582,7 +583,7 @@ impl Expansion<'_> {
         placement: &Placement,
         at: Pos<Meters>,
         yaw: Degrees,
-        values: &BTreeMap<String, VarValue<RiftScripting>>,
+        values: &BTreeMap<String, VarValue>,
     ) {
         let content = self.content.clone();
         let Some(def) = content.table::<BlueprintDef>().get(placement.blueprint) else {
@@ -830,8 +831,8 @@ fn rect_of(at: Pos<Meters>, yaw: Degrees, rect: Rect<Meters>) -> Rect<Meters> {
 
 fn typed_value(
     content: &Content,
-    variable: &Variable<RiftScripting>,
-    value: &VarValue<RiftScripting>,
+    variable: &Variable,
+    value: &VarValue,
 ) -> Result<Value, ContentProblem> {
     let wrong = |expected: &str| {
         ContentProblem::new(
@@ -840,7 +841,7 @@ fn typed_value(
             format!("a {expected} value"),
         )
     };
-    let json = |value: &VarValue<RiftScripting>| {
+    let json = |value: &VarValue| {
         with_content(ContentScope::of(content), || serde_json::to_value(value))
             .0
             .map_err(|error| ContentProblem::new("wrong type", error, "a JSON value"))
@@ -858,7 +859,7 @@ fn typed_value(
         | (VariableType::Condition, VarValue::Condition(_) | VarValue::Boolean(_)) => json(value),
         (VariableType::Row, VarValue::Str(key)) => {
             let table = variable.table.as_deref().unwrap_or("");
-            match RiftScripting::row_value(content, table, key) {
+            match RowValue::of(content, table, key) {
                 Some(_) => json(value),
                 None => Err(ContentProblem::unknown_row(
                     table,

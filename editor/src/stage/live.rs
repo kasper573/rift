@@ -10,21 +10,24 @@ use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::Pos;
+use engine::core::script::Expr;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::core::vfx::VfxInstance;
 use engine::systems::actor::plate;
 use engine::systems::actor::{Action, Actor, Appearance, ModelId};
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::class::ClassDef;
 use engine::systems::combat::Attitude;
+use engine::systems::equipment::query::Equipped;
+use engine::systems::item::query::Holding;
 use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
 use engine::systems::launch::{ServerDay, ServerWeather};
 use engine::systems::movement::Position;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, SnapshotSkill};
 use engine::systems::player::{ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules};
-use engine::systems::script::{Condition, Place, RiftQuery};
 use engine::systems::skill::casting::{self, CastAim};
 use engine::systems::skill::{self, Rank, SkillDef, SkillId, Targeting};
 use engine::systems::stat::{self, StatKind, Stats};
@@ -206,7 +209,13 @@ impl LiveWorld {
                 if let Some(mut cooldowns) = self.world.get_mut::<skill::Cooldowns>(*caster) {
                     cooldowns.0.remove(skill);
                 }
-                match casting::cast(&mut self.world, *caster, *skill, *aim, false) {
+                match casting::cast(
+                    &mut self.world,
+                    *caster,
+                    *skill,
+                    *aim,
+                    casting::CastWay::Once,
+                ) {
                     Ok(()) => {
                         *casts += 1;
                         *phase = Phase::Playing {
@@ -215,7 +224,7 @@ impl LiveWorld {
                         };
                         self.report = format!("{} · cast {casts}", def.name);
                     }
-                    Err(reason) => self.report = reason.plain_words(),
+                    Err(reason) => self.report = reason.plain_words(&content),
                 }
             }
             Phase::Resting { .. } => {}
@@ -320,7 +329,7 @@ fn skill_setup(
     let def = skill.get(content);
     let settings = content.built::<GameSettings>();
     let mut snapshot =
-        CharacterSnapshot::of_player(content, "Caster", settings.player.get(content));
+        CharacterSnapshot::of_def(content, "Caster", settings.character.get(content));
     match taught_by(content, skill) {
         Some((class, node)) => {
             let levels = &class.get(content).levels;
@@ -352,7 +361,7 @@ fn skill_setup(
     let caster = join(world, snapshot.clone(), spawn, ClientId(1))?.actor;
     let ally = || {
         let mut friend =
-            CharacterSnapshot::of_player(content, "Friend", settings.player.get(content));
+            CharacterSnapshot::of_def(content, "Friend", settings.character.get(content));
         friend.start = snapshot.start;
         friend
     };
@@ -487,11 +496,13 @@ fn required_items(def: &SkillDef) -> Vec<ItemId> {
     let mut items = Vec::new();
     if let Some(requires) = &def.requires {
         requires.visit(&mut |expr| {
-            if let Condition::Query(
-                RiftQuery::Equipped { item, .. } | RiftQuery::Holding { item, .. },
-            ) = expr
-            {
-                items.push(*item);
+            if let Expr::Query(query) = expr {
+                if let Some(Equipped { item, .. }) = query.downcast_ref::<Equipped>() {
+                    items.push(*item);
+                }
+                if let Some(Holding { item, .. }) = query.downcast_ref::<Holding>() {
+                    items.push(*item);
+                }
             }
         });
     }
@@ -525,7 +536,7 @@ fn enemy_model(content: &Content, zone: AreaId) -> ModelId {
                 .map(|npc| npc.get(content).appearance.model)
         })
         .unwrap_or_else(|| {
-            let player = content.built::<GameSettings>().player.get(content);
+            let player = content.built::<GameSettings>().character.get(content);
             player.class.get(content).model
         })
 }

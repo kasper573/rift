@@ -10,7 +10,7 @@ use crate::core::math::Rect;
 use crate::core::render::world::haze::HazeBox;
 use crate::core::render::world::sky::Fog;
 use crate::core::units::Meters;
-use crate::systems::script::SkyCondition;
+use crate::systems::area::sky::SkyCondition;
 
 /// A bank of fog lying over the ground: over `rect`, standing `height` deep over the ground under
 /// it, hazing what is seen through it as `haze` says.

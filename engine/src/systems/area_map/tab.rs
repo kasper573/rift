@@ -91,7 +91,7 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
     let whole = ui.interact(sheet, ui.id().with("sheet"), Sense::drag());
     let reach = view.reach.0;
     whole.widget_info(|| {
-        let said = format!("Map of {area_name}, reaching {reach} m");
+        let said = view.messages().map_of(&area_name, reach);
         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said)
     });
     let mut middle = held.filter(|_| world.resource::<MapTabLook>().area == Some(view.area));
@@ -122,7 +122,14 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
     let stepped = super::reach_buttons(ui, &view, [corner - along, corner]);
     let stepped = stepped.or_else(|| super::wheeled(ui, world, &whole, &view));
     let off_me = middle.unwrap_or(rests_on) != view.at;
-    if !view.away && centre_button(ui, corner - 2.0 * along, off_me) {
+    if !view.away
+        && centre_button(
+            ui,
+            corner - 2.0 * along,
+            off_me,
+            view.messages().centre_on_you(),
+        )
+    {
         middle = spot.map(|_| view.at);
     }
     super::lettered(
@@ -141,13 +148,11 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
     }
 }
 
-fn centre_button(ui: &mut Ui, at: egui::Pos2, away: bool) -> bool {
-    let button = super::round_button(ui, at, CENTRES, away);
+fn centre_button(ui: &mut Ui, at: egui::Pos2, away: bool, said: &str) -> bool {
+    let button = super::round_button(ui, at, "centre", said, away);
     super::arrow(ui, at + Vec2::new(0.0, 1.0), Vec2::UP, 5.0, button.ink);
     float::tooltip(&button.response, |ui| {
-        ui.label(TextRole::Tooltip.rich(CENTRES));
+        ui.label(TextRole::Tooltip.rich(said));
     });
     away && button.response.clicked()
 }
-
-const CENTRES: &str = "Centre the map on you";

@@ -6,6 +6,7 @@ use editor::views::spreadsheet;
 use engine::core::content::{ContentFile, Fixture};
 use engine::core::vfx::VfxShaderDef;
 use engine::systems::input::map::{InputAction, InputBinding, InputDef, InputFixture};
+use engine::systems::messages;
 use serde_json::json;
 use strum::VariantArray;
 use testkit::path;
@@ -71,8 +72,13 @@ fn the_input_file_opens_as_a_sheet_of_the_actions_the_engine_fixes() {
         .iter()
         .find(|row| row.key == "dismiss")
         .expect("dismiss");
+    let content = editor
+        .project
+        .as_ref()
+        .and_then(|project| project.content.clone())
+        .expect("the content loads");
     assert_eq!(
         columns[1].text(dismiss),
-        Some(InputBinding::key(KeyCode::Escape).name())
+        Some(InputBinding::key(KeyCode::Escape).name(&messages::of(&content).input))
     );
 }

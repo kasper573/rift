@@ -18,11 +18,9 @@ use bevy::pbr::{
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
-use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{
     AlphaMode2d, Material2d, Material2dKey, Material2dPipeline, Material2dPlugin,
@@ -32,10 +30,10 @@ use bevy_egui::EguiPrimaryContextPass;
 use ui::egui::Color32;
 use ui::egui::load::SizedTexture;
 
-use super::uniform::{MAX_PATH_POINTS, ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
+use super::uniform::{MAX_PATH_POINTS, ParamsUniform, SiteUniform, VfxShaderKey};
 use super::{
-    BodyShape, CompiledVfxShaders, ParamValue, SiteKind, SpriteAnchor, Stage, VfxDef, VfxInstance,
-    VfxLayer, VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell, standing,
+    BodyShape, CompiledVfxShaders, ParamValue, SiteKind, SpriteAnchor, Stage, StageKind, VfxDef,
+    VfxInstance, VfxLayer, VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell, standing,
     standing::HeldStill,
 };
 use crate::core::content::Content;
@@ -43,10 +41,9 @@ use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::gui::{self, Band, WidgetRects};
 use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER};
-use crate::core::render::sample::{FrameWork, UploadedBytes};
+use crate::core::render::sample::FrameWork;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
-use crate::core::render::world::cover::CoverMaterial;
 use crate::core::render::world::decal::LIFT;
 use crate::core::render::world::lights;
 use crate::core::render::world::material::WorldMaterial;
@@ -57,9 +54,7 @@ use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
 use crate::core::time::server_now;
 use crate::core::units::{Meters, Radians, Seconds};
 
-/// The materials every vfx stage and every cover is drawn with, the content's shaders compiled
-/// for them, and the weather the covers read: what any world that draws content needs, the
-/// client's and the editor's alike.
+/// The materials every vfx stage is drawn with, and the content's shaders compiled for them: what any world that draws content needs, the client's and the editor's alike.
 pub struct VfxMaterialsPlugin;
 
 impl Plugin for VfxMaterialsPlugin {
@@ -67,37 +62,17 @@ impl Plugin for VfxMaterialsPlugin {
         app.add_plugins(Material2dPlugin::<VfxMaterial>::default())
             .add_plugins(MaterialPlugin::<VfxWorldMaterial>::default())
             .add_plugins(MaterialPlugin::<SurfaceMaterial>::default())
-            .add_plugins(MaterialPlugin::<CoverMaterial>::default())
-            .add_plugins(MaterialPlugin::<super::sky::SkyMaterial>::default())
-            .add_plugins(MaterialPlugin::<super::rain::RainMaterial>::default())
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
-            .init_resource::<WeatherImage>()
             .init_resource::<FrameWork>()
-            .init_resource::<super::cover::WeatherWrites>()
-            .init_resource::<super::rain::RainField>()
-            .init_resource::<super::rain::Shelter>()
-            .add_plugins((
-                ExtractResourcePlugin::<WeatherImage>::default(),
-                ExtractResourcePlugin::<super::cover::WeatherWrites>::default(),
-            ))
             .add_systems(
                 Update,
-                (
-                    load_shaders.run_if(resource_exists_and_changed::<Content>),
-                    super::cover::blow,
-                ),
+                load_shaders.run_if(resource_exists_and_changed::<Content>),
             );
         // The world's shaders sway on the frame's time from bevy's globals: wrapping it, as
         // bevy does every hour by default, would jump every swaying thing at once.
         if let Some(mut time) = app.world_mut().get_resource_mut::<Time<Virtual>>() {
             time.set_wrap_period(Duration::MAX);
-        }
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.init_resource::<UploadedBytes>().add_systems(
-                Render,
-                super::cover::write_weather.in_set(RenderSystems::PrepareResources),
-            );
         }
     }
 }
@@ -266,7 +241,7 @@ pub struct SurfaceVfx {
 /// A piece that draws over the presented frame, hidden until something is presented on it: for
 /// text a client letters itself.
 pub fn screen_piece(world: &mut World) -> Entity {
-    piece_for(world, Stage::Text, None)
+    piece_for(world, Stage::TEXT, None)
 }
 
 /// Draws a compiled shader over the site through its piece, with the site as the prelude reads it
@@ -288,8 +263,8 @@ pub fn present_shader(
         .as_ref()
         .map(|texture| texture.image.clone())
         .unwrap_or_else(|| world.resource::<VfxAssets>().blank.clone());
-    match (stage, frame.place) {
-        (Stage::Screen | Stage::Text, SitePlace::Screen { center, z }) => {
+    match (stage.kind(), frame.place) {
+        (StageKind::Screen | StageKind::Text, SitePlace::Screen { center, z }) => {
             if let Some(handle) = world
                 .get::<MeshMaterial2d<VfxMaterial>>(piece)
                 .map(|material| material.0.clone())
@@ -315,14 +290,14 @@ pub fn present_shader(
                 },
             );
         }
-        (Stage::Ground, SitePlace::World { at, footprint, .. }) => {
+        (StageKind::Ground, SitePlace::World { at, footprint, .. }) => {
             paint_world(world, piece, image, site, params, shader);
             let size = footprint * frame.overscan(stage);
             lay_patch(world, piece, at, size);
             place(world, piece, Transform::default());
         }
         (
-            Stage::Billboard,
+            StageKind::Billboard,
             SitePlace::World {
                 at,
                 footprint,
@@ -344,7 +319,7 @@ pub fn present_shader(
             );
         }
         (
-            Stage::Surface,
+            StageKind::Surface,
             SitePlace::World {
                 body: Some(body), ..
             },
@@ -587,14 +562,14 @@ impl SiteFrame {
         }
     }
 
-    /// How many metres the site spans on `stage`: a patch of ground or a cover covers its
-    /// footprint, a board stands as wide as the thing and as tall, the screen and text are their
-    /// pixels over the pixel scale.
+    /// How many metres the site spans on `stage`: a patch of ground covers its footprint, a board
+    /// stands as wide as the thing and as tall, the screen and text are their pixels over the
+    /// pixel scale.
     pub fn metres(&self, stage: Stage) -> Vec2 {
-        match (stage, self.place) {
-            (Stage::Ground | Stage::Cover, SitePlace::World { footprint, .. }) => footprint,
+        match (stage.kind(), self.place) {
+            (StageKind::Ground, SitePlace::World { footprint, .. }) => footprint,
             (
-                Stage::Billboard | Stage::Surface,
+                StageKind::Billboard | StageKind::Surface,
                 SitePlace::World {
                     footprint, height, ..
                 },
@@ -606,15 +581,11 @@ impl SiteFrame {
     /// How many times its own size the site is drawn on `stage`: the screen, text and a surface as
     /// they are, a quad in the world with its margin.
     pub fn overscan(&self, stage: Stage) -> Vec2 {
-        match stage {
-            Stage::Screen
-            | Stage::Text
-            | Stage::Surface
-            | Stage::Cover
-            | Stage::Prop
-            | Stage::Sky
-            | Stage::Rain => Vec2::ONE,
-            Stage::Ground | Stage::Billboard => quad_overscan(self.metres(stage), self.margin),
+        match stage.kind() {
+            StageKind::Ground | StageKind::Billboard => {
+                quad_overscan(self.metres(stage), self.margin)
+            }
+            _ => Vec2::ONE,
         }
     }
 
@@ -624,8 +595,21 @@ impl SiteFrame {
             self.metres(stage),
             self.overscan(stage),
             self.texture.as_ref(),
-            stage == Stage::Surface || self.texture.is_some(),
-            stage == Stage::Billboard,
+            stage.kind() == StageKind::Surface || self.texture.is_some(),
+            stage.kind() == StageKind::Billboard,
+        )
+    }
+
+    /// The site as a shader a system draws on it itself reads it, over `metres` and drawn as it
+    /// is.
+    pub fn uniform_over(&self, run: Run, metres: Vec2) -> SiteUniform {
+        self.uniform_with(
+            run,
+            metres,
+            Vec2::ONE,
+            self.texture.as_ref(),
+            self.texture.is_some(),
+            false,
         )
     }
 
@@ -873,7 +857,7 @@ impl FromWorld for VfxShaders {
     fn from_world(world: &mut World) -> VfxShaders {
         let sprite = VfxShaderDef {
             name: "sprite".to_owned(),
-            stage: Stage::Billboard,
+            stage: Stage::BILLBOARD,
             params: Vec::new(),
         };
         let composed = sprite.compose(SPRITE_SOURCE);
@@ -899,7 +883,7 @@ fn load_shaders(
         .0
         .iter()
         .map(|(id, source)| {
-            let wesl = id.get(&content).composes_wesl();
+            let wesl = id.get(&content).stage.composes_wesl();
             let mut text = std::collections::hash_map::DefaultHasher::new();
             source.hash(&mut text);
             let name = format!(
@@ -1109,9 +1093,9 @@ fn piece_for(world: &mut World, stage: Stage, sheet: Option<Handle<Image>>) -> E
     let piece = world
         .spawn((VfxPiece { stage }, Transform::default(), Visibility::Hidden))
         .id();
-    match stage {
-        Stage::Cover | Stage::Prop | Stage::Sky | Stage::Rain => {}
-        Stage::Screen | Stage::Text => {
+    match stage.kind() {
+        StageKind::Pass => {}
+        StageKind::Screen | StageKind::Text => {
             let material = world
                 .resource_mut::<Assets<VfxMaterial>>()
                 .add(VfxMaterial {
@@ -1126,7 +1110,7 @@ fn piece_for(world: &mut World, stage: Stage, sheet: Option<Handle<Image>>) -> E
                 RenderLayers::layer(PRESENT_LAYER),
             ));
         }
-        Stage::Ground | Stage::Billboard => {
+        StageKind::Ground | StageKind::Billboard => {
             let material = world
                 .resource_mut::<Assets<VfxWorldMaterial>>()
                 .add(VfxWorldMaterial {
@@ -1134,7 +1118,7 @@ fn piece_for(world: &mut World, stage: Stage, sheet: Option<Handle<Image>>) -> E
                     site: SiteUniform::default(),
                     params: ParamsUniform::default(),
                     shader: Handle::default(),
-                    depth_bias: if stage == Stage::Ground {
+                    depth_bias: if stage.kind() == StageKind::Ground {
                         GROUND_BIAS
                     } else {
                         0.0
@@ -1147,13 +1131,13 @@ fn piece_for(world: &mut World, stage: Stage, sheet: Option<Handle<Image>>) -> E
                 NotShadowCaster,
                 NotShadowReceiver,
             ));
-            if stage == Stage::Ground {
+            if stage.kind() == StageKind::Ground {
                 entity.insert(Patched::default());
             } else {
                 entity.insert(Billboard);
             }
         }
-        Stage::Surface => {
+        StageKind::Surface => {
             world.entity_mut(piece).insert(Swapped::default());
         }
     }

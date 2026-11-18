@@ -3,17 +3,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 
-use super::Vocabulary;
+use super::ScriptQuery;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize, EnumDiscriminants)]
-#[serde(tag = "type", rename_all = "snake_case", bound = "")]
-#[schemars(rename = "Expr", bound = "", transform = SchemaMark::Condition.with(true))]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[schemars(rename = "Expr", transform = SchemaMark::Condition.with(true))]
 #[strum_discriminants(
     name(ExprKind),
     derive(EnumString, IntoStaticStr, VariantArray),
     strum(serialize_all = "snake_case")
 )]
-pub enum Expr<V: Vocabulary> {
+pub enum Expr {
     Local {
         local: String,
     },
@@ -24,67 +24,67 @@ pub enum Expr<V: Vocabulary> {
         event: String,
     },
     All {
-        of: Vec<Expr<V>>,
+        of: Vec<Expr>,
     },
     Any {
-        of: Vec<Expr<V>>,
+        of: Vec<Expr>,
     },
     Join {
-        of: Vec<Expr<V>>,
+        of: Vec<Expr>,
     },
     Not {
-        of: Box<Expr<V>>,
+        of: Box<Expr>,
     },
     Round {
-        of: Box<Expr<V>>,
+        of: Box<Expr>,
     },
     Equal {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     NotEqual {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     Less {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     AtMost {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     More {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     AtLeast {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     Add {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     Subtract {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     Multiply {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     Divide {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     Min {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     Max {
-        a: Box<Expr<V>>,
-        b: Box<Expr<V>>,
+        a: Box<Expr>,
+        b: Box<Expr>,
     },
     #[serde(untagged)]
     #[strum_discriminants(strum(serialize = "boolean"))]
@@ -102,7 +102,7 @@ pub enum Expr<V: Vocabulary> {
         var: String,
     },
     #[serde(untagged)]
-    Query(V::Query),
+    Query(ScriptQuery),
 }
 
 impl ExprKind {
@@ -115,13 +115,13 @@ pub const MAX_DEPTH: usize = 16;
 pub const MAX_EXPR_NODES: usize = 64;
 pub const MAX_LIST: usize = 32;
 
-impl<V: Vocabulary> Expr<V> {
+impl Expr {
     pub fn kind(&self) -> ExprKind {
         self.into()
     }
 
     /// The comparison or arithmetic of `kind` between `a` and `b`, when `kind` is one.
-    pub fn binary(kind: ExprKind, a: Box<Expr<V>>, b: Box<Expr<V>>) -> Option<Expr<V>> {
+    pub fn binary(kind: ExprKind, a: Box<Expr>, b: Box<Expr>) -> Option<Expr> {
         Some(match kind {
             ExprKind::Equal => Expr::Equal { a, b },
             ExprKind::NotEqual => Expr::NotEqual { a, b },
@@ -157,7 +157,7 @@ impl<V: Vocabulary> Expr<V> {
         }
     }
 
-    pub fn children(&self) -> Vec<&Expr<V>> {
+    pub fn children(&self) -> Vec<&Expr> {
         match self {
             Expr::All { of } | Expr::Any { of } | Expr::Join { of } => of.iter().collect(),
             Expr::Not { of } | Expr::Round { of } => vec![of],
@@ -187,7 +187,7 @@ impl<V: Vocabulary> Expr<V> {
         found
     }
 
-    pub fn visit<'a>(&'a self, f: &mut impl FnMut(&'a Expr<V>)) {
+    pub fn visit<'a>(&'a self, f: &mut impl FnMut(&'a Expr)) {
         f(self);
         for child in self.children() {
             child.visit(f);

@@ -46,7 +46,7 @@ pub fn panel(ui: &mut Ui, folder: &str, text: &str, closable: bool) -> ReportAct
         if controls::primary(ui, "Copy report").clicked() {
             ui.ctx().copy_text(text.to_owned());
         }
-        if ui.button("Save to file…").clicked()
+        if controls::button(ui, "Save to file…").clicked()
             && let Some(path) = rfd::FileDialog::new()
                 .set_title("Save the load report")
                 .set_file_name("load-report.txt")
@@ -57,7 +57,7 @@ pub fn panel(ui: &mut Ui, folder: &str, text: &str, closable: bool) -> ReportAct
         if controls::marked(ui, Mark::Reload, "Load again").clicked() {
             action = ReportAction::LoadAgain;
         }
-        if closable && ui.button("Close").clicked() {
+        if closable && controls::button(ui, "Close").clicked() {
             action = ReportAction::Close;
         }
     });

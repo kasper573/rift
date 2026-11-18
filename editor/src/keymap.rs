@@ -1,6 +1,7 @@
 use strum::VariantArray;
 use ui::egui::os::OperatingSystem;
 use ui::egui::{InputState, Key, KeyboardShortcut, ModifierNames, Modifiers};
+use ui::keys::KeyCap;
 
 /// Every input the editor answers to. Handlers ask a key whether it was pressed or is held, and
 /// every hint, menu and the key sheet names it, so a key is bound in one place only.
@@ -201,6 +202,11 @@ impl EditorKey {
             Binding::Digits => digit(input),
             _ => None,
         }
+    }
+
+    /// The key as a cap shows it.
+    pub fn cap(self) -> KeyCap {
+        KeyCap::text(self.name())
     }
 
     pub fn name(self) -> String {

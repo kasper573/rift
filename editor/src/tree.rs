@@ -928,13 +928,13 @@ pub(crate) fn show_menu(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     menu.show(|ui| {
         for narrowing in narrowings.iter_mut() {
-            ui.checkbox(narrowing.on, narrowing.label);
+            controls::check(ui, narrowing.on, narrowing.label);
         }
         if !narrowings.is_empty() {
             ui.separator();
         }
         let mut all = shown == kinds.len();
-        if ui.checkbox(&mut all, "All").changed() {
+        if controls::check(ui, &mut all, "All").changed() {
             view.hidden_kinds = if all {
                 BTreeSet::new()
             } else {

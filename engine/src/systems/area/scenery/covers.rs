@@ -17,9 +17,10 @@ use crate::core::render::world::gpu::draw::GroundSheet;
 use crate::core::render::world::gpu::grass::{BladeShape, GrassPiece};
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
+use crate::core::vfx::Stage;
+use crate::core::vfx::board::ShaderBoardImage;
 use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
-use crate::core::vfx::shader::Stage;
-use crate::core::vfx::uniform::{ParamsUniform, WeatherImage};
+use crate::core::vfx::uniform::ParamsUniform;
 use crate::systems::area::Area;
 use crate::systems::area::prop::PropId;
 use crate::systems::area::terrain::{CoverSheet, PieceShape};
@@ -152,11 +153,11 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
             }
         });
         let material = |world: &mut World, strewn: Option<&StrewnPiece>| {
-            let weather = world.resource::<WeatherImage>().0.clone();
+            let weather = world.resource::<ShaderBoardImage>().image.clone();
             world
                 .resource_mut::<Assets<CoverMaterial>>()
                 .add(cover::material(
-                    frame.uniform(run, Stage::Cover),
+                    frame.uniform_over(run, frame.metres(Stage::GROUND)),
                     params,
                     shader.clone(),
                     weather,

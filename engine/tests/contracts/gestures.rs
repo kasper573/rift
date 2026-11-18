@@ -6,7 +6,6 @@ use engine::systems::actor::{self, Appearance, ModelDef, Motion};
 use engine::systems::movement;
 use engine::systems::npc;
 use engine::systems::region;
-use engine::systems::script;
 use serde_json::{Value, json};
 use testkit::{BODY, Game, Map, Sim, clip, path, rig_clips};
 
@@ -70,11 +69,11 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
     for case in cases {
         let mut sim = Sim::new(game(case.nodes).load());
         sim.serve("room").add(actor::playing::progress).plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ));
-        script::spawn_stateless(&mut sim.world);
+        engine::systems::spawn_scripts(&mut sim.world);
         region::hold_whole(&mut sim.world);
         let guard = sim.npc("guard");
         let giant = sim.id::<ModelDef>("giant");

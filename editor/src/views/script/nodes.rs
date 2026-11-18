@@ -1,20 +1,44 @@
+use engine::systems::area::OBJECT_RUNNER;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use ui::words;
 
 use engine::core::content::{ContentFile, ContentId, ContentScope, FolderReader, with_content};
+use engine::core::script::EventKind;
+use engine::core::script::Node;
+use engine::core::script::Run;
+use engine::core::script::RunnerKind;
 use engine::core::script::node::{MAX_CALL_DEPTH, NEXT_EXIT};
 use engine::core::script::{
-    Arrow, DialogueNode, EffectDef, EventDef, Exit, Expr, Fill, NodeKind, REFUSED, RunnerKindDef,
-    Target, VarValue,
+    Arrow, DialogueNode, Exit, Expr, Fill, NodeKind, REFUSED, Target, VarValue,
+};
+use engine::core::script::{
+    ChoiceLabel, DialogueLine, PlaceValue, ScriptEffect, ScriptEvent, ScriptQuery,
 };
 use engine::core::units::{Meters, Seconds};
+use engine::systems::area::Place;
+use engine::systems::area::Started;
+use engine::systems::area::object::{Entered, Left, StoodOn, Who};
+use engine::systems::area::query::{InArea, Inside, KnowsArea};
+use engine::systems::area::warp::Warp;
+use engine::systems::chat::Heard;
+use engine::systems::class::query::Level;
+use engine::systems::crafting::ItemCrafted;
+use engine::systems::dialogue::ScriptLine;
+use engine::systems::dialogue::Speaker;
+use engine::systems::dialogue::span::ScriptSpan;
+use engine::systems::equipment::query::Equipped;
+use engine::systems::interact::Interacted;
 use engine::systems::interact::Verb;
 use engine::systems::item::ItemStack;
-use engine::systems::script::{
-    Condition, EventKind, Node, Place, RiftEffect, RiftEffectKind, RiftEvent, RiftQuery,
-    RiftScripting, RunnerKind, ScriptLine, Speaker, Who,
-};
-use engine::systems::text::plain;
+use engine::systems::item::effects::Items;
+use engine::systems::item::query::Holding;
+use engine::systems::memory::query::{Memory, SetWithin};
+use engine::systems::memory::{Forget, Remember};
+use engine::systems::npc::{CameNear, DiedHere};
+use engine::systems::quest::query::{OnQuest, QuestCooling, QuestDone, QuestResetsIn, TaskDone};
+use engine::systems::resource::Extracted;
+use engine::systems::shop::{Bought, Sold};
+use engine::systems::status::aspect::Interval;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -26,10 +50,35 @@ use crate::{condition, rows, spans};
 
 pub(crate) type Nodes = BTreeMap<String, Node>;
 
+/// The one kind of line a dialogue node holds.
+pub(crate) fn line_of(line: &DialogueLine) -> &ScriptLine {
+    line.downcast_ref()
+        .expect("a dialogue line is a script line")
+}
+
+pub(crate) fn line_of_mut(line: &mut DialogueLine) -> &mut ScriptLine {
+    line.downcast_mut()
+        .expect("a dialogue line is a script line")
+}
+
+/// The spans a dialogue choice is labelled with.
+pub(crate) fn label_of(label: &ChoiceLabel) -> &Vec<ScriptSpan> {
+    label
+        .downcast_ref()
+        .expect("a choice is labelled with spans")
+}
+
+/// The place a script variable holds.
+pub(crate) fn place_of(place: &PlaceValue) -> &Place {
+    place
+        .downcast_ref()
+        .expect("a place variable holds a place")
+}
+
 /// The tag a node is written with: its flow kind, or the effect it is.
 pub(crate) fn tag_of(node: &Node) -> &'static str {
     match node {
-        Node::Effect(effect) => RiftEffectKind::from(effect).into(),
+        Node::Effect(effect) => effect.name(),
         other => other.kind().name(),
     }
 }
@@ -50,7 +99,7 @@ fn event_of(node: &Node) -> Option<EventKind> {
 }
 
 pub(crate) fn event_name(node: &Node) -> Option<&'static str> {
-    event_of(node).map(Into::into)
+    event_of(node).map(EventKind::name)
 }
 
 pub fn hint(node: &Node) -> String {
@@ -80,7 +129,7 @@ pub(crate) enum SpeakerKind {
     Npc,
     Object,
     Narrator,
-    Player,
+    Character,
 }
 
 impl SpeakerKind {
@@ -89,7 +138,7 @@ impl SpeakerKind {
             Speaker::Npc(_) => SpeakerKind::Npc,
             Speaker::Object => SpeakerKind::Object,
             Speaker::Narrator => SpeakerKind::Narrator,
-            Speaker::Player => SpeakerKind::Player,
+            Speaker::Character => SpeakerKind::Character,
         }
     }
 
@@ -98,26 +147,26 @@ impl SpeakerKind {
             SpeakerKind::Npc => "npc",
             SpeakerKind::Object => "object",
             SpeakerKind::Narrator => "narrator",
-            SpeakerKind::Player => "player",
+            SpeakerKind::Character => "character",
         }
     }
 
     /// Who may speak the lines of a script its owner runs.
     pub fn options(owner: RunnerKind) -> &'static [SpeakerKind] {
         match owner {
-            RunnerKind::Object => &[SpeakerKind::Npc, SpeakerKind::Object, SpeakerKind::Narrator],
+            OBJECT_RUNNER => &[SpeakerKind::Npc, SpeakerKind::Object, SpeakerKind::Narrator],
             _ => &[SpeakerKind::Npc, SpeakerKind::Narrator],
         }
     }
 }
 
-pub(crate) fn blank_line(by: Speaker) -> ScriptLine {
-    ScriptLine {
+pub(crate) fn blank_line(by: Speaker) -> DialogueLine {
+    DialogueLine::new(ScriptLine {
         by,
         gesture: None,
         camera: None,
-        text: vec![plain("")],
-    }
+        text: vec![ScriptSpan::plain("")],
+    })
 }
 
 pub fn speaker_name(reader: &FolderReader, by: Speaker) -> String {
@@ -251,7 +300,7 @@ impl NodeCatalogue {
             .into_iter()
             .map(|variant| {
                 let owners =
-                    unscoped::<RiftEvent>(schema::variant_template(root, &variant, nowhere))
+                    unscoped::<ScriptEvent>(schema::variant_template(root, &variant, nowhere))
                         .map(|event| event.owners().to_vec())
                         .unwrap_or_default();
                 (variant.tag.clone(), owners)
@@ -306,9 +355,9 @@ fn unscoped<T: serde::de::DeserializeOwned>(template: Value) -> Option<T> {
 
 fn allowed(owners: &[RunnerKind], owner: RunnerKind) -> Option<OwnerRefusal> {
     if owners.is_empty()
-        || owner == RunnerKind::Any
+        || owner == RunnerKind::ANY
         || owners.contains(&owner)
-        || owners.contains(&RunnerKind::Any)
+        || owners.contains(&RunnerKind::ANY)
     {
         return None;
     }
@@ -347,7 +396,7 @@ pub fn ports(node: &Node) -> Vec<NodePort> {
                 .iter()
                 .enumerate()
                 .map(|(index, choice)| {
-                    let label = words::clip(&spans::plain(&choice.label), 22);
+                    let label = words::clip(&spans::plain(label_of(&choice.label)), 22);
                     port(label, Exit::Choice(index), &choice.to)
                 })
                 .collect();
@@ -508,7 +557,9 @@ pub fn fresh(
     let none = Arrow::default;
     let flow = kind.parse::<NodeKind>().ok();
     Some(match flow {
-        Some(NodeKind::On) => return fresh_event(reader, EventKind::Started.into(), nearby),
+        Some(NodeKind::On) => {
+            return fresh_event(reader, EventKind::of::<Started>().name(), nearby);
+        }
         Some(NodeKind::Dialogue) => Node::Dialogue(DialogueNode {
             lines: vec![blank_line(speaker)],
             choices: Vec::new(),
@@ -580,16 +631,16 @@ pub(crate) fn fresh_event(
         .into_iter()
         .find(|variant| variant.tag == event)?;
     let template = schema::variant_template(node_root(), &variant, nearby);
-    let mut event = reader.from_json::<RiftEvent>(&template).ok()?;
-    match &mut event {
-        RiftEvent::Interacted { verb, reach, .. } => {
-            *verb = Verb::Talk;
-            *reach = Meters(1.5);
-        }
-        RiftEvent::CameNear { within, .. } | RiftEvent::Heard { within, .. } => {
-            *within = Meters(4.0);
-        }
-        _ => {}
+    let mut event = reader.from_json::<ScriptEvent>(&template).ok()?;
+    if let Some(interacted) = event.downcast_mut::<Interacted>() {
+        interacted.verb = Verb::Talk;
+        interacted.reach = Meters(1.5);
+    }
+    if let Some(came) = event.downcast_mut::<CameNear>() {
+        came.within = Meters(4.0);
+    }
+    if let Some(heard) = event.downcast_mut::<Heard>() {
+        heard.within = Meters(4.0);
     }
     Some(Node::On {
         event,
@@ -735,7 +786,7 @@ pub(crate) struct NodeReads {
 impl NodeReads {
     /// What the nodes' tests and choice requirements ask of the world, each file by its path.
     pub fn of(reader: &FolderReader, nodes: &Nodes) -> NodeReads {
-        let mut asked: Vec<&RiftQuery> = Vec::new();
+        let mut asked: Vec<&ScriptQuery> = Vec::new();
         for node in nodes.values() {
             match node {
                 Node::If { test, .. } => queries_in(test, &mut asked),
@@ -775,44 +826,60 @@ impl NodeReads {
         parts.join(" · ")
     }
 
-    fn note(&mut self, reader: &FolderReader, query: &RiftQuery) {
+    fn note(&mut self, reader: &FolderReader, query: &ScriptQuery) {
         let path = |path: Option<&str>| path.unwrap_or("?").to_owned();
-        match query {
-            RiftQuery::Memory { memory, .. } | RiftQuery::SetWithin { memory, .. } => {
-                self.memories.push(path(reader.path_of(*memory)));
-            }
-            RiftQuery::Holding { item, .. } => {
-                let item = path(reader.path_of(*item));
-                self.items.push(format!("holding {}", shown_path(&item)));
-            }
-            RiftQuery::Equipped { item, .. } => {
-                let item = path(reader.path_of(*item));
-                self.items.push(format!("wearing {}", shown_path(&item)));
-            }
-            RiftQuery::Inside { object, .. } => self.places.push(format!("inside {object}")),
-            RiftQuery::InArea { area, .. } => {
-                let area = path(reader.path_of(*area));
-                self.places.push(format!("in {}", shown_path(&area)));
-            }
-            RiftQuery::KnowsArea { area, .. } => {
-                let area = path(reader.path_of(*area));
-                self.places.push(format!("knows {}", shown_path(&area)));
-            }
-            RiftQuery::OnQuest { quest, .. }
-            | RiftQuery::QuestDone { quest, .. }
-            | RiftQuery::QuestCooling { quest, .. }
-            | RiftQuery::TaskDone { quest, .. }
-            | RiftQuery::QuestResetsIn { quest, .. } => {
-                let quest = path(reader.path_of(*quest));
-                self.other.push(shown_path(&quest).to_owned());
-            }
-            RiftQuery::Level { .. } => self.other.push("the level".to_owned()),
-            _ => {}
+        let memory = query
+            .downcast_ref::<Memory>()
+            .map(|query| query.memory)
+            .or_else(|| query.downcast_ref::<SetWithin>().map(|query| query.memory));
+        if let Some(memory) = memory {
+            self.memories.push(path(reader.path_of(memory)));
+        }
+        if let Some(Holding { item, .. }) = query.downcast_ref() {
+            let item = path(reader.path_of(*item));
+            self.items.push(format!("holding {}", shown_path(&item)));
+        }
+        if let Some(Equipped { item, .. }) = query.downcast_ref() {
+            let item = path(reader.path_of(*item));
+            self.items.push(format!("wearing {}", shown_path(&item)));
+        }
+        if let Some(Inside { object, .. }) = query.downcast_ref() {
+            self.places.push(format!("inside {object}"));
+        }
+        if let Some(InArea { area, .. }) = query.downcast_ref() {
+            let area = path(reader.path_of(*area));
+            self.places.push(format!("in {}", shown_path(&area)));
+        }
+        if let Some(KnowsArea { area, .. }) = query.downcast_ref() {
+            let area = path(reader.path_of(*area));
+            self.places.push(format!("knows {}", shown_path(&area)));
+        }
+        let quest = query
+            .downcast_ref::<OnQuest>()
+            .map(|query| query.quest)
+            .or_else(|| query.downcast_ref::<QuestDone>().map(|query| query.quest))
+            .or_else(|| {
+                query
+                    .downcast_ref::<QuestCooling>()
+                    .map(|query| query.quest)
+            })
+            .or_else(|| query.downcast_ref::<TaskDone>().map(|query| query.quest))
+            .or_else(|| {
+                query
+                    .downcast_ref::<QuestResetsIn>()
+                    .map(|query| query.quest)
+            });
+        if let Some(quest) = quest {
+            let quest = path(reader.path_of(quest));
+            self.other.push(shown_path(&quest).to_owned());
+        }
+        if query.is::<Level>() {
+            self.other.push("the level".to_owned());
         }
     }
 }
 
-fn queries_in<'a>(condition: &'a Condition, found: &mut Vec<&'a RiftQuery>) {
+fn queries_in<'a>(condition: &'a Expr, found: &mut Vec<&'a ScriptQuery>) {
     if let Expr::Query(query) = condition {
         found.push(query);
     }
@@ -926,60 +993,58 @@ pub fn pieces(node: &Node, text: &NodeText) -> Vec<Vec<SummaryPiece>> {
     }
 }
 
-fn effect_pieces(text: &NodeText, effect: &RiftEffect) -> Vec<Vec<SummaryPiece>> {
-    match effect {
-        RiftEffect::Remember(remember) => {
-            let mut line = vec![strong(text.path_of(remember.memory)), muted(" = ")];
-            match &remember.to {
-                Some(to) => line.extend(expression_pieces(text, to)),
-                None => line.push(strong("true")),
-            }
-            vec![line]
+fn effect_pieces(text: &NodeText, effect: &ScriptEffect) -> Vec<Vec<SummaryPiece>> {
+    if let Some(remember) = effect.downcast_ref::<Remember>() {
+        let mut line = vec![strong(text.path_of(remember.memory)), muted(" = ")];
+        match &remember.to {
+            Some(to) => line.extend(expression_pieces(text, to)),
+            None => line.push(strong("true")),
         }
-        RiftEffect::Forget(forget) => {
-            let memories: Vec<String> = forget.memories.iter().map(|m| text.path_of(*m)).collect();
-            vec![vec![strong(memories.join(", ")), muted(" back to zero")]]
-        }
-        RiftEffect::Items(items) => {
-            let mut lines = Vec::new();
-            let named = [(items.named_take(), "take "), (items.named_give(), "give ")];
-            for (stacks, word) in &named {
-                if !stacks.is_empty() {
-                    let mut line = vec![muted(*word)];
-                    line.extend(stack_pieces(text, stacks));
-                    lines.push(line);
-                }
-            }
-            if lines.is_empty() {
-                lines.push(vec![muted("nothing changes hands")]);
-            }
-            lines
-        }
-        RiftEffect::Warp(warp) => {
-            let mut line = match &warp.who {
-                Some(who) => expression_pieces(text, who),
-                None => vec![strong("the subject")],
-            };
-            line.push(muted(" to "));
-            match &warp.to {
-                Fill::Var { var } => line.push(hole(var)),
-                Fill::Const(place) => line.push(strong(place_text(text, place))),
-            }
-            vec![line, vec![muted("sets its spawn point")]]
-        }
-        other => field_lines(text, other),
+        return vec![line];
     }
+    if let Some(forget) = effect.downcast_ref::<Forget>() {
+        let memories: Vec<String> = forget.memories.iter().map(|m| text.path_of(*m)).collect();
+        return vec![vec![strong(memories.join(", ")), muted(" back to zero")]];
+    }
+    if let Some(items) = effect.downcast_ref::<Items>() {
+        let mut lines = Vec::new();
+        let named = [(items.named_take(), "take "), (items.named_give(), "give ")];
+        for (stacks, word) in &named {
+            if !stacks.is_empty() {
+                let mut line = vec![muted(*word)];
+                line.extend(stack_pieces(text, stacks));
+                lines.push(line);
+            }
+        }
+        if lines.is_empty() {
+            lines.push(vec![muted("nothing changes hands")]);
+        }
+        return lines;
+    }
+    if let Some(warp) = effect.downcast_ref::<Warp>() {
+        let mut line = match &warp.who {
+            Some(who) => expression_pieces(text, who),
+            None => vec![strong("the subject")],
+        };
+        line.push(muted(" to "));
+        match &warp.to {
+            Fill::Var { var } => line.push(hole(var)),
+            Fill::Const(place) => line.push(strong(place_text(text, place))),
+        }
+        return vec![line, vec![muted("sets its spawn point")]];
+    }
+    field_lines(text, effect)
 }
 
 /// An effect's fields as its definition lists them, read back as the types they may be: files by
 /// their path, places, stacks of items, conditions, and the variables filling them.
-fn field_lines(text: &NodeText, effect: &RiftEffect) -> Vec<Vec<SummaryPiece>> {
+fn field_lines(text: &NodeText, effect: &ScriptEffect) -> Vec<Vec<SummaryPiece>> {
     let Ok(json) = text.reader.to_json(effect) else {
         return Vec::new();
     };
     let fields = text
         .catalogue
-        .entry(RiftEffectKind::from(effect).into())
+        .entry(effect.name())
         .map(|entry| entry.fields.clone())
         .unwrap_or_default();
     let mut named: Vec<SummaryPiece> = Vec::new();
@@ -1031,7 +1096,7 @@ fn field_pieces(
         Value::Number(_) | Value::Bool(_) | Value::String(_) => {
             (false, labelled(vec![strong(value_text(value))]))
         }
-        _ => match text.reader.from_json::<Condition>(value) {
+        _ => match text.reader.from_json::<Expr>(value) {
             Ok(condition) => (true, labelled(expression_pieces(text, &condition))),
             Err(_) => (true, labelled(vec![strong(value_text(value))])),
         },
@@ -1049,26 +1114,26 @@ fn value_text(value: &Value) -> String {
 }
 
 /// A value a variable takes, as text.
-pub(crate) fn var_value_text(text: &NodeText, value: &VarValue<RiftScripting>) -> String {
+pub(crate) fn var_value_text(text: &NodeText, value: &VarValue) -> String {
     var_value_pieces(text, value)
         .into_iter()
         .map(|piece| piece.text)
         .collect()
 }
 
-fn var_value_pieces(text: &NodeText, value: &VarValue<RiftScripting>) -> Vec<SummaryPiece> {
+fn var_value_pieces(text: &NodeText, value: &VarValue) -> Vec<SummaryPiece> {
     match value {
         VarValue::Integer(number) => vec![strong(number.to_string())],
         VarValue::Number(number) => vec![strong(number.to_string())],
         VarValue::Boolean(flag) => vec![strong(flag.to_string())],
         VarValue::Str(name) => vec![strong(name)],
-        VarValue::Place(place) => vec![strong(place_text(text, place))],
+        VarValue::Place(place) => vec![strong(place_text(text, place_of(place)))],
         VarValue::Condition(condition) => expression_pieces(text, condition),
     }
 }
 
-fn dialogue_pieces(text: &NodeText, dialogue: &DialogueNode<RiftScripting>) -> Vec<SummaryPiece> {
-    let Some(first) = dialogue.lines.first() else {
+fn dialogue_pieces(text: &NodeText, dialogue: &DialogueNode) -> Vec<SummaryPiece> {
+    let Some(first) = dialogue.lines.first().map(line_of) else {
         return vec![muted("no lines")];
     };
     let mut line = vec![
@@ -1100,52 +1165,72 @@ fn stack_pieces(text: &NodeText, stacks: &[ItemStack]) -> Vec<SummaryPiece> {
     line
 }
 
-fn event_pieces(text: &NodeText, event: &RiftEvent) -> Vec<SummaryPiece> {
-    let who = |by| match by {
+fn event_pieces(text: &NodeText, event: &ScriptEvent) -> Vec<SummaryPiece> {
+    let who = |by: &Who| match by {
         Who::Characters => "characters",
         Who::Npcs => "npcs",
         Who::Anyone => "anyone",
     };
-    match event {
-        RiftEvent::Interacted { verb, reach, .. } => vec![
+    if let Some(Interacted { verb, reach, .. }) = event.downcast_ref() {
+        return vec![
             muted("verb "),
             strong(verb.label().to_lowercase()),
             muted(" · reach "),
             strong(reach.0.to_string()),
             muted(" m"),
-        ],
-        RiftEvent::CameNear { within, by, .. } => vec![
-            strong(who(*by)),
+        ];
+    }
+    if let Some(CameNear { within, by, .. }) = event.downcast_ref() {
+        return vec![
+            strong(who(by)),
             muted(" within "),
             strong(within.0.to_string()),
-        ],
-        RiftEvent::Heard { words, within } => vec![
+        ];
+    }
+    if let Some(Heard { words, within }) = event.downcast_ref() {
+        return vec![
             strong(words.join(", ")),
             muted(" within "),
             strong(within.0.to_string()),
-        ],
-        RiftEvent::Entered { by } | RiftEvent::Left { by } | RiftEvent::Died { by } => {
-            vec![strong(who(*by))]
-        }
-        RiftEvent::StoodOn { by, object } => {
-            vec![strong(who(*by)), muted(" on "), strong(object)]
-        }
-        RiftEvent::Interval { seconds } => {
-            vec![muted("every "), strong(seconds.0.to_string()), muted(" s")]
-        }
-        RiftEvent::Bought { item: Some(item) }
-        | RiftEvent::Sold { item: Some(item) }
-        | RiftEvent::Extracted { item: Some(item) }
-        | RiftEvent::Crafted { item: Some(item) } => {
-            vec![strong(text.path_of(*item))]
-        }
-        RiftEvent::Started => vec![muted("the owner spawned")],
-        RiftEvent::Run => vec![muted("started by a run node")],
-        _ => Vec::new(),
+        ];
     }
+    let crossed = event
+        .downcast_ref::<Entered>()
+        .map(|crossed| &crossed.by)
+        .or_else(|| event.downcast_ref::<Left>().map(|crossed| &crossed.by))
+        .or_else(|| event.downcast_ref::<DiedHere>().map(|died| &died.by));
+    if let Some(by) = crossed {
+        return vec![strong(who(by))];
+    }
+    if let Some(StoodOn { by, object }) = event.downcast_ref() {
+        return vec![strong(who(by)), muted(" on "), strong(object)];
+    }
+    if let Some(Interval { seconds }) = event.downcast_ref() {
+        return vec![muted("every "), strong(seconds.0.to_string()), muted(" s")];
+    }
+    let item = event
+        .downcast_ref::<Bought>()
+        .and_then(|trade| trade.item)
+        .or_else(|| event.downcast_ref::<Sold>().and_then(|trade| trade.item))
+        .or_else(|| event.downcast_ref::<Extracted>().and_then(|drop| drop.item))
+        .or_else(|| {
+            event
+                .downcast_ref::<ItemCrafted>()
+                .and_then(|made| made.item)
+        });
+    if let Some(item) = item {
+        return vec![strong(text.path_of(item))];
+    }
+    if event.is::<Started>() {
+        return vec![muted("the owner spawned")];
+    }
+    if event.is::<Run>() {
+        return vec![muted("started by a run node")];
+    }
+    Vec::new()
 }
 
-fn expression_pieces(text: &NodeText, condition: &Condition) -> Vec<SummaryPiece> {
+fn expression_pieces(text: &NodeText, condition: &Expr) -> Vec<SummaryPiece> {
     if let Expr::Var { var } = condition {
         return vec![hole(var)];
     }

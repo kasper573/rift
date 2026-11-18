@@ -58,6 +58,8 @@ bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_platform.workspace = true
 slotmap.workspace = true
+dyn-clone = "1"
+erased-serde = "0.4"
 smallvec.workspace = true
 bevy_egui.workspace = true
 bevy_mod_outline.workspace = true
@@ -77,6 +79,9 @@ getrandom = "0.4"
 num_cpus = "1"
 rayon.workspace = true
 strum = { workspace = true, features = ["derive"] }
+formatjs_icu_messageformat.workspace = true
+formatjs_icu_messageformat_parser.workspace = true
+icu_locale_core.workspace = true
 strsim.workspace = true
 renet2.workspace = true
 renet2_netcode.workspace = true
@@ -90,8 +95,11 @@ blake3 = "1"
 schemars = "1"
 naga = { version = "30", features = ["wgsl-in"] }
 png = "0.18"
-tar = "0.4"
-flate2 = "1"
+tar.workspace = true
+flate2.workspace = true
+zip.workspace = true
+minisign-verify.workspace = true
+self-replace.workspace = true
 postcard.workspace = true
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 polyanya = "0.17"
@@ -114,6 +122,7 @@ tokio.workspace = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+minisign.workspace = true
 walkdir.workspace = true
 tempfile.workspace = true
 

@@ -12,7 +12,6 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use strum::VariantArray;
 use ui::egui::Ui;
-use ui::glyph::{self, Mark};
 
 use crate::forms::{self, FormChange, FormCx};
 
@@ -80,7 +79,7 @@ fn cards<L: Level>(
         levels.remove(index);
         changed = FormChange::at(path);
     }
-    if ui.button(format!("+ {noun}")).clicked() {
+    if controls::button(ui, format!("+ {noun}")).clicked() {
         levels.push(L::next(levels.last()));
         changed = FormChange::at(path);
     }
@@ -104,7 +103,7 @@ fn card<L: Level>(
                 ui.label(theme::muted(note).size(12.0));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                if controls::remove(ui, "Remove")
                     .on_hover_text(format!("Remove this {}", L::NAME.to_lowercase()))
                     .clicked()
                 {
@@ -134,7 +133,7 @@ fn stats<L: Level>(
         let key = stat_key(stat);
         field_row(ui, &key, |ui| {
             changed |= forms::quantity(ui, cx, amount, L::unit(stat), &format!("{path}/{key}"));
-            if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+            if controls::remove(ui, "Remove")
                 .on_hover_text(format!("Unset {key}"))
                 .clicked()
             {

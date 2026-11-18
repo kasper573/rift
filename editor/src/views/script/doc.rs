@@ -5,10 +5,16 @@ use crate::project::Project;
 use crate::project::files::content_of;
 use crate::scene_graph;
 use engine::core::content::{ContentFile, FolderReader, fields_file};
+use engine::core::script::ListedScriptModule;
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptDef;
+use engine::core::script::ScriptModule;
 use engine::systems::area::AreaModule;
+use engine::systems::area::OBJECT_RUNNER;
 use engine::systems::area::scene::{SCENE_FILE, SceneNode};
+use engine::systems::dialogue::Speaker;
+use engine::systems::npc::NPC_RUNNER;
 use engine::systems::npc::NpcDef;
-use engine::systems::script::{ListedScriptModule, RunnerKind, ScriptDef, ScriptModule, Speaker};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -185,8 +191,8 @@ impl ScriptDoc {
             .as_deref()
             .and_then(|npc| self.reader.id_of::<NpcDef>(npc));
         match (self.kind, npc) {
-            (RunnerKind::Npc, Some(npc)) => Speaker::Npc(npc),
-            (RunnerKind::Object, _) => Speaker::Object,
+            (NPC_RUNNER, Some(npc)) => Speaker::Npc(npc),
+            (OBJECT_RUNNER, _) => Speaker::Object,
             _ => Speaker::Narrator,
         }
     }

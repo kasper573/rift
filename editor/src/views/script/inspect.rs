@@ -10,15 +10,19 @@ use ui::theme;
 use ui::words;
 
 use engine::core::content::{ContentFile, FolderReader};
-use engine::core::script::{EventDef, Expr, Fill, RunnerKindDef};
+use engine::core::script::DialogueNode;
+use engine::core::script::Node;
+use engine::core::script::ScriptDef;
+use engine::core::script::VarValue;
+use engine::core::script::Variable;
+use engine::core::script::{Choice, ChoiceLabel, ChoiceReveal, Expr, Fill, ScriptEvent};
 use engine::field;
-use engine::systems::dialogue::ChoiceReveal;
+use engine::systems::actor::playing::Animate;
+use engine::systems::dialogue::ScriptLine;
+use engine::systems::dialogue::Speaker;
 use engine::systems::memory::MemoryDef;
+use engine::systems::memory::{Forget, Remember};
 use engine::systems::npc::NpcDef;
-use engine::systems::script::{
-    Choice, DialogueNode, Node, RiftEffect, RiftEvent, ScriptDef, ScriptLine, Speaker, VarValue,
-    Variable,
-};
 use serde_json::Value;
 use strum::VariantArray;
 use ui::egui::Ui;
@@ -293,7 +297,7 @@ fn variables_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                 .collect();
             panel::tile_across(ui, false, |ui| {
                 panel::header(ui, name, "", |ui| {
-                    if ui.button("Remove the variable").clicked() {
+                    if menu::entry(ui, "Remove the variable").clicked() {
                         script.variables.remove(name);
                         changed = FormChange::at(field!(ScriptDef, variables));
                         ui.close();
@@ -374,7 +378,7 @@ fn default_value(ui: &mut Ui, cx: &mut FormCx, variable: &mut Variable, path: &s
                     }
                 }
             }
-            if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+            if controls::remove(ui, "Remove")
                 .on_hover_text("Drop the default")
                 .clicked()
             {
@@ -384,7 +388,7 @@ fn default_value(ui: &mut Ui, cx: &mut FormCx, variable: &mut Variable, path: &s
         }
         None => {
             ui.label(theme::muted("none").size(13.0));
-            if ui.button("+ Add default").clicked() {
+            if controls::button(ui, "+ Add default").clicked() {
                 let fresh = schema::template(&shape, &shape, cx.nearby());
                 match reader.from_json::<VarValue>(&fresh) {
                     Ok(read) => {
@@ -461,8 +465,8 @@ fn run_by_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
         .nodes()
         .values()
         .flat_map(|node| match node {
-            Node::Dialogue(dialogue) => dialogue.lines.as_slice(),
-            _ => &[],
+            Node::Dialogue(dialogue) => dialogue.lines.iter().map(nodes::line_of).collect(),
+            _ => Vec::new(),
         })
         .filter_map(|line| match line.by {
             Speaker::Npc(npc) => doc.reader.path_of(npc).map(str::to_owned),
@@ -494,7 +498,7 @@ fn run_by_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
 
 fn action_buttons(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
     ui.add_space(8.0);
-    if controls::keyed(ui, "Run", Some(&EditorKey::RunScript.name()), true).clicked() {
+    if controls::keyed(ui, "Run", Some(&EditorKey::RunScript.cap()), true).clicked() {
         editor.bottom_tab = BottomTab::Run;
         editor.views.script.fire(&doc.at);
     }
@@ -823,20 +827,33 @@ fn node_extras(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, shown: Shown) 
         ins,
         blurb,
     } = shown;
-    let memory = match node {
-        Node::Effect(RiftEffect::Remember(remember)) => Some(Some(remember.memory)),
-        Node::Effect(RiftEffect::Forget(forget)) => Some(forget.memories.first().copied()),
+    let effect = match node {
+        Node::Effect(effect) => Some(effect),
         _ => None,
     };
+    let memory = effect.and_then(|effect| {
+        effect
+            .downcast_ref::<Remember>()
+            .map(|remember| Some(remember.memory))
+            .or_else(|| {
+                effect
+                    .downcast_ref::<Forget>()
+                    .map(|forget| forget.memories.first().copied())
+            })
+    });
+    let moving = effect
+        .and_then(|effect| effect.downcast_ref::<Animate>())
+        .and_then(|animate| match &animate.motion {
+            engine::systems::actor::Motion::Move(asked) => Some(asked),
+            _ => None,
+        });
     match (node, memory) {
         (Node::Repeat { .. }, _) => bounds_card(ui, doc, name, node),
-        (
-            Node::Effect(RiftEffect::Animate(engine::systems::actor::playing::Animate {
-                motion: engine::systems::actor::Motion::Move(asked),
-                ..
-            })),
-            _,
-        ) => move_card(editor, ui, asked),
+        _ if moving.is_some() => {
+            if let Some(asked) = moving {
+                move_card(editor, ui, asked);
+            }
+        }
         (_, Some(memory)) => {
             if let Some(memory) = memory.and_then(|memory| doc.reader.path_of(memory)) {
                 memory_row_card(editor, ui, doc, memory);
@@ -923,7 +940,7 @@ fn memory_row_card(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, memory: &s
             .editing(MemoryDef::TABLE, Some(memory));
         panel::tile_across(ui, false, |ui| {
             panel::header(ui, shown_path(memory), "row", |ui| {
-                if ui.button("Open the row").clicked() {
+                if menu::entry(ui, "Open the row").clicked() {
                     cx.actions.push(FormAction::OpenRow {
                         table: MemoryDef::TABLE.to_owned(),
                         key: memory.to_owned(),
@@ -1028,12 +1045,12 @@ fn on_form(
     ui: &mut Ui,
     cx: &mut FormCx,
     reader: &FolderReader,
-    event: &mut RiftEvent,
+    event: &mut ScriptEvent,
     path: &str,
 ) -> FormChange {
     let mut changed = FormChange::default();
     let events = nodes::event_variants();
-    let current: &str = event.kind().into();
+    let current: &str = event.kind().name();
     let mut picked = current.to_owned();
     form::kv(ui, "event", |ui| {
         controls::combo(ui.id().with(path).with("event"))
@@ -1051,7 +1068,7 @@ fn on_form(
         *event = fresh;
         changed = FormChange::at(path);
     }
-    let shown: &str = event.kind().into();
+    let shown: &str = event.kind().name();
     if let Some(variant) = events.iter().find(|variant| variant.tag == shown) {
         changed |= forms::variant_of_type(
             ui,
@@ -1081,13 +1098,14 @@ fn dialogue_form(
     let mut swap_line = None;
     let count = node.lines.len();
     for (index, line) in node.lines.iter_mut().enumerate() {
+        let line = nodes::line_of_mut(line);
         let line_path = format!("{path}/lines/{index}");
         panel::tile_across(ui, false, |ui| {
             let title = format!("line {}", index + 1);
             if count > 1 {
                 panel::header(ui, &title, "", |ui| {
                     swap_line = menu::move_entries(ui, index, count).or(swap_line);
-                    if ui.button("Remove the line").clicked() {
+                    if menu::entry(ui, "Remove the line").clicked() {
                         remove_line = Some(index);
                         ui.close();
                     }
@@ -1114,8 +1132,7 @@ fn dialogue_form(
         node.lines.swap(a, b);
         changed = FormChange::at(path);
     }
-    if ui
-        .button("+ line")
+    if controls::button(ui, "+ line")
         .on_hover_text(format!("{} on the card", EditorKey::Confirm.name()))
         .clicked()
     {
@@ -1148,8 +1165,7 @@ fn dialogue_form(
         node.choices.swap(a, b);
         changed = FormChange::at(path);
     }
-    if ui
-        .button("+ choice")
+    if controls::button(ui, "+ choice")
         .on_hover_text(format!("{} on the card", EditorKey::AddChoice.name()))
         .clicked()
     {
@@ -1210,15 +1226,15 @@ fn choice_card(ui: &mut Ui, cx: &mut FormCx, choice: &mut Choice, at: &ChoiceAt)
     panel::tile_across(ui, false, |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             ui.menu_button(Mark::More.text(16.0).color(theme::FAINT), |ui| {
-                if index > 0 && ui.button("Move up").clicked() {
+                if index > 0 && menu::entry(ui, "Move up").clicked() {
                     menu.swap = Some((index, index - 1));
                     ui.close();
                 }
-                if index + 1 < count && ui.button("Move down").clicked() {
+                if index + 1 < count && menu::entry(ui, "Move down").clicked() {
                     menu.swap = Some((index, index + 1));
                     ui.close();
                 }
-                if ui.button("Remove the choice").clicked() {
+                if menu::entry(ui, "Remove the choice").clicked() {
                     menu.remove = Some(index);
                     ui.close();
                 }
@@ -1227,13 +1243,13 @@ fn choice_card(ui: &mut Ui, cx: &mut FormCx, choice: &mut Choice, at: &ChoiceAt)
                 let id = ui.id().with(choice_path).with("label");
                 let edit = spans::line(
                     ui,
-                    &choice.label,
+                    nodes::label_of(&choice.label),
                     id,
                     egui::FontId::new(13.5, theme::medium()),
                     "the choice",
                 );
                 if let Some(spans) = edit.spans {
-                    choice.label = spans;
+                    choice.label = ChoiceLabel::new(spans);
                     changed = FormChange::at(choice_path);
                 }
             });
@@ -1352,7 +1368,7 @@ fn choice_inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, name: &st
         node_inspector(editor, ui, doc, name);
         return;
     };
-    let label_text = spans::plain(&choice.label);
+    let label_text = spans::plain(nodes::label_of(&choice.label));
     path_label(
         ui,
         &format!(
@@ -1442,7 +1458,7 @@ fn speaker_rows(
             SpeakerKind::Npc => npc.map(Speaker::Npc),
             SpeakerKind::Object => Some(Speaker::Object),
             SpeakerKind::Narrator => Some(Speaker::Narrator),
-            SpeakerKind::Player => Some(Speaker::Player),
+            SpeakerKind::Character => Some(Speaker::Character),
         };
         match by {
             Some(by) => {

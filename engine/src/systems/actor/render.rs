@@ -50,7 +50,7 @@ pub struct ActorRenderPlugin;
 impl Plugin for ActorRenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(InterpolatePlugin::<RenderActor>::default())
-            .add_observer(adopt_player)
+            .add_observer(adopt_character)
             .add_systems(
                 Update,
                 (dress, pose, hang)
@@ -547,7 +547,7 @@ fn mask_groups(
 
 /// A body's rig, once it stands, plays through the skeleton's graph, and the skeleton's layers take
 /// its joints.
-pub fn adopt_player(
+pub fn adopt_character(
     ready: On<RigReady>,
     content: Res<Content>,
     mut puppets: Query<(&mut Puppet, &Body)>,

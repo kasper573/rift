@@ -6,12 +6,12 @@
 use std::collections::BTreeSet;
 
 use engine::core::content::Content;
+use engine::core::script::ScriptDef;
 use engine::core::script::node::Node;
 use engine::systems::actor::playing::Animate;
 use engine::systems::actor::skeleton::{GestureName, MAX_JOINTS, MoveName, SkeletonDef};
 use engine::systems::actor::{Action, MaterialDef, ModelDef, ModelPartDef, Motion};
 use engine::systems::mount::{self, MountDef};
-use engine::systems::script::{RiftEffect, ScriptDef};
 use strum::VariantArray;
 use ui::egui::Ui;
 use ui::{form, panel, theme, words};
@@ -293,10 +293,11 @@ fn asked_moves(editor: &Editor, content: &Content) -> Vec<(String, MoveName)> {
             continue;
         };
         for node in script.nodes.values() {
-            if let Node::Effect(RiftEffect::Animate(Animate {
-                motion: Motion::Move(name),
-                ..
-            })) = node
+            if let Node::Effect(effect) = node
+                && let Some(Animate {
+                    motion: Motion::Move(name),
+                    ..
+                }) = effect.downcast_ref::<Animate>()
             {
                 asked.push((path.clone(), name.clone()));
             }

@@ -6,12 +6,12 @@ use ui::theme;
 
 use engine::core::content::{Content, ContentScope, FolderReader, parent_of, rescoped};
 use engine::core::math::{Pos, Rect, Size};
+use engine::core::script::VarValue;
 use engine::core::script::VariableType;
 use engine::core::units::{Degrees, MeterPos, Meters};
 use engine::systems::area::blueprint::{BlueprintDef, BlueprintId, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaModule, AreaModuleKind};
-use engine::systems::script::VarValue;
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Ui, Vec2};
 
 use super::{AreaFrame, AreaSnapshot, modules, shapes};

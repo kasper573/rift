@@ -1,22 +1,26 @@
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::Vocabulary;
 use std::collections::HashMap;
 
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::Learned;
-use crate::core::content::SchemaMark;
-use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, ScriptFault};
+use super::{Learned, SkillMessages};
+use crate::core::content::{Content, SchemaMark};
+use crate::core::script::{
+    ACCEPTED, Answer, Arrow, Compiler, DECLINED, EffectDef, EffectStep, ScriptFault,
+};
+use crate::core::script::{EffectCall, Expr, FlowKey, Instances};
+use crate::systems::aim as effects;
 use crate::systems::class::{self, SkillPoints};
 use crate::systems::history::{HistoryTopic, RecordTally};
+use crate::systems::messages;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, player_requests};
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, effect as effects,
-};
 use crate::systems::stat;
-use ui::words::counted;
 
 /// Asks the player before forgetting every learned rank and returning the points. The answer
 /// picks the output, so whatever the reset costs is wired after it by the script.
@@ -25,7 +29,7 @@ use ui::words::counted;
 pub struct ResetSkills {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub accepted: Arrow,
     #[schemars(transform = SchemaMark::Fails.with(true))]
@@ -49,10 +53,7 @@ pub struct ResetAnswerRequest {
 #[derive(Resource, Default)]
 pub struct PendingResets(HashMap<Entity, FlowKey>);
 
-const ACCEPTED: &str = "accepted";
-const DECLINED: &str = "declined";
-
-impl EffectDef<RiftScripting> for ResetSkills {
+impl EffectDef for ResetSkills {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
@@ -63,10 +64,7 @@ impl EffectDef<RiftScripting> for ResetSkills {
     fn keeps_box(&self) -> bool {
         true
     }
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
@@ -80,8 +78,8 @@ impl EffectDef<RiftScripting> for ResetSkills {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::ResetsSkills]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(ResetsSkills)]
     }
 }
 
@@ -133,15 +131,13 @@ pub fn reset(world: &mut World, player: Entity) {
     if let Some(mut learned) = world.get_mut::<Learned>(player) {
         learned.0.clear();
     }
+    let content = world.resource::<Content>().clone();
+    let said = messages::of(&content).skill.skills_reset().to_owned();
     notification::notify(
         world,
         player,
         None,
-        Notification::feed(
-            HistoryTopic::Notification,
-            "Skills reset, skill points returned",
-        )
-        .tally(RecordTally::Change(
+        Notification::feed(HistoryTopic::Notification, said).tally(RecordTally::Change(
             i32::try_from(returned.0).unwrap_or(i32::MAX),
         )),
     );
@@ -157,18 +153,23 @@ pub fn prompt(world: &World, player: Entity) -> ResetPrompt {
 }
 
 impl ResetPrompt {
-    pub fn describe(self) -> String {
-        format!(
-            "Forget {} across {}; {} come back",
-            counted(self.ranks, "rank"),
-            counted(self.skills, "skill"),
-            counted(self.points.0, "point"),
-        )
+    pub fn describe(self, words: &SkillMessages) -> String {
+        words.reset_summary(self.points.0, self.ranks, self.skills)
     }
 }
 
 fn answer(world: &mut World, flow: FlowKey, output: &'static str) {
     world
-        .resource_mut::<RiftInstances>()
+        .resource_mut::<Instances>()
         .answer(flow, Answer::Output(output));
+}
+
+/// A script that may reset a player's skills.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ResetsSkills;
+
+impl ReachDef for ResetsSkills {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary.effect::<ResetSkills>("reset_skills");
 }

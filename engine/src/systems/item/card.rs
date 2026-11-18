@@ -17,24 +17,26 @@ use crate::core::card::CardStyleDef;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, ImageSource};
 use crate::core::math::ColorGradient;
+use crate::core::script::{Expr, condition};
 use crate::core::stage::card::HungCardLamp;
-use crate::core::text::{self, StyledLine, TextLook, TextPiece};
-use crate::systems::GameSettings;
+use crate::core::text::LineText;
+use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::chat::ChatEmbed;
-use crate::systems::hud::{self, Carried};
-use crate::systems::input::map::{self, InputAction, input};
-use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
+use crate::systems::hud::{self, Carried, WindowKey};
+use crate::systems::input::map::{self, InputAction};
+use crate::systems::item::ItemMessages;
+use crate::systems::item::inline;
+use crate::systems::item::{ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
 use crate::systems::mention::Mention;
+use crate::systems::messages::Direction;
 use crate::systems::player::session;
+use crate::systems::requirement;
 use crate::systems::screen::ClientScreen;
-use crate::systems::script::{Condition, condition};
 use crate::systems::skill::{self, SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status;
 use crate::systems::terminal::chat;
-use crate::systems::text::LineText;
-
-pub(crate) const WINDOW_KEY: &str = "Item";
+use crate::systems::{GameSettings, messages};
 
 pub struct ItemCardPlugin;
 
@@ -43,7 +45,7 @@ impl Plugin for ItemCardPlugin {
         app.init_resource::<hud::Pinned<ItemId>>()
             .add_systems(
                 Update,
-                (show_told, hud::raise_pinned::<ItemId>(WINDOW_KEY))
+                (show_told, hud::raise_pinned::<ItemId>(WindowKey::ItemCard))
                     .chain()
                     .run_if(in_state(ClientScreen::Area)),
             )
@@ -80,17 +82,17 @@ pub fn showing(world: &World) -> bool {
 }
 
 pub fn layer() -> egui::LayerId {
-    hud::window_layer(WINDOW_KEY)
+    hud::window_layer(WindowKey::ItemCard)
 }
 
 /// How far the pinned card is turned toward the pointer.
 pub fn tilt(world: &World) -> CardTilt {
-    hud::pinned_tilt(world, WINDOW_KEY)
+    hud::pinned_tilt(world, WindowKey::ItemCard)
 }
 
 /// The lamp the pinned card is lit by, while it is on the stage.
 pub fn lamp(world: &World) -> Option<HungCardLamp> {
-    hud::pinned_lamp(world, WINDOW_KEY)
+    hud::pinned_lamp(world, WindowKey::ItemCard)
 }
 
 pub fn shown(world: &World) -> Option<(ItemId, Rect)> {
@@ -117,7 +119,7 @@ pub fn chat_shortcut(world: &mut World, response: &Response, items: &[ItemId]) {
 }
 
 pub fn tooltip(world: &mut World, response: &Response, item: ItemId) {
-    let hint = StyledLine::new(inspect_hint());
+    let hint = inspect_hint(world);
     tooltip_noted(world, response, item, [], Some(&hint));
 }
 
@@ -130,6 +132,30 @@ pub fn tooltip_noted(
     notes: impl IntoIterator<Item = LineText>,
     hint: Option<&StyledLine>,
 ) {
+    let name = item.get(world.resource::<Content>()).name.clone();
+    tooltip_titled(world, response, item, Some(&name), notes, hint);
+}
+
+/// An item's tooltip beside where its name is shown already, as a named inline item shows it:
+/// what the item is, `notes` under that, and a hint, without the name again.
+pub fn tooltip_beside_name(
+    world: &mut World,
+    response: &Response,
+    item: ItemId,
+    notes: impl IntoIterator<Item = LineText>,
+    hint: Option<&StyledLine>,
+) {
+    tooltip_titled(world, response, item, None, notes, hint);
+}
+
+fn tooltip_titled(
+    world: &mut World,
+    response: &Response,
+    item: ItemId,
+    title: Option<&str>,
+    notes: impl IntoIterator<Item = LineText>,
+    hint: Option<&StyledLine>,
+) {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
     let rarity = def.rarity.get(&content);
@@ -137,44 +163,56 @@ pub fn tooltip_noted(
         .icon
         .as_ref()
         .and_then(|icon| gui::image(world, icon));
+    let messages = &messages::of(&content).item;
     let lines: Vec<LineText> =
-        std::iter::once(format!("{} · {}", rarity.name, overview(def)).into())
+        std::iter::once(format!("{} · {}", rarity.name, overview(def, messages)).into())
             .chain(notes)
             .collect();
-    hud::tooltip_marked(response, world, &def.name, mark.as_ref(), &lines, hint);
+    hud::tooltip_marked(response, world, title, mark.as_ref(), &lines, hint);
 }
 
 /// What an item is, in a line, for a tooltip, which has no band or style to say it: led by the
 /// rarity's name there. A card says each part of it once elsewhere.
-fn overview(def: &ItemDef) -> String {
-    let category = def.category().label();
+fn overview(def: &ItemDef, messages: &ItemMessages) -> String {
+    let category = def.category().named(messages);
     match &def.kind {
-        ItemKind::Equipment { wear, .. } => format!("{category} · {}", wear.label()),
-        _ => category.to_owned(),
+        ItemKind::Equipment { wear, .. } => format!("{category} · {}", wear.named(messages)),
+        _ => category,
     }
 }
 
-fn worn_as(wear: &Wear) -> String {
+fn worn_as(wear: &Wear, messages: &ItemMessages) -> String {
     match wear {
-        Wear::Held { .. } => "Held in the hand".to_owned(),
-        Wear::Tool { .. } => "Kept in the tool slot".to_owned(),
-        Wear::Worn { slot, .. } => format!("Worn on your {}", slot.as_str().replace('_', " ")),
+        Wear::Held { .. } => messages.held_in_hand().to_owned(),
+        Wear::Tool { .. } => messages.kept_as_tool().to_owned(),
+        Wear::Worn { slot, .. } => messages.worn_on(slot.as_str().replace('_', " ")),
     }
 }
 
-pub fn inspect_hint() -> Vec<TextPiece> {
-    let mut hint = vec![
-        input(InputAction::InspectItem),
-        TextPiece::text(" for more information · "),
-    ];
-    hint.extend(chat::shortcut_hint());
-    hint
+/// How an item's card opens, and how it goes into chat where chat takes it, each input with what
+/// it does.
+pub fn inspect_hints(world: &World) -> Vec<(InputAction, String)> {
+    let messages = &messages::of(world.resource::<Content>()).item;
+    std::iter::once((InputAction::InspectItem, messages.inspect().to_owned()))
+        .chain(chat_hint(world, messages))
+        .collect()
 }
 
-pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
+/// How an item goes into chat, while chat takes it.
+pub fn chat_hint(world: &World, messages: &ItemMessages) -> Option<(InputAction, String)> {
+    chat::takes_embeds(world).then(|| (InputAction::AddToChat, messages.add_to_chat().to_owned()))
+}
+
+/// How an item's card opens and how it goes into chat, as a hint under it.
+pub fn inspect_hint(world: &World) -> StyledLine {
+    StyledLine::new(map::hints(inspect_hints(world)))
+}
+
+/// What using the item from the bag does, as a hint names it: none for an item that is not used.
+pub fn use_hint<'w>(def: &ItemDef, messages: &'w ItemMessages) -> Option<&'w str> {
     match def.kind {
-        ItemKind::Usable { .. } => Some("use"),
-        ItemKind::Equipment { .. } => Some("wear"),
+        ItemKind::Usable { .. } => Some(messages.use_item()),
+        ItemKind::Equipment { .. } => Some(messages.wear()),
         ItemKind::Resource => None,
     }
 }
@@ -192,28 +230,21 @@ pub fn kind(def: &ItemDef) -> CardKind {
 pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> CardResponse {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
-    let held = session::me(world)
-        .and_then(|me| world.get::<Inventory>(me))
-        .map_or(0, |bag| bag.count(item));
-    let tally = (def.stack_max() > 1 && held > 0).then(|| format!("{held} held"));
-    let mut card = face_of(&content, world, item, look);
+    let held = super::my_bag(world).map_or(0, |bag| bag.count(item));
+    let messages = messages::of(&content);
+    let tally = (def.stack_max() > 1 && held > 0).then(|| messages.item.held(held));
+    let band = def.category().named(&messages.item);
+    let mut card = face_of(&content, world, item, look, &band);
     card.tally = tally.as_deref();
-    card.action = Some(chat::card_action());
+    card.action = Some(chat::card_action(&messages.terminal));
     let shown = card.show(ui, |ui, plate| {
         summary(ui, &content, item, plate);
         let viewer = session::me(world);
-        details_named(ui, world, &content, item, |requirement| {
+        details_named(ui, world, &content, item, |world, requirement| {
             let viewer = viewer?;
             Some(condition::holds(world, viewer, requirement))
         });
         grants(ui, world, &content, item, plate);
-        if let Some(verb) = use_verb(def) {
-            let hint = StyledLine::new(vec![
-                input(InputAction::UseItem),
-                TextPiece::text(format!(" in your inventory to {verb}")),
-            ]);
-            foot(ui, world, &hint);
-        }
     });
     chat::offered(world, &shown, ChatEmbed::Item(item));
     shown
@@ -246,6 +277,7 @@ pub fn face_of<'a>(
     images: &mut (impl ImageSource + ?Sized),
     item: ItemId,
     look: CardLook,
+    band: &'a str,
 ) -> Card<'a> {
     let def = item.get(content);
     let icon = images.image(&def.icon).map(|image| image.texture);
@@ -254,11 +286,11 @@ pub fn face_of<'a>(
         .item_type_art_colors
         .of(&def.kind);
     let style = CardStyleDef::of(content, def.rarity.get(content).card_style);
-    let mut card = Card::new(kind(def), &def.name);
-    card.band = def.category().label();
+    let messages = messages::of(content);
+    let mut card = Card::new(kind(def), band, &def.name);
     card.dress = style.dress(images, Some(ground));
     card.picture = icon;
-    card.closable = look.closable;
+    card.close = look.closable.then_some(messages.interface.close());
     card.depth = look.depth;
     card
 }
@@ -269,7 +301,7 @@ pub fn summary(ui: &mut Ui, content: &Content, item: ItemId, plate: Plate) {
         card::full_name(ui, &def.name);
     }
     if def.has(ItemModuleKind::QuestItem) {
-        controls::pill(ui, "Quest item", Pill::Gold);
+        controls::pill(ui, messages::of(content).item.quest_item(), Pill::Gold);
     }
 }
 
@@ -279,10 +311,11 @@ pub fn details(
     ui: &mut Ui,
     content: &Content,
     item: ItemId,
-    meets: impl Fn(&Condition) -> Option<bool>,
+    meets: impl Fn(&Expr) -> Option<bool>,
 ) {
-    details_drawn(ui, content, item, meets, |ui, met, line| {
-        let words = line.plain_words();
+    details_drawn(ui, content, item, |ui, requirement, line| {
+        let met = requirement.and_then(&meets);
+        let words = line.plain_words(content);
         match met {
             Some(met) => card::requirement(ui, met, &words),
             None => card::fact(ui, &words),
@@ -293,21 +326,22 @@ pub fn details(
 /// `details` for a reader in the game, whose lines name what they mention.
 pub fn details_named(
     ui: &mut Ui,
-    world: &World,
+    world: &mut World,
     content: &Content,
     item: ItemId,
-    meets: impl Fn(&Condition) -> Option<bool>,
+    meets: impl Fn(&World, &Expr) -> Option<bool>,
 ) {
-    details_drawn(ui, content, item, meets, |ui, met, line| {
-        detail_line(ui, world, met, line)
+    details_drawn(ui, content, item, |ui, requirement, line| {
+        let met = requirement.and_then(|requirement| meets(world, requirement));
+        detail_line(ui, world, met, line);
     });
 }
 
 /// A line of a card's facts: a requirement with the mark of whether it is met, or else a fact.
-pub fn detail_line(ui: &mut Ui, world: &World, met: Option<bool>, line: &LineText) {
+pub fn detail_line(ui: &mut Ui, world: &mut World, met: Option<bool>, line: &LineText) {
     let Some(met) = met else {
         let look = TextLook::role(TextRole::CardBody, ink::INK);
-        text::show(ui, world, &line.styled(), look, None);
+        inline::show_line(ui, world, line, look, None);
         return;
     };
     ui.horizontal(|ui| {
@@ -319,22 +353,23 @@ pub fn detail_line(ui: &mut Ui, world: &World, met: Option<bool>, line: &LineTex
         };
         glyph::show(ui, mark, 12.0, color);
         let look = TextLook::role(TextRole::CardBody, color);
-        text::show(ui, world, &line.styled(), look, None);
+        inline::show_line(ui, world, line, look, None);
     });
 }
 
+/// Draws an item's flavour and facts, each fact by `line`, with the requirement it states where
+/// it states one.
 fn details_drawn(
     ui: &mut Ui,
     content: &Content,
     item: ItemId,
-    meets: impl Fn(&Condition) -> Option<bool>,
-    mut line: impl FnMut(&mut Ui, Option<bool>, &LineText),
+    mut line: impl FnMut(&mut Ui, Option<&Expr>, &LineText),
 ) {
     let def = item.get(content);
     if let Some(flavor) = def.flavor() {
         card::flavour(ui, flavor);
     }
-    facts(ui, content, item, def, meets, &mut line);
+    facts(ui, content, item, def, &mut line);
 }
 
 /// The skills an item lends while worn. Answers each one's line, for a reader who may take the
@@ -350,16 +385,19 @@ pub fn grant_lines(
     if granted.is_empty() {
         return Vec::new();
     }
-    card::heading(ui, plate, "grants while worn");
+    let messages = messages::of(content);
+    card::heading(ui, plate, messages.item.grants());
     let lines = granted
         .iter()
-        .map(|&granted| (grant_line(ui, images, granted.get(content)), granted))
+        .map(|&granted| {
+            (
+                grant_line(ui, images, &messages.skill, granted.get(content)),
+                granted,
+            )
+        })
         .collect();
     if granted.iter().any(|skill| skill.get(content).basic_attack) {
-        card::foot(
-            ui,
-            "On the basic attack slot, it lends its first basic attack",
-        );
+        card::foot(ui, messages.item.lends_basic_attack());
     }
     lines
 }
@@ -397,13 +435,18 @@ fn draw_card(world: &mut World) {
             .material
             .clone()
     };
-    hud::draw_pinned::<ItemId>(world, WINDOW_KEY, material, |ui, world, item, depth| {
-        let look = CardLook {
-            depth,
-            ..CardLook::PINNED
-        };
-        show(ui, world, *item, look)
-    });
+    hud::draw_pinned::<ItemId>(
+        world,
+        WindowKey::ItemCard,
+        material,
+        |ui, world, item, depth| {
+            let look = CardLook {
+                depth,
+                ..CardLook::PINNED
+            };
+            show(ui, world, *item, look)
+        },
+    );
 }
 
 fn grants(ui: &mut Ui, world: &mut World, content: &Content, item: ItemId, plate: Plate) {
@@ -414,33 +457,46 @@ fn grants(ui: &mut Ui, world: &mut World, content: &Content, item: ItemId, plate
         } else if map::clicked(world, InputAction::PinToBar, &response) {
             skill::bar::pin(world, skill::HotbarEntry::Skill(granted));
         }
-        let hint = StyledLine::new(vec![
-            input(InputAction::CarryItem),
-            TextPiece::text(" carries it to a slot · "),
-            input(InputAction::PinToBar),
-            TextPiece::text(" puts it on the bar"),
-        ]);
+        let hint = slots(world, granted).then(|| {
+            messages::of(content)
+                .item
+                .grant_hint(InputAction::CarryItem, InputAction::PinToBar)
+                .styled(content)
+        });
         skill::card::tooltip(
             &response,
             world,
             &skill::card::of(world, granted),
-            Some(&hint),
+            hint.as_ref(),
         );
     }
 }
 
-fn grant_line(ui: &mut Ui, images: &mut (impl ImageSource + ?Sized), def: &SkillDef) -> Response {
+/// Whether the player can put `granted` on the bar: they know it, as while they wear what grants
+/// it, and it isn't a passive.
+fn slots(world: &World, granted: skill::SkillId) -> bool {
+    let content = world.resource::<Content>();
+    session::me(world).is_some_and(|me| skill::known(world, me).contains_key(&granted))
+        && granted.get(content).kind != skill::SkillKind::Passive
+}
+
+fn grant_line(
+    ui: &mut Ui,
+    images: &mut (impl ImageSource + ?Sized),
+    words: &skill::SkillMessages,
+    def: &SkillDef,
+) -> Response {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
         hud::icon(ui, images, &def.icon, card::GRANT_ICON);
         ui.label(face::bold(&def.name).size(TextRole::CardBody.size()));
         ui.label(
             TextRole::CardBody
-                .rich(def.target.describe())
+                .rich(def.target.named(words))
                 .color(ink::INK2),
         );
         if def.basic_attack {
-            controls::pill(ui, skill::card::BASIC_ATTACK_MARK, Pill::Gold);
+            controls::pill(ui, words.basic_attack_mark(), Pill::Gold);
         }
     })
     .response
@@ -451,47 +507,56 @@ fn facts(
     content: &Content,
     item: ItemId,
     def: &ItemDef,
-    meets: impl Fn(&Condition) -> Option<bool>,
-    line: &mut impl FnMut(&mut Ui, Option<bool>, &LineText),
+    line: &mut impl FnMut(&mut Ui, Option<&Expr>, &LineText),
 ) {
     let boosts = status::boosts_of(content, item);
+    let messages = messages::of(content);
     match &def.kind {
         ItemKind::Equipment { wear, requires, .. } => {
-            card::fact(ui, &worn_as(wear));
+            card::fact(ui, &worn_as(wear, &messages.item));
             for boost in &boosts {
-                card::fact(ui, &modifier(*boost));
+                card::fact(ui, &boost_fact(*boost, false, messages));
             }
             if let Some(requirement) = requires {
-                let requires = LineText::plain("Requires ")
-                    .then(LineText::from(&condition::describe(content, requirement)));
-                line(ui, meets(requirement), &requires);
+                let requires =
+                    messages
+                        .item
+                        .requires(requirement::describe(content, messages, requirement));
+                line(ui, Some(requirement), &requires);
             }
         }
         ItemKind::Usable { casts: None } => {}
         ItemKind::Usable { casts: Some(skill) } => {
-            let casts = LineText::plain("Casts ").then(Mention::Skill(*skill).span(content));
+            let casts = messages.item.casts(Mention::Skill(*skill).span(content));
             line(ui, None, &casts);
         }
         ItemKind::Resource => {
             for boost in &boosts {
-                card::fact(ui, &format!("{} while carried", modifier(*boost)));
+                card::fact(ui, &boost_fact(*boost, true, messages));
             }
         }
     }
     match def.stack_max() {
         1 => {}
-        u32::MAX => card::fact(ui, "Stacks without limit"),
-        max => card::fact(ui, &format!("Stacks up to {max}")),
+        u32::MAX => card::fact(ui, messages.item.stacks_without_limit()),
+        max => card::fact(ui, &messages.item.stacks_up_to(max)),
     }
     if def.bound() {
-        card::fact(ui, "Can't be sold or dropped");
+        card::fact(ui, messages.item.bound_slot());
     }
 }
 
-fn modifier((stat, by): (StatKind, Option<f32>)) -> String {
-    let name: &'static str = stat.into();
-    match by {
-        Some(by) => format!("{by:+} {name}"),
-        None => format!("Boosts {name}"),
+fn boost_fact(
+    (stat, by): (StatKind, Option<f32>),
+    carried: bool,
+    messages: &messages::Messages,
+) -> String {
+    let stat = stat.named(&messages.stat);
+    let item = &messages.item;
+    match (by, carried) {
+        (Some(by), false) => item.boost_by(by.abs(), Direction::of(by), stat),
+        (None, false) => item.boosts(stat),
+        (Some(by), true) => item.carried_boost_by(by.abs(), Direction::of(by), stat),
+        (None, true) => item.carried_boosts(stat),
     }
 }

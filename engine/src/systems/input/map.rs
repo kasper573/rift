@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use ui::egui;
 
@@ -10,11 +9,16 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 
+use super::InputMessages;
 use super::scope;
 use crate::core::content::SchemaMark;
 use crate::core::content::fixture::FixtureLock;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby, RowCheck, serial};
-use crate::core::text::{InputRef, KeyCap, KeyNames, TextPiece};
+use crate::core::text::{
+    InputRef, KeyNames, PluggedSpan, SpanDef, SpanKinds, SpanText, TextKey, TextPiece,
+};
+use crate::systems::messages;
+use ui::keys::{CapFace, KeyCap, MouseGlyph};
 
 #[derive(
     JsonSchema,
@@ -113,6 +117,8 @@ pub enum InputAction {
     FocusChat,
     /// Leaves the seat of what the player's character rides.
     StepOff,
+    /// Opens what the player can do with the other player the pointer is on.
+    ActorOptions,
 }
 
 /// The one file that binds every action, a fixture every game provides.
@@ -303,6 +309,23 @@ pub enum InputBinding {
 }
 
 impl InputBinding {
+    /// Whether this binding answers wherever `other` would, before `other` can: the same
+    /// gesture, or a press or a shorter run of clicks of the same button with the same modifiers,
+    /// which fires on the first click of `other`'s run.
+    pub fn preempts(&self, other: &InputBinding) -> bool {
+        match (self, other) {
+            (InputBinding::Click(first), InputBinding::Click(run)) => {
+                first.button == run.button
+                    && first.modifiers == run.modifiers
+                    && first.times <= run.times
+            }
+            (InputBinding::Mouse { button, modifiers }, InputBinding::Click(run)) => {
+                *button == run.button && *modifiers == run.modifiers
+            }
+            _ => self == other,
+        }
+    }
+
     pub const fn key(key: KeyCode) -> InputBinding {
         InputBinding::Key(KeyGesture {
             key,
@@ -391,25 +414,51 @@ impl InputBinding {
         }
     }
 
-    pub fn name(&self) -> String {
-        let (modifiers, name) = match *self {
-            InputBinding::Key(gesture) => (gesture.modifiers, key_name(gesture.key)),
-            InputBinding::AnyKey => (KeyModifiers::NONE, "any key".to_owned()),
-            InputBinding::Mouse { button, modifiers } => {
-                (modifiers, click_name(button, Clicks::Single))
+    /// What a player reads for the binding: its name, and the key cap or mouse glyph it is drawn as.
+    pub fn cap(&self, words: &InputMessages) -> KeyCap {
+        let modifiers = self.modifiers();
+        let (face, name) = match *self {
+            InputBinding::Key(gesture) => {
+                let name = key_name(words, gesture.key);
+                (CapFace::Text(name.clone()), name)
             }
-            InputBinding::Click(gesture) => {
-                (gesture.modifiers, click_name(gesture.button, gesture.times))
+            InputBinding::AnyKey => (
+                CapFace::Text(words.any_key().to_owned()),
+                words.any_key().to_owned(),
+            ),
+            InputBinding::Mouse { button, .. } => mouse_cap(words, button, Clicks::Single, false),
+            InputBinding::Click(gesture) => mouse_cap(words, gesture.button, gesture.times, false),
+            InputBinding::Drag(gesture) => mouse_cap(words, gesture.button, Clicks::Single, true),
+            InputBinding::Wheel(gesture) => {
+                let (glyph, name) = match gesture.turn {
+                    WheelTurn::Up => (MouseGlyph::WheelUp, words.wheel_up()),
+                    WheelTurn::Down => (MouseGlyph::WheelDown, words.wheel_down()),
+                };
+                let face = CapFace::Mouse {
+                    glyph,
+                    presses: 1,
+                    drag: false,
+                };
+                (face, name.to_owned())
             }
-            InputBinding::Drag(gesture) => (gesture.modifiers, drag_name(gesture.button)),
-            InputBinding::Wheel(gesture) => (gesture.modifiers, wheel_name(gesture.turn)),
         };
-        capitalized(format!("{}{name}", held_prefix(modifiers)))
+        let held = held_names(words, modifiers);
+        let name = held
+            .iter()
+            .map(|held| format!("{held}+"))
+            .chain([name])
+            .collect();
+        KeyCap { held, face, name }
+    }
+
+    pub fn name(&self, words: &InputMessages) -> String {
+        self.cap(words).name
     }
 }
 
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct InputMap {
+    words: InputMessages,
     bindings: HashMap<InputAction, Vec<InputBinding>>,
     own_keys: KeyModifiers,
     /// Every modifier the game binds a gesture with, by the gesture alone.
@@ -440,14 +489,31 @@ impl InputMap {
             *with = with.and(binding.modifiers());
         }
         InputMap {
+            words: messages::of(content).input.clone(),
             bindings,
             own_keys,
             bound_with,
         }
     }
 
+    pub fn words(&self) -> &InputMessages {
+        &self.words
+    }
+
     pub fn bindings(&self, action: InputAction) -> &[InputBinding] {
         self.bindings.get(&action).map_or(&[], Vec::as_slice)
+    }
+
+    /// Whether a binding of one of `first`, read before `action` where both are, answers before a
+    /// binding of `action` can.
+    pub fn preempted(&self, first: &[InputAction], action: InputAction) -> bool {
+        first.iter().any(|&before| {
+            self.bindings(before).iter().any(|binding| {
+                self.bindings(action)
+                    .iter()
+                    .any(|other| binding.preempts(other))
+            })
+        })
     }
 
     /// Whether the modifiers held are just those `gesture` asks for. A modifier the game binds
@@ -462,8 +528,10 @@ impl InputMap {
         KeyModifiers::held(keys).without(self.own_keys.without(meant)) == wanted
     }
 
-    pub fn name(&self, action: InputAction) -> Option<String> {
-        self.bindings(action).first().map(InputBinding::name)
+    pub fn cap(&self, action: InputAction) -> Option<KeyCap> {
+        self.bindings(action)
+            .first()
+            .map(|binding| binding.cap(&self.words))
     }
 
     pub fn shortcut(&self, action: InputAction) -> Option<egui::KeyboardShortcut> {
@@ -478,11 +546,12 @@ impl InputMap {
             })
     }
 
-    fn key_names(&self) -> KeyNames {
+    /// The cap every action is bound to, as lines name their keys.
+    pub fn key_names(&self) -> KeyNames {
         KeyNames(
             InputAction::VARIANTS
                 .iter()
-                .map(|&action| (action.into(), self.name(action).unwrap_or_default()))
+                .filter_map(|&action| Some((action.into(), self.cap(action)?)))
                 .collect(),
         )
     }
@@ -571,21 +640,78 @@ pub fn takes_wheel(world: &World, action: InputAction) -> bool {
 }
 
 pub fn input(action: InputAction) -> TextPiece {
-    TextPiece::Key(KeyCap::Input(action.into()))
+    TextPiece::Key(TextKey::Input(action.into()))
+}
+
+/// Registers the kinds of span this system draws.
+pub fn spans(kinds: &mut SpanKinds) {
+    kinds.add::<ActionCap>("action_cap");
+    kinds.add::<BindingCap>("binding_cap");
+}
+
+/// A key or button as a cap in a line, showing how the action is bound now.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct ActionCap(pub InputAction);
+
+/// A key or button as a cap in a line, bound to no action of the game's own.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct BindingCap(pub InputBinding);
+
+impl SpanDef for ActionCap {
+    fn pieces(&self, _: &Content) -> Vec<TextPiece> {
+        vec![input(self.0)]
+    }
+
+    fn words(&self, _: &Content, keys: Option<&KeyNames>) -> String {
+        keys.and_then(|keys| keys.0.get(&InputRef::from(self.0)))
+            .map(|cap| cap.name.clone())
+            .unwrap_or_default()
+    }
+
+    fn word_count(&self, _: &Content) -> usize {
+        1
+    }
+}
+
+impl SpanDef for BindingCap {
+    fn pieces(&self, content: &Content) -> Vec<TextPiece> {
+        let cap = self.0.cap(&messages::of(content).input);
+        vec![TextPiece::Key(TextKey::Cap(cap))]
+    }
+
+    fn words(&self, content: &Content, keys: Option<&KeyNames>) -> String {
+        keys.map(|_| self.0.cap(&messages::of(content).input).name)
+            .unwrap_or_default()
+    }
+
+    fn word_count(&self, _: &Content) -> usize {
+        1
+    }
+}
+
+impl From<InputAction> for SpanText {
+    fn from(action: InputAction) -> SpanText {
+        SpanText::Part(PluggedSpan::new(ActionCap(action)))
+    }
+}
+
+impl From<InputBinding> for SpanText {
+    fn from(binding: InputBinding) -> SpanText {
+        SpanText::Part(PluggedSpan::new(BindingCap(binding)))
+    }
 }
 
 /// A line of hints, each an input followed by what it does, with a dot between one and the next.
-pub fn hints<S: Into<Cow<'static, str>>>(
-    hints: impl IntoIterator<Item = (InputAction, S)>,
-) -> Vec<TextPiece> {
+pub fn hints<S: AsRef<str>>(hints: impl IntoIterator<Item = (InputAction, S)>) -> Vec<TextPiece> {
     hints
         .into_iter()
         .enumerate()
         .flat_map(|(index, (action, does))| {
             let separator = (index > 0).then(|| TextPiece::text(" · "));
-            separator
-                .into_iter()
-                .chain([input(action), TextPiece::text(does)])
+            separator.into_iter().chain([
+                input(action),
+                TextPiece::text(format!(" {}", does.as_ref())),
+            ])
         })
         .collect()
 }
@@ -635,7 +761,7 @@ pub struct ClickGesture {
 }
 
 /// How many clicks in a row make a gesture, as many as a pointer tells apart.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "u8", into = "u8")]
 pub enum Clicks {
     Single,
@@ -851,29 +977,41 @@ fn pointer_button(button: MouseButton) -> Option<egui::PointerButton> {
     }
 }
 
-fn held_prefix(modifiers: KeyModifiers) -> String {
+fn held_names(words: &InputMessages, modifiers: KeyModifiers) -> Vec<String> {
     [
-        (modifiers.ctrl, "Ctrl+"),
-        (modifiers.shift, "Shift+"),
-        (modifiers.alt, "Alt+"),
-        (modifiers.super_key, "Super+"),
+        (modifiers.ctrl, words.ctrl()),
+        (modifiers.alt, words.alt()),
+        (modifiers.shift, words.shift()),
+        (modifiers.super_key, words.super_key()),
     ]
     .into_iter()
-    .filter_map(|(held, prefix)| held.then_some(prefix))
+    .filter(|(held, _)| *held)
+    .map(|(_, name)| name.to_owned())
     .collect()
 }
 
-fn key_name(key: KeyCode) -> String {
+fn key_name(words: &InputMessages, key: KeyCode) -> String {
     let named = match key {
-        KeyCode::Escape => "Esc",
-        KeyCode::ArrowUp => "↑",
-        KeyCode::ArrowDown => "↓",
-        KeyCode::ArrowLeft => "←",
-        KeyCode::ArrowRight => "→",
-        _ if CTRL.contains(&key) => "Ctrl",
-        _ if SHIFT.contains(&key) => "Shift",
-        _ if ALT.contains(&key) => "Alt",
-        _ if SUPER.contains(&key) => "Super",
+        KeyCode::Escape => words.escape(),
+        KeyCode::Space => words.space(),
+        KeyCode::Enter => words.enter(),
+        KeyCode::Tab => words.tab(),
+        KeyCode::Backspace => words.backspace(),
+        KeyCode::Delete => words.delete(),
+        KeyCode::Insert => words.insert(),
+        KeyCode::Home => words.home(),
+        KeyCode::End => words.end(),
+        KeyCode::PageUp => words.page_up(),
+        KeyCode::PageDown => words.page_down(),
+        KeyCode::CapsLock => words.caps_lock(),
+        KeyCode::ArrowUp => return "↑".to_owned(),
+        KeyCode::ArrowDown => return "↓".to_owned(),
+        KeyCode::ArrowLeft => return "←".to_owned(),
+        KeyCode::ArrowRight => return "→".to_owned(),
+        _ if CTRL.contains(&key) => words.ctrl(),
+        _ if SHIFT.contains(&key) => words.shift(),
+        _ if ALT.contains(&key) => words.alt(),
+        _ if SUPER.contains(&key) => words.super_key(),
         _ => {
             let debug = format!("{key:?}");
             return ["Key", "Digit"]
@@ -886,38 +1024,34 @@ fn key_name(key: KeyCode) -> String {
     named.to_owned()
 }
 
-fn click_name(button: MouseButton, times: Clicks) -> String {
-    let press = match times {
-        Clicks::Single => "",
-        Clicks::Double => "double-",
-        Clicks::Triple => "triple-",
+fn mouse_cap(
+    words: &InputMessages,
+    button: MouseButton,
+    times: Clicks,
+    drag: bool,
+) -> (CapFace, String) {
+    let presses = u8::from(times);
+    let glyph = |glyph| CapFace::Mouse {
+        glyph,
+        presses,
+        drag,
     };
-    format!("{press}{}click", button_prefix(button))
-}
-
-fn drag_name(button: MouseButton) -> String {
-    format!("{}drag", button_prefix(button))
-}
-
-fn wheel_name(turn: WheelTurn) -> String {
-    match turn {
-        WheelTurn::Up => "wheel up",
-        WheelTurn::Down => "wheel down",
+    let gesture = match (drag, times) {
+        (true, _) => "drag",
+        (false, Clicks::Single) => "click",
+        (false, Clicks::Double) => "double_click",
+        (false, Clicks::Triple) => "triple_click",
+    };
+    let (shown, name) = match button {
+        MouseButton::Left => (Some(MouseGlyph::Left), words.left(gesture)),
+        MouseButton::Right => (Some(MouseGlyph::Right), words.right(gesture)),
+        MouseButton::Middle => (Some(MouseGlyph::Middle), words.middle(gesture)),
+        MouseButton::Back => (Some(MouseGlyph::Back), words.back(gesture)),
+        MouseButton::Forward => (Some(MouseGlyph::Forward), words.forward(gesture)),
+        MouseButton::Other(number) => (None, words.other(gesture, number)),
+    };
+    match shown {
+        Some(shown) => (glyph(shown), name),
+        None => (CapFace::Text(name.clone()), name),
     }
-    .to_owned()
-}
-
-fn button_prefix(button: MouseButton) -> String {
-    match button {
-        MouseButton::Left => String::new(),
-        other => format!("{other:?}-").to_lowercase(),
-    }
-}
-
-fn capitalized(name: String) -> String {
-    let mut letters = name.chars();
-    letters
-        .next()
-        .map(|first| first.to_uppercase().chain(letters).collect())
-        .unwrap_or_default()
 }

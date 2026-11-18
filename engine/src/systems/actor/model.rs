@@ -29,7 +29,7 @@ use crate::core::content::{
 use crate::core::geometry::Capsule;
 use crate::core::render::world::body::{Figure, Skin};
 use crate::core::units::{Meters, MetersPerSec, Millis, PlaybackRate, Seconds};
-use crate::core::vfx::VfxId;
+use crate::core::vfx::{SiteKind, VfxId, check_played};
 use crate::systems::area::prop::MAX_EFFECTS;
 use crate::systems::mount::{self, MountDef};
 
@@ -69,6 +69,16 @@ pub const MAX_CHARACTER_TRIANGLES: usize = 8000;
 pub const HITBOX_RADII: RangeInclusive<f32> = 0.1..=4.0;
 /// The heights a model's hitbox may take.
 pub const HITBOX_HEIGHTS: RangeInclusive<f32> = 0.2..=8.0;
+
+/// Refuses the stage of a model's vfx that the object they play on cannot take.
+pub fn check_vfx(loading: &mut Loading) {
+    let content = loading.content();
+    for (id, model) in loading.rows::<ModelDef>(&content) {
+        for vfx in &model.effects {
+            check_played(loading, *vfx, &[SiteKind::Object], id.path(&content));
+        }
+    }
+}
 
 impl ContentFile for ModelDef {
     const TABLE: &'static str = "model";

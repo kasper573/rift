@@ -33,7 +33,7 @@ pub struct CoverVfx {
     #[uniform(101)]
     pub params: ParamsUniform,
     #[texture(102, sample_type = "float", filterable = false)]
-    pub weather: Handle<Image>,
+    pub board: Handle<Image>,
     #[uniform(103)]
     pub strewn: StrewnUniform,
     pub shader: Handle<Shader>,
@@ -92,7 +92,7 @@ pub fn material(
     site: SiteUniform,
     params: ParamsUniform,
     shader: Handle<Shader>,
-    weather: Handle<Image>,
+    board: Handle<Image>,
     strewn: Option<&StrewnPiece>,
 ) -> CoverMaterial {
     let alpha_mode = match strewn {
@@ -119,7 +119,7 @@ pub fn material(
         extension: CoverVfx {
             site,
             params,
-            weather,
+            board,
             strewn,
             shader,
         },

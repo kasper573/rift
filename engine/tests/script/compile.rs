@@ -1,21 +1,44 @@
+use engine::systems::area::AREA_RUNNER;
+use engine::systems::area::OBJECT_RUNNER;
+use engine::systems::area::spawnable::SPAWNABLE_RUNNER;
+use engine::systems::command::COMMAND_RUNNER;
+use engine::systems::crafting::RECIPE_BOOK_RUNNER;
+use engine::systems::item::ITEM_RUNNER;
+use engine::systems::mount::MOUNT_RUNNER;
+use engine::systems::npc::NPC_RUNNER;
+use engine::systems::quest::QUEST_RUNNER;
+use engine::systems::resource::RESOURCE_RUNNER;
+use engine::systems::shop::SHOP_RUNNER;
+use engine::systems::skill::SKILL_RUNNER;
+use engine::systems::status::STATUS_EFFECT_RUNNER;
 use std::sync::Arc;
 
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{Content, ContentFile, ContentId};
 use engine::core::content::{ContentScope, with_content};
 use engine::core::math::Pos;
+use engine::core::script::EventKind;
+use engine::core::script::ListedScriptModule;
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptModule;
 use engine::core::script::compile::compile_owner;
-use engine::core::script::{EffectDef, Expr, ScriptError};
+use engine::core::script::{Expr, ScriptError};
+use engine::core::script::{Procedure, ReachDef, ScriptEffect};
 use engine::systems::area::AreaDef;
+use engine::systems::area::Place;
+use engine::systems::area::Started;
+use engine::systems::area::Warps;
+use engine::systems::interact::Interacted;
 use engine::systems::item::ItemDef;
+use engine::systems::item::effects::{Gives, PaysItems, Takes};
 use engine::systems::memory::MemoryDef;
+use engine::systems::memory::Remembers;
 use engine::systems::notification::NotificationDef;
+use engine::systems::notification::Notifies;
 use engine::systems::npc::NpcModule;
 use engine::systems::quest::QuestDef;
-use engine::systems::script::{
-    EffectReach, EventKind, ListedScriptModule, Place, Procedure, RiftScripting, RunnerKind,
-    ScriptModule,
-};
+use engine::systems::quest::{Completes, Decides};
+use engine::systems::shop::OpensShop;
 use engine::systems::shop::ShopDef;
 use serde_json::{Value, json};
 
@@ -23,14 +46,14 @@ use crate::game::{content, game, module, parse, parse_in};
 use testkit::{Declared, path};
 
 const OWNERS: [RunnerKind; 8] = [
-    RunnerKind::Object,
-    RunnerKind::Npc,
-    RunnerKind::Item,
-    RunnerKind::Area,
-    RunnerKind::Quest,
-    RunnerKind::Shop,
-    RunnerKind::Resource,
-    RunnerKind::RecipeBook,
+    OBJECT_RUNNER,
+    NPC_RUNNER,
+    ITEM_RUNNER,
+    AREA_RUNNER,
+    QUEST_RUNNER,
+    SHOP_RUNNER,
+    RESOURCE_RUNNER,
+    RECIPE_BOOK_RUNNER,
 ];
 
 #[test]
@@ -52,9 +75,9 @@ fn every_capability_compiles_for_exactly_the_owners_it_lists() {
             });
         let content = probes.load();
         for (index, value) in capabilities.iter().enumerate() {
-            let parsed: engine::systems::script::RiftEffect = parse_in(&content, value.clone());
-            let kind = parsed.kind().name();
-            let allowed = parsed.owners().contains(&owner);
+            let parsed: ScriptEffect = parse_in(&content, value.clone());
+            let kind = parsed.name();
+            let allowed = parsed.owners().is_empty() || parsed.owners().contains(&owner);
             let script: ScriptModule = parse_in(
                 &content,
                 json!({ "script": path("script", &format!("probe_{index}")) }),
@@ -100,29 +123,25 @@ fn may_do_lists_exactly_what_a_script_reaches() {
         at: Pos::new(3.0, 18.0),
     };
 
-    let procedures = compile(RunnerKind::Npc, &[&module("compile_may_do")]).expect("compiles");
+    let procedures = compile(NPC_RUNNER, &[&module("compile_may_do")]).expect("compiles");
     let may_do = &procedures[0].may_do;
 
-    assert_eq!(may_do.answers, vec![EventKind::Interacted]);
+    assert_eq!(may_do.answers, vec![EventKind::of::<Interacted>()]);
     assert_eq!(may_do.dialogue, vec!["hello"]);
     assert!(may_do.calls.is_empty());
     assert!(may_do.waits);
-    let expected = [
-        EffectReach::Takes(gold),
-        EffectReach::Gives(pass),
-        EffectReach::Warp(place),
-        EffectReach::Remembers(bribed),
-        EffectReach::OpensShop(honesty_box),
-    ];
-    assert_eq!(may_do.reaches.len(), expected.len(), "{:?}", may_do.reaches);
-    for reach in expected {
-        assert!(may_do.reaches.contains(&reach), "{reach:?} missing");
-    }
+    assert_eq!(may_do.reaches.len(), 6, "{:?}", may_do.reaches);
+    assert!(reaches(may_do, Takes(gold)));
+    assert!(reaches(may_do, Gives(pass)));
+    assert!(reaches(may_do, Warps(place)));
+    assert!(reaches(may_do, Remembers(bribed)));
+    assert!(reaches(may_do, OpensShop(honesty_box)));
+    assert!(reaches(may_do, PaysItems));
 
-    let procedures = compile(RunnerKind::Npc, &[&module("calls_helper")]).expect("compiles");
+    let procedures = compile(NPC_RUNNER, &[&module("calls_helper")]).expect("compiles");
     let may_do = &procedures[0].may_do;
     assert_eq!(may_do.calls, vec![path("script", "helper")]);
-    assert_eq!(may_do.answers, vec![EventKind::Started]);
+    assert_eq!(may_do.answers, vec![EventKind::of::<Started>()]);
     assert!(may_do.reaches.is_empty());
     assert!(!may_do.waits);
 }
@@ -141,16 +160,16 @@ fn a_node_is_named_by_letters_digits_and_underscores_alone() {
                 "script",
                 "named",
                 json!({
-                    "runs_on": RunnerKind::Npc,
+                    "runs_on": NPC_RUNNER,
                     "nodes": {
-                        "on": entry(RunnerKind::Npc, name),
+                        "on": entry(NPC_RUNNER, name),
                         name: { "type": "wait", "seconds": 1, "at_most": 1.0 },
                     },
                 }),
             )
             .load();
         let script: ScriptModule = parse_in(&content, json!({ "script": path("script", "named") }));
-        let compiled = compile_in(&content, RunnerKind::Npc, &[&script]);
+        let compiled = compile_in(&content, NPC_RUNNER, &[&script]);
         assert_eq!(
             compiled.as_ref().map(|_| ()).map_err(|error| error.rule),
             if kept { Ok(()) } else { Err("invalid name") },
@@ -161,7 +180,7 @@ fn a_node_is_named_by_letters_digits_and_underscores_alone() {
 
 #[test]
 fn a_loop_without_a_wait_is_refused() {
-    let error = compile(RunnerKind::Npc, &[&module("compile_loop")])
+    let error = compile(NPC_RUNNER, &[&module("compile_loop")])
         .err()
         .expect("refused");
 
@@ -171,7 +190,7 @@ fn a_loop_without_a_wait_is_refused() {
 
 #[test]
 fn too_many_steps_between_pauses_are_refused() {
-    let error = compile(RunnerKind::Npc, &[&module("compile_too_many")])
+    let error = compile(NPC_RUNNER, &[&module("compile_too_many")])
         .err()
         .expect("refused");
 
@@ -180,15 +199,15 @@ fn too_many_steps_between_pauses_are_refused() {
 
 #[test]
 fn a_decision_reaches_as_deciding_a_path_not_completing_a_task() {
-    let procedures = compile(RunnerKind::Npc, &[&module("compile_decision")]).expect("compiles");
+    let procedures = compile(NPC_RUNNER, &[&module("compile_decision")]).expect("compiles");
     let reaches = &procedures[0].may_do.reaches;
 
     assert!(
-        reaches.contains(&EffectReach::Decides(id::<QuestDef>("plea"))),
+        reaches_in(reaches, Decides(id::<QuestDef>("plea"))),
         "{reaches:?}"
     );
     assert!(
-        !reaches.contains(&EffectReach::Completes(id::<QuestDef>("plea"))),
+        !reaches_in(reaches, Completes(id::<QuestDef>("plea"))),
         "{reaches:?}"
     );
 }
@@ -196,9 +215,7 @@ fn a_decision_reaches_as_deciding_a_path_not_completing_a_task() {
 #[test]
 fn an_effect_or_query_refuses_by_its_own_rule() {
     for key in ["compile_effect", "compile_query"] {
-        let error = compile(RunnerKind::Npc, &[&module(key)])
-            .err()
-            .expect("refused");
+        let error = compile(NPC_RUNNER, &[&module(key)]).err().expect("refused");
 
         assert_eq!(error.rule, "unknown task");
         assert_eq!(error.node.as_deref(), Some("a"));
@@ -207,7 +224,7 @@ fn an_effect_or_query_refuses_by_its_own_rule() {
 
 #[test]
 fn a_script_that_runs_itself_is_refused() {
-    let error = compile(RunnerKind::Npc, &[&module("calls_loops")])
+    let error = compile(NPC_RUNNER, &[&module("calls_loops")])
         .err()
         .expect("refused");
 
@@ -217,12 +234,12 @@ fn a_script_that_runs_itself_is_refused() {
 
 #[test]
 fn an_if_always_taken_still_compiles_both_arrows() {
-    let procedures = compile(RunnerKind::Area, &[&module("compile_if_taken")]).expect("compiles");
+    let procedures = compile(AREA_RUNNER, &[&module("compile_if_taken")]).expect("compiles");
 
     let reaches = &procedures[0].may_do.reaches;
     for notification in ["gulls", "intro"] {
-        let notifies = EffectReach::Notifies(id::<NotificationDef>(notification));
-        assert!(reaches.contains(&notifies), "{reaches:?}");
+        let notifies = Notifies(id::<NotificationDef>(notification));
+        assert!(reaches_in(reaches, notifies), "{reaches:?}");
     }
 }
 
@@ -246,16 +263,16 @@ fn every_expression_shape_serializes_back_to_the_json_it_was_read_from() {
         { "type": "divide", "a": 9, "b": 3 }
     ]);
     for shape in shapes.as_array().expect("a list") {
-        let expr: Expr<RiftScripting> = parse(shape.clone());
+        let expr: Expr = parse(shape.clone());
         assert_eq!(serde_json::to_value(&expr).expect("json"), *shape);
     }
 }
 
 #[test]
 fn an_event_field_reads_only_where_every_entry_reaching_the_node_raises_it() {
-    compile(RunnerKind::Shop, &[&module("compile_trade_field")]).expect("compiles");
+    compile(SHOP_RUNNER, &[&module("compile_trade_field")]).expect("compiles");
 
-    let error = compile(RunnerKind::Object, &[&module("compile_event_field")])
+    let error = compile(OBJECT_RUNNER, &[&module("compile_event_field")])
         .err()
         .expect("refused");
 
@@ -285,22 +302,22 @@ fn compile_in(
 
 fn entry(owner: RunnerKind, next: &str) -> Value {
     match owner {
-        RunnerKind::Object | RunnerKind::Spawnable | RunnerKind::Npc => json!({
+        OBJECT_RUNNER | SPAWNABLE_RUNNER | NPC_RUNNER => json!({
             "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": next
         }),
-        RunnerKind::Item | RunnerKind::Skill => {
+        ITEM_RUNNER | SKILL_RUNNER => {
             json!({ "type": "on", "event": "used", "next": next })
         }
-        RunnerKind::Area => json!({ "type": "on", "event": "discovered", "next": next }),
-        RunnerKind::Quest => json!({ "type": "on", "event": "accepted", "next": next }),
-        RunnerKind::Shop => json!({ "type": "on", "event": "bought", "next": next }),
-        RunnerKind::Resource => json!({ "type": "on", "event": "extracted", "next": next }),
-        RunnerKind::RecipeBook => json!({ "type": "on", "event": "crafted", "next": next }),
-        RunnerKind::StatusEffect | RunnerKind::Mount => {
+        AREA_RUNNER => json!({ "type": "on", "event": "discovered", "next": next }),
+        QUEST_RUNNER => json!({ "type": "on", "event": "accepted", "next": next }),
+        SHOP_RUNNER => json!({ "type": "on", "event": "bought", "next": next }),
+        RESOURCE_RUNNER => json!({ "type": "on", "event": "extracted", "next": next }),
+        RECIPE_BOOK_RUNNER => json!({ "type": "on", "event": "crafted", "next": next }),
+        STATUS_EFFECT_RUNNER | MOUNT_RUNNER => {
             json!({ "type": "on", "event": "activated", "next": next })
         }
-        RunnerKind::Command => json!({ "type": "on", "event": "invoked", "next": next }),
-        RunnerKind::Blueprint | RunnerKind::Any => unreachable!("no entry for {owner:?}"),
+        COMMAND_RUNNER => json!({ "type": "on", "event": "invoked", "next": next }),
+        _ => unreachable!("no entry for {owner:?}"),
     }
 }
 
@@ -359,7 +376,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
             json!({
                 "runs_on": "npc",
                 "nodes": {
-                    "on": entry(RunnerKind::Npc, "hello"),
+                    "on": entry(NPC_RUNNER, "hello"),
                     "hello": {
                         "type": "dialogue",
                         "lines": [{ "by": { "type": "narrator" }, "text": ["Pay or go."] }],
@@ -386,7 +403,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
             json!({
                 "runs_on": "npc",
                 "nodes": {
-                    "on": entry(RunnerKind::Npc, "a"),
+                    "on": entry(NPC_RUNNER, "a"),
                     "a": { "type": "if", "test": true, "yes": "b" },
                     "b": { "type": "if", "test": true, "yes": "a" },
                 },
@@ -397,7 +414,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
             json!({
                 "runs_on": "npc",
                 "nodes": {
-                    "on": entry(RunnerKind::Npc, "outer"),
+                    "on": entry(NPC_RUNNER, "outer"),
                     "outer": { "type": "repeat", "times": 1000, "at_most": 1000, "each": "inner" },
                     "inner": { "type": "repeat", "times": 1000, "at_most": 1000, "each": "check" },
                     "check": { "type": "if", "test": true },
@@ -409,7 +426,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
             json!({
                 "runs_on": "npc",
                 "nodes": {
-                    "on": entry(RunnerKind::Npc, "decide"),
+                    "on": entry(NPC_RUNNER, "decide"),
                     "decide": {
                         "type": "decide",
                         "quest": "plea.quest.json",
@@ -423,7 +440,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
             json!({
                 "runs_on": "npc",
                 "nodes": {
-                    "on": entry(RunnerKind::Npc, "a"),
+                    "on": entry(NPC_RUNNER, "a"),
                     "a": { "type": "complete_task", "quest": "x_marks.quest.json", "task": "no_such_task" },
                 },
             }),
@@ -433,7 +450,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
             json!({
                 "runs_on": "npc",
                 "nodes": {
-                    "on": entry(RunnerKind::Npc, "a"),
+                    "on": entry(NPC_RUNNER, "a"),
                     "a": {
                         "type": "if",
                         "test": { "type": "task_done", "quest": "x_marks.quest.json", "task": "no_such_task" },
@@ -446,7 +463,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
             json!({
                 "runs_on": "area",
                 "nodes": {
-                    "on": entry(RunnerKind::Area, "check"),
+                    "on": entry(AREA_RUNNER, "check"),
                     "check": { "type": "if", "test": { "type": "not", "of": true }, "yes": "yes", "no": "no" },
                     "yes": { "type": "notify", "notification": "gulls.notification.json" },
                     "no": { "type": "notify", "notification": "intro.notification.json" },
@@ -510,4 +527,14 @@ fn calling(script: &str) -> Value {
             "call": { "type": "run", "script": path("script", script) }
         }
     })
+}
+
+fn reaches<R: ReachDef + PartialEq>(may_do: &engine::core::script::MayDo, reach: R) -> bool {
+    reaches_in(&may_do.reaches, reach)
+}
+
+fn reaches_in<R: ReachDef + PartialEq>(held: &[engine::core::script::Reach], reach: R) -> bool {
+    held.iter()
+        .filter_map(engine::core::script::Reach::downcast_ref::<R>)
+        .any(|held| *held == reach)
 }

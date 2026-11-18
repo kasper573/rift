@@ -9,7 +9,6 @@ use super::{AreaModule, AreaModuleKind};
 use crate::core::content::load::{JsonPart, ParseError, parse_value, shape_problem};
 use crate::core::content::{ContentProblem, FileWriter, FolderReader, PartSpec, Parts, serial};
 use crate::core::script::Variable;
-use crate::systems::script::RiftScripting;
 
 pub const SCENE_FILE: &str = "scene.json";
 
@@ -115,11 +114,7 @@ pub fn walk<'a>(nodes: &'a [SceneNode], visit: &mut impl FnMut(&str, &'a SceneNo
 
 /// Reads the scene of the bundle `parts` holds, reporting every problem with its structure at its
 /// node.
-pub fn read(
-    scene: &mut Vec<SceneNode>,
-    variables: &BTreeMap<String, Variable<RiftScripting>>,
-    parts: &mut Parts,
-) {
+pub fn read(scene: &mut Vec<SceneNode>, variables: &BTreeMap<String, Variable>, parts: &mut Parts) {
     let Some(file) = parts.required(SCENE) else {
         return;
     };
@@ -158,7 +153,7 @@ pub fn write_nodes(nodes: &[SceneNode]) -> Result<Value, serde_json::Error> {
 /// its own, in the scope being read in; each problem at its pointer.
 pub fn read_nodes(
     json: &Value,
-    variables: &BTreeMap<String, Variable<RiftScripting>>,
+    variables: &BTreeMap<String, Variable>,
 ) -> Result<Vec<SceneNode>, Vec<(String, ContentProblem)>> {
     let files = parse_value::<Vec<NodeFile>>(json)
         .map_err(|error| vec![(error.pointer.clone(), shape_problem(&error))])?;
@@ -296,11 +291,7 @@ struct Read {
 
 /// The nodes `files` hold, read in the scope being read in, so the content their modules name
 /// counts as the bundle's references.
-fn nodes_of(
-    files: &[NodeFile],
-    prefix: &str,
-    variables: &BTreeMap<String, Variable<RiftScripting>>,
-) -> Read {
+fn nodes_of(files: &[NodeFile], prefix: &str, variables: &BTreeMap<String, Variable>) -> Read {
     let mut read = Read {
         nodes: Vec::new(),
         problems: Vec::new(),
@@ -314,7 +305,7 @@ fn nodes_of(
 fn read_node(
     file: &NodeFile,
     pointer: &str,
-    variables: &BTreeMap<String, Variable<RiftScripting>>,
+    variables: &BTreeMap<String, Variable>,
     read: &mut Read,
 ) {
     match file {

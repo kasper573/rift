@@ -8,11 +8,16 @@ use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Pos2, Rect, Ui};
 use ui::{controls, dialog, face, ink};
 
-use super::{AnswerSocialRequest, BlockPlayer, RequestAnswer};
+use super::{AnswerSocialRequest, BlockCharacter, RequestAnswer, RequestMessages};
+use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::Seconds;
+use crate::systems::area_instance;
+use crate::systems::duration::TimeMessages;
 use crate::systems::hud::{self, Confirm, HudWidget};
 use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::input::scope;
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::society::{RequestCard, SocietyMember, SocietyView};
@@ -33,15 +38,20 @@ impl HudWidget for RequestCardsWidget {
     fn show(&self, ui: &mut Ui, world: &mut World) -> Option<Rect> {
         let cards = on_hud(world);
         let now = time::server_now(world)?;
+        let content = world.resource::<Content>().clone();
+        let messages = messages::of(&content);
+        let words = &messages.requests;
         let (front, behind) = cards.split_first()?;
         ui.spacing_mut().item_spacing.y = CARD_GAP;
-        let done = dialog::note(ui, WIDTH, |ui| front_card(ui, world, front, now));
+        let done = dialog::note(ui, WIDTH, |ui| {
+            front_card(ui, world, words, &messages.time, front, now)
+        });
         if let Some(next) = behind.first() {
             ui.with_layout(Layout::top_down(Align::Max), |ui| {
-                let left = time_left(next.until, now);
+                let left = time_left(&messages.time, next.until, now);
                 ui.label(face::small(format!("{} · {left}", next.says)).color(ink::LIGHT));
                 if behind.len() > 1 {
-                    let waiting = format!("{} more waiting", behind.len() - 1);
+                    let waiting = words.more_waiting(behind.len() - 1);
                     ui.label(face::small(waiting).color(ink::LIGHT));
                 }
             });
@@ -85,23 +95,19 @@ pub fn shown(world: &World) -> Vec<ShownRequestCard> {
 
 /// Asks the player whether to block `player`, and blocks them once they confirm.
 pub(crate) fn block(world: &mut World, player: SocietyMember) {
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     let name = &player.name;
     hud::confirm(
         world,
         Confirm {
-            title: format!("Block {name}?").into(),
-            body: vec![
-                format!(
-                    "{name} will not be able to send you requests or messages, and you will not \
-                     see what they say in chat. {name} is not told."
-                )
-                .into(),
-            ],
-            confirm: "Block".to_owned(),
-            cancel: "Cancel".to_owned(),
+            title: words.requests.block_title(name).into(),
+            body: vec![words.requests.block_body(name).into()],
+            confirm: words.requests.block().to_owned(),
+            cancel: words.interface.cancel().to_owned(),
             answer: Box::new(move |world, blocked| {
                 if blocked {
-                    world.write_message(BlockPlayer {
+                    world.write_message(BlockCharacter {
                         account: player.account,
                         blocked: true,
                     });
@@ -116,12 +122,11 @@ pub(crate) fn plugin(app: &mut App) {
 }
 
 /// How long is left until `until`, as a card says it.
-pub(crate) fn time_left(until: UnixMillis, now: UnixMillis) -> String {
-    let seconds = until.since(now).0.max(0.0) as u64;
-    match seconds {
-        0..3600 => format!("{}:{:02}", seconds / 60, seconds % 60),
-        3600..172_800 => format!("{} h", seconds / 3600),
-        _ => format!("{} d", seconds / 86_400),
+pub(crate) fn time_left(time: &TimeMessages, until: UnixMillis, now: UnixMillis) -> String {
+    let left = until.since(now);
+    match left.0.max(0.0) as u64 {
+        0..3600 => time.countdown(left),
+        _ => time.rough(left),
     }
 }
 
@@ -147,26 +152,35 @@ fn on_hud(world: &World) -> Vec<RequestCard> {
         .unwrap_or_default()
 }
 
-fn front_card(ui: &mut Ui, world: &World, card: &RequestCard, now: UnixMillis) -> Option<Done> {
+fn front_card(
+    ui: &mut Ui,
+    world: &World,
+    words: &RequestMessages,
+    time: &TimeMessages,
+    card: &RequestCard,
+    now: UnixMillis,
+) -> Option<Done> {
     let keys = world.resource::<InputMap>();
+    let keyed = keys_answer(world);
+    let cap = |action| keyed.then(|| keys.cap(action)).flatten();
     let mut done = None;
     ui.horizontal(|ui| {
         ui.add(egui::Label::new(face::body(&card.says)).wrap());
         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-            ui.label(face::small_faint(time_left(card.until, now)));
+            ui.label(face::small_faint(time_left(time, card.until, now)));
         });
     });
     ui.horizontal(|ui| {
-        let accept = keys.name(InputAction::AcceptRequest);
-        if controls::keyed(ui, "Accept", accept.as_deref(), true).clicked() {
+        let accept = cap(InputAction::AcceptRequest);
+        if controls::keyed(ui, words.accept(), accept.as_ref(), true).clicked() {
             done = Some(Done::Answer(RequestAnswer::Accept));
         }
-        let deny = keys.name(InputAction::DenyRequest);
-        if controls::keyed(ui, "Deny", deny.as_deref(), true).clicked() {
+        let deny = cap(InputAction::DenyRequest);
+        if controls::keyed(ui, words.deny(), deny.as_ref(), true).clicked() {
             done = Some(Done::Answer(RequestAnswer::Deny));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if controls::button(ui, "Block").clicked() {
+            if controls::button(ui, words.block()).clicked() {
                 done = Some(Done::Block);
             }
         });
@@ -181,8 +195,18 @@ fn answer_card(world: &mut World, card: &RequestCard, answer: RequestAnswer) {
     });
 }
 
-/// The keys answer the card in front.
+/// Whether the keys answer the card in front: not while a call to an instance is up, which they
+/// answer first, nor where they aren't read.
+fn keys_answer(world: &World) -> bool {
+    !area_instance::gather::card_up(world)
+        && scope::reads(world, InputAction::AcceptRequest)
+        && scope::reads(world, InputAction::DenyRequest)
+}
+
 fn answer_keys(world: &mut World) {
+    if !keys_answer(world) {
+        return;
+    }
     let answer = if map::just_pressed(world, InputAction::AcceptRequest) {
         RequestAnswer::Accept
     } else if map::just_pressed(world, InputAction::DenyRequest) {

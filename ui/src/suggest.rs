@@ -2,16 +2,27 @@
 //! shows at its caret.
 
 use egui::{
-    Align2, Area, Context, Id, Margin, Order, Rect, Sense, Stroke, Vec2, WidgetInfo, WidgetType,
+    Align, Align2, Area, Context, Id, Layout, Margin, Order, Rect, Sense, Stroke, Ui, UiBuilder,
+    Vec2, WidgetInfo, WidgetType,
 };
 
 use crate::face::TextRole;
 use crate::{float, form, ink, sheet};
 
-/// One way to go on: what would be typed, and what it is besides.
+/// One way to go on: what would be typed, what it is besides, and whether it is dimmed for being
+/// refused for now. A suggestion that names a thing shows as `drawn` draws it, where it has a way.
 pub struct Suggestion<'a> {
     pub text: &'a str,
     pub detail: &'a str,
+    pub muted: bool,
+    pub drawn: Option<&'a dyn DrawnSuggestion>,
+}
+
+/// A suggestion that shows as more than words: how wide it is, and how it draws itself in the
+/// room its words would take.
+pub trait DrawnSuggestion {
+    fn width(&self) -> f32;
+    fn draw(&self, ui: &mut Ui);
 }
 
 const ROW: f32 = 22.0;
@@ -56,8 +67,10 @@ pub fn suggestions(
             let wide = suggestions
                 .iter()
                 .map(|suggestion| {
-                    width(TextRole::Mono, suggestion.text)
-                        + APART
+                    suggestion.drawn.map_or_else(
+                        || width(TextRole::Mono, suggestion.text),
+                        |drawn| drawn.width(),
+                    ) + APART
                         + width(TextRole::Small, suggestion.detail)
                 })
                 .fold(width(TextRole::Small, heading), f32::max)
@@ -86,13 +99,28 @@ pub fn suggestions(
                     ui.painter()
                         .rect_filled(rect, 2.0, ink::wash(ink::HONEY2, 0.45));
                 }
-                ui.painter().text(
-                    rect.left_center() + Vec2::new(PAD, 0.0),
-                    Align2::LEFT_CENTER,
-                    suggestion.text,
-                    TextRole::Mono.font_id(),
-                    ink::INK,
-                );
+                let ink = if suggestion.muted {
+                    ink::INK3
+                } else {
+                    ink::INK
+                };
+                match suggestion.drawn {
+                    Some(drawn) => {
+                        let room = UiBuilder::new()
+                            .max_rect(rect.shrink2(Vec2::new(PAD, 0.0)))
+                            .layout(Layout::left_to_right(Align::Center));
+                        drawn.draw(&mut ui.new_child(room));
+                    }
+                    None => {
+                        ui.painter().text(
+                            rect.left_center() + Vec2::new(PAD, 0.0),
+                            Align2::LEFT_CENTER,
+                            suggestion.text,
+                            TextRole::Mono.font_id(),
+                            ink,
+                        );
+                    }
+                }
                 ui.painter().text(
                     rect.right_center() - Vec2::new(PAD, 0.0),
                     Align2::RIGHT_CENTER,

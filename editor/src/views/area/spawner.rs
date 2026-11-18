@@ -6,13 +6,13 @@ use engine::systems::area::{self, AreaModule, AreaModuleKind};
 use engine::systems::item::ToolTypeDef;
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::resource::ResourceDef;
-use engine::systems::spawner::{SpawnShare, Spawner, Spawns};
+use engine::systems::spawner::{Population, SpawnShare, Spawner, Spawns};
 use engine::systems::stat::StatKind;
 use ui::chip;
 use ui::controls;
 use ui::egui::{self, Align, Layout, Ui};
 use ui::form;
-use ui::glyph::{self, Mark};
+use ui::input::NumberField;
 use ui::sheet;
 use ui::theme;
 
@@ -20,7 +20,7 @@ use super::placement::short_value;
 use super::{AreaFrame, nodes, pick};
 use crate::app::Editor;
 use crate::condition;
-use crate::forms::{FormAction, FormCx};
+use crate::forms::{self, FormAction, FormCx};
 use crate::picker;
 use crate::tabs::{file_title, shown_path};
 
@@ -174,7 +174,7 @@ pub(super) fn drop_file(editor: &mut Editor, frame: &AreaFrame, key: &str, groun
                 node.module(),
                 AreaModule::Spawner(spawner)
                     if spawner.within.is_some_and(|within| within.contains(ground))
-                        && spawner.spawns.iter().all(|share| share.what != what)
+                        && spawner.shares().all(|share| share.what != what)
             )
         })
         .map(|node| node.pointer.to_owned());
@@ -184,7 +184,11 @@ pub(super) fn drop_file(editor: &mut Editor, frame: &AreaFrame, key: &str, groun
                 let AreaModule::Spawner(spawner) = &mut scene.module_mut(&pointer)?.module else {
                     return None;
                 };
-                spawner.spawns.push(SpawnShare::of(what));
+                spawner
+                    .populations
+                    .first_mut()?
+                    .spawns
+                    .push(SpawnShare::of(what));
                 Some(format!(
                     "Add {} to spawner · {}",
                     shown_path(key),
@@ -202,29 +206,91 @@ pub(super) fn drop_file(editor: &mut Editor, frame: &AreaFrame, key: &str, groun
     }
 }
 
-/// The lines of what `spawner` may spawn, each with its share of the entries, and a line to add
-/// another.
-pub(super) fn spawns_card(ui: &mut Ui, cx: &mut FormCx, spawner: &mut Spawner, path: &str) -> bool {
+/// Every population of `spawner`, each under its number with what it spawns and how many, a
+/// way to take one away while others are left, and a way to add another.
+pub(super) fn populations_card(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    spawner: &mut Spawner,
+    path: &str,
+) -> bool {
+    let mut changed = false;
+    let mut remove = None;
+    let alone = spawner.populations.len() == 1;
+    for (index, population) in spawner.populations.iter_mut().enumerate() {
+        let population_path = format!("{path}{}/{index}", field!(Spawner, populations));
+        ui.horizontal(|ui| {
+            sheet::section(ui, &format!("Population {}", index + 1));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if !alone
+                    && controls::remove(ui, "Remove")
+                        .on_hover_text("Take this population away")
+                        .clicked()
+                {
+                    remove = Some(index);
+                }
+            });
+        });
+        ui.push_id(("population", index), |ui| {
+            changed |= spawns_card(ui, cx, population, &population_path);
+            changed |= forms::of_type_without(
+                ui,
+                cx,
+                population,
+                &population_path,
+                &[field!(Population, spawns)],
+            )
+            .is_some();
+        });
+    }
+    if let Some(index) = remove {
+        spawner.populations.remove(index);
+        changed = true;
+    }
+    if controls::button(ui, "+ population")
+        .on_hover_text("Another population, to take its turn after the ones before it")
+        .clicked()
+    {
+        let copied = spawner.populations.last().cloned();
+        spawner
+            .populations
+            .extend(copied.map(|population| Population {
+                size: population.size.or(Some(population.max_spawned_at_once)),
+                ..population
+            }));
+        changed = true;
+    }
+    changed
+}
+
+/// The lines of what `population` may spawn, each with its share of the entries, and a line to
+/// add another.
+fn spawns_card(ui: &mut Ui, cx: &mut FormCx, population: &mut Population, path: &str) -> bool {
     let reader = cx.project.reader();
     let mut changed = false;
     let mut remove = None;
-    let alone = spawner.spawns.len() == 1;
-    sheet::section(ui, "Spawns");
-    for (index, share) in spawner.spawns.iter_mut().enumerate() {
-        let share_path = format!("{path}{}/{index}", field!(Spawner, spawns));
+    let alone = population.spawns.len() == 1;
+    for (index, share) in population.spawns.iter_mut().enumerate() {
+        let share_path = format!("{path}{}/{index}", field!(Population, spawns));
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if !alone
-                    && glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                    && controls::remove(ui, "Remove")
                         .on_hover_text("Stop spawning this")
                         .clicked()
                 {
                     remove = Some(index);
                 }
-                changed |= ui
-                    .add(egui::DragValue::new(&mut share.weight).range(1..=u32::MAX))
-                    .on_hover_text("Its share: how many entries in this many of all the shares")
-                    .changed();
+                let weight = ui.scope(|ui| {
+                    NumberField::new(&mut share.weight)
+                        .range(1..=u32::MAX)
+                        .width(WEIGHT_WIDTH)
+                        .show(ui)
+                });
+                weight
+                    .response
+                    .on_hover_text("Its share: how many entries in this many of all the shares");
+                changed |= weight.inner;
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     let mut table = table_of(share.what).to_owned();
                     let mut key = match share.what {
@@ -273,38 +339,47 @@ pub(super) fn spawns_card(ui: &mut Ui, cx: &mut FormCx, spawner: &mut Spawner, p
         }
     }
     if let Some(index) = remove {
-        spawner.spawns.remove(index);
+        population.spawns.remove(index);
         changed = true;
     }
     form::kv(ui, "+ spawn", |ui| {
-        let new_path = format!("{path}{}/{}", field!(Spawner, spawns), spawner.spawns.len());
+        let new_path = format!(
+            "{path}{}/{}",
+            field!(Population, spawns),
+            population.spawns.len()
+        );
         if let Some((_, key)) = picker::row_added_among(ui, cx, &SPAWNED_TABLES, &new_path)
             && let Some(what) = spawned(&reader, &key)
         {
-            spawner.spawns.push(SpawnShare::of(what));
+            population.spawns.push(SpawnShare::of(what));
             changed = true;
         }
     });
     changed
 }
 
-/// What a preview of `spawner` stands in `area` and where, rolled from `seed` among the shares
-/// `holds` says the sky has now, each as likely as its weight.
+/// What a preview of `spawner` stands in `area` and where, as its first population takes its
+/// turn: rolled from `seed` among the shares `holds` says the sky has now, each as likely as its
+/// weight.
 pub(crate) fn preview_places(
     area: &area::Area,
     spawner: &Spawner,
     seed: u64,
     holds: impl Fn(&SpawnShare) -> bool,
 ) -> Vec<(Spawns, Pos<Meters>)> {
+    let Some(population) = spawner.populations.first() else {
+        return Vec::new();
+    };
+    let count = population.max_spawned_at_once;
     let mut rng = Rng::new(
         seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            .wrapping_add(spawner.count as u64),
+            .wrapping_add(count as u64),
     );
-    (0..spawner.count)
+    (0..count)
         .filter_map(|_| {
-            let what = spawner
+            let what = population
                 .draw(&mut rng, |share| f32::from(u8::from(holds(share))))?
-                .of(spawner)
+                .of(population)
                 .what;
             let mesh = match what {
                 Spawns::Npc { .. } => area.mesh_for(true, false),
@@ -318,3 +393,5 @@ pub(crate) fn preview_places(
         })
         .collect()
 }
+
+const WEIGHT_WIDTH: f32 = 56.0;

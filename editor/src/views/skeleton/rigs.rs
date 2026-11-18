@@ -88,7 +88,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
             words::counted(def.rig.files.len(), "file"),
             words::counted(joints, "joint")
         ));
-        if ui.button("Read joints from files…").clicked() {
+        if controls::button(ui, "Read joints from files…").clicked() {
             editor.views.skeleton.views.view_mut(key).rigs.picker = Some(FilePicker {
                 reading: Reading::OurRig,
                 query: String::new(),
@@ -146,8 +146,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
     }
     if !hung.is_empty() {
         ui.horizontal(|ui| {
-            if ui
-                .button("Guess where they hang")
+            if controls::button(ui, "Guess where they hang")
                 .on_hover_text(
                     "the joint that stands what hangs closest to where its skins bind it",
                 )
@@ -206,10 +205,7 @@ fn sources(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
                 .desired_width(160.0),
         );
         let name = state.new_source.trim().to_owned();
-        if ui
-            .add_enabled(!name.is_empty(), egui::Button::new("+ Add source rig"))
-            .clicked()
-        {
+        if controls::button_if(ui, !name.is_empty(), "+ Add source rig").clicked() {
             state.picker = Some(FilePicker {
                 reading: Reading::NewSource(name),
                 query: String::new(),
@@ -256,15 +252,14 @@ fn pairs(
     let mut changed = source.pairs.clone();
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("{} · joint pairs", source.name)).strong());
-        if ui.button("Read joints from a file…").clicked() {
+        if controls::button(ui, "Read joints from a file…").clicked() {
             editor.views.skeleton.views.view_mut(key).rigs.picker = Some(FilePicker {
                 reading: Reading::Source(index),
                 query: String::new(),
                 ticked: BTreeSet::new(),
             });
         }
-        if ui
-            .button("Pair by names")
+        if controls::button(ui, "Pair by names")
             .on_hover_text("pairs a joint of his with the joint of ours of exactly its name")
             .clicked()
         {
@@ -290,33 +285,33 @@ fn pairs(
                     chosen = Some((!lit).then(|| his.0.clone()));
                 }
                 let mut pair = changed.get(his).cloned();
-                let selected = pair
-                    .as_ref()
-                    .map_or("none".to_owned(), |joint| joint.0.clone());
-                controls::filtered_combo(
+                let names: Vec<String> = std::iter::once("none".to_owned())
+                    .chain(ours.iter().cloned())
+                    .collect();
+                let at = match &pair {
+                    Some(joint) => ours
+                        .iter()
+                        .position(|ours| *ours == joint.0)
+                        .map(|place| place + 1),
+                    None => Some(0),
+                };
+                let combo = controls::search_combo(
                     ui,
                     ("pair", key, index, his.as_str()),
-                    selected,
-                    150.0,
-                    "filter",
-                    |ui, filter| {
-                        let filter = filter.to_lowercase();
-                        let mut picked = ui.selectable_value(&mut pair, None, "none").clicked();
-                        for joint in ours
-                            .iter()
-                            .filter(|joint| joint.to_lowercase().contains(&filter))
-                        {
-                            picked |= ui
-                                .selectable_value(
-                                    &mut pair,
-                                    Some(JointName::new(joint.clone())),
-                                    joint,
-                                )
-                                .clicked();
-                        }
-                        picked
+                    &controls::NamedChoices(&names),
+                    at,
+                    controls::SearchWords {
+                        hint: "none",
+                        none_found: "no joint of ours by that name",
                     },
+                    Some(150.0),
                 );
+                if let Some(place) = combo.picked {
+                    pair = place
+                        .checked_sub(1)
+                        .and_then(|place| ours.get(place))
+                        .map(|joint| JointName::new(joint.clone()));
+                }
                 match pair {
                     Some(pair) => changed.insert(his.clone(), pair),
                     None => changed.remove(his),
@@ -504,15 +499,12 @@ fn picker_list(ui: &mut Ui, picker: &mut FilePicker, files: &[JointFile]) -> boo
     let many = picker.reading.many();
     if many {
         ui.horizontal(|ui| {
-            if ui
-                .button(format!("Select all {} shown", shown.len()))
-                .clicked()
-            {
+            if controls::button(ui, format!("Select all {} shown", shown.len())).clicked() {
                 picker
                     .ticked
                     .extend(shown.iter().map(|file| file.path.clone()));
             }
-            if ui.button("Clear shown").clicked() {
+            if controls::button(ui, "Clear shown").clicked() {
                 for file in &shown {
                     picker.ticked.remove(&file.path);
                 }
@@ -556,8 +548,7 @@ fn picker_list(ui: &mut Ui, picker: &mut FilePicker, files: &[JointFile]) -> boo
         ))
         .color(theme::OK),
     );
-    ui.add_enabled(!picker.ticked.is_empty(), egui::Button::new("Read"))
-        .clicked()
+    controls::button_if(ui, !picker.ticked.is_empty(), "Read").clicked()
 }
 
 /// Reads what the picker was opened for from the files ticked in it.

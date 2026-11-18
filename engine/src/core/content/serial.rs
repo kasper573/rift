@@ -88,20 +88,29 @@ pub fn pos_from<'de, U, D: Deserializer<'de>>(deserializer: D) -> Result<Pos<U>,
     Ok(Pos::new(x, y))
 }
 
-pub fn points<U, S: Serializer>(points: &[Pos<U>], serializer: S) -> Result<S::Ok, S::Error> {
-    let rows: Vec<PosRow> = points
+pub fn parts<U, S: Serializer>(parts: &[Vec<Pos<U>>], serializer: S) -> Result<S::Ok, S::Error> {
+    let rows: Vec<Vec<PosRow>> = parts
         .iter()
-        .map(|point| PosRow {
-            x: point.x,
-            y: point.y,
+        .map(|part| {
+            part.iter()
+                .map(|point| PosRow {
+                    x: point.x,
+                    y: point.y,
+                })
+                .collect()
         })
         .collect();
     rows.serialize(serializer)
 }
 
-pub fn points_from<'de, U, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Pos<U>>, D::Error> {
-    let rows = Vec::<PosRow>::deserialize(deserializer)?;
-    Ok(rows.into_iter().map(|row| Pos::new(row.x, row.y)).collect())
+pub fn parts_from<'de, U, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Vec<Pos<U>>>, D::Error> {
+    let rows = Vec::<Vec<PosRow>>::deserialize(deserializer)?;
+    Ok(rows
+        .into_iter()
+        .map(|part| part.into_iter().map(|row| Pos::new(row.x, row.y)).collect())
+        .collect())
 }
 
 pub fn one() -> u32 {

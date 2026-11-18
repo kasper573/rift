@@ -5,6 +5,7 @@ use ui::egui::{Id, LayerId, Pos2, Rect, Ui, Vec2};
 use ui::motion::{self, CardPose};
 use ui::sheet::Depth;
 
+use super::WindowKey;
 use super::panel;
 use crate::core::card::CardMaterial;
 use crate::core::gui::{self, Band, GuiContext};
@@ -96,7 +97,7 @@ pub(crate) fn pinned_rect<T: Send + Sync + 'static>(world: &World) -> Option<Rec
 /// out, each on the card stage in the material `material` says it is made of.
 pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     world: &mut World,
-    key: &'static str,
+    key: WindowKey,
     material: impl Fn(&World, &T) -> CardMaterial,
     draw: impl Fn(&mut Ui, &mut World, &T, Depth) -> CardResponse,
 ) {
@@ -107,7 +108,7 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     let screen = gui.content_rect();
     let leaving = leaving_pose(world, now);
     let main = panel::layer(key);
-    let scratch = LayerId::new(Band::Hud.order(), Id::new(("leaving card", key)));
+    let scratch = LayerId::new(Band::Hud.order(), Id::new(("leaving card", key.name())));
     let pinned = pinned::<T>(world);
     if let Some((card, at, pose, way)) = leaving {
         let since = motion::mark(&gui, scratch);
@@ -158,7 +159,7 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     let drawn = shown.response.rect;
     let mut open = !response.close.is_some_and(|close| close.clicked());
     if deal.is_none() {
-        panel::grab_spot(world, key, &response.band, drawn);
+        panel::grab_spot(world, key.name(), &response.band, drawn);
     } else {
         open = true;
     }
@@ -179,7 +180,7 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
     world
         .resource_mut::<gui::WidgetRects>()
         .0
-        .insert(key.to_owned(), drawn);
+        .insert(key.name().to_owned(), drawn);
     world.resource_mut::<Pinned<T>>().drawn = Some(drawn);
     if !open {
         unpin::<T>(world);
@@ -187,12 +188,12 @@ pub(crate) fn draw_pinned<T: Clone + Send + Sync + 'static>(
 }
 
 /// How far the pinned card of `key` is turned toward the pointer.
-pub(crate) fn pinned_tilt(world: &World, key: &'static str) -> CardTilt {
+pub(crate) fn pinned_tilt(world: &World, key: WindowKey) -> CardTilt {
     stage::tilt_of(world, panel::layer(key).id)
 }
 
 /// The lamp the pinned card of `key` is lit by, while it is on the stage.
-pub(crate) fn pinned_lamp(world: &World, key: &'static str) -> Option<HungCardLamp> {
+pub(crate) fn pinned_lamp(world: &World, key: WindowKey) -> Option<HungCardLamp> {
     stage::lamp_of(world, panel::layer(key).id)
 }
 
@@ -200,7 +201,7 @@ pub(crate) fn pinned_lamp(world: &World, key: &'static str) -> Option<HungCardLa
 // in the same pass keep their order. So the card comes to the front a pass after it was asked for,
 // to end up above the window it was asked for from.
 pub(crate) fn raise_pinned<T: Send + Sync + 'static>(
-    key: &'static str,
+    key: WindowKey,
 ) -> impl FnMut(ResMut<Pinned<T>>, Option<Res<GuiContext>>) {
     move |mut pinned, gui| {
         if !pinned.to_front {

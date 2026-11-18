@@ -405,7 +405,7 @@ fn route_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
         }
     }
     ui.add_space(8.0);
-    sheet::section(ui, "EffectReach");
+    sheet::section(ui, "Reachability");
     let unreached: Vec<&str> = atlas
         .areas
         .iter()
@@ -568,7 +568,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
         });
         form::kv(ui, "pinned", |ui| {
             let mut pinned = cards.iter().all(|area| map.layout.cards[area].pinned);
-            if ui.checkbox(&mut pinned, "").changed() {
+            if controls::tick(ui, &mut pinned).changed() {
                 for area in cards {
                     if let Some(pin) = next.cards.get_mut(area) {
                         pin.pinned = pinned;
@@ -608,7 +608,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
     ] {
         ui.horizontal(|ui| {
             for key in keys {
-                controls::key_hint(ui, &key.name());
+                controls::key_hint(ui, &key.cap());
             }
             ui.label(theme::muted(text));
         });

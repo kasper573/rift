@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy_terminal::{
     COMMAND_PREFIX, EMBED, LineKind, MAX_INPUT_LEN, TerminalCompletionRequest, TerminalCompletions,
-    TerminalEmbed, TerminalInput, TerminalLine, best_matches, command_line,
+    TerminalInput, TerminalLine, best_matches, command_line,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,6 @@ use strum::VariantArray;
 use ui::card::{CardAction, CardResponse};
 use ui::egui;
 use ui::egui::containers::scroll_area::{DragScroll, ScrollBarVisibility, ScrollSource};
-use ui::egui::emath::TSTransform;
 use ui::egui::text::LayoutJob;
 use ui::egui::{
     Align, Align2, Color32, CursorIcon, FontId, Galley, Id, Layout, Order, Pos2, Rect, Sense,
@@ -26,23 +25,28 @@ use ui::panel::GripCorner;
 use ui::suggest::{self, Suggestion};
 use ui::{dusk, input};
 
+use super::TerminalMessages;
 use super::draft::ChatDraft;
 use super::{ChatSpeakers, LoggedLineId, TerminalLog};
 use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band, Tier};
 use crate::core::math::Rgb;
-use crate::core::text::{self, StyledLine, TextLook, TextPiece};
-use crate::systems::GameSettings;
+use crate::core::text::SpanDef;
+use crate::core::text::{self, LinkKey, StyledLine, StyledSpan, TextLook, TextPiece};
 use crate::systems::actor::portrait::ActorPortraits;
 use crate::systems::area_map::{self, MapPin, MapSight};
 use crate::systems::chat::{
     ChatChannel, ChatChannels, ChatEmbed, ChatEmbedKind, ChatLocation, EMBED_ASK,
 };
-use crate::systems::command::input::{InputKind, SlotPart, options as input_options};
+use crate::systems::command::search;
 use crate::systems::hud::{self, SizedPiece};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::input::scope;
-use crate::systems::mention::Mention;
+use crate::systems::interface::InterfaceSound;
+use crate::systems::item::ItemId;
+use crate::systems::item::inline::{self, InlineItem};
+use crate::systems::mention::{Mention, SuggestedMention};
+use crate::systems::messages::{self, MessagePart};
 use crate::systems::player::{ClientId, session};
 use crate::systems::settings::{Placed, UserSettings};
 
@@ -136,14 +140,16 @@ pub fn add(world: &mut World, embed: ChatEmbed) {
     }
 }
 
-/// What a view calls its offer to set something it shows in chat.
-pub const ADD_TO_CHAT: &str = "Add to chat";
+/// Whether chat takes what the player sets in it: only while it shows.
+pub fn takes_embeds(world: &World) -> bool {
+    world.resource::<UserSettings>().chat_shown()
+}
 
 /// The offer a card makes in its band to set what it shows in chat.
-pub fn card_action() -> CardAction<'static> {
+pub fn card_action(words: &TerminalMessages) -> CardAction<'_> {
     CardAction {
         mark: Mark::Chat,
-        label: ADD_TO_CHAT,
+        label: words.add_to_chat(),
     }
 }
 
@@ -153,7 +159,9 @@ pub fn offered(world: &mut World, shown: &CardResponse, embed: ChatEmbed) {
     let Some(offer) = &shown.action else {
         return;
     };
-    hud::tooltip(offer, world, ADD_TO_CHAT, &[], None);
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).terminal;
+    hud::tooltip(offer, world, words.add_to_chat(), &[], None);
     if offer.clicked() {
         add(world, embed);
     }
@@ -166,19 +174,11 @@ pub fn shortcut(
     response: &egui::Response,
     embeds: impl IntoIterator<Item = ChatEmbed>,
 ) {
-    if map::clicked(world, InputAction::AddToChat, response) {
+    if takes_embeds(world) && map::clicked(world, InputAction::AddToChat, response) {
         for embed in embeds {
             add(world, embed);
         }
     }
-}
-
-/// What a tooltip says of the shortcut, after what else it says.
-pub fn shortcut_hint() -> Vec<TextPiece> {
-    vec![
-        map::input(InputAction::AddToChat),
-        TextPiece::text(" to add it to chat"),
-    ]
 }
 
 /// Gives the keyboard back from chat: from the search for a thing to the line it is set in
@@ -310,6 +310,8 @@ pub(super) fn draw(world: &mut World) {
             .map(|&channel| ChannelLook::of(world, channel))
             .collect(),
     };
+    let content = world.resource::<Content>().clone();
+    let terminal = &messages::of(&content).terminal;
     let screen = gui.content_rect();
     let piece = SizedPiece {
         key: CHAT,
@@ -347,7 +349,7 @@ pub(super) fn draw(world: &mut World) {
         .show(&gui, |ui| {
             let (rect, _) = ui.allocate_exact_size(rect.size(), Sense::hover());
             plate(ui, rect, typing, look.background);
-            let handles = typing.then(|| handles(ui, rect));
+            let handles = typing.then(|| handles(ui, rect, terminal));
             let row = Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - ROW), rect.max);
             let strip = Rect::from_min_max(
                 Pos2::new(rect.left(), rect.top() + BAR),
@@ -361,7 +363,11 @@ pub(super) fn draw(world: &mut World) {
                 Pos2::new(rect.right(), row.top() - ROW_GAP),
             );
             if typing {
+                let was = view.shown;
                 tabs(ui, world, &mut view, strip, &look);
+                if view.shown != was {
+                    InterfaceSound::UiPage.play(world);
+                }
             }
             if let Some(asked) = lines(ui, world, &mut view, log, &look) {
                 inspect(world, asked);
@@ -402,14 +408,12 @@ impl ChatLook {
     }
 }
 
-/// How each thing chat shows this frame looks: the things of the lines it keeps and of what is
-/// being typed.
+/// How each thing held by what is being typed looks this frame: in the field, an item keeps the
+/// colour and icon of its inline item, as any other thing those of its name in a line.
 #[derive(Default)]
 struct EmbedLooks(HashMap<ChatEmbed, EmbedLook>);
 
 struct EmbedLook {
-    kind: ChatEmbedKind,
-    name: String,
     color: Color32,
     /// The thing's icon, once it is loaded.
     icon: Option<egui::TextureId>,
@@ -418,14 +422,7 @@ struct EmbedLook {
 impl EmbedLooks {
     fn of(world: &mut World, view: &ChatView) -> EmbedLooks {
         let content = world.resource::<Content>().clone();
-        let mut held: Vec<ChatEmbed> = view.draft.held().map(|(_, embed)| embed).collect();
-        held.extend(
-            world
-                .resource::<TerminalLog>()
-                .lines()
-                .flat_map(|line| &line.embeds)
-                .filter_map(|sent| ChatEmbed::read(&content, sent)),
-        );
+        let held: Vec<ChatEmbed> = view.draft.held().map(|(_, embed)| embed).collect();
         let mut looks = HashMap::new();
         for embed in held {
             if looks.contains_key(&embed) {
@@ -434,47 +431,18 @@ impl EmbedLooks {
             let shown = embed.shown(&content);
             let Rgb([r, g, b]) = shown.color;
             let look = EmbedLook {
-                kind: embed.kind(),
-                name: shown.name,
-                color: ink::legible(Color32::from_rgb(r, g, b), dusk::FILL),
+                color: Ground::Dusk.legible(Color32::from_rgb(r, g, b)),
                 icon: gui::image(world, &shown.icon).map(|image| image.texture),
             };
             looks.insert(embed, look);
         }
         EmbedLooks(looks)
     }
-
-    /// What a line sent over a terminal holds, and its look.
-    fn sent(&self, content: &Content, sent: &TerminalEmbed) -> Option<(ChatEmbed, &EmbedLook)> {
-        let embed = ChatEmbed::read(content, sent)?;
-        Some((embed, self.0.get(&embed)?))
-    }
 }
 
 /// Which letter of a laid-out line the name of a thing it holds starts at, and the thing's
 /// icon to draw before it.
 type EmbedIcon = (usize, egui::TextureId);
-
-/// Appends the name of a thing a line holds to `job`, in the thing's colour behind room for its
-/// icon, and notes the icon when it is loaded.
-fn append_embed(
-    job: &mut LayoutJob,
-    icons: &mut Vec<EmbedIcon>,
-    look: &EmbedLook,
-    font: &FontId,
-    icon_side: f32,
-) {
-    let starts = job.text.chars().count();
-    let format = TextFormat {
-        font_id: font.clone(),
-        color: look.color,
-        ..TextFormat::default()
-    };
-    job.append(&look.name, icon_side + 2.0 * ICON_GAP, format);
-    if let Some(icon) = look.icon {
-        icons.push((starts, icon));
-    }
-}
 
 /// Draws the icon of each thing the line laid out as `galley` at `origin` holds, in the room
 /// kept before its name.
@@ -576,7 +544,8 @@ fn tabs(ui: &mut Ui, world: &World, view: &mut ChatView, strip: Rect, look: &Cha
             Pos2::new(left, strip.top()),
             Vec2::new(name.size().x + 2.0 * TAB_PAD, strip.height()),
         );
-        let label = format!("{} chat", channel_look.name);
+        let words = &messages::of(world.resource::<Content>()).terminal;
+        let label = words.chat_tab(&channel_look.name);
         let response = ui
             .interact(rect, Id::new(("chat tab", channel)), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
@@ -623,13 +592,13 @@ fn plate(ui: &Ui, rect: Rect, typing: bool, background: f32) {
     );
 }
 
-fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
+fn handles(ui: &mut Ui, rect: Rect, words: &TerminalMessages) -> (egui::Response, egui::Response) {
     let id = Id::new(("hud piece", CHAT));
     let bar = Rect::from_min_max(rect.min, Pos2::new(rect.right(), rect.top() + BAR));
     let mover = ui
         .interact(bar, id.with("bar"), Sense::drag())
         .on_hover_cursor(CursorIcon::Grab);
-    mover.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, "Move chat"));
+    mover.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, words.move_chat()));
     let faint = dusk::TEXT.gamma_multiply(0.45);
     ui.painter()
         .rect_filled(Rect::from_center_size(bar.center(), HANDLE), 1.0, faint);
@@ -642,7 +611,7 @@ fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
     let sizer = ui
         .interact(corner, id.with("grip"), Sense::drag())
         .on_hover_cursor(CursorIcon::ResizeNeSw);
-    sizer.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, "Resize chat"));
+    sizer.widget_info(|| WidgetInfo::labeled(WidgetType::ResizeHandle, true, words.resize_chat()));
     let ink = if sizer.hovered() || sizer.dragged() {
         dusk::TEXT
     } else {
@@ -665,59 +634,59 @@ fn handles(ui: &mut Ui, rect: Rect) -> (egui::Response, egui::Response) {
 /// Answers the thing of a line the player asked to see.
 fn lines(
     ui: &mut Ui,
-    world: &World,
+    world: &mut World,
     view: &mut ChatView,
     room: Rect,
     look: &ChatLook,
 ) -> Option<AskedEmbed> {
-    let log = world.resource::<TerminalLog>();
-    let speakers = world.resource::<ChatSpeakers>();
-    let portraits = world.resource::<ActorPortraits>();
     let me = session::my_id(world).map(|client| u64::from(client.0));
     let width = room.width() - SCROLL_BAR - PAD;
     let typing = view.typing;
     let shown = view.shown;
     let together = !typing && view.channels.len() > 1;
     let row_tall = ui.fonts_mut(|fonts| fonts.row_height(&look.font));
-    let of_tab = |line: &TerminalLine| !typing || line.channel == shown.terminal();
-    let content = world.resource::<Content>();
+    let text_look = TextLook::new(look.font.size, dusk::TEXT)
+        .on(Ground::Dusk)
+        .shadowed(dusk::SMALL_TEXT_SHADOW);
+    let content = world.resource::<Content>().clone();
+    let log = world.resource::<TerminalLog>();
     view.revealed
         .retain(|(line, _)| log.numbered().any(|(kept, _)| kept == *line));
-    let revealed = &view.revealed;
-    let laid: Vec<LaidLine> = log
-        .numbered()
-        .filter(|(_, line)| of_tab(line))
-        .map(|(id, line)| {
-            let said_on = ChatChannel::of(line.channel)
-                .and_then(|on| look.of(on))
-                .filter(|_| together);
-            let speaker = typist(line).and_then(|typist| speakers.of(typist));
-            let pictured = speaker.filter(|speaker| portraits.has(&speaker.appearance));
-            let said = SaidLook {
-                on: said_on,
-                name_color: speaker.map(|speaker| speaker.name_color),
-                portrait: pictured.map(|_| row_tall),
-            };
-            let covers = |place: usize, kind: ChatEmbedKind| {
-                look.covered.contains(&kind) && !revealed.contains(&(id, place))
-            };
-            let (job, embeds) = line_job(line, &said, content, look, width, row_tall, &covers);
-            let plain = job.text.clone();
-            let portrait = pictured.and_then(|speaker| portraits.of(&speaker.appearance));
-            let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-            LaidLine {
-                id,
-                galley,
-                plain,
-                portrait,
-                embeds,
-            }
-        })
-        .collect();
-    let tall: f32 = laid
-        .iter()
-        .map(|line| line.galley.size().y + LINE_GAP)
-        .sum();
+    let laid: Vec<LaidLine> = {
+        let speakers = world.resource::<ChatSpeakers>();
+        let portraits = world.resource::<ActorPortraits>();
+        let revealed = &view.revealed;
+        let of_tab = |line: &TerminalLine| !typing || line.channel == shown.terminal();
+        log.numbered()
+            .filter(|(_, line)| of_tab(line))
+            .map(|(id, line)| {
+                let said_on = ChatChannel::of(line.channel)
+                    .and_then(|on| look.of(on))
+                    .filter(|_| together);
+                let speaker = typist(line).and_then(|typist| speakers.of(typist));
+                let pictured = speaker.filter(|speaker| portraits.has(&speaker.appearance));
+                let said = SaidLook {
+                    on: said_on,
+                    name_color: speaker.map(|speaker| speaker.name_color),
+                    portrait: pictured.map(|_| row_tall),
+                };
+                let covers = |place: usize, kind: ChatEmbedKind| {
+                    look.covered.contains(&kind) && !revealed.contains(&(id, place))
+                };
+                let (styled, embeds) = said_line(line, &said, &content, &covers);
+                let portrait = pictured.and_then(|speaker| portraits.of(&speaker.appearance));
+                let tall = text::measure(ui.ctx(), world, &styled, text_look, width).y;
+                LaidLine {
+                    id,
+                    styled,
+                    tall,
+                    portrait,
+                    embeds,
+                }
+            })
+            .collect()
+    };
+    let tall: f32 = laid.iter().map(|line| line.tall + LINE_GAP).sum();
     let mut uncovered = Vec::new();
     let mut asked_for = None;
     let (source, bar) = if typing {
@@ -766,57 +735,51 @@ fn lines(
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.add_space((room.height() - tall).max(0.0));
                     for line in laid {
-                        let size = Vec2::new(width, line.galley.size().y + LINE_GAP);
-                        let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
-                        response.widget_info(|| {
-                            WidgetInfo::labeled(WidgetType::Label, true, &line.plain)
-                        });
-                        if ui.is_rect_visible(rect) {
-                            if let Some(portrait) = line.portrait {
-                                let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-                                let at = Rect::from_min_size(rect.min, Vec2::splat(row_tall));
-                                ui.painter().image(portrait, at, whole, Color32::WHITE);
-                            }
-                            let embeds = &line.embeds;
-                            embed_icons(ui.painter(), rect.min, &line.galley, &embeds.icons);
-                            let bars: Vec<(usize, Vec<Rect>)> = embeds
-                                .covered
+                        let size = Vec2::new(width, line.tall + LINE_GAP);
+                        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                        if !ui.is_rect_visible(rect) {
+                            continue;
+                        }
+                        if let Some(portrait) = line.portrait {
+                            let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                            let at = Rect::from_min_size(rect.min, Vec2::splat(row_tall));
+                            ui.painter().image(portrait, at, whole, Color32::WHITE);
+                        }
+                        let drawn = ui
+                            .scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+                                text::show_linked(ui, world, &line.styled, text_look, None)
+                            })
+                            .inner;
+                        inline::answer_items(ui, world, &drawn);
+                        for (place, embed) in &line.embeds {
+                            let (place, key) = (*place, embed_key(*place));
+                            let rows: Vec<Rect> = drawn
+                                .links
                                 .iter()
-                                .map(|cover| {
-                                    let bars = letters_rects(&line.galley, cover.letters.clone());
-                                    (cover.place, bars)
-                                })
+                                .filter(|link| link.key == key)
+                                .map(|link| link.row)
                                 .collect();
-                            let links: Vec<(&ShownEmbed, Vec<Rect>)> = embeds
-                                .shown
-                                .iter()
-                                .map(|shown| {
-                                    let names = letters_rects(&line.galley, shown.letters.clone());
-                                    (shown, names)
-                                })
-                                .collect();
-                            dusk::lettering(
-                                ui.painter(),
-                                rect.min,
-                                line.galley,
-                                dusk::SMALL_TEXT_SHADOW,
-                                TSTransform::IDENTITY,
-                            );
-                            for (place, bars) in bars {
-                                let key = ui.id().with(("covered", line.id, place));
-                                if cover_bars(ui, world, rect.min, key, &bars) {
-                                    uncovered.push((line.id, place));
+                            let id = ui.id().with(("embed", line.id, place));
+                            match embed {
+                                LineEmbed::Covered => {
+                                    if cover_bars(ui, world, id, &rows) {
+                                        uncovered.push((line.id, place));
+                                    }
                                 }
-                            }
-                            for (shown, names) in links {
-                                let key = ui.id().with(("shown", line.id, shown.letters.start));
-                                if let Some(from) = embed_link(ui, rect.min, key, &names, shown) {
-                                    asked_for = Some(AskedEmbed {
-                                        embed: shown.embed,
-                                        from,
-                                        speaker: shown.speaker.clone(),
-                                    });
+                                LineEmbed::Shown {
+                                    embed,
+                                    name,
+                                    speaker,
+                                } => {
+                                    if let Some(from) = embed_link(ui, id, &rows, name) {
+                                        asked_for = Some(AskedEmbed {
+                                            embed: *embed,
+                                            from,
+                                            speaker: speaker.clone(),
+                                        });
+                                    }
                                 }
+                                LineEmbed::Item => {}
                             }
                         }
                     }
@@ -838,6 +801,7 @@ fn lines(
     view.revealed.extend(uncovered);
     let end = scrolled.content_size.y - scrolled.inner_rect.height();
     let reading = typing && scrolled.state.offset.y < end - 1.0;
+    let log = world.resource::<TerminalLog>();
     let arrived = log.arrived(shown.terminal());
     if !typing {
         view.reading_from.clear();
@@ -855,7 +819,7 @@ fn lines(
         .take(usize::try_from(since).unwrap_or(usize::MAX))
         .filter(|line| !typed_by(line, me))
         .count();
-    if unread > 0 && unread_pill(ui, room, unread).clicked() {
+    if unread > 0 && unread_pill(ui, room, unread, &messages::of(&content).terminal).clicked() {
         view.catching_up = true;
     }
     asked_for
@@ -897,6 +861,20 @@ fn typist(line: &TerminalLine) -> Option<ClientId> {
 }
 
 /// Whether `line` is what this client's own player typed, which is never news to them.
+fn key_hints(hints: &[(InputAction, &str)]) -> Vec<TextPiece> {
+    hints
+        .iter()
+        .enumerate()
+        .flat_map(|(place, (action, does))| {
+            let gap = if place + 1 < hints.len() { "  " } else { "" };
+            [
+                map::input(*action),
+                TextPiece::text(format!(" {does}{gap}")),
+            ]
+        })
+        .collect()
+}
+
 fn typed_by(line: &TerminalLine, me: Option<u64>) -> bool {
     match &line.kind {
         LineKind::Said(speaker) => speaker.typist.is_some() && speaker.typist == me,
@@ -904,12 +882,12 @@ fn typed_by(line: &TerminalLine, me: Option<u64>) -> bool {
     }
 }
 
-fn unread_pill(ui: &mut Ui, room: Rect, unread: usize) -> egui::Response {
+fn unread_pill(ui: &mut Ui, room: Rect, unread: usize, words: &TerminalMessages) -> egui::Response {
     let rect = Rect::from_center_size(
         Pos2::new(room.center().x, room.bottom() - PILL.y / 2.0 - 4.0),
         PILL,
     );
-    let label = format!("{unread} new");
+    let label = words.unread(unread);
     let response = ui
         .interact(rect, Id::new("chat unread"), Sense::click())
         .on_hover_cursor(CursorIcon::PointingHand);
@@ -918,7 +896,7 @@ fn unread_pill(ui: &mut Ui, room: Rect, unread: usize) -> egui::Response {
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,
-        format!("↓ {label}"),
+        &label,
         TextRole::Small.font_id(),
         dusk::FILL,
     );
@@ -938,155 +916,161 @@ struct SaidLook<'a> {
 /// A name and its colon tell speech from what the game itself says, and a player's name is in
 /// the colour the game gives that player, behind their portrait, so a reader follows one
 /// speaker through many lines. The name of the channel stands before what was said on it, so
-/// the ink is never the only sign of where a line was said. A thing the line holds is written by
-/// its name in its colour, behind its icon.
-fn line_job(
+/// the ink is never the only sign of where a line was said. An item the line holds is its inline
+/// item, and any other thing is written by its name in its colour, behind its icon. Answers the
+/// things the line holds, each by its place among them and a run of the line linked by
+/// `embed_key`.
+fn said_line(
     line: &TerminalLine,
     said: &SaidLook,
     content: &Content,
-    look: &ChatLook,
-    width: f32,
-    icon_side: f32,
     covers: &dyn Fn(usize, ChatEmbedKind) -> bool,
-) -> (LayoutJob, LineEmbeds) {
-    let mut job = LayoutJob::default();
-    let mut embeds = LineEmbeds::default();
-    job.wrap.max_width = width;
-    let format = |color: Color32| TextFormat {
-        font_id: look.font.clone(),
-        color,
-        ..TextFormat::default()
+) -> (StyledLine, Vec<(usize, LineEmbed)>) {
+    let terminal = &messages::of(content).terminal;
+    let mut styled = StyledLine::default();
+    let mut embeds = Vec::new();
+    let words = |styled: &mut StyledLine, text: &str, color: Color32| {
+        styled
+            .pieces
+            .push(StyledSpan::plain(text.to_owned()).ink(color).into());
     };
     match &line.kind {
         LineKind::Said(speaker) => {
             let ink = match speaker.typist {
-                Some(_) => said.name_color.map_or(dusk::PLAYER, |Rgb([r, g, b])| {
+                Some(_) => said.name_color.map_or(dusk::CHARACTER, |Rgb([r, g, b])| {
                     ink::legible(Color32::from_rgb(r, g, b), dusk::FILL)
                 }),
                 None => dusk::TOWNSPERSON,
             };
-            let mut lead = said.portrait.map_or(0.0, |wide| wide + PORTRAIT_GAP);
-            if let Some(said_on) = said.on {
-                let channel = format!("[{}] ", said_on.name);
-                job.append(&channel, std::mem::take(&mut lead), format(said_on.color));
+            if let Some(wide) = said.portrait {
+                styled.pieces.push(TextPiece::Room(wide + PORTRAIT_GAP));
             }
-            job.append(&format!("{}: ", speaker.name), lead, format(ink));
-            let mut held = line.embeds.iter();
-            for (place, words) in line.text.split(EMBED).enumerate() {
-                if place > 0 {
-                    match held.next().and_then(|sent| look.embeds.sent(content, sent)) {
-                        Some((_, shown)) if covers(place - 1, shown.kind) => {
-                            let starts = job.text.chars().count();
-                            job.append(COVERED, 0.0, format(Color32::TRANSPARENT));
-                            embeds.covered.push(CoveredEmbed {
-                                place: place - 1,
-                                letters: starts..starts + COVERED.chars().count(),
-                            });
-                        }
-                        Some((embed, shown)) => {
-                            let starts = job.text.chars().count();
-                            append_embed(&mut job, &mut embeds.icons, shown, &look.font, icon_side);
-                            embeds.shown.push(ShownEmbed {
-                                embed,
-                                name: shown.name.clone(),
-                                letters: starts..job.text.chars().count(),
-                                speaker: speaker.name.clone(),
-                            });
-                        }
-                        None => job.append("?", 0.0, format(dusk::TEXT)),
+            let parts = match said.on {
+                Some(on) => terminal.said_on_by((on.name.as_str(), on.color), (&speaker.name, ink)),
+                None => terminal.said_by((speaker.name.as_str(), ink)),
+            };
+            let mut color = parts.iter().find_map(|part| match part {
+                MessagePart::Argument((_, color)) => Some(*color),
+                MessagePart::Words(_) => None,
+            });
+            for part in parts {
+                match part {
+                    MessagePart::Words(said) => {
+                        words(&mut styled, &said, color.unwrap_or(dusk::TEXT))
+                    }
+                    MessagePart::Argument((name, ink)) => {
+                        color = Some(ink);
+                        words(&mut styled, name, ink);
                     }
                 }
-                job.append(words, 0.0, format(dusk::TEXT));
+            }
+            let mut held = line.embeds.iter();
+            for (place, said_words) in line.text.split(EMBED).enumerate() {
+                if let Some(place) = place.checked_sub(1) {
+                    match held.next().and_then(|sent| ChatEmbed::read(content, sent)) {
+                        Some(embed) if covers(place, embed.kind()) => {
+                            styled.pieces.push(TextPiece::LinkStart {
+                                key: embed_key(place),
+                                name: terminal.covered().to_owned(),
+                            });
+                            words(&mut styled, terminal.covered(), Color32::TRANSPARENT);
+                            styled.pieces.push(TextPiece::LinkEnd);
+                            embeds.push((place, LineEmbed::Covered));
+                        }
+                        Some(ChatEmbed::Item(item)) => {
+                            styled.pieces.extend(InlineItem::of(item).pieces(content));
+                            embeds.push((place, LineEmbed::Item));
+                        }
+                        Some(embed) => {
+                            let shown = embed.line(content);
+                            styled.pieces.push(TextPiece::LinkStart {
+                                key: embed_key(place),
+                                name: shown.plain_words(content),
+                            });
+                            styled.pieces.extend(shown.styled(content).pieces);
+                            styled.pieces.push(TextPiece::LinkEnd);
+                            embeds.push((
+                                place,
+                                LineEmbed::Shown {
+                                    embed,
+                                    name: embed.shown(content).name,
+                                    speaker: speaker.name.clone(),
+                                },
+                            ));
+                        }
+                        None => words(&mut styled, "?", dusk::TEXT),
+                    }
+                }
+                words(&mut styled, said_words, dusk::TEXT);
             }
         }
-        LineKind::Notice => job.append(&line.text, 0.0, format(dusk::NOTICE)),
-        LineKind::Failed => job.append(&line.text, 0.0, format(dusk::DANGER)),
+        LineKind::Notice => words(&mut styled, &line.text, dusk::NOTICE),
+        LineKind::Failed => words(&mut styled, &line.text, dusk::DANGER),
     }
-    (job, embeds)
+    (styled, embeds)
 }
 
-/// A line of the log laid out to draw.
+/// The link a line's `place`th thing stands in.
+fn embed_key(place: usize) -> LinkKey {
+    struct Embed;
+    LinkKey::new::<Embed>(place as u64)
+}
+
+/// A line of the log ready to draw.
 struct LaidLine {
     id: LoggedLineId,
-    galley: Arc<Galley>,
-    plain: String,
+    styled: StyledLine,
+    tall: f32,
     portrait: Option<egui::TextureId>,
-    embeds: LineEmbeds,
+    /// The things the line holds, by their place among its things.
+    embeds: Vec<(usize, LineEmbed)>,
 }
 
-/// The things a laid-out line holds: the icons drawn before their names, the things chat
-/// covers and the things it shows.
-#[derive(Default)]
-struct LineEmbeds {
-    icons: Vec<EmbedIcon>,
-    covered: Vec<CoveredEmbed>,
-    shown: Vec<ShownEmbed>,
+/// A thing a line holds, as chat shows it.
+enum LineEmbed {
+    /// Covered by chat until the player asks to see it.
+    Covered,
+    /// An item, which its inline item answers for.
+    Item,
+    /// Another thing, by its name: who said the line, for a location pinned on the map.
+    Shown {
+        embed: ChatEmbed,
+        name: String,
+        speaker: String,
+    },
 }
 
-/// A thing a line shows by its name: the thing, and the letters its name is written in.
-struct ShownEmbed {
-    embed: ChatEmbed,
-    name: String,
-    letters: Range<usize>,
-    /// Who said the line.
-    speaker: String,
-}
-
-/// A thing a line holds that chat covers: which of the line's things it is, and the letters
-/// that keep its room.
-struct CoveredEmbed {
-    place: usize,
-    letters: Range<usize>,
-}
-
-/// What a line reads where chat covers a thing it holds.
-const COVERED: &str = "[hidden]";
-const COVERED_HINT: &str = "Embedded content hidden. Click to reveal";
-
-/// Draws the black bars over a thing chat covers in the line drawn at `origin`, one for each
-/// row its room runs over. Whether the player asked to see the thing.
-fn cover_bars(ui: &mut Ui, world: &World, origin: Pos2, key: Id, bars: &[Rect]) -> bool {
+/// Draws the black bars over a thing chat covers, one for each row of the line its room runs
+/// over. Whether the player asked to see the thing.
+fn cover_bars(ui: &mut Ui, world: &World, key: Id, bars: &[Rect]) -> bool {
     let mut asked = false;
+    let hint = messages::of(world.resource::<Content>())
+        .terminal
+        .covered_hint();
     for (row, bar) in bars.iter().enumerate() {
-        let bar = bar
-            .translate(origin.to_vec2())
-            .shrink2(Vec2::new(0.0, bar.height() * COVER_INSET));
+        let bar = bar.shrink2(Vec2::new(0.0, bar.height() * COVER_INSET));
         let response = ui
             .interact(bar, key.with(row), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, COVERED_HINT));
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, hint));
         ui.painter().rect_filled(bar, 2.0, Color32::BLACK);
-        hud::tooltip(&response, world, COVERED_HINT, &[], None);
+        hud::tooltip(&response, world, hint, &[], None);
         asked |= response.clicked();
     }
     asked
 }
 
-/// Lets the player ask for the card of a thing shown in the line drawn at `origin`, by a click
-/// on its name or its icon: `names` is where its name stands, a rect for each row it runs over.
-/// Where it was clicked, once it is.
-fn embed_link(
-    ui: &mut Ui,
-    origin: Pos2,
-    key: Id,
-    names: &[Rect],
-    shown: &ShownEmbed,
-) -> Option<Rect> {
+/// Lets the player ask to see a thing other than an item that a line shows, by a click on its
+/// name or its icon, a rect for each row it runs over. Where it was clicked, once it is.
+fn embed_link(ui: &mut Ui, key: Id, rows: &[Rect], name: &str) -> Option<Rect> {
     let mut clicked = None;
-    for (row, name) in names.iter().enumerate() {
-        let icon = if row == 0 {
-            name.height() + ICON_GAP
-        } else {
-            0.0
-        };
-        let at = Rect::from_min_max(name.min - Vec2::new(icon, 0.0), name.max)
-            .translate(origin.to_vec2());
+    for (row, at) in rows.iter().enumerate() {
         let response = ui
-            .interact(at, key.with(row), Sense::click())
+            .interact(*at, key.with(row), Sense::click())
             .on_hover_cursor(CursorIcon::PointingHand);
-        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &shown.name));
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name));
         if response.clicked() {
-            clicked = Some(at);
+            clicked = Some(*at);
         }
     }
     clicked
@@ -1098,14 +1082,12 @@ const COVER_INSET: f32 = 0.12;
 // Focus is asked for after the field draws, so the key that gave chat the keyboard is never
 // read by the field as its own.
 fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, look: &ChatLook) {
-    let keys = world.resource::<InputMap>();
-    let send = keys.shortcut(InputAction::SubmitText);
-    let key = |action| keys.shortcut(action);
-    let (take, previous, next) = (
-        key(InputAction::CompleteText),
-        key(InputAction::ChoosePrevious),
-        key(InputAction::ChooseNext),
-    );
+    let content = world.resource::<Content>().clone();
+    let messages = messages::of(&content);
+    let (terminal, chat_words) = (&messages.terminal, &messages.chat);
+    let send = world
+        .resource::<InputMap>()
+        .shortcut(InputAction::SubmitText);
     let typing = view.typing;
     let field_id = field_id();
     let focused = ui.memory(|memory| memory.has_focus(field_id));
@@ -1124,22 +1106,9 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
     view.selected = view.selected.min(options.saturating_sub(1));
     let mut taken = None;
     if focused || found.is_some() {
-        let pressed = |shortcut: Option<egui::KeyboardShortcut>| {
-            shortcut.is_some_and(|shortcut| ui.input_mut(|input| input.consume_shortcut(&shortcut)))
-        };
+        let keys = world.resource::<InputMap>();
         // The key that sends a line picks the thing looked for instead, while one is.
-        let picked = pressed(take) || (found.is_some() && pressed(send));
-        if options > 0 {
-            if pressed(previous) {
-                view.selected = (view.selected + options - 1) % options;
-            }
-            if pressed(next) {
-                view.selected = (view.selected + 1) % options;
-            }
-            if picked {
-                taken = Some(view.selected);
-            }
-        }
+        taken = search::keyed(ui, keys, options, &mut view.selected, found.is_some());
     }
     if typing {
         ui.painter()
@@ -1162,36 +1131,36 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         dusk::TEXT
     };
     let faint = TextLook::new(TextRole::Small.size(), hint_ink).on(Ground::Dusk);
+    let sends = !view.draft.text().trim().is_empty();
+    let only = |hints: &[(InputAction, &str, bool)]| -> Vec<TextPiece> {
+        let kept: Vec<(InputAction, &str)> = hints
+            .iter()
+            .filter(|(.., works)| *works)
+            .map(|&(action, does, _)| (action, does))
+            .collect();
+        key_hints(&kept)
+    };
     let hints = StyledLine::new(if found.is_some() {
-        vec![
-            map::input(InputAction::CompleteText),
-            TextPiece::text(" pick  "),
-            map::input(InputAction::Dismiss),
-            TextPiece::text(" back"),
-        ]
-    } else if typing && view.channels.len() > 1 {
-        vec![
-            map::input(InputAction::SubmitText),
-            TextPiece::text(" send  "),
-            map::input(InputAction::NextChatTab),
-            TextPiece::text(" next tab  "),
-            map::input(InputAction::Dismiss),
-            TextPiece::text(" cancel"),
-        ]
+        only(&[
+            (InputAction::CompleteText, terminal.hint_pick(), options > 0),
+            (InputAction::Dismiss, terminal.hint_back(), true),
+        ])
     } else if typing {
-        vec![
-            map::input(InputAction::SubmitText),
-            TextPiece::text(" send  "),
-            map::input(InputAction::Dismiss),
-            TextPiece::text(" cancel"),
-        ]
+        only(&[
+            (InputAction::SubmitText, terminal.hint_send(), sends),
+            (
+                InputAction::NextChatTab,
+                terminal.hint_next_tab(),
+                view.channels.len() > 1,
+            ),
+            (InputAction::Dismiss, terminal.hint_cancel(), true),
+        ])
+    } else if session::is_dead(world) {
+        Vec::new()
     } else if scope::reads(world, InputAction::FocusChat) {
-        vec![
-            map::input(InputAction::FocusChat),
-            TextPiece::text(" to chat"),
-        ]
+        key_hints(&[(InputAction::FocusChat, terminal.hint_to_chat())])
     } else {
-        vec![TextPiece::text("Click to chat")]
+        vec![TextPiece::text(terminal.click_to_chat().to_owned())]
     });
     let hints_wide = text::measure(ui.ctx(), world, &hints, faint, f32::INFINITY).x;
     let hinted = !typing || inner.width() >= hints_wide + ROOM_TO_TYPE_BESIDE_HINTS;
@@ -1214,7 +1183,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 ui.spacing_mut().item_spacing.x = 6.0;
                 if let Some(typed_on) = typed_on.filter(|_| typing) {
                     ui.label(
-                        egui::RichText::new(format!("{}:", typed_on.name))
+                        egui::RichText::new(terminal.typing_on(&typed_on.name))
                             .font(look.font.clone())
                             .color(dusk::TEXT.gamma_multiply(0.75)),
                     );
@@ -1227,8 +1196,8 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 ui.visuals_mut().text_cursor.stroke.color = dusk::TEXT;
                 let ChatView { draft, seeking, .. } = &mut *view;
                 let field = match seeking {
-                    Some(seeking) => sought_field(ui, draft, seeking, look, room.max(0.0)),
-                    None => typed_field(ui, draft, look, room.max(0.0), send),
+                    Some(seeking) => sought_field(ui, world, draft, seeking, look, room.max(0.0)),
+                    None => typed_field(ui, world, draft, look, room.max(0.0), send),
                 };
                 if typing && hinted {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1247,27 +1216,46 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         .flat_map(|asked| &asked.kinds)
         .map(|kind| format!("{EMBED_ASK}{}", kind.name()))
         .collect();
+    let drawn: Vec<SuggestedMention> = found
+        .iter()
+        .flatten()
+        .map(|found| {
+            SuggestedMention::new(
+                world,
+                ui.ctx(),
+                &found.embed.line(world.resource::<Content>()),
+            )
+        })
+        .collect();
     let (heading, listed): (String, Vec<Suggestion>) = match (&found, &asked, &view.suggested) {
         (Some(found), ..) => {
             let kind = view
                 .seeking
                 .as_ref()
-                .map_or("", |seeking| seeking.kind.hint());
+                .map_or("", |seeking| seeking.kind.hint(chat_words));
             let listed = found
                 .iter()
-                .map(|found| Suggestion {
+                .zip(&drawn)
+                .map(|(found, drawn)| Suggestion {
                     text: &found.name,
                     detail: "",
+                    muted: false,
+                    drawn: Some(drawn),
                 })
                 .collect();
-            (format!("Show {kind} in the message"), listed)
+            (terminal.show_kind(kind), listed)
         }
         (None, Some(_), _) => {
             let listed = kinds
                 .iter()
-                .map(|text| Suggestion { text, detail: "" })
+                .map(|text| Suggestion {
+                    text,
+                    detail: "",
+                    muted: false,
+                    drawn: None,
+                })
                 .collect();
-            ("Show in the message".to_owned(), listed)
+            (terminal.show_in_message().to_owned(), listed)
         }
         (None, None, Some(suggested)) if focused => {
             let listed = suggested
@@ -1276,6 +1264,8 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
                 .map(|option| Suggestion {
                     text: &option.text,
                     detail: &option.detail,
+                    muted: option.muted,
+                    drawn: None,
                 })
                 .collect();
             (suggested.usage.clone(), listed)
@@ -1283,7 +1273,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         (None, None, _) => (String::new(), Vec::new()),
     };
     if !listed.is_empty() || !heading.is_empty() {
-        let clicked = suggest::suggestions(
+        let suggested = suggest::suggestions(
             ui.ctx(),
             field_id.with("suggestions"),
             field.rect,
@@ -1291,7 +1281,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
             &listed,
             view.selected,
         );
-        taken = taken.or(clicked);
+        taken = taken.or(suggested);
     }
     match (taken, found, asked) {
         (Some(place), Some(found), _) => {
@@ -1392,6 +1382,7 @@ fn search_id() -> Id {
 /// their names in their colours, each behind its icon.
 fn typed_field(
     ui: &mut Ui,
+    world: &mut World,
     draft: &mut ChatDraft,
     look: &ChatLook,
     room: f32,
@@ -1420,6 +1411,8 @@ fn typed_field(
         .show(ui);
     let painter = ui.painter().with_clip_rect(shown.text_clip_rect);
     embed_icons(&painter, shown.galley_pos, &shown.galley, &icons);
+    let items = held_items(&shown.galley, shown.galley_pos, &held, side);
+    item_tooltips(ui, world, id, &items);
     let caret = shown.cursor_range.map(|range| range.primary.index.0);
     let moved = if text == draft.text() {
         None
@@ -1439,6 +1432,7 @@ fn typed_field(
 /// the words before it, the name being looked for, and the words after, all within `room`.
 fn sought_field(
     ui: &mut Ui,
+    world: &mut World,
     draft: &ChatDraft,
     seeking: &mut EmbedSearch,
     look: &ChatLook,
@@ -1458,17 +1452,28 @@ fn sought_field(
         let (job, icons) = draft_job(&text, held, look, side);
         (ui.fonts_mut(|fonts| fonts.layout_job(job)), icons)
     };
-    // What does not fit is cut at the far end from the search, which stays in sight.
-    let words = |ui: &mut Ui, (galley, icons): (Arc<Galley>, Vec<EmbedIcon>), room: f32| {
+    // What does not fit is cut at the far end from the search, which stays in sight. Answers
+    // where the items it holds stand, as far as they are in sight.
+    let words = |ui: &mut Ui,
+                 (galley, icons): (Arc<Galley>, Vec<EmbedIcon>),
+                 held: &[(Range<usize>, ChatEmbed)],
+                 room: f32| {
         let size = Vec2::new(galley.size().x.min(room.max(0.0)), galley.size().y);
         if size.x <= 0.0 {
-            return;
+            return Vec::new();
         }
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         let from = Pos2::new(rect.right() - galley.size().x, rect.top());
         let painter = ui.painter().with_clip_rect(rect);
         embed_icons(&painter, from, &galley, &icons);
+        let items = held_items(&galley, from, held, side)
+            .into_iter()
+            .filter_map(|(at, item)| {
+                Some((at.intersect(rect), item)).filter(|(at, _)| at.is_positive())
+            })
+            .collect();
         painter.galley(from, galley, dusk::TEXT);
+        items
     };
     ui.spacing_mut().item_spacing.x = 2.0;
     let starts = ui.cursor().left();
@@ -1481,7 +1486,7 @@ fn sought_field(
     let said_before = laid(ui, letters[..at].iter().collect(), &before);
     let around = kind_wide + 4.0 * ICON_GAP;
     let search = (room - around - said_before.0.size().x).clamp(SEARCH_LEAST, SEARCH_WIDTH);
-    words(ui, said_before, room - around - search);
+    let mut items = words(ui, said_before, &before, room - around - search);
     let field = egui::Frame::new()
         .fill(dusk::FILL)
         .stroke(Stroke::new(1.0, dusk::BORDER))
@@ -1507,8 +1512,44 @@ fn sought_field(
         .inner;
     let left = room - (ui.cursor().left() - starts);
     let said_after = laid(ui, letters[at..].iter().collect(), &after);
-    words(ui, said_after, left);
+    items.extend(words(ui, said_after, &after, left));
+    item_tooltips(ui, world, search_id(), &items);
     field
+}
+
+/// Where each item `held` by what is typed stands in its field, laid out as `galley` at
+/// `origin`: its name, and the icon of `side` before it.
+fn held_items(
+    galley: &Galley,
+    origin: Pos2,
+    held: &[(Range<usize>, ChatEmbed)],
+    side: f32,
+) -> Vec<(Rect, ItemId)> {
+    held.iter()
+        .filter_map(|(letters, embed)| match embed {
+            ChatEmbed::Item(item) => Some((letters, *item)),
+            _ => None,
+        })
+        .flat_map(|(letters, item)| {
+            letters_rects(galley, letters.clone())
+                .into_iter()
+                .enumerate()
+                .map(move |(row, at)| {
+                    let icon = if row == 0 { side + 2.0 * ICON_GAP } else { 0.0 };
+                    let at = Rect::from_min_max(at.min - Vec2::new(icon, 0.0), at.max);
+                    (at.translate(origin.to_vec2()), item)
+                })
+        })
+        .collect()
+}
+
+/// Shows the tooltip of each item of a field at its place, leaving the click to the field, which
+/// puts the caret there.
+fn item_tooltips(ui: &mut Ui, world: &mut World, field: Id, items: &[(Rect, ItemId)]) {
+    for (index, &(at, item)) in items.iter().enumerate() {
+        let response = ui.interact(at, field.with(("held item", index)), Sense::hover());
+        inline::tooltip(world, &response, InlineItem::of(item));
+    }
 }
 
 /// What is typed laid out for its field: its words in the field's ink, and the things it holds
@@ -1613,20 +1654,15 @@ struct FoundEmbed {
 /// lists them for an input of their table.
 fn found(world: &World, seeking: &EmbedSearch) -> Vec<FoundEmbed> {
     let content = world.resource::<Content>();
-    let most = content.built::<GameSettings>().suggestions as usize;
-    let caller = session::me(world).unwrap_or(Entity::PLACEHOLDER);
     let Some(table) = seeking.kind.table() else {
         return Vec::new();
     };
-    let options = input_options(world, caller, InputKind::Row(table), SlotPart::Whole);
-    let names = options.iter().map(|option| option.text.as_str());
-    best_matches(&seeking.name, names, most)
+    search::matching(world, table, &seeking.name)
         .into_iter()
-        .filter_map(|place| {
-            let option = &options[place];
+        .filter_map(|option| {
             Some(FoundEmbed {
                 embed: ChatEmbed::of(content, seeking.kind, option.file()?)?,
-                name: option.text.clone(),
+                name: option.text,
             })
         })
         .collect()

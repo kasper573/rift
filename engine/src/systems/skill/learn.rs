@@ -5,14 +5,15 @@ use serde::{Deserialize, Serialize};
 
 use super::{Learned, Rank};
 use crate::core::content::Content;
+use crate::core::script::{Expr, condition};
+use crate::core::text::LineText;
 use crate::systems::class::{self, AccessRequirement, ClassDef, NodeKey, SkillPoints};
 use crate::systems::history::HistoryTopic;
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
-use crate::systems::script::{Condition, condition};
-use crate::systems::text::LineText;
 
 /// The whole plan the player confirmed: each node of their class tree with the rank to reach.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -66,7 +67,12 @@ pub fn learn(
     picks: &[(NodeKey, Rank)],
 ) -> Result<Vec<(NodeKey, Rank)>, LineText> {
     let content = world.resource::<Content>().clone();
-    let class = class::of(world, player).ok_or("No class")?;
+    let class = class::of(world, player).ok_or_else(|| {
+        messages::of(&content)
+            .skill
+            .learn_without_class()
+            .to_owned()
+    })?;
     let def = class.get(&content);
     let held = world.get::<Learned>(player).cloned().unwrap_or_default();
     let planned = plan(
@@ -80,11 +86,8 @@ pub fn learn(
     .map_err(|refusal| refusal.line(&content, def, picks))?;
     let available = class::points_to_spend(world, player);
     if planned.cost > available {
-        return Err(format!(
-            "Needs {} skill points, you have {}",
-            planned.cost.0, available.0
-        )
-        .into());
+        let words = &messages::of(&content).skill;
+        return Err(words.short_of_points(planned.cost.0, available.0).into());
     }
     world.entity_mut(player).insert(Learned(planned.ranks));
     Ok(picks.to_vec())
@@ -97,7 +100,7 @@ pub fn plan(
     held: &Learned,
     picks: &[(NodeKey, Rank)],
     level: u32,
-    condition: impl Fn(&Condition) -> bool,
+    condition: impl Fn(&Expr) -> bool,
 ) -> Result<Planned, PlanRefusal> {
     let mut ranks = held.0.clone();
     let mut cost = SkillPoints(0);
@@ -151,7 +154,7 @@ impl PlanRefusal {
         class: &ClassDef,
         picks: &[(NodeKey, Rank)],
     ) -> String {
-        self.line(content, class, picks).plain_words()
+        self.line(content, class, picks).plain_words(content)
     }
 
     pub fn line(&self, content: &Content, class: &ClassDef, picks: &[(NodeKey, Rank)]) -> LineText {
@@ -160,19 +163,20 @@ impl PlanRefusal {
             || LineText::plain(key.to_string()),
             |node| Mention::Skill(node.skill).line(content),
         );
+        let words = &messages::of(content).skill;
         match self {
-            PlanRefusal::NotInTree { .. } => LineText::plain(format!("{key} is not in your tree")),
-            PlanRefusal::NotAbove { held, .. } => name.then(format!(" is already rank {}", held.0)),
+            PlanRefusal::NotInTree { .. } => LineText::plain(words.not_in_tree(key.as_str())),
+            PlanRefusal::NotAbove { held, .. } => words.already_ranked(held.0, name),
             PlanRefusal::OutOfRange { .. } => {
                 let has = class
                     .tree
                     .node(key)
                     .map_or(0, |node| node.skill.get(content).rank_count());
-                name.then(format!(" has only {has} ranks, not {}", rank.0))
+                words.rank_out_of_range(has, rank.0, name)
             }
-            PlanRefusal::Unmet { requirement, .. } => name
-                .then(" needs ")
-                .then(requirement.line(content, &class.tree)),
+            PlanRefusal::Unmet { requirement, .. } => {
+                words.needs_unmet(requirement.line(content, &class.tree), name)
+            }
         }
     }
 }
@@ -189,16 +193,17 @@ fn announce(world: &mut World, player: Entity, learned: &[(NodeKey, Rank)]) {
         };
         let skill = node.skill.get(&content);
         let name = Mention::Skill(node.skill).name(&content);
+        let words = &messages::of(&content).skill;
         let text = if rank.is_first() {
-            LineText::plain("Learned ").then(name)
+            words.learned_skill(name)
         } else {
-            LineText::from(name).then(format!(" rank {}", rank.0))
+            words.learned_rank(rank.0, name)
         };
         notification::notify(
             world,
             player,
             None,
-            Notification::feed(HistoryTopic::Notification, text).icon(skill.icon.path()),
+            Notification::feed(HistoryTopic::Notification, text).icon(skill.icon.clone()),
         );
     }
 }

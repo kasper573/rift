@@ -8,16 +8,18 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::Content;
 use crate::core::math::{Pos, PosSchema};
 use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
-use crate::core::units::{HourOfDay, MeterPos, Meters};
+use crate::core::units::{HourOfDay, MeterPos, Meters, Seconds};
 use crate::systems::area;
+use crate::systems::area::Place;
 use crate::systems::combat::{self, AttackRequest, Relation};
+use crate::systems::dialogue::span::ScriptSpan;
 use crate::systems::interact::{self, InteractRequest, Verb};
+use crate::systems::item::ItemStack;
+use crate::systems::market::{self, MarketAsk, MarketRequest, MarketView};
 use crate::systems::movement::{self, MoveRequest, MoveSeq, Position};
 use crate::systems::notification::{self, NotificationId};
 use crate::systems::npc::Npc;
 use crate::systems::player::{conn_player, may_command, tell_clocks};
-use crate::systems::script::Place;
-use crate::systems::text::LineText;
 use crate::systems::{GameSettings, ServerClocks, WorldArea, from_client, start_clocks, stat};
 
 /// Where a game server that stages scenes takes them, beside its test characters.
@@ -54,6 +56,13 @@ pub enum Staging {
     /// Tells the character's player the notification `notification`, as a script tells it, with
     /// nothing in the places its text leaves for a script's values.
     Notify { notification: NotificationId },
+    /// Puts up a listing on the market from the character's bag of `goods` for `price`
+    /// for `duration`, with the market opened for them where they stand.
+    List {
+        goods: Vec<ItemStack>,
+        price: Vec<ItemStack>,
+        duration: Seconds,
+    },
 }
 
 /// Stages `staging` for the character the connection `conn` plays, as its client would ask for it.
@@ -91,9 +100,8 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
             .ok_or("nobody to talk to in the character's area")?;
             from_client(world, conn, InteractRequest { target: npc });
         }
-        Staging::Place { place } => {
-            area::warp::warp(world, player, place).map_err(|refusal| refusal.plain_words())?
-        }
+        Staging::Place { place } => area::warp::warp(world, player, place)
+            .map_err(|refusal| refusal.plain_words(world.resource::<Content>()))?,
         Staging::Weather { spell } => {
             let area = world.resource::<WorldArea>().0;
             let climate = &area::load(world.resource::<Content>(), area).climate;
@@ -133,8 +141,26 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
         }
         Staging::Notify { notification } => {
             let def = notification.get(world.resource::<Content>()).clone();
-            let told = def.notification(LineText::spoken(&def.text, &[]));
+            let told = def.notification(ScriptSpan::said(&def.text, &[]));
             notification::notify(world, player, None, told);
+        }
+        Staging::List {
+            goods,
+            price,
+            duration,
+        } => {
+            if world.resource::<GameSettings>().market.is_none() {
+                return Err("the game has no market".to_owned());
+            }
+            if world.get::<MarketView>(player).is_none() {
+                market::open(world, player, None);
+            }
+            let ask = MarketAsk::List {
+                goods,
+                price,
+                duration,
+            };
+            from_client(world, conn, MarketRequest::Ask(ask));
         }
     }
     Ok(())

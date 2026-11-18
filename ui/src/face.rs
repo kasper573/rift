@@ -11,6 +11,7 @@ pub enum Face {
     BookMedium,
     BookBold,
     BookItalic,
+    BookMediumItalic,
     SmallCaps,
     SmallCapsBold,
     Quill,
@@ -36,6 +37,13 @@ impl Face {
     }
 }
 
+/// How tall a conversation's text is, as a share of the viewport's height, so it reads the same
+/// at every resolution.
+pub const DIALOGUE_SIZE_SHARE: f32 = 0.027;
+
+/// How far apart the lines of a conversation's text stand, in ems.
+pub const DIALOGUE_LEADING: f32 = 1.45;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextRole {
     Title,
@@ -56,6 +64,8 @@ pub enum TextRole {
     Mono,
     Count,
     SlotKey,
+    /// The words on a pill.
+    Pill,
 }
 
 impl TextRole {
@@ -67,7 +77,7 @@ impl TextRole {
             | TextRole::MainTab
             | TextRole::Band
             | TextRole::Name => Face::SmallCapsBold,
-            TextRole::NoteTitle => Face::BookBold,
+            TextRole::NoteTitle | TextRole::Pill => Face::BookBold,
             TextRole::Body
             | TextRole::CardBody
             | TextRole::Line
@@ -84,7 +94,7 @@ impl TextRole {
         match self {
             TextRole::Title | TextRole::Line => 17.0,
             TextRole::NoteTitle | TextRole::Name => 16.0,
-            TextRole::Section | TextRole::Tab | TextRole::KeyHint => 12.0,
+            TextRole::Section | TextRole::Tab | TextRole::KeyHint | TextRole::Pill => 12.0,
             TextRole::Band => 12.5,
             TextRole::Body => 15.0,
             TextRole::CardBody | TextRole::Flavour => 14.5,

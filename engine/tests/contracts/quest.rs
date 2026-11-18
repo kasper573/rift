@@ -9,9 +9,9 @@ use engine::systems::player::Xp;
 use engine::systems::quest::{self, QuestDef, QuestLog, QuestRequest, QuestResult};
 use engine::systems::region;
 use engine::systems::shop::{self, ShopRequest};
-use engine::systems::{combat, movement, npc, rewards, script, stat};
+use engine::systems::{combat, movement, npc, reward, stat, window};
 use serde_json::{Value, json};
-use testkit::{BODY, Game, Map, Sim, dialogue, labels, locked, path, said};
+use testkit::{BODY, Game, Map, Sim, dialogue, path, said};
 
 #[test]
 fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items() {
@@ -19,9 +19,9 @@ fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items() {
     let player = sim.join(1);
 
     let greeting = sim.talk(1, "giver");
-    assert!(labels(&greeting).contains(&"A Letter".to_owned()));
+    assert!(sim.labels(&greeting).contains(&"A Letter".to_owned()));
     let offer = sim.pick(1, "A Letter").expect("the offer");
-    assert!(labels(&offer).contains(&"I'll take it.".to_owned()));
+    assert!(sim.labels(&offer).contains(&"I'll take it.".to_owned()));
     sim.pick(1, "I'll take it.");
 
     let log = log(&sim, player);
@@ -58,7 +58,7 @@ fn delivering_completes_the_quest_once_and_with_the_level_unlocks_the_next_in_th
     let levelled = sim.join(2);
     level_up(&mut sim, levelled);
     let captain = sim.talk(2, "captain");
-    assert!(!labels(&captain).contains(&"Bats".to_owned()));
+    assert!(!sim.labels(&captain).contains(&"Bats".to_owned()));
 
     sim.talk(1, "giver");
     sim.pick(1, "A Letter");
@@ -68,7 +68,7 @@ fn delivering_completes_the_quest_once_and_with_the_level_unlocks_the_next_in_th
     let gold = sim.count(player, "gold");
 
     let captain = sim.talk(1, "captain");
-    assert!(!labels(&captain).contains(&"Bats".to_owned()));
+    assert!(!sim.labels(&captain).contains(&"Bats".to_owned()));
     let thanks = sim.pick(1, "A Letter").expect("thanks");
     let letter = sim.id::<QuestDef>("letter");
     assert_eq!(thanks.panel, Some(ConversationPanel::QuestTurnIn(letter)));
@@ -95,13 +95,13 @@ fn delivering_completes_the_quest_once_and_with_the_level_unlocks_the_next_in_th
 
     sim.leave(1);
     let again = sim.talk(1, "captain");
-    assert!(!labels(&again).contains(&"A Letter".to_owned()));
-    assert!(!labels(&again).contains(&"Bats".to_owned()));
+    assert!(!sim.labels(&again).contains(&"A Letter".to_owned()));
+    assert!(!sim.labels(&again).contains(&"Bats".to_owned()));
 
     sim.leave(1);
     level_up(&mut sim, player);
     let ready = sim.talk(1, "captain");
-    assert!(!locked(&ready, "Bats"));
+    assert!(!sim.locked(&ready, "Bats"));
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn quest_items_never_sell_or_drop() {
 }
 
 #[test]
-fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
+fn a_full_bag_takes_the_hand_in_and_sends_the_reward_that_has_no_room_by_message() {
     let mut sim = harbour();
     let player = sim.join(1);
     accept(&mut sim, player, "tusks");
@@ -189,34 +189,30 @@ fn a_full_bag_refuses_the_reward_counting_space_after_the_hand_in() {
     let thanks = sim.pick(1, "Tusks").expect("thanks");
     let tusks = sim.id::<QuestDef>("tusks");
     assert_eq!(thanks.panel, Some(ConversationPanel::QuestTurnIn(tusks)));
-    assert!(!locked(&thanks, "I'll take the shield."));
-    let refused = sim
-        .pick(1, "I'll take the shield.")
-        .and_then(|now| now.refused);
-    assert!(refused.is_some());
-    assert_eq!(
-        sim.errors(1).last().map(String::as_str),
-        Some("Needs 1 free slot")
-    );
-    assert_eq!(sim.count(player, "tusk"), 7);
-    assert_eq!(sim.count(player, "shield"), 0);
-    sim.leave(1);
-
-    let conn = sim.conn(1);
-    let slot = sim.slot_of(player, "tusk");
-    sim.send(conn, DropItemRequest { slot });
-    sim.tick();
-    sim.give(player, "tusk", 5);
-    sim.run(0.5);
-
-    sim.talk(1, "trader");
-    sim.pick(1, "Tusks");
+    assert!(!sim.locked(&thanks, "I'll take the shield."));
     sim.pick(1, "I'll take the shield.");
-    assert_eq!(sim.count(player, "tusk"), 0);
-    assert_eq!(sim.count(player, "shield"), 1);
+    assert_eq!(
+        [
+            sim.count(player, "tusk"),
+            sim.count(player, "gold"),
+            sim.count(player, "shield")
+        ],
+        [2, 36, 0],
+        "the hand-in is taken, and what fits is paid into the bag"
+    );
     assert_eq!(
         log(&sim, player).finished(tusks).map(|done| done.result),
-        Some(QuestResult::Completed)
+        Some(QuestResult::Completed),
+        "a full bag never holds a quest back"
+    );
+    let told: Vec<String> = sim
+        .told(1)
+        .iter()
+        .map(|told| told.text.plain_words(sim.content()))
+        .collect();
+    assert!(
+        told.contains(&"No room in your bag for 1 shield: sent to your mail.".to_owned()),
+        "the player is told what went to their mail: {told:?}"
     );
 }
 
@@ -234,12 +230,12 @@ fn a_daily_quest_returns_after_the_reset() {
     assert_eq!(sim.count(player, "token"), 6);
 
     let today = sim.talk(1, "keeper");
-    assert!(!labels(&today).contains(&"Tithe".to_owned()));
+    assert!(!sim.labels(&today).contains(&"Tithe".to_owned()));
     sim.leave(1);
 
     sim.later(24.0 * 3600.0);
     let tomorrow = sim.talk(1, "keeper");
-    assert!(labels(&tomorrow).contains(&"Tithe".to_owned()));
+    assert!(sim.labels(&tomorrow).contains(&"Tithe".to_owned()));
 }
 
 #[test]
@@ -262,7 +258,7 @@ fn a_timed_quest_fails_when_time_runs_out_and_is_offered_again() {
     );
     assert!(failed.tracked.contains(&tide));
     let again = sim.talk(1, "giver");
-    assert!(labels(&again).contains(&"Low Tide".to_owned()));
+    assert!(sim.labels(&again).contains(&"Low Tide".to_owned()));
 }
 
 #[test]
@@ -335,7 +331,7 @@ fn deciding_fails_the_other_quest_and_is_remembered() {
     sim.pick(1, "The Plea");
     sim.pick(1, "I'm listening.");
     let given = sim.pick(1, "Give her the tusks.").expect("her thanks");
-    assert_eq!(labels(&given), vec!["Rest easy.".to_owned()]);
+    assert_eq!(sim.labels(&given), vec!["Rest easy.".to_owned()]);
 
     let tusks = sim.id::<QuestDef>("tusks");
     let plea = sim.id::<QuestDef>("plea");
@@ -356,7 +352,7 @@ fn deciding_fails_the_other_quest_and_is_remembered() {
     assert!(!log(&sim, player).tracked.contains(&tusks));
 
     let friend = sim.talk(1, "shaman");
-    assert_eq!(labels(&friend), vec!["Farewell.".to_owned()]);
+    assert_eq!(sim.labels(&friend), vec!["Farewell.".to_owned()]);
 }
 
 /// A harbour of quest givers, each standing for one way quests are offered, followed and handed
@@ -533,7 +529,7 @@ fn harbour() -> Sim {
                     { "type": "deliver", "item": "letter.item.json" },
                     { "type": "hand_in", "items": [{ "item": "letter.item.json" }] },
                     { "type": "hand_over", "text": ["The giver asked me to bring you this."] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 10 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 10 }] },
                 ]),
             ),
         )
@@ -546,7 +542,7 @@ fn harbour() -> Sim {
                     { "type": "hold", "item": "key.item.json" },
                     { "type": "hand_in", "items": [{ "item": "key.item.json" }] },
                     { "type": "hand_over", "text": ["Here's your key."] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 25 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 25 }] },
                     { "type": "drop", "from": "bat.npc.json", "item": "key.item.json", "chance": 10.0, "grows": 15.0 },
                 ]),
             ),
@@ -558,7 +554,7 @@ fn harbour() -> Sim {
                     { "type": "shown", "condition": not(json!({ "type": "memory", "memory": "sided.memory.json" })) },
                     { "type": "hold", "item": "tusk.item.json", "count": 5 },
                     { "type": "hand_in", "items": [{ "item": "tusk.item.json", "count": 5 }] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 35 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 35 }] },
                     { "type": "pick_one", "items": [{ "item": "shield.item.json" }, { "item": "helm.item.json" }] },
                 ]),
             ),
@@ -570,7 +566,7 @@ fn harbour() -> Sim {
                     { "type": "hold", "item": "bone.item.json", "count": 10 },
                     { "type": "hand_in", "items": [{ "item": "bone.item.json", "count": 10 }] },
                     { "type": "hand_over", "text": ["Here are today's bones."] },
-                    { "type": "reward", "items": [{ "item": "token.item.json", "count": 6 }] },
+                    { "type": "reward", "items": [{ "item": "token.item.json", "amount": 6 }] },
                     { "type": "daily" },
                 ]),
             ),
@@ -582,7 +578,7 @@ fn harbour() -> Sim {
                     { "type": "hold", "item": "steak.item.json", "count": 3 },
                     { "type": "hand_in", "items": [{ "item": "steak.item.json", "count": 3 }] },
                     { "type": "hand_over", "text": ["Here are the steaks."] },
-                    { "type": "reward", "items": [{ "item": "gold.item.json", "count": 15 }] },
+                    { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 15 }] },
                     { "type": "time_limit", "seconds": 600.0 },
                 ]),
             ),
@@ -645,22 +641,27 @@ fn harbour() -> Sim {
             shop::requests,
             quest::requests,
         ))
-        .add((rewards::grant, quest::credit, npc::defeated))
+        .add((
+            combat::credit::credit,
+            reward::kills,
+            quest::credit,
+            npc::defeated,
+        ))
         .plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
-            shop::hold,
+            window::hold::<shop::ShopVisit>,
             shop::refresh,
         ))
         .plan(quest::AnnounceQuests::default())
         .plan(stat::SettleVitals::default())
         .add(combat::defeats);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }
@@ -757,7 +758,7 @@ fn shaman() -> Value {
 }
 
 fn quest(title: &str, modules: Value) -> Value {
-    json!({ "title": title, "category": "Errands", "blurb": title, "xp": 10, "modules": modules })
+    json!({ "title": title, "category": "Errands", "blurb": title, "modules": modules })
 }
 
 fn bats_open() -> Value {

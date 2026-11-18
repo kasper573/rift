@@ -9,13 +9,14 @@ use ui::egui::{self, Align, Align2, Id, Layout, Vec2};
 use ui::{controls, dialog, dusk, face, float, ink};
 
 use super::{GameChange, ServerSaving};
+use crate::core::content::Content;
 use crate::core::gui::{self, Band};
+use crate::core::text::LineText;
 use crate::core::time::{LocalClock, UnixMillis};
 use crate::systems::history::{self, HistoryEntry, HistoryTopic};
 use crate::systems::player::{ClientId, Players};
 use crate::systems::screen::ClientScreen;
-use crate::systems::text::LineText;
-use crate::systems::{GameSettings, visibility};
+use crate::systems::{GameSettings, messages, visibility};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -60,11 +61,12 @@ pub fn tell_returned(world: &mut World, returned: &mut QueryState<(Entity, &Clie
         .collect();
     for (conn, character, changes) in back {
         world.entity_mut(conn).remove::<Returned>();
-        let settings = world.resource::<GameSettings>();
-        let heading = settings.words.game_changed.clone();
-        let lines: Vec<ChangeLine> = changes.iter().map(|change| change.line(settings)).collect();
+        let content = world.resource::<Content>().clone();
+        let messages = messages::of(&content);
+        let heading = messages.save.game_changed().to_owned();
+        let lines: Vec<ChangeLine> = changes.iter().map(|change| change.line(&content)).collect();
         for line in &lines {
-            let text = LineText::plain(format!("{} {}", line.what, line.became));
+            let text = LineText::plain(messages.save.change_entry(&line.what, &line.became));
             let entry = HistoryEntry::of(HistoryTopic::Notification, text);
             history::record(world, character, entry.by(Some(heading.clone())));
         }
@@ -99,31 +101,24 @@ pub fn tell_saving(
 }
 
 impl GameChange {
-    /// The change, in the words of the game `settings` are of.
-    pub fn line(&self, settings: &GameSettings) -> ChangeLine {
-        let words = &settings.words;
+    /// The change, in the words of the game `content` is of.
+    pub fn line(&self, content: &Content) -> ChangeLine {
+        let messages = messages::of(content);
         match self {
             GameChange::Gone { table, name } => ChangeLine {
-                what: words.gone.replace("{kind}", table).replace("{name}", name),
-                became: words.kept_aside.clone(),
+                what: messages.save.gone(table, name),
+                became: messages.save.kept_aside().to_owned(),
             },
             GameChange::DidNotFit { slots, stacks } => ChangeLine {
-                what: match stacks {
-                    1 => &words.stack_did_not_fit,
-                    _ => &words.stacks_did_not_fit,
-                }
-                .replace("{slots}", &slots.to_string())
-                .replace("{stacks}", &stacks.to_string()),
-                became: match settings.messages {
-                    Some(_) => words.sent_in_a_message.clone(),
-                    None => words.kept_aside.clone(),
+                what: messages.save.stacks_did_not_fit(*slots, *stacks),
+                became: match content.built::<GameSettings>().mail {
+                    Some(_) => messages.mail.sent_in_a_letter().to_owned(),
+                    None => messages.save.kept_aside().to_owned(),
                 },
             },
             GameChange::SkillsReset { class, points } => ChangeLine {
-                what: words.skills_rearranged.replace("{class}", class),
-                became: words
-                    .points_returned
-                    .replace("{points}", &points.to_string()),
+                what: messages.save.skills_rearranged(class),
+                became: messages.save.points_returned(*points),
             },
         }
     }
@@ -159,12 +154,12 @@ pub struct ShownSaving {
 
 pub fn shown(world: &World) -> ShownSaving {
     let told = world.resource::<Told>();
-    let words = &world.resource::<GameSettings>().words;
+    let messages = messages::of(world.resource::<Content>());
     let now = gui::context(world).map(|gui| gui.input(|input| input.time));
     ShownSaving {
         notice: match (told.failing_since, told.saved_until, now) {
-            (Some(_), ..) => Some(words.not_saving.clone()),
-            (None, Some(until), Some(now)) if now < until => Some(words.saved.clone()),
+            (Some(_), ..) => Some(messages.save.not_saving().to_owned()),
+            (None, Some(until), Some(now)) if now < until => Some(messages.save.saved().to_owned()),
             _ => None,
         },
         card: told.changed.clone().unwrap_or_default(),
@@ -189,9 +184,13 @@ fn hear(world: &mut World) {
         .drain()
         .collect();
     let now = gui::context(world).map(|gui| gui.input(|input| input.time));
-    let settings = world.resource::<GameSettings>();
-    let said = format!("{} {}", settings.words.saved, settings.words.saved_again);
-    let stays = settings.reading.of(said.split_whitespace().count());
+    let content = world.resource::<Content>();
+    let messages = &messages::of(content).save;
+    let words = [messages.saved(), messages.saved_again()]
+        .iter()
+        .map(|said| said.split_whitespace().count())
+        .sum();
+    let stays = content.built::<GameSettings>().reading.of(words);
     let mut told = world.resource_mut::<Told>();
     for SavingNews(stands) in saving {
         if told.failing_since.is_some() && stands.failing_since.is_none() {
@@ -213,20 +212,22 @@ fn draw_notice(world: &mut World) {
         return;
     };
     let told = world.resource::<Told>();
-    let words = &world.resource::<GameSettings>().words;
+    let messages = &messages::of(world.resource::<Content>()).save;
     let (title, color, lines) = match (told.failing_since, told.saved_until) {
         (Some(since), _) => {
             let since = LocalClock::of_this_machine().label(since);
-            let at_stake = words.not_saving_since.replace("{time}", &since);
+            let at_stake = messages.not_saving_since(since);
             (
-                &words.not_saving,
+                messages.not_saving(),
                 dusk::NOTICE,
-                vec![at_stake, words.play_on.clone()],
+                vec![at_stake, messages.play_on().to_owned()],
             )
         }
-        (None, Some(until)) if gui.input(|input| input.time) < until => {
-            (&words.saved, dusk::PLAYER, vec![words.saved_again.clone()])
-        }
+        (None, Some(until)) if gui.input(|input| input.time) < until => (
+            messages.saved(),
+            dusk::CHARACTER,
+            vec![messages.saved_again().to_owned()],
+        ),
         _ => return,
     };
     let area = egui::Area::new(Id::new("saving"))
@@ -252,21 +253,21 @@ fn draw_card(world: &mut World) {
     let Some(lines) = world.resource::<Told>().changed.clone() else {
         return;
     };
-    let words = &world.resource::<GameSettings>().words;
+    let messages = &messages::of(world.resource::<Content>()).save;
     let mut carried_on = false;
     let modal = egui::Modal::new(Id::new("game-changed"))
         .backdrop_color(ink::ink_wash(0.3))
         .frame(egui::Frame::NONE)
         .show(&gui, |ui| {
             dialog::note(ui, CARD_WIDTH, |ui| {
-                dialog::title(ui, &words.game_changed);
+                dialog::title(ui, messages.game_changed());
                 for line in &lines {
                     ui.add(egui::Label::new(face::body(&line.what)).wrap());
                     ui.add(egui::Label::new(face::small_faint(&line.became)).wrap());
                     ui.add_space(LINE_GAP);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Max), |ui| {
-                    let carry_on = controls::primary(ui, words.carry_on.as_str());
+                    let carry_on = controls::primary(ui, messages.carry_on());
                     carried_on = carry_on.clicked() || dialog::keys(ui).confirm;
                 });
             });

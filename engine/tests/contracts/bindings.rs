@@ -1,7 +1,12 @@
 use bevy::prelude::*;
-use engine::systems::input::map::{self, InputAction, InputBinding, InputMap, KeyModifiers};
+use engine::systems::input::map::{
+    self, ClickGesture, Clicks, InputAction, InputBinding, InputMap, KeyModifiers, WheelTurn,
+};
 use engine::systems::input::scope::InputScope;
-use testkit::Game;
+use engine::systems::messages;
+use serde_json::json;
+use testkit::{Game, Map};
+use ui::keys::{CapFace, MouseGlyph};
 
 #[test]
 fn a_modifier_bound_as_an_actions_own_key_stands_in_no_other_gestures_way() {
@@ -22,6 +27,8 @@ fn a_modifier_bound_as_an_actions_own_key_stands_in_no_other_gestures_way() {
                 InputBinding::key(KeyCode::KeyE).with(alt),
             ),
         ])
+        .area("start", &Map::open(4, 4), json!([]))
+        .hero("start", 1.0, 1.0)
         .load();
     let pressed = |keys: &[KeyCode]| {
         let mut world = World::new();
@@ -64,4 +71,134 @@ fn a_modifier_bound_as_an_actions_own_key_stands_in_no_other_gestures_way() {
         [false, true, true, false],
         "nothing held beside a key"
     );
+}
+
+#[test]
+fn a_binding_reads_as_a_key_cap_with_mouse_buttons_drawn_as_glyphs_and_named_in_words() {
+    let content = Game::new()
+        .area("start", &Map::open(4, 4), json!([]))
+        .hero("start", 1.0, 1.0)
+        .load();
+    let words = &messages::of(&content).input;
+    let held = KeyModifiers {
+        ctrl: true,
+        shift: true,
+        alt: true,
+        ..KeyModifiers::NONE
+    };
+    let clicked = |button, times| {
+        InputBinding::Click(ClickGesture {
+            button,
+            times,
+            modifiers: KeyModifiers::NONE,
+        })
+    };
+    let mouse = |glyph, presses, drag| CapFace::Mouse {
+        glyph,
+        presses,
+        drag,
+    };
+    let text = |words: &str| CapFace::Text(words.to_owned());
+    let cases = [
+        (
+            InputBinding::key(KeyCode::KeyE),
+            text("E"),
+            "E",
+            Some("Ctrl+Alt+Shift+E"),
+        ),
+        (
+            InputBinding::key(KeyCode::Escape),
+            text("Esc"),
+            "Esc",
+            Some("Ctrl+Alt+Shift+Esc"),
+        ),
+        (InputBinding::AnyKey, text("Any key"), "Any key", None),
+        (
+            InputBinding::mouse(MouseButton::Right),
+            mouse(MouseGlyph::Right, 1, false),
+            "Right-click",
+            Some("Ctrl+Alt+Shift+Right-click"),
+        ),
+        (
+            InputBinding::click(MouseButton::Left),
+            mouse(MouseGlyph::Left, 1, false),
+            "Click",
+            Some("Ctrl+Alt+Shift+Click"),
+        ),
+        (
+            clicked(MouseButton::Left, Clicks::Double),
+            mouse(MouseGlyph::Left, 2, false),
+            "Double-click",
+            Some("Ctrl+Alt+Shift+Double-click"),
+        ),
+        (
+            clicked(MouseButton::Middle, Clicks::Triple),
+            mouse(MouseGlyph::Middle, 3, false),
+            "Triple-middle-click",
+            Some("Ctrl+Alt+Shift+Triple-middle-click"),
+        ),
+        (
+            InputBinding::drag(MouseButton::Left),
+            mouse(MouseGlyph::Left, 1, true),
+            "Drag",
+            Some("Ctrl+Alt+Shift+Drag"),
+        ),
+        (
+            InputBinding::drag(MouseButton::Right),
+            mouse(MouseGlyph::Right, 1, true),
+            "Right-drag",
+            Some("Ctrl+Alt+Shift+Right-drag"),
+        ),
+        (
+            InputBinding::wheel(WheelTurn::Up),
+            mouse(MouseGlyph::WheelUp, 1, false),
+            "Wheel up",
+            Some("Ctrl+Alt+Shift+Wheel up"),
+        ),
+        (
+            InputBinding::wheel(WheelTurn::Down),
+            mouse(MouseGlyph::WheelDown, 1, false),
+            "Wheel down",
+            Some("Ctrl+Alt+Shift+Wheel down"),
+        ),
+        (
+            InputBinding::click(MouseButton::Back),
+            mouse(MouseGlyph::Back, 1, false),
+            "Mouse back",
+            Some("Ctrl+Alt+Shift+Mouse back"),
+        ),
+        (
+            clicked(MouseButton::Forward, Clicks::Double),
+            mouse(MouseGlyph::Forward, 2, false),
+            "Mouse forward double-click",
+            Some("Ctrl+Alt+Shift+Mouse forward double-click"),
+        ),
+        (
+            InputBinding::mouse(MouseButton::Other(6)),
+            text("Mouse 6"),
+            "Mouse 6",
+            Some("Ctrl+Alt+Shift+Mouse 6"),
+        ),
+    ];
+    for (binding, face, name, held_name) in cases {
+        let cap = binding.cap(words);
+        assert_eq!(
+            (&cap.held, &cap.face, cap.name.as_str(), binding.name(words)),
+            (&Vec::<String>::new(), &face, name, name.to_owned()),
+            "{name}"
+        );
+        let Some(held_name) = held_name else {
+            continue;
+        };
+        let with = binding.with(held).cap(words);
+        assert_eq!(
+            (with.held, with.face, with.name),
+            (
+                ["Ctrl", "Alt", "Shift"].map(str::to_owned).to_vec(),
+                face,
+                held_name.to_owned()
+            ),
+            "{name}, held: the modifiers come first, always in the same order"
+        );
+    }
 }

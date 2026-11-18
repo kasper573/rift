@@ -2,6 +2,7 @@ mod ask;
 mod bench;
 mod binaries;
 mod check;
+mod dialogue;
 mod fit;
 mod folder;
 mod loadtest;
@@ -58,6 +59,10 @@ enum Command {
         /// Spreads the server bench's players over the area rather than crowding them on its spawn.
         #[arg(long)]
         spread: bool,
+        /// Measures the server at this many areas, `--repeat` times, rather than finding the
+        /// most it sustains: a steady load to compare builds by.
+        #[arg(long)]
+        areas: Option<usize>,
         /// Runs only these parts of the bench, each named once.
         #[arg(long, value_enum)]
         only: Vec<bench::BenchPart>,
@@ -71,7 +76,8 @@ enum Command {
         /// The video presets to run the scenarios at.
         #[arg(long, value_enum, default_value_t = render::VideoFilter::Highest)]
         video: render::VideoFilter,
-        /// How many times each scenario runs; the report keeps the median run and the spread.
+        /// How many times each scenario runs, or the server is measured at `--areas`; the report
+        /// keeps the median run and the spread.
         #[arg(long, default_value_t = 1)]
         repeat: u32,
         /// Where the report is written.
@@ -125,6 +131,16 @@ enum Render {
         #[arg(long)]
         profile: Option<PathBuf>,
     },
+    /// Draws the dialogue of GAME once for every style a line is set in and every state a choice
+    /// shows, over grounds from the lightest to the darkest and the busiest, as the pictures of the
+    /// folder OUT.
+    Dialogue {
+        game: PathBuf,
+        out: PathBuf,
+        /// Pictures to draw the dialogue over too, such as frames of the game.
+        #[arg(long)]
+        over: Vec<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -162,9 +178,11 @@ fn main() {
                 render::area(&game, &shot, &out, profile.as_deref());
             }
         }
+        Command::Render(Render::Dialogue { game, out, over }) => dialogue::run(&game, &out, &over),
         Command::Bench {
             game,
             spread,
+            areas,
             only,
             scenario,
             scenarios,
@@ -178,6 +196,7 @@ fn main() {
             let args = bench::BenchArgs {
                 game,
                 spread,
+                areas,
                 only,
                 scenario,
                 scenarios,

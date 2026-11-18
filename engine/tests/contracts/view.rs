@@ -1002,7 +1002,7 @@ fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::
     .init_asset::<WorldMaterial>()
     .init_asset::<Image>()
     .init_resource::<Animator>()
-    .add_observer(render::adopt_player)
+    .add_observer(render::adopt_character)
     .insert_resource(content.clone());
     app.finish();
     app.cleanup();

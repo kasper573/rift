@@ -8,25 +8,13 @@ use crate::core::geometry::Capsule;
 use crate::core::render::{
     CameraRig, CameraRigSystems, GroundHeights, Shot, ground_height, window_size, world_point,
 };
+use crate::core::script::DialogueCamera;
 use crate::core::units::{Degrees, Meters};
 use crate::systems::GameSettings;
 use crate::systems::actor::{Actor, Hitbox};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
-
-#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum DialogueCamera {
-    /// From behind whoever is spoken to, over their shoulder, onto whoever speaks.
-    #[default]
-    Shoulder,
-    /// Everyone in the conversation at once, from as far round the player as the game's shot
-    /// stands: in front of them, or beside them for a profile of everyone.
-    Participants,
-    /// Where the player keeps the camera.
-    Gameplay,
-}
 
 /// How the camera frames a conversation.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

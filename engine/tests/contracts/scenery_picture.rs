@@ -1,3 +1,4 @@
+use engine::systems::area::stages::{COVER, PROP};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,9 +25,8 @@ use engine::core::render::world::gpu::pick::{self, Outline, Picking};
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, Meters};
-use engine::core::vfx::rain::{RainField, Shelter};
 use engine::core::vfx::render::VfxMaterialsPlugin;
-use engine::core::vfx::shader::Stage;
+use engine::systems::area::rain::{RainField, Shelter};
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, AreaDef};
 use serde_json::json;
@@ -443,17 +443,17 @@ fn field() -> Game {
     Game::new()
         .shader_of(
             "meadow",
-            Stage::Cover,
+            COVER,
             "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(albedo().rgb * light(), 1.0);\n}\nfn sway(world: vec3<f32>, tip: f32) -> vec3<f32> {\n    return world;\n}\n",
         )
         .shader_of(
             "lamp",
-            Stage::Prop,
+            PROP,
             "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(1.0, 0.0, 0.0, 1.0);\n}\nfn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {\n    return world;\n}\n",
         )
         .shader_of(
             "aside",
-            Stage::Prop,
+            PROP,
             &format!(
                 "fn vfx(uv: vec2<f32>) -> vec4<f32> {{\n    return vec4<f32>(0.0, 1.0, 0.0, 1.0);\n}}\nfn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {{\n    return world + vec3<f32>({VANE_MOVED:?}, 0.0, 0.0);\n}}\n"
             ),

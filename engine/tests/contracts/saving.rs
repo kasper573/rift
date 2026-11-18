@@ -8,6 +8,7 @@ use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::actor::plate;
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::NodeKey;
 use engine::systems::history::{History, HistoryNews};
@@ -24,7 +25,6 @@ use engine::systems::quest::QuestDef;
 use engine::systems::save::load::{self, LoadedCharacter};
 use engine::systems::save::notice::{self, ChangeLine, GameChanged, Returned, SavingNews};
 use engine::systems::save::{self, GameChange, SavedCharacter, ServerSaving};
-use engine::systems::script::Place;
 use engine::systems::skill::{self, Rank};
 use engine::systems::society::{Account, Society};
 use engine::systems::stat::{self, StatKind};
@@ -51,7 +51,7 @@ fn what_a_server_saved_as_it_stopped_is_what_the_next_one_plays_on() {
     village.world.get_mut::<Xp>(wren).expect("xp").gain(40);
     movement::relocate(&mut village.world, wren, Pos::new(6.0, 2.0));
     let staged = JoinAs {
-        snapshot: CharacterSnapshot::of_player(&content, "Stand-in", player::def(&content)),
+        snapshot: CharacterSnapshot::of_def(&content, "Stand-in", player::def(&content)),
         start: content.built::<GameSettings>().initial_spawn,
         origin: JoinOrigin::Staged,
     };
@@ -170,7 +170,7 @@ fn a_character_that_left_is_read_from_memory_until_the_store_has_it() {
     let mut above = saves.above(&content);
     let wren = village.sign_in(1, "wren", None);
     let staged = JoinAs {
-        snapshot: CharacterSnapshot::of_player(&content, "Stand-in", player::def(&content)),
+        snapshot: CharacterSnapshot::of_def(&content, "Stand-in", player::def(&content)),
         start: content.built::<GameSettings>().initial_spawn,
         origin: JoinOrigin::Staged,
     };
@@ -231,7 +231,7 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
             }]
             .into(),
             start: CharacterStart::At(stood),
-            ..CharacterSnapshot::of_player(&before, "Wren", player::def(&before))
+            ..CharacterSnapshot::of_def(&before, "Wren", player::def(&before))
         },
         told: Vec::new(),
     };
@@ -296,7 +296,10 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
     let lines = vec![
         line("The item token is no longer in the game.", kept),
         line("The quest errand is no longer in the game.", kept),
-        line("Your inventory now holds 2. One stack did not fit.", kept),
+        line(
+            "Your inventory now holds 2 slots. 1 stack did not fit.",
+            "It was sent to you in a letter.",
+        ),
         line(
             "The Hero's skills were rearranged.",
             "Your 2 skill points are yours to spend again.",
@@ -316,7 +319,7 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
         .get::<History>(back)
         .expect("a history")
         .records()
-        .map(|record| record.entry.text.plain_words())
+        .map(|record| record.entry.text.plain_words(woods.content()))
         .collect();
     let written: Vec<String> = lines
         .iter()
@@ -501,13 +504,18 @@ fn serving(content: &Content, area: &str) -> Sim {
 }
 
 /// A village to start in and, with `forest`, a forest laid out so; two things to carry, an
-/// errand that asks for one of them, and a class with a skill to learn.
+/// errand that asks for one of them, and a class with a skill to learn. It has no messages, so
+/// what a bag has no room for is kept aside.
 fn game(forest: Option<&Map>) -> Game {
     let stacked =
         json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 50 }] });
     let game = Game::new()
         .area("village", &Map::open(9, 9), json!([]))
         .hero("village", 4.0, 4.0)
+        .edit_settings(|settings| {
+            let settings = settings.as_object_mut().expect("settings");
+            settings.remove("messages");
+        })
         .vfx("damage_taken")
         .shader("damage_pop")
         .item("token", stacked.clone())
@@ -518,7 +526,6 @@ fn game(forest: Option<&Map>) -> Game {
                 "title": "An errand",
                 "category": "Errands",
                 "blurb": "Bring five tokens.",
-                "xp": 120,
                 "modules": [
                     { "type": "hold", "item": "token.item.json", "count": 5 },
                     { "type": "hand_over", "text": ["Done."] },

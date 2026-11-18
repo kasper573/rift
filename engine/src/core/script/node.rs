@@ -6,7 +6,7 @@ use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 
 use super::dialogue::DialogueNode;
 use super::expr::Expr;
-use super::{Arrow, EffectDef, ScriptId, VarValue, Vocabulary};
+use super::{Arrow, ScriptEffect, ScriptEvent, ScriptId, VarValue};
 use crate::core::content::SchemaMark;
 use crate::core::units::Seconds;
 
@@ -19,26 +19,25 @@ pub const MAX_CALL_DEPTH: usize = 8;
 pub const MAX_LIVE_FLOWS: usize = 32;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize, EnumDiscriminants)]
-#[serde(tag = "type", rename_all = "snake_case", bound = "")]
-#[schemars(bound = "")]
+#[serde(tag = "type", rename_all = "snake_case")]
 #[strum_discriminants(
     name(NodeKind),
     derive(EnumString, IntoStaticStr, VariantArray),
     strum(serialize_all = "snake_case")
 )]
-pub enum Node<V: Vocabulary> {
+pub enum Node {
     /// Starts a flow at an event; its cause is the subject.
     #[schemars(transform = SchemaMark::System.with("flow"))]
     On {
         #[serde(flatten)]
-        event: V::Event,
+        event: ScriptEvent,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
         next: Arrow,
     },
     /// Takes yes when the test holds, else no.
     #[schemars(transform = SchemaMark::System.with("flow"))]
     If {
-        test: Expr<V>,
+        test: Expr,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
         yes: Arrow,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -54,7 +53,7 @@ pub enum Node<V: Vocabulary> {
     #[schemars(transform = SchemaMark::System.with("flow"))]
     Repeat {
         #[schemars(transform = SchemaMark::Count.with(true))]
-        times: Expr<V>,
+        times: Expr,
         at_most: u32,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
         each: Arrow,
@@ -64,7 +63,7 @@ pub enum Node<V: Vocabulary> {
     /// Pauses for seconds, or one tick at 0.
     #[schemars(transform = SchemaMark::System.with("flow"))]
     Wait {
-        seconds: Expr<V>,
+        seconds: Expr,
         at_most: Seconds,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
         next: Arrow,
@@ -72,16 +71,16 @@ pub enum Node<V: Vocabulary> {
     /// Writes locals and owner state in order.
     #[schemars(transform = SchemaMark::System.with("flow"))]
     Set {
-        values: Vec<Assignment<V>>,
+        values: Vec<Assignment>,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
         next: Arrow,
     },
     /// Calls another script and goes on when it ends.
     #[schemars(transform = SchemaMark::System.with("flow"))]
     Run {
-        script: ScriptId<V>,
+        script: ScriptId,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-        values: BTreeMap<String, VarValue<V>>,
+        values: BTreeMap<String, VarValue>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         into: Option<String>,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -91,22 +90,21 @@ pub enum Node<V: Vocabulary> {
     #[schemars(transform = SchemaMark::System.with("flow"))]
     Return {
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        value: Option<Expr<V>>,
+        value: Option<Expr>,
     },
     /// Lines and choices spoken to the subject.
     #[schemars(transform = SchemaMark::System.with("dialogue"))]
-    Dialogue(DialogueNode<V>),
+    Dialogue(DialogueNode),
     #[serde(untagged)]
-    Effect(V::Effect),
+    Effect(ScriptEffect),
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[serde(bound = "")]
-#[schemars(bound = "", transform = SchemaMark::Assignment.with(true))]
-pub struct Assignment<V: Vocabulary> {
+#[schemars(transform = SchemaMark::Assignment.with(true))]
+pub struct Assignment {
     #[serde(flatten)]
     pub target: Target,
-    pub to: Expr<V>,
+    pub to: Expr,
 }
 
 #[derive(JsonSchema, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,7 +131,7 @@ pub enum Exit {
 
 pub const NEXT_EXIT: Exit = Exit::Named(super::NEXT);
 
-impl<V: Vocabulary> Node<V> {
+impl Node {
     pub fn kind(&self) -> NodeKind {
         self.into()
     }

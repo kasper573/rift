@@ -4,14 +4,20 @@ use ui::form;
 use ui::theme;
 
 use engine::core::content::ContentFile;
+use engine::core::script::Expr;
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptDef;
+use engine::core::script::ScriptId;
+use engine::core::script::ScriptModule;
+use engine::core::script::Scripts;
+use engine::core::script::VarValue;
 use engine::field;
 use engine::systems::npc::NpcDef;
-use engine::systems::script::{
-    Condition, RiftScripts, RunnerKind, ScriptDef, ScriptId, ScriptModule, VarValue,
-};
 use serde_json::Value;
+use ui::controls;
 use ui::egui::{Align, Layout, Ui};
 use ui::glyph::Mark;
+use ui::menu;
 
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::project::Project;
@@ -41,11 +47,11 @@ pub(crate) fn script_cards(
                 ui.label(theme::strong(ScriptModule::TAG).monospace());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.menu_button(Mark::More.text(16.0).color(theme::FAINT), |ui| {
-                        if ui.button("Duplicate").clicked() {
+                        if menu::entry(ui, "Duplicate").clicked() {
                             duplicate = Some(index);
                             ui.close();
                         }
-                        if ui.button("Remove").clicked() {
+                        if menu::entry(ui, "Remove").clicked() {
                             remove = Some(index);
                             ui.close();
                         }
@@ -103,10 +109,10 @@ fn script_extras(ui: &mut Ui, cx: &mut FormCx, table: &str, module: &ScriptModul
     let key = cx.speaker.clone();
     if let (Some(content), Some(row_key)) =
         (cx.content.clone(), key.as_deref().or(cx.row_key.as_deref()))
-        && content.has_built::<RiftScripts>()
+        && content.has_built::<Scripts>()
         && let Some(bound) = panel::owner_row(&content, table, row_key, &pointer)
     {
-        let may = content.built::<RiftScripts>().may_do(bound.row);
+        let may = content.built::<Scripts>().may_do(bound.row);
         let answers: Vec<&str> = may.answers.iter().map(|kind| kind.name()).collect();
         form::kv_text(
             ui,
@@ -144,7 +150,7 @@ fn script_extras(ui: &mut Ui, cx: &mut FormCx, table: &str, module: &ScriptModul
     let reader = cx.project.reader();
     if let Some(script) = reader.path_of(module.script) {
         ui.add_space(4.0);
-        if ui.button((Mark::Arrow.text(13.0), "Open script")).clicked() {
+        if controls::marked(ui, Mark::Arrow, "Open script").clicked() {
             cx.actions.push(FormAction::OpenRow {
                 table: ScriptDef::TABLE.to_owned(),
                 key: script.to_owned(),
@@ -257,7 +263,7 @@ pub(crate) fn summary_of(cx: &FormCx, module: &Value) -> String {
     let reader = cx.project.reader();
     schema::summary_of(cx.root, module_shape(cx.root, module), module, |field| {
         reader
-            .from_json::<Condition>(field)
+            .from_json::<Expr>(field)
             .ok()
             .map(|condition| condition::summary(cx.project, &condition))
     })

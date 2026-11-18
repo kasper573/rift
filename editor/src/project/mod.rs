@@ -31,8 +31,15 @@ use engine::core::content::{
     FolderReader, LoadError, LoadPurpose, LoadReport, MISSING_FILE, NamedContent, ReadRow,
     SETTINGS_FILE, Unreadable, parent_of, table_of,
 };
-use engine::systems::script::condition::ConditionNames;
-use engine::systems::{self, GameSettings};
+use engine::core::script::Expr;
+use engine::core::text::LineText;
+use engine::systems::area::TimeOfDayName;
+use engine::systems::class::ClassId;
+use engine::systems::memory::MemoryId;
+use engine::systems::mention::Mention;
+use engine::systems::requirement::{self, ConditionNames};
+use engine::systems::status::StatusEffectId;
+use engine::systems::{self, GameSettings, messages};
 
 use self::files::{Vouched, content_holding};
 use self::watch::FolderChange;
@@ -509,7 +516,7 @@ impl Project {
     }
 
     /// What finds, on any thread, what keeps the game from being played as it is now, though it
-    /// loads to be worked on: quests and shops out of a player's reach.
+    /// loads to be worked on: quests and shops out of a character's reach.
     pub(crate) fn playable(&self) -> PlayableCheck {
         PlayableCheck(self.files.clone())
     }
@@ -1228,7 +1235,43 @@ impl Project {
 }
 
 /// Names files as they stand now; a file that doesn't read is named by its path.
-impl ConditionNames for Project {}
+impl ConditionNames for Project {
+    fn mentioned(&self, mention: Mention) -> LineText {
+        LineText::plain(match mention {
+            Mention::Item(item) => self.name_of(item),
+            Mention::Quest(quest) => self.name_of(quest),
+            Mention::Skill(skill) => self.name_of(skill),
+            Mention::Area(area) => self.name_of(area),
+        })
+    }
+
+    fn time_of_day(&self, time: &TimeOfDayName) -> LineText {
+        LineText::plain(time.0.clone())
+    }
+
+    fn memory(&self, memory: MemoryId) -> String {
+        self.name_of(memory)
+    }
+
+    fn class(&self, class: ClassId) -> String {
+        self.name_of(class)
+    }
+
+    fn status_effect(&self, effect: StatusEffectId) -> String {
+        self.name_of(effect)
+    }
+}
+
+impl Project {
+    pub fn describe(&self, condition: &Expr) -> String {
+        match &self.content {
+            Some(content) => {
+                requirement::describe(self, messages::of(content), condition).plain_words(content)
+            }
+            None => String::new(),
+        }
+    }
+}
 
 impl ContentNames for Project {
     fn name_of<Row: NamedContent>(&self, id: ContentId<Row>) -> String {

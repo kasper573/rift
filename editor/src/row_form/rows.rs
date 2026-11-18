@@ -8,8 +8,9 @@ use ui::theme;
 
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{MODULES, ModuleRule, fields_file};
+use engine::core::script::ListedScriptModule;
+use engine::core::script::ScriptModule;
 use engine::systems::registry;
-use engine::systems::script::{ListedScriptModule, ScriptModule};
 use serde_json::Value;
 use ui::controls;
 use ui::egui::Ui;

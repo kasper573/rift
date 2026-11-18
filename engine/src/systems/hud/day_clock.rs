@@ -10,15 +10,14 @@ use ui::face::{Face, TextRole};
 use ui::paint::TextShadow;
 use ui::{chip, dusk, ink};
 
+use crate::core::content::Content;
 use crate::core::gui;
-use crate::core::text::{self, TextLook};
 use crate::core::units::HourOfDay;
 use crate::systems::GameSettings;
 use crate::systems::area::TimeOfDayName;
-use crate::systems::script::condition::{Wording, WordingPart};
-use crate::systems::script::sky;
+use crate::systems::area::sky;
+use crate::systems::messages;
 use crate::systems::settings::UserSettings;
-use crate::systems::text::{LineText, SpanText};
 
 /// How far past the disc it goes round the clock reaches.
 pub(crate) const REACH: f32 = ORBIT + NUMERAL_ROOM;
@@ -82,9 +81,10 @@ pub(crate) fn face(ui: &mut Ui, world: &mut World, center: Pos2, disc: f32) {
             ));
         }
     }
+    let words = &messages::of(world.resource::<Content>()).hud;
     let said = match cycle.time_at(hour) {
-        Some(time) => format!("{} o'clock. {}.", hour.0.floor(), time.name.0),
-        None => format!("{} o'clock.", hour.0.floor()),
+        Some(time) => words.clock_time(hour.0.floor(), &time.name.0),
+        None => words.clock_hour(hour.0.floor()),
     };
     let badge = egui::Rect::from_center_size(at, Vec2::splat(2.0 * BADGE));
     ui.interact(badge, ui.id().with("clock"), Sense::hover())
@@ -96,37 +96,6 @@ pub(crate) fn face(ui: &mut Ui, world: &mut World, center: Pos2, disc: f32) {
 pub fn hand(hour: HourOfDay) -> Vec2 {
     let turned = hour.0 / HALF_DAY * TAU;
     Vec2::new(turned.sin(), -turned.cos())
-}
-
-/// What a condition asks for, its times of day each shown by the game's mark for it.
-pub(crate) fn wording(
-    ui: &mut Ui,
-    world: &mut World,
-    wording: &Wording,
-    role: TextRole,
-    color: Color32,
-) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        for part in &wording.0 {
-            match part {
-                WordingPart::Words { words } => {
-                    ui.label(role.rich(words).color(color));
-                }
-                WordingPart::Time { time } => {
-                    time_mark(ui, world, time, role, color);
-                }
-                WordingPart::Named { name, mark } => {
-                    let named = SpanText::Named {
-                        name: name.clone(),
-                        mark: mark.clone(),
-                    };
-                    let look = TextLook::role(role, color);
-                    text::show(ui, world, &LineText::from(named).styled(), look, None);
-                }
-            }
-        }
-    });
 }
 
 /// The time of day as the game marks it: its colour, its icon and its name.

@@ -8,33 +8,30 @@ use ui::float;
 use ui::glyph::CardKind;
 use ui::ink;
 
-use super::{Rank, SkillDef, SkillId, SkillKind, SkillStat};
+use super::{Rank, SkillDef, SkillId, SkillKind, SkillMessages, SkillStat};
 use crate::core::card::CardStyleDef;
 use crate::core::content::Content;
+use crate::core::geometry::Shape;
 use crate::core::gui::{self, Band};
 use crate::core::stage::card::HungCardLamp;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::chat::ChatEmbed;
 use crate::systems::class::{self, ClassId, NodeKey};
-use crate::systems::crafting;
+use crate::systems::messages::{self, Direction, Messages};
+
+use crate::core::script::condition;
+use crate::core::text::LineText;
 use crate::systems::equipment::Equipment;
-use crate::systems::hud;
+use crate::systems::hud::{self, WindowKey};
 use crate::systems::item::card::{self as item_card, CardLook};
-use crate::systems::item::{Inventory, ItemId};
+use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::mention::Mention;
 use crate::systems::player::session;
+use crate::systems::requirement;
 use crate::systems::screen::ClientScreen;
-use crate::systems::script::condition;
 use crate::systems::skill::Learned;
 use crate::systems::stat::{self, Vital};
 use crate::systems::terminal::chat;
-use crate::systems::text::LineText;
-use ui::words;
-use ui::words::counted;
-
-pub(crate) const BASIC_ATTACK_MARK: &str = "basic attack";
-
-pub(crate) const WINDOW_KEY: &str = "Skill";
 
 /// One skill as the player sees it: the row at the rank they hold, with the node that unlocks it
 /// when it sits in their tree, and the worn item that grants it when that is how they know it.
@@ -59,7 +56,8 @@ impl Plugin for SkillCardPlugin {
         app.init_resource::<hud::Pinned<SkillId>>()
             .add_systems(
                 Update,
-                hud::raise_pinned::<SkillId>(WINDOW_KEY).run_if(in_state(ClientScreen::Area)),
+                hud::raise_pinned::<SkillId>(WindowKey::SkillCard)
+                    .run_if(in_state(ClientScreen::Area)),
             )
             .add_systems(
                 EguiPrimaryContextPass,
@@ -77,12 +75,12 @@ pub fn open(world: &mut World, skill: SkillId, from: Option<Rect>) {
 
 /// How far the pinned card is turned toward the pointer.
 pub fn tilt(world: &World) -> CardTilt {
-    hud::pinned_tilt(world, WINDOW_KEY)
+    hud::pinned_tilt(world, WindowKey::SkillCard)
 }
 
 /// The lamp the pinned card is lit by, while it is on the stage.
 pub fn lamp(world: &World) -> Option<HungCardLamp> {
-    hud::pinned_lamp(world, WINDOW_KEY)
+    hud::pinned_lamp(world, WindowKey::SkillCard)
 }
 
 pub fn shown(world: &World) -> Option<SkillId> {
@@ -98,7 +96,7 @@ pub fn showing(world: &World) -> bool {
 }
 
 pub fn layer() -> egui::LayerId {
-    hud::window_layer(WINDOW_KEY)
+    hud::window_layer(WindowKey::SkillCard)
 }
 
 /// The card of a skill as the player's own character knows it.
@@ -153,7 +151,7 @@ pub fn tooltip(
         text::show(
             ui,
             world,
-            &line.styled(),
+            &line.styled(&content),
             TextLook::role(TextRole::Tooltip, ink::INK2),
             None,
         );
@@ -174,15 +172,21 @@ pub fn kind(def: &SkillDef) -> CardKind {
 pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) -> CardResponse {
     let content = world.resource::<Content>().clone();
     let def = card.skill.get(&content);
-    let tally = rank_tally(def, card.rank);
+    let all = messages::of(&content);
+    let words = &all.skill;
+    let tally = rank_tally(words, def, card.rank);
     let learned = card.rank > Rank::NONE;
     let icon = gui::image(world, &def.icon).map(|image| image.texture);
-    let mut shown = Card::new(kind(def), &def.name);
+    let band = match def.kind {
+        SkillKind::Active => words.active_band(),
+        SkillKind::Passive => words.passive_band(),
+    };
+    let mut shown = Card::new(kind(def), band, &def.name);
     shown.dress = CardStyleDef::of(&content, def.card_style).dress(world, None);
     shown.tally = Some(&tally);
     shown.picture = icon;
-    shown.closable = look.closable;
-    shown.action = Some(chat::card_action());
+    shown.close = look.closable.then_some(all.interface.close());
+    shown.action = Some(chat::card_action(&all.terminal));
     shown.depth = look.depth;
     let response = shown.show(ui, |ui, plate| {
         if plate.name_cut {
@@ -191,11 +195,11 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
         text::show(
             ui,
             world,
-            &card_overview(&content, def, card).styled(),
+            &card_overview(&content, def, card).styled(&content),
             TextLook::role(TextRole::CardBody, ink::INK2),
             None,
         );
-        card::heading(ui, plate, "ranks");
+        card::heading(ui, plate, words.heading_ranks());
         for (index, level) in def.levels.iter().enumerate() {
             let rank = Rank(index as u8 + 1);
             let lit = rank <= card.rank;
@@ -203,32 +207,37 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
             ui.add(
                 egui::Label::new(
                     TextRole::CardBody
-                        .rich(rank_line(def, rank, level.cost.0))
+                        .rich(rank_line(all, def, rank, level.cost.0))
                         .color(color),
                 )
                 .wrap(),
             );
         }
         if !def.masteries.is_empty() {
-            card::heading(ui, plate, "masters");
+            card::heading(ui, plate, words.heading_masters());
             for recipe in def.masteries.iter().filter_map(|key| key.get(&content)) {
-                let makes = crafting::stacks_mentioned(&content, &recipe.makes, 0);
+                let makes = ItemStack::summed(&recipe.makes);
                 item_card::detail_line(ui, world, None, &makes);
             }
         }
         if let Some(access) = &card.node {
             let lines = access_lines(world, &content, access);
             if !lines.is_empty() {
-                card::heading(ui, plate, if learned { "unlocked by" } else { "costs" });
+                let heading = if learned {
+                    words.heading_unlocked_by()
+                } else {
+                    words.heading_costs()
+                };
+                card::heading(ui, plate, heading);
                 for (line, met) in lines {
                     item_card::detail_line(ui, world, Some(met), &line);
                 }
             }
         }
-        card::heading(ui, plate, "to use");
+        card::heading(ui, plate, words.heading_to_use());
         let needs = use_lines(world, &content, def, card.rank);
         if needs.is_empty() {
-            card::fact(ui, "Nothing needed");
+            card::fact(ui, words.nothing_needed());
         }
         for (line, met) in needs {
             item_card::detail_line(ui, world, Some(met), &line);
@@ -243,7 +252,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
 fn card_overview(content: &Content, def: &SkillDef, card: &SkillCard) -> LineText {
     match card.granted_by {
         Some(item) => lent_line(content, item),
-        None => LineText::plain(use_line(def, card.rank)),
+        None => LineText::plain(use_line(&messages::of(content).skill, def, card.rank)),
     }
 }
 
@@ -252,6 +261,7 @@ fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) 
     if let Some(item) = card.granted_by {
         return lent_line(content, item);
     }
+    let words = &messages::of(content).skill;
     if card.rank == Rank::NONE {
         let wanting = card.node.as_ref().and_then(|access| {
             access_lines(world, content, access)
@@ -259,29 +269,26 @@ fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) 
                 .find(|(_, met)| !met)
         });
         return match wanting {
-            Some((line, _)) => LineText::plain("Not learned · needs ").then(line),
-            None => LineText::plain("Not learned"),
+            Some((line, _)) => words.not_learned_needs(line),
+            None => LineText::plain(words.not_learned()),
         };
     }
-    let kind = match def.kind {
-        SkillKind::Active => "",
-        SkillKind::Passive => "Passive · ",
-    };
-    LineText::plain(format!(
-        "{} · {kind}{}",
-        rank_tally(def, card.rank),
-        use_line(def, card.rank)
-    ))
+    let usage = use_line(words, def, card.rank);
+    let (rank, count) = (card.rank.0, def.rank_count());
+    LineText::plain(match def.kind {
+        SkillKind::Active => words.tooltip_active(rank, count, usage),
+        SkillKind::Passive => words.tooltip_passive(rank, count, usage),
+    })
 }
 
-fn rank_tally(def: &SkillDef, rank: Rank) -> String {
-    format!("Rank {} of {}", rank.0, def.rank_count())
+fn rank_tally(words: &SkillMessages, def: &SkillDef, rank: Rank) -> String {
+    words.rank_tally(def.rank_count(), rank.0)
 }
 
 fn lent_line(content: &Content, item: ItemId) -> LineText {
-    LineText::plain("Known while your ")
-        .then(Mention::Item(item).span(content))
-        .then(" is worn")
+    messages::of(content)
+        .skill
+        .lent_line(Mention::Item(item).span(content))
 }
 
 fn draw_card(world: &mut World) {
@@ -291,55 +298,65 @@ fn draw_card(world: &mut World) {
             .material
             .clone()
     };
-    hud::draw_pinned::<SkillId>(world, WINDOW_KEY, material, |ui, world, skill, depth| {
-        let card = of(world, *skill);
-        let look = CardLook {
-            depth,
-            ..CardLook::PINNED
-        };
-        show(ui, world, &card, look)
-    });
+    hud::draw_pinned::<SkillId>(
+        world,
+        WindowKey::SkillCard,
+        material,
+        |ui, world, skill, depth| {
+            let card = of(world, *skill);
+            let look = CardLook {
+                depth,
+                ..CardLook::PINNED
+            };
+            show(ui, world, &card, look)
+        },
+    );
 }
 
-fn use_line(def: &SkillDef, rank: Rank) -> String {
+fn use_line(words: &SkillMessages, def: &SkillDef, rank: Rank) -> String {
     if def.kind == SkillKind::Passive {
-        return "Holds while known".to_owned();
+        return words.holds_while_known().to_owned();
     }
     let rank = rank.max(Rank::FIRST);
-    let mut parts = vec![def.target.describe().to_owned()];
+    let mut parts = vec![def.target.named(words).to_owned()];
     if let Some(shape) = def.area_at(rank) {
-        parts.push(shape.describe());
+        parts.push(area_words(words, shape));
     }
     if let Some(range) = def.range {
-        parts.push(format!("{} m", range.0 + def.stat(rank, SkillStat::Range)));
+        parts.push(words.range_of(range.0 + def.stat(rank, SkillStat::Range)));
     }
     let cooldown = def.cooldown_at(rank);
     if cooldown.0 > 0.0 {
-        parts.push(format!("{} s cooldown", trim(cooldown.0)));
+        parts.push(words.cooldown_of(cooldown.0));
     }
     parts.join(" · ")
 }
 
-fn rank_line(def: &SkillDef, rank: Rank, cost: u32) -> String {
+fn area_words(words: &SkillMessages, shape: Shape) -> String {
+    match shape {
+        Shape::Circle { radius } => words.area_circle(radius.0),
+        Shape::Rect { width, height } => words.area_rect(height.0, width.0),
+        Shape::Cone { angle, length } => words.area_cone(angle.0, length.0),
+        Shape::Line { length, width } => words.area_line(length.0, width.0),
+    }
+}
+
+fn rank_line(all: &Messages, def: &SkillDef, rank: Rank, cost: u32) -> String {
     let level = &def.levels[usize::from(rank.0) - 1];
-    let mut line = format!("Rank {} · {}", rank.0, counted(cost, "point"));
     let changes: Vec<String> = level
         .stats
         .iter()
         .map(|(stat, value)| {
-            let unit = stat.unit().map_or(String::new(), |unit| format!(" {unit}"));
-            format!(
-                "{} {}{unit}",
-                stat.label(),
-                words::signed(f64::from(*value))
-            )
+            all.skill
+                .stat_change(stat.key(), value.abs(), Direction::of(*value))
         })
         .collect();
-    if !changes.is_empty() {
-        line.push_str(": ");
-        line.push_str(&changes.join(", "));
+    if changes.is_empty() {
+        all.skill.rank_cost(rank.0, cost)
+    } else {
+        all.skill
+            .rank_cost_changing(rank.0, cost, all.interface.listed_words(changes))
     }
-    line
 }
 
 fn access_lines(world: &World, content: &Content, access: &NodeAccess) -> Vec<(LineText, bool)> {
@@ -368,38 +385,27 @@ fn use_lines(
     rank: Rank,
 ) -> Vec<(LineText, bool)> {
     let me = session::me(world);
+    let all = messages::of(content);
+    let words = &all.skill;
     let mut lines: Vec<(LineText, bool)> = def
         .requires
         .iter()
         .flat_map(condition::parts)
         .map(|part| {
             let met = me.is_some_and(|me| condition::holds(world, me, part));
-            (LineText::from(&condition::describe(content, part)), met)
+            let what = requirement::describe(content, all, part);
+            (what, met)
         })
         .collect();
     let mana = def.mana_at(rank.max(Rank::FIRST));
     if mana > 0.0 {
         let held = me.map_or(0.0, |me| stat::current(world, me, Vital::Mana));
-        lines.push((LineText::plain(format!("Spends {mana} mana")), held >= mana));
+        lines.push((LineText::plain(words.spends_mana(mana)), held >= mana));
     }
     let bag = me.and_then(|me| world.get::<Inventory>(me));
     for stack in &def.cost {
         let held = bag.map_or(0, |bag| bag.count(stack.item));
-        lines.push((
-            LineText::plain(format!("Spends {} ", stack.count))
-                .then(Mention::Item(stack.item).span(content))
-                .then(format!(" ({held} held)")),
-            held >= stack.count,
-        ));
+        lines.push((words.spends_item(held, stack.named()), held >= stack.count));
     }
     lines
-}
-
-fn trim(value: f32) -> String {
-    let rounded = (value * 100.0).round() / 100.0;
-    if rounded.fract() == 0.0 {
-        format!("{rounded:.0}")
-    } else {
-        format!("{rounded}")
-    }
 }

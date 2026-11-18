@@ -1,18 +1,23 @@
+use crate::systems::area::script::area_owner;
 use std::collections::BTreeSet;
 
 use bevy_ecs::prelude::*;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use super::AreaId;
 use crate::core::content::Content;
 use crate::core::math::Pos;
+use crate::core::script::{EventDef, EventKind, Instances, RunnerKind, Vocabulary};
+use crate::core::text::LineText;
 use crate::core::units::Meters;
+use crate::systems::area::AREA_RUNNER;
+use crate::systems::area::object::{Entered, Left};
 use crate::systems::area_instance::AreaInstanceWorld;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
 use crate::systems::mount::{self, CrossingRide};
 use crate::systems::npc::Npc;
 use crate::systems::player::{CharacterState, Played, Players};
-use crate::systems::script::{EventKind, RiftEvent, RiftInstances, area_owner};
-use crate::systems::text::LineText;
 
 #[derive(Component, Clone, Copy)]
 pub struct Crossing {
@@ -50,7 +55,7 @@ pub struct Traveler {
     /// The instance of the area they are bound for, or the world everyone there shares.
     pub instance: Option<AreaInstanceWorld>,
     pub state: CharacterState,
-    /// The mount they rode out on, and where on it they sat.
+    /// The mount they rode out on.
     pub ride: Option<CrossingRide>,
 }
 
@@ -64,14 +69,11 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
         .iter()
         .map(|(entity, _)| mount::crossing(world, *entity))
         .collect();
-    let mut travelers: Vec<Traveler> = crossings
+    crossings
         .into_iter()
         .zip(rides)
         .filter_map(|((entity, crossing), ride)| leave(world, entity, crossing, ride))
-        .collect();
-    // A driver arrives before whoever rode with them, who are seated beside them as they arrive.
-    travelers.sort_by_key(|traveler| traveler.ride.map(|ride| ride.seat));
-    travelers
+        .collect()
 }
 
 pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
@@ -93,9 +95,9 @@ pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
     )
     .mark(Some(HistoryMark::Arrived));
     history::record(world, entity, arrived);
-    raise_area(world, EventKind::Entered, entity);
+    raise_area(world, EventKind::of::<Entered>(), entity);
     if first_visit {
-        raise_area(world, EventKind::Discovered, entity);
+        raise_area(world, EventKind::of::<AreaDiscovered>(), entity);
     }
     entity
 }
@@ -103,16 +105,15 @@ pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
 pub fn raise_area(world: &mut World, kind: EventKind, subject: Entity) {
     let is_npc = world.get::<Npc>(subject).is_some();
     let owner = area_owner(world);
-    world.resource_mut::<RiftInstances>().raise(
-        owner,
-        kind,
-        Some(subject),
-        Vec::new(),
-        move |event| match event {
-            RiftEvent::Entered { by } | RiftEvent::Left { by } => by.admits(is_npc),
-            _ => true,
-        },
-    );
+    world
+        .resource_mut::<Instances>()
+        .raise(owner, kind, Some(subject), Vec::new(), move |event| {
+            event
+                .downcast_ref::<Entered>()
+                .map(|crossed| crossed.by)
+                .or_else(|| event.downcast_ref::<Left>().map(|crossed| crossed.by))
+                .is_none_or(|by| by.admits(is_npc))
+        });
 }
 
 fn leave(
@@ -132,11 +133,25 @@ fn leave(
         state,
         ride,
     };
-    raise_area(world, EventKind::Left, entity);
+    raise_area(world, EventKind::of::<Left>(), entity);
     world
         .resource_mut::<Players>()
         .0
         .remove(&traveler.played.client);
     world.despawn(entity);
     Some(traveler)
+}
+
+/// A character comes to an area they have not been in before.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct AreaDiscovered {}
+
+impl EventDef for AreaDiscovered {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[AREA_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary.event::<AreaDiscovered>("discovered");
 }

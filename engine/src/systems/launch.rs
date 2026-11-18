@@ -16,8 +16,8 @@ use crate::core::net::auth::TokenClaims;
 use crate::core::store::RecordStoreAddress;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
 use crate::core::units::{HourOfDay, Seconds};
+use crate::systems::area::Place;
 use crate::systems::player::SpawnPolicy;
-use crate::systems::script::Place;
 use crate::systems::staging::Staging;
 
 pub const BUILD_INFO_FLAG: &str = "--build-info";
@@ -159,8 +159,8 @@ pub struct ServerConfig {
     /// How many instances of the game's instanced areas run at once.
     pub max_instances: u32,
     pub content_dir: PathBuf,
-    pub player_spawn_policy: SpawnPolicy,
-    pub player_immortal: bool,
+    pub character_spawn_policy: SpawnPolicy,
+    pub characters_immortal: bool,
     pub daylight: ServerDaylight,
     /// The hour of the day a fixed daylight holds at, 0 to 24.
     pub hour: Option<HourOfDay>,
@@ -199,8 +199,8 @@ impl ServerConfig {
             max_clients: 8,
             max_instances: 8,
             content_dir,
-            player_spawn_policy: SpawnPolicy::Map,
-            player_immortal: false,
+            character_spawn_policy: SpawnPolicy::Map,
+            characters_immortal: false,
             daylight: ServerDaylight::Turning,
             hour: None,
             weather: ServerWeather::Turning,
@@ -277,6 +277,18 @@ pub struct ClientConfig {
     pub profile_dir: PathBuf,
     pub exit_on_stdin_eof: bool,
     pub probe: Option<SocketAddr>,
+    /// Where releases are published: a client whose server runs another build installs that
+    /// build's client from there, when it was built with a release key.
+    pub releases_url: Option<String>,
+    /// The build this client updated itself from, which it sets on the restart after an update.
+    pub updated_from: Option<String>,
+}
+
+impl ClientConfig {
+    /// The variable a client sets on the restart after an update, naming the build it replaced.
+    pub fn updated_from_var() -> String {
+        format!("{CLIENT_ENV_PREFIX}UPDATED_FROM")
+    }
 }
 
 pub fn env_of<T: Serialize>(prefix: &str, config: &T) -> Vec<(String, String)> {

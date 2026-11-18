@@ -6,14 +6,18 @@ pub mod client;
 pub mod hotbar;
 pub mod learn;
 pub mod prompt;
+pub mod query;
 pub mod reset;
 pub mod window;
 
-pub use casting::{CastAim, UseSkill, UseSkillRequest, cast};
+pub use casting::{CastAim, CastWay, UseSkill, UseSkillRequest, cast};
 pub use hotbar::{AssignBasicAttackRequest, AssignHotbarRequest, BasicAttackPick};
 pub use learn::LearnSkillsRequest;
 pub use reset::{ResetAnswerRequest, ResetPrompt, ResetSkills};
 
+use crate::core::script::ReachDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::Vocabulary;
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
@@ -34,6 +38,10 @@ use crate::core::content::{
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::Pos;
 use crate::core::script::FlowCx;
+use crate::core::script::{
+    EventKind, Expr, OwnerRow, RunnerKind, ScriptModule, ScriptedRow, Scripts,
+};
+use crate::core::text::LineText;
 use crate::core::time::UnixMillis;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::AreaTag;
@@ -41,16 +49,288 @@ use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
 use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind, ItemStack};
+use crate::systems::item::{USED_POINT, USED_RANK, USED_TARGET, Used};
 use crate::systems::mention::Mention;
+use crate::systems::messages::{self, messages};
 use crate::systems::movement;
 use crate::systems::npc::{Npc, NpcDef};
-use crate::systems::script::event::{USED_POINT, USED_RANK, USED_TARGET};
-use crate::systems::script::query::{Among, TickRoster};
-use crate::systems::script::{
-    Condition, EventKind, OwnerRow, RiftScripts, RunnerKind, ScriptModule, ScriptedRow,
-};
+use crate::systems::roster::{Among, TickRoster};
 use crate::systems::stat::{self, StatKind};
-use crate::systems::text::LineText;
+use crate::systems::status::aspect::{Activated, Deactivated, Interval};
+
+messages! {
+    /// What the game says of skills.
+    pub struct SkillMessages {
+        /// What a player without a class is told learning a skill.
+        learn_without_class,
+        /// What a player is told putting something on a bar slot there is none of.
+        no_such_slot,
+        /// What a player without a skill bar is told putting something on it.
+        no_hotbar,
+        /// What a player without a basic attack slot is told setting their basic attack.
+        no_basic_attack_slot,
+        /// What a player is told aiming a skill at a spot farther off than it reaches.
+        spot_too_far,
+        /// What a player is told casting at someone out of their sight.
+        cant_see,
+        /// What a player is told casting a skill, `{skill}`, at someone it can't land on.
+        cant_target[skill: Line],
+        /// What a player is told casting a skill, `{skill}`, that wants a target without one.
+        needs_target[skill: Line],
+        /// What a player is told casting an area skill, `{skill}`, without a point to aim at.
+        needs_point[skill: Line],
+        /// What a player is told casting a spot skill, `{skill}`, without a spot to aim at.
+        needs_spot[skill: Line],
+        /// What a player is told casting a skill, `{skill}`, that is still cooling down.
+        cooling_down[skill: Line],
+        /// What a player is told casting a skill, `{skill}`, while lacking something it needs, `{need}`.
+        needs_unmet[need: Line, skill: Line],
+        /// What a player is told casting a skill, `{skill}`, with too little mana, `{mana}` being what it takes.
+        needs_mana[mana: Number, skill: Line],
+        /// What a player is told using or placing a skill, `{skill}`, they have not learned.
+        unknown_skill[skill: Line],
+        /// What a player is told casting a passive skill, `{skill}`.
+        passive_holds[skill: Line],
+        /// What a player is told placing a passive skill, `{skill}`, on the bar.
+        passive_unslotted[skill: Line],
+        /// What a player is told placing an item, `{item}`, they don't have on the bar.
+        item_not_held[item: Line],
+        /// What a player is told picking a skill, `{skill}`, that can't be a basic attack.
+        not_basic_attack[skill: Line],
+        /// What a player is told picking an item, `{item}`, that grants no basic attack.
+        item_no_basic_attack[item: Line],
+        /// The notice that a skill, `{skill}`, has become the basic attack.
+        basic_attack_set[skill: Line],
+        /// What a player is told planning a node, `{node}`, their tree doesn't have.
+        not_in_tree(node: Text),
+        /// What a player is told planning a rank of a skill, `{skill}`, they already hold at `{rank}` or above.
+        already_ranked[rank: Number, skill: Line],
+        /// What a player is told planning a rank, `{rank}`, past what a skill, `{skill}`, has, `{count}` being how many ranks it has.
+        rank_out_of_range[count: Number, rank: Number, skill: Line],
+        /// What a player is told learning more than they can pay for, `{cost}` being the points it takes and `{held}` those they can spend.
+        short_of_points(cost: Number, held: Number),
+        /// The notice that a skill, `{skill}`, was learned.
+        learned_skill[skill: Line],
+        /// The notice that a skill, `{skill}`, reached a higher rank, `{rank}`.
+        learned_rank[rank: Number, skill: Line],
+        /// The notice that every skill was forgotten and the points returned.
+        skills_reset,
+        /// What the reset confirm dialog says is given up, `{ranks}` across `{skills}`, and given back, `{points}`.
+        reset_summary(points: Number, ranks: Number, skills: Number),
+        /// The title of the dialog that asks whether to reset skills.
+        reset_title,
+        /// What the reset confirm dialog says of the bar slots.
+        reset_body,
+        /// The button that confirms resetting skills.
+        reset_confirm,
+        /// The button that declines a skill or bar change in a confirm dialog.
+        keep,
+        /// Why a conversation ends when its player is struck.
+        under_attack,
+        /// What a player is told attacking with an empty basic attack slot.
+        nothing_to_attack_with,
+        /// What a player is told quick casting a skill, `{skill}`, with nothing under the pointer.
+        nothing_to_aim_at[skill: Line],
+        /// The prompt shown while aiming where to step off a mount.
+        pick_shore,
+        /// What the click does while aiming where a rider steps off a mount.
+        step_off,
+        /// What the dismiss key does while aiming where to step off a mount.
+        stay_aboard,
+        /// The prompt shown while aiming where to launch a mount on water.
+        pick_water,
+        /// What the click does while aiming where to launch a mount.
+        launch,
+        /// What the dismiss key does while aiming a skill at a spot.
+        put_away,
+        /// The prompt shown while aiming a skill at a spot.
+        pick_spot,
+        /// What the click does while aiming a skill at a spot.
+        use_there,
+        /// What marks a good spot to call a mount, `{mount}`, at.
+        mount_here(mount: Text),
+        /// What marks a good spot to step off at.
+        step_off_here,
+        /// The screen-reader name and tooltip of the grip that resizes the bar.
+        reshape_bar,
+        /// What the notice says while a bar slot, `{slot}`, waits for its new key, `{key}` being the key that cancels.
+        rebind_prompt[key: Line, slot: Number],
+        /// What a player is told pinning to a full bar.
+        no_free_slot,
+        /// The title of the dialog asking whether to take an entry, `{entry}`, off the bar.
+        take_off_title[entry: Line],
+        /// What the take-off dialog says of what remains.
+        take_off_body,
+        /// The button that takes an entry off the bar.
+        take_off,
+        /// What names an empty bar entry.
+        nothing,
+        /// What names an empty bar slot.
+        empty,
+        /// The screen-reader name of a bar slot, `{slot}` being its number and `{name}` what it holds.
+        bar_slot_named(name: Text, slot: Number),
+        /// What a bar slot shows while it waits for a new key.
+        key_pending,
+        /// The menu entry that rebinds a bar slot's key.
+        rebind_key,
+        /// The menu entry that empties a bar slot.
+        clear_slot,
+        /// What a bar slot's menu says of what it holds, `{name}`, and its key, `{key}`.
+        slot_keyed[key: Line, name: Text],
+        /// What a bar slot's menu says of what it holds, `{name}`, when it has no key.
+        slot_unkeyed(name: Text),
+        /// The screen-reader name of the basic attack slot, `{name}` being what it holds.
+        basic_slot_named(name: Text),
+        /// The menu entry that empties the basic attack slot.
+        clear,
+        /// What a bar slot shows over a skill that cools down for `{count}` more minutes.
+        cooling_minutes(count: Number),
+        /// What a bar slot shows over a skill that cools down for `{count}` more seconds.
+        cooling_seconds(count: Number),
+        /// The hint under the basic attack slot's skill card, with the keys `{interact}`, `{carry}`, `{pin}` and `{options}`.
+        basic_attack_hint[carry: Line, interact: Line, options: Line, pin: Line],
+        /// The hint on the empty basic attack slot, `{carry}` being the key that carries.
+        basic_slot_empty_hint[carry: Line],
+        /// The tooltip title of the empty basic attack slot.
+        basic_slot_empty,
+        /// The hint on a bar slot with a key, `{key}` being the key for its options.
+        slot_options_hint[key: Line],
+        /// What a bar slot's hint says when it has no key.
+        slot_no_key,
+        /// The hint that follows no key, `{key}` being the key for options.
+        slot_bind_hint[key: Line],
+        /// The hint on a bar slot that has `{key}` bound, `{usage}` being the slot input.
+        slot_use_hint[key: Line, usage: Line],
+        /// The hint on a bar slot, `{key}` being the key that empties it.
+        slot_take_off_hint[key: Line],
+        /// What the tooltip of an empty bar slot says first.
+        slot_empty_hint,
+        /// What the tooltip of an empty bar slot says of filling it, `{key}` being the key that carries.
+        slot_fill_hint[key: Line],
+        /// The tooltip title of an empty bar slot, `{slot}` being its number.
+        slot_titled(slot: Number),
+        /// What a player is told using an item, `{item}`, they have none of.
+        item_used_up[item: Line],
+        /// What a player is told binding a key, `{key}`, the game already uses for `{action}`.
+        key_taken[action: Text, key: Line],
+        /// What a player is told when a key, `{key}`, moves from bar slot `{lost}` to slot `{gained}`.
+        key_moved[gained: Number, key: Line, lost: Number],
+        /// The mark on an item's card for the skill it grants as a basic attack.
+        basic_attack_mark,
+        /// The band of an active skill's card.
+        active_band,
+        /// The band of a passive skill's card.
+        passive_band,
+        /// The heading of a skill card's ranks.
+        heading_ranks,
+        /// The heading of what a skill card's masteries make.
+        heading_masters,
+        /// The heading of what unlocked a learned skill.
+        heading_unlocked_by,
+        /// The heading of what a skill not yet learned costs.
+        heading_costs,
+        /// The heading of what a skill needs to be used.
+        heading_to_use,
+        /// What a skill card says when using the skill needs nothing.
+        nothing_needed,
+        /// What a skill's tooltip says of a skill not learned.
+        not_learned,
+        /// What a skill's tooltip says of a skill not learned that still needs `{need}`.
+        not_learned_needs[need: Line],
+        /// What a passive skill's tooltip says, `{tally}` being its rank and `{usage}` how it works.
+        tooltip_passive(count: Number, rank: Number, usage: Text),
+        /// What an active skill's tooltip says, `{tally}` being its rank and `{usage}` how it works.
+        tooltip_active(count: Number, rank: Number, usage: Text),
+        /// A skill's rank, `{rank}` of `{count}`.
+        rank_tally(count: Number, rank: Number),
+        /// What a skill's card says of a skill lent by a worn item, `{item}`.
+        lent_line[item: Line],
+        /// What a passive skill's card says of how it works.
+        holds_while_known,
+        /// How a skill that lands on one ally is described.
+        target_single_ally,
+        /// How a skill that lands on one enemy is described.
+        target_single_enemy,
+        /// How a skill that lands on allies in an area is described.
+        target_area_ally,
+        /// How a skill that lands on enemies in an area is described.
+        target_area_enemy,
+        /// How a skill aimed at a spot is described.
+        target_spot,
+        /// How a skill that lands on its caster is described.
+        target_caster,
+        /// How a circular area is described, `{radius}` being its radius in meters.
+        area_circle(radius: Number),
+        /// How a rectangular area is described, `{width}` by `{height}` meters.
+        area_rect(height: Number, width: Number),
+        /// How a cone is described, `{angle}` degrees wide and `{length}` meters long.
+        area_cone(angle: Number, length: Number),
+        /// How a line is described, `{length}` meters long and `{width}` wide.
+        area_line(length: Number, width: Number),
+        /// How far a skill reaches on its card, `{meters}` in meters.
+        range_of(meters: Number),
+        /// How a skill's cooldown, `{seconds}`, is described.
+        cooldown_of(seconds: Number),
+        /// How a rank is introduced on a skill card, `{rank}` being the rank and `{cost}` its cost in points.
+        rank_cost(cost: Number, rank: Number),
+        /// How a rank is introduced on a skill card when it changes stats: `{rank}`, its cost in points `{cost}` and `{changes}`, the list of the stats it changes.
+        rank_cost_changing(rank: Number, cost: Number, changes: Text),
+        /// How a skill card says a rank changes a stat: `{stat}` is `power`, `cooldown`, `range`, `radius`, `duration` or `mana`, and `{value}` the change, up or down as `{direction}` says.
+        stat_change(stat: Text, value: Number, direction: Text),
+        /// What a skill card says it spends, `{mana}` being the mana.
+        spends_mana(mana: Number),
+        /// What a skill card says it spends, `{item}`, with `{held}` how many the player holds.
+        spends_item[held: Number, item: Line],
+        /// The hint of the key that raises a rank in the skill window.
+        raise,
+        /// The hint of the key that lowers a planned rank in the skill window.
+        lower,
+        /// The hint of the key that carries a skill to the bar.
+        to_the_bar,
+        /// The hint of the key that opens a skill's card.
+        open_the_card,
+        /// What the skill window says when the player has no class.
+        no_class,
+        /// How a locked node of the skill tree is named to a screen reader.
+        state_locked,
+        /// How an available node of the skill tree is named to a screen reader.
+        state_available,
+        /// How a learned node of the skill tree is named to a screen reader.
+        state_learned,
+        /// How a node of the skill tree at its last rank is named to a screen reader.
+        state_maxed,
+        /// How a planned node of the skill tree is named to a screen reader, `{rank}` being the planned rank.
+        state_picked(rank: Number),
+        /// The screen-reader name of a node of the skill tree, `{skill}` being the skill and `{state}` its state.
+        node_named(skill: Text, state: Text),
+        /// The screen-reader name of the skill tree.
+        skill_tree,
+        /// What the skill window says of the points left, `{points}`.
+        points_to_spend(points: Number),
+        /// What the skill window says of the points planned, `{points}`.
+        points_picked(points: Number),
+        /// The button that learns the planned ranks.
+        learn,
+        /// What the learn button's tooltip says.
+        learn_tooltip,
+        /// The button that drops the planned ranks.
+        reset_plan,
+        /// What the reset plan button's tooltip says.
+        reset_plan_tooltip,
+        /// The hint of the key that plans a rank on a skill's tooltip.
+        hint_picks_rank,
+        /// The hint of the key that takes a planned rank back on a skill's tooltip.
+        hint_takes_back,
+        /// The hint of the key that shows a skill's card.
+        hint_shows_card,
+        /// The hint of the key that puts a skill on the bar.
+        hint_puts_on_bar,
+        /// The hint of the key that carries a skill to a slot.
+        hint_carries,
+        /// The hint of the key that adds a skill to chat.
+        hint_adds_to_chat,
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -99,7 +379,7 @@ pub struct SkillDef {
     #[serde(default, skip_serializing_if = "Seconds::is_zero")]
     pub cooldown: Seconds,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub requires: Option<Condition>,
+    pub requires: Option<Expr>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cost: Vec<ItemStack>,
     #[serde(default, skip_serializing_if = "serial::is_false")]
@@ -261,7 +541,7 @@ impl ModuleSet for SkillDef {
 }
 
 impl ScriptedRow for SkillDef {
-    const OWNER: RunnerKind = RunnerKind::Skill;
+    const OWNER: RunnerKind = SKILL_RUNNER;
 
     fn script(module: &SkillModule) -> Option<&ScriptModule> {
         match module {
@@ -359,14 +639,14 @@ impl Targeting {
         self.into()
     }
 
-    pub fn describe(self) -> &'static str {
+    pub fn named(self, words: &SkillMessages) -> &str {
         match self {
-            Targeting::SingleAlly => "One ally",
-            Targeting::SingleEnemy => "One enemy",
-            Targeting::AreaAlly => "Allies around the aimed point",
-            Targeting::AreaEnemy => "Enemies around the aimed point",
-            Targeting::Spot => "A spot in range",
-            Targeting::Caster => "Yourself",
+            Targeting::SingleAlly => words.target_single_ally(),
+            Targeting::SingleEnemy => words.target_single_enemy(),
+            Targeting::AreaAlly => words.target_area_ally(),
+            Targeting::AreaEnemy => words.target_area_enemy(),
+            Targeting::Spot => words.target_spot(),
+            Targeting::Caster => words.target_caster(),
         }
     }
 }
@@ -407,15 +687,14 @@ pub enum SkillStat {
 }
 
 impl SkillStat {
-    pub fn label(self) -> &'static str {
-        self.into()
-    }
-
-    pub fn unit(self) -> Option<&'static str> {
+    pub fn key(self) -> &'static str {
         match self {
-            SkillStat::Cooldown | SkillStat::Duration => Some("s"),
-            SkillStat::Range | SkillStat::Radius => Some("m"),
-            SkillStat::Power | SkillStat::Mana => None,
+            SkillStat::Power => "power",
+            SkillStat::Cooldown => "cooldown",
+            SkillStat::Range => "range",
+            SkillStat::Radius => "radius",
+            SkillStat::Duration => "duration",
+            SkillStat::Mana => "mana",
         }
     }
 }
@@ -696,25 +975,35 @@ pub fn known_from(
 /// Why an actor could not use the skill at all, whatever its aim or readiness.
 pub fn unusable(world: &World, actor: Entity, skill: SkillId) -> Option<LineText> {
     let content = world.resource::<Content>();
-    let def = skill.get(content);
     if rank_of(world, actor, skill) == Rank::NONE {
-        Some(LineText::plain("You don't know ").then(Mention::Skill(skill).span(content)))
-    } else if def.kind == SkillKind::Passive {
-        Some(
-            Mention::Skill(skill)
-                .line(content)
-                .then(" is passive: it holds on its own"),
-        )
+        Some(unknown(skill, content))
     } else {
-        None
+        passive(world, skill)
     }
+}
+
+/// Why `skill` is never cast: it is passive, and holds on its own.
+pub fn passive(world: &World, skill: SkillId) -> Option<LineText> {
+    let content = world.resource::<Content>();
+    (skill.get(content).kind == SkillKind::Passive).then(|| {
+        messages::of(content)
+            .skill
+            .passive_holds(Mention::Skill(skill).line(content))
+    })
 }
 
 /// Why a passive skill takes no bar slot.
 pub fn unslotted(skill: SkillId, content: &Content) -> LineText {
-    Mention::Skill(skill)
-        .line(content)
-        .then(" is passive: it holds without a slot")
+    messages::of(content)
+        .skill
+        .passive_unslotted(Mention::Skill(skill).line(content))
+}
+
+/// Why a skill the actor has not learned is turned down.
+pub fn unknown(skill: SkillId, content: &Content) -> LineText {
+    messages::of(content)
+        .skill
+        .unknown_skill(Mention::Skill(skill).span(content))
 }
 
 pub fn rank_of(world: &World, actor: Entity, skill: SkillId) -> Rank {
@@ -855,7 +1144,7 @@ fn used_rank(cx: &FlowCx) -> Rank {
 /// one the other way around.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     for (id, def) in loading.rows::<SkillDef>(&content) {
         for (index, mastery) in def.masteries.iter().enumerate() {
             if let Some(problem) = crafting::mastery_problem(&content, mastery) {
@@ -864,12 +1153,12 @@ pub fn check_all(loading: &mut Loading) {
         }
         let may_do = scripts.may_do(OwnerRow::of_row(id));
         let aspect_events = [
-            EventKind::Activated,
-            EventKind::Deactivated,
-            EventKind::Interval,
+            EventKind::of::<Activated>(),
+            EventKind::of::<Deactivated>(),
+            EventKind::of::<Interval>(),
         ];
         let (rule, expected) = match def.kind {
-            SkillKind::Passive if may_do.answers(EventKind::Used) => (
+            SkillKind::Passive if may_do.answers(EventKind::of::<Used>()) => (
                 "passive answers used",
                 "activated, deactivated or interval: a passive skill is never used",
             ),
@@ -877,7 +1166,7 @@ pub fn check_all(loading: &mut Loading) {
                 "active answers an aspect event",
                 "used: an active skill's script runs when it is used",
             ),
-            SkillKind::Active if !may_do.answers(EventKind::Used) => (
+            SkillKind::Active if !may_do.answers(EventKind::of::<Used>()) => (
                 "skill without used",
                 "a script answering used on every active skill",
             ),
@@ -889,4 +1178,26 @@ pub fn check_all(loading: &mut Loading) {
             ContentProblem::new(rule, format!("skill/{}", id.path(&content)), expected),
         );
     }
+}
+
+pub const SKILL_RUNNER: RunnerKind = RunnerKind::new("skill");
+
+/// A script that may cast a skill.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Casts(pub SkillId);
+
+impl ReachDef for Casts {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .runner(
+            SKILL_RUNNER,
+            RunnerSpec::named_row::<SkillDef>()
+                .stateless()
+                .starting_with_world(),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<SkillDef>(loading, content));
+    casting::scripting(vocabulary);
+    reset::scripting(vocabulary);
 }

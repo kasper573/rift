@@ -5,11 +5,13 @@ use crate::project::IdPaths;
 use crate::rows;
 use crate::tabs::file_title;
 use engine::core::math::Pos;
+use engine::core::script::PlaceValue;
+use engine::core::script::VarValue;
 use engine::core::units::{MeterPos, Meters};
+use engine::systems::area::Place;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaModule};
-use engine::systems::script::{Place, VarValue};
 
 /// Every place the object's scripts lead to, by the path of its area and its ground.
 pub(crate) fn warp_destinations(
@@ -21,7 +23,10 @@ pub(crate) fn warp_destinations(
         .iter()
         .flat_map(|script| script.values.values())
         .filter_map(|value| match value {
-            VarValue::Place(place) => Some((paths.path_of(place.area)?.to_owned(), place.at)),
+            VarValue::Place(place) => {
+                let place = crate::views::script::nodes::place_of(place);
+                Some((paths.path_of(place.area)?.to_owned(), place.at))
+            }
             _ => None,
         })
         .collect()
@@ -35,7 +40,7 @@ fn redirect_places(object: &mut ObjectDef, to: Place) {
         .flat_map(|script| script.values.values_mut())
     {
         if let VarValue::Place(place) = value {
-            *place = to;
+            *place = PlaceValue::new(to);
         }
     }
 }

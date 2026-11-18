@@ -1,10 +1,10 @@
 //! Dialogs: a note laid over the interface that asks, tells or waits, its title on top and its
 //! answers at the foot.
 
-use egui::{Context, Event, Id, Margin, Order, Sense, Ui, Vec2};
+use egui::{Align, Context, Event, Id, Layout, Margin, Order, Sense, Ui, Vec2};
 
 use crate::face::TextRole;
-use crate::{controls, ink, keys, paint, sheet};
+use crate::{controls, ink, keys, paint, sheet, theme};
 
 /// The room between a dialog's edge and what it says.
 pub const PADDING: i8 = 22;
@@ -79,19 +79,79 @@ pub enum Answer {
     Cancel,
 }
 
-/// The foot of a dialog: `confirm` and Cancel, each answered by its key as well.
-pub fn answer_row(ui: &mut Ui, confirm: &str) -> Option<Answer> {
-    let pressed = keys(ui);
-    let mut answer = None;
-    ui.horizontal(|ui| {
-        if controls::primary(ui, confirm).clicked() || pressed.confirm {
-            answer = Some(Answer::Confirm);
+/// The foot of a dialog: the `confirm` button and the `cancel` one, each answered by its key as well.
+pub struct AnswerRow<'a> {
+    confirm: &'a str,
+    cancel: &'a str,
+    danger: bool,
+    enabled: bool,
+    confirm_key: bool,
+    hint: Option<String>,
+}
+
+impl<'a> AnswerRow<'a> {
+    pub fn new(confirm: &'a str, cancel: &'a str) -> AnswerRow<'a> {
+        AnswerRow {
+            confirm,
+            cancel,
+            danger: false,
+            enabled: true,
+            confirm_key: true,
+            hint: None,
         }
-        if controls::button(ui, "Cancel").clicked() || pressed.cancel {
-            answer = Some(Answer::Cancel);
-        }
-    });
-    answer
+    }
+
+    /// Confirming destroys something, which the button shows.
+    pub fn danger(mut self, danger: bool) -> Self {
+        self.danger = danger;
+        self
+    }
+
+    /// Whether confirming is possible yet, by button and by key.
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Whether the confirm key answers too, where it is not the key of something else in the dialog.
+    pub fn confirm_key(mut self, confirm_key: bool) -> Self {
+        self.confirm_key = confirm_key;
+        self
+    }
+
+    /// Words at the row's far end, telling the keys the dialog answers to.
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    pub fn show(self, ui: &mut Ui) -> Option<Answer> {
+        let pressed = keys(ui);
+        let mut answer = None;
+        ui.horizontal(|ui| {
+            let clicked = ui
+                .add_enabled_ui(self.enabled, |ui| {
+                    if self.danger {
+                        controls::danger(ui, self.confirm).clicked()
+                    } else {
+                        controls::primary(ui, self.confirm).clicked()
+                    }
+                })
+                .inner;
+            if clicked || (self.enabled && self.confirm_key && pressed.confirm) {
+                answer = Some(Answer::Confirm);
+            }
+            if controls::button(ui, self.cancel).clicked() || pressed.cancel {
+                answer = Some(Answer::Cancel);
+            }
+            if let Some(hint) = &self.hint {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(theme::faint(hint).size(12.0));
+                });
+            }
+        });
+        answer
+    }
 }
 
 /// Whether a dialog was answered this frame, its keys before the `clicked` answer.
@@ -144,7 +204,8 @@ pub fn veil(gui: &Context, id: &str, waiting: Option<&Waiting>) {
                 title(ui, waiting.title);
                 ui.add(
                     egui::Label::new(TextRole::Body.rich(&waiting.line).color(ink::INK2))
-                        .truncate(),
+                        .truncate()
+                        .show_tooltip_when_elided(false),
                 );
                 ui.add_space(10.0);
                 let size = Vec2::new(ui.available_width(), WAITING_BAR);

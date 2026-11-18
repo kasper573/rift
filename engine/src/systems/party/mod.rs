@@ -4,8 +4,10 @@
 
 pub mod frames;
 pub mod page;
+pub mod query;
 pub mod share;
 
+use crate::core::script::Vocabulary;
 use std::collections::{BTreeMap, HashMap};
 
 use bevy_app::App;
@@ -13,6 +15,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::Content;
 use crate::core::store::{Record, RecordId};
 use crate::core::time::UnixMillis;
 use crate::core::units::{Meters, Seconds};
@@ -21,6 +24,7 @@ use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::chat::{self, ChatChannel, ChatChannelSource, ChatSaid, ChatSpeaker};
 use crate::systems::history::HistoryTopic;
+use crate::systems::messages::{self, messages};
 use crate::systems::notification::Notification;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, ClientId, PlayedBy};
@@ -31,6 +35,114 @@ use crate::systems::social_request::{
 use crate::systems::society::{
     self, AccountNumber, Settling, Society, SocietyAsk, SocietyMember, SocietyView,
 };
+
+messages! {
+    /// What the game says of parties.
+    pub struct PartyMessages {
+        /// What the plate of a character says whose player is gone.
+        away,
+        /// What an invitation to a party from `{name}` says to the player invited.
+        invite_asks(name: Text),
+        /// What an invitation to a party says to the player who invited `{name}`.
+        invite_asked(name: Text),
+        /// What a player is told as their invitation to a party is sent to `{name}`.
+        invite_sent(name: Text),
+        /// What a player is told as `{name}` denies their invitation to a party.
+        invite_denied(name: Text),
+        /// What a player is told as their invitation to `{name}` runs out unanswered.
+        invite_lapsed(name: Text),
+        /// What a player is told inviting someone to a party that has no room.
+        full,
+        /// What a player is told inviting `{name}`, who is in a party.
+        in_a_party(name: Text),
+        /// What the members of a party are told as `{name}` joins it.
+        joined(name: Text),
+        /// What the members of a party are told as `{name}` leaves it.
+        left(name: Text),
+        /// What the members of a party are told as its leader removes `{name}` from it.
+        removed(name: Text),
+        /// What a player is told as the leader of their party removes them from it.
+        you_were_removed,
+        /// What the members of a party are told as its leader `{name}` ends it.
+        disbanded(name: Text),
+        /// What the members of a party are told as `{name}` comes to lead it.
+        leads(name: Text),
+        /// What the party's chat says to a player as they join the party `{name}` leads.
+        you_joined(name: Text),
+        /// What chat says to a player as they leave their party.
+        you_left,
+        /// The name of the Party page, and the heading of the party's frames on the HUD.
+        title,
+        /// The heading of the party's frames on the HUD while they are folded away, `{count}` the members they list.
+        tracker_title_folded(count: Number),
+        /// What a screen reader names the party's heading on the HUD while its frames are folded away.
+        tracker_show,
+        /// What a screen reader names the party's heading on the HUD while its frames are shown.
+        tracker_hide,
+        /// What a member's frame says of their health, `{percent}` the share they hold.
+        health_percent(percent: Number),
+        /// What a member's frame says of a member whose player is gone, `{time}` until they leave the party.
+        away_leaves(time: Text),
+        /// What a member's frame says of a member whose player is gone.
+        away_stays,
+        /// How a screen reader names the leader of a party, `{name}` their name.
+        leader_named(name: Text),
+        /// The hint, beside its key, that chooses a member on the Party page.
+        hint_choose,
+        /// The heading over the party of a player who is in none.
+        your_party,
+        /// What the page says to a player who is in no party.
+        no_party,
+        /// The button that makes a party.
+        create,
+        /// The heading over the invitations to a party the player is asked.
+        invitations_heading,
+        /// What an invitation says: `{name}` invites, `{left}` is how long it waits.
+        invitation_line(left: Text, name: Text),
+        /// The heading over the player's party: `{count}` members of the most it holds, `{size}`.
+        party_of_size(count: Number, size: Number),
+        /// The mark that says the player leads their party.
+        you_lead,
+        /// The button that hands the lead of the party to the member chosen.
+        make_leader,
+        /// The button that removes the member chosen from the party.
+        remove_member,
+        /// What the page tells a member who does not lead what members may do.
+        members_note,
+        /// The button that leaves the party.
+        leave,
+        /// The button that ends the party, for its leader.
+        disband,
+        /// What a member's row says of their class `{class}` and level `{level}`.
+        class_level(class: Text, level: Number),
+        /// The heading over the search for who to invite.
+        invite_heading,
+        /// The heading over the friends who play right now.
+        friends_online,
+        /// What the page says when no friend plays right now.
+        none_online,
+        /// What the page says of a friend who is in a party already.
+        in_another_party,
+        /// The mark on a found player who is in the player's party.
+        in_the_party,
+        /// The mark on a found player who has an invitation waiting, `{left}` how long it waits.
+        invited(left: Text),
+        /// The button that invites a player to the party.
+        invite,
+        /// The action that invites a player a page lists to the party.
+        invite_to_party,
+        /// The title of the question whether to end the party.
+        disband_title,
+        /// What the question whether to end the party tells the leader.
+        disband_body,
+        /// The button that confirms ending the party.
+        disband_confirm,
+        /// How a screen reader names a member's row or frame: `{name}` is the member, `{state}` how they stand.
+        row_named(name: Text, state: Text),
+        /// How a screen reader names a button: `{does}` is what it does, `{name}` the member or player it does it to.
+        button_for(does: Text, name: Text),
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -45,6 +157,8 @@ pub struct PartySettings {
     pub size: u32,
     /// How long an invitation waits for its answer.
     pub invite_lasts: Seconds,
+    /// How long a leader's call to gather the party for an instance stays open.
+    pub call_lasts: Seconds,
     /// How long a member whose player is gone stays in the party.
     pub absent_for: Seconds,
     pub experience: SharedExperience,
@@ -81,7 +195,7 @@ pub struct PartyId(pub u64);
 /// A party: its leader, and its members in the order they joined.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct PlayerParty {
+pub struct CharacterParty {
     pub id: PartyId,
     pub leader: AccountId,
     pub members: Vec<PartyMember>,
@@ -94,7 +208,7 @@ pub struct PartyMember {
     pub joined: UnixMillis,
 }
 
-impl Record for PlayerParty {
+impl Record for CharacterParty {
     const KIND: &'static str = "party";
 
     fn id(&self) -> RecordId {
@@ -102,7 +216,7 @@ impl Record for PlayerParty {
     }
 }
 
-impl PlayerParty {
+impl CharacterParty {
     pub fn holds(&self, account: &AccountId) -> bool {
         self.members.iter().any(|member| member.account == *account)
     }
@@ -110,21 +224,26 @@ impl PlayerParty {
     pub fn accounts(&self) -> impl Iterator<Item = &AccountId> {
         self.members.iter().map(|member| &member.account)
     }
+
+    /// Every member but `account`, in the order they joined.
+    pub fn others<'a>(&'a self, account: &'a AccountId) -> impl Iterator<Item = &'a AccountId> {
+        self.accounts().filter(move |member| *member != account)
+    }
 }
 
 /// Every party of the server.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct PlayerParties {
-    parties: BTreeMap<PartyId, PlayerParty>,
+pub struct CharacterParties {
+    parties: BTreeMap<PartyId, CharacterParty>,
     of: HashMap<AccountId, PartyId>,
     /// Since when each member's player has been gone.
     absent: HashMap<AccountId, UnixMillis>,
     dealt: u64,
 }
 
-impl PlayerParties {
-    pub fn of(saved: impl IntoIterator<Item = PlayerParty>) -> PlayerParties {
-        let mut parties = PlayerParties::default();
+impl CharacterParties {
+    pub fn of(saved: impl IntoIterator<Item = CharacterParty>) -> CharacterParties {
+        let mut parties = CharacterParties::default();
         for party in saved {
             parties.dealt = parties.dealt.max(party.id.0);
             for account in party.accounts() {
@@ -136,7 +255,7 @@ impl PlayerParties {
     }
 
     /// The party `account` is in.
-    pub fn of_account(&self, account: &AccountId) -> Option<&PlayerParty> {
+    pub fn of_account(&self, account: &AccountId) -> Option<&CharacterParty> {
         self.parties.get(self.of.get(account)?)
     }
 
@@ -152,6 +271,17 @@ impl PlayerParties {
             .is_some_and(|party| self.of.get(other) == Some(party))
     }
 
+    /// Whether `account` leads the party they are in.
+    pub fn leads(&self, account: &AccountId) -> bool {
+        self.of_account(account)
+            .is_some_and(|party| party.leader == *account)
+    }
+
+    /// Whether `account` is in a party that `other` is not in.
+    pub fn in_another(&self, account: &AccountId, other: &AccountId) -> bool {
+        self.of_account(account).is_some() && !self.together(account, other)
+    }
+
     /// Since when the player of `account`, a member of a party, has been gone.
     pub fn absent_since(&self, account: &AccountId) -> Option<UnixMillis> {
         self.absent.get(account).copied()
@@ -160,7 +290,7 @@ impl PlayerParties {
     fn create(&mut self, leader: &AccountId, now: UnixMillis) -> PartyId {
         self.dealt += 1;
         let id = PartyId(self.dealt);
-        let party = PlayerParty {
+        let party = CharacterParty {
             id,
             leader: leader.clone(),
             members: vec![PartyMember {
@@ -199,7 +329,7 @@ pub struct PartyShown {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PartyMemberRow {
-    pub player: SocietyMember,
+    pub character: SocietyMember,
     /// The client their character is played as, while it stands in a world.
     pub client: Option<ClientId>,
     /// The area they play in, while they are at their character.
@@ -229,7 +359,7 @@ impl PartyShown {
                 .accounts()
                 .filter_map(|member| {
                     Some(PartyMemberRow {
-                        player: society.member(member)?,
+                        character: society.member(member)?,
                         client: client_of(member),
                         area: society.playing_in(member),
                         leaves_at: society
@@ -280,13 +410,13 @@ pub fn request_source() -> SocialRequestSource {
         kind: SocialRequestKind::PartyInvitation,
         lasts: |settings| settings.party.map(|party| party.invite_lasts),
         reaches_offline: false,
-        words: |words| SocialRequestWords {
-            asks: &words.party_invite_asks,
-            asked: &words.party_invite_asked,
-            sent: None,
+        words: SocialRequestWords {
+            asks: |messages, name| messages.party.invite_asks(name),
+            asked: |messages, name| messages.party.invite_asked(name),
+            sent: |messages, name| messages.party.invite_sent(name),
             accepted: None,
-            denied: Some(&words.party_invite_denied),
-            lapsed: Some(&words.party_invite_lapsed),
+            denied: Some(|messages, name| messages.party.invite_denied(name)),
+            lapsed: Some(|messages, name| messages.party.invite_lapsed(name)),
         },
         may_send,
         accepted,
@@ -317,19 +447,19 @@ pub fn requests(world: &mut World) {
     );
 }
 
-/// Does what `by` asked of parties, under the game `settings` are of.
+/// Does what `by` asked of parties, under the game `content` is of.
 pub(crate) fn settle(
     settling: &mut Settling,
-    settings: &GameSettings,
+    content: &Content,
     by: &AccountId,
     ask: PartyRequest,
 ) {
-    if settings.party.is_none() {
+    if content.built::<GameSettings>().party.is_none() {
         return;
     }
-    let words = &settings.words;
+    let words = &messages::of(content).party;
     let party = settling.society.parties.of_account(by).cloned();
-    let leads = party.as_ref().is_some_and(|party| party.leader == *by);
+    let leads = settling.society.parties.leads(by);
     let member = |settling: &Settling, number: AccountNumber| {
         let account = settling.society.accounts().numbered(number)?.clone();
         let party = party.as_ref()?;
@@ -346,31 +476,29 @@ pub(crate) fn settle(
         PartyRequest::Invite(_) => {}
         PartyRequest::Leave => {
             if let Some(party) = &party {
-                let said = words.party_left.replace("{name}", &settling.name(by));
+                let said = words.left(settling.name(by));
                 tell(settling, party, by, &said);
-                closed(settling, by, &words.you_left_party);
+                closed(settling, by, words.you_left());
                 leave(settling, by);
             }
         }
         PartyRequest::Remove(number) => {
             if leads && let (Some(party), Some(removed)) = (&party, member(settling, number)) {
-                let said = words
-                    .party_removed
-                    .replace("{name}", &settling.name(&removed));
+                let said = words.removed(settling.name(&removed));
                 tell(settling, party, &removed, &said);
-                settling.tell(&removed, feed(&words.you_were_removed));
-                closed(settling, &removed, &words.you_were_removed);
+                settling.tell(&removed, feed(words.you_were_removed()));
+                closed(settling, &removed, words.you_were_removed());
                 leave(settling, &removed);
             }
         }
         PartyRequest::Lead(number) => {
             if leads && let (Some(party), Some(leader)) = (&party, member(settling, number)) {
-                lead(settling, settings, party.id, &leader);
+                lead(settling, content, party.id, &leader);
             }
         }
         PartyRequest::Disband => {
             if leads && let Some(party) = &party {
-                let said = words.party_disbanded.replace("{name}", &settling.name(by));
+                let said = words.disbanded(settling.name(by));
                 for account in party.accounts() {
                     if account != by {
                         settling.tell(account, feed(&said));
@@ -384,7 +512,7 @@ pub(crate) fn settle(
                 settling.society.parties.parties.remove(&party.id);
                 settling
                     .unwritten
-                    .remove::<PlayerParty>(record_id(party.id));
+                    .remove::<CharacterParty>(record_id(party.id));
             }
         }
     }
@@ -393,8 +521,8 @@ pub(crate) fn settle(
 /// Notes whose players are gone: a member gone for as long as the game's parties wait for one
 /// leaves, and a party whose leader is gone is led by the member who has been in it longest of
 /// those who are there.
-pub(crate) fn keep(settling: &mut Settling, settings: &GameSettings) {
-    let Some(rules) = &settings.party else {
+pub(crate) fn keep(settling: &mut Settling, content: &Content) {
+    let Some(rules) = &content.built::<GameSettings>().party else {
         return;
     };
     let now = settling.now;
@@ -418,10 +546,7 @@ pub(crate) fn keep(settling: &mut Settling, settings: &GameSettings) {
     }
     for account in gone {
         if let Some(party) = settling.society.parties.of_account(&account).cloned() {
-            let said = settings
-                .words
-                .party_left
-                .replace("{name}", &settling.name(&account));
+            let said = messages::of(content).party.left(settling.name(&account));
             tell(settling, &party, &account, &said);
         }
         leave(settling, &account);
@@ -440,7 +565,7 @@ pub(crate) fn keep(settling: &mut Settling, settings: &GameSettings) {
         })
         .collect();
     for (party, leader) in leaderless {
-        lead(settling, settings, party, &leader);
+        lead(settling, content, party, &leader);
     }
 }
 
@@ -461,7 +586,7 @@ pub(crate) fn leave(settling: &mut Settling, account: &AccountId) {
     party.members.retain(|member| member.account != *account);
     let Some(eldest) = party.members.first().map(|member| member.account.clone()) else {
         parties.parties.remove(&id);
-        settling.unwritten.remove::<PlayerParty>(record_id(id));
+        settling.unwritten.remove::<CharacterParty>(record_id(id));
         return;
     };
     if party.leader == *account {
@@ -492,7 +617,7 @@ fn each_member(settling: &mut Settling, account: &AccountId) {
     }
 }
 
-fn lead(settling: &mut Settling, settings: &GameSettings, id: PartyId, leader: &AccountId) {
+fn lead(settling: &mut Settling, content: &Content, id: PartyId, leader: &AccountId) {
     let Some(party) = settling.society.parties.parties.get_mut(&id) else {
         return;
     };
@@ -501,10 +626,7 @@ fn lead(settling: &mut Settling, settings: &GameSettings, id: PartyId, leader: &
     }
     party.leader = leader.clone();
     let party = party.clone();
-    let said = settings
-        .words
-        .party_leads
-        .replace("{name}", &settling.name(leader));
+    let said = messages::of(content).party.leads(settling.name(leader));
     for account in party.accounts() {
         settling.tell(account, feed(&said));
         settling.send(account, chat::notice(ChatChannel::Party, &said));
@@ -531,7 +653,7 @@ pub(crate) fn say(settling: &mut Settling, by: &AccountId, said: &ChatSaid) {
 }
 
 /// Tells every member of `party` but `but` what happened in it, the party's chat saying it too.
-fn tell(settling: &mut Settling, party: &PlayerParty, but: &AccountId, said: &str) {
+fn tell(settling: &mut Settling, party: &CharacterParty, but: &AccountId, said: &str) {
     for account in party.accounts().filter(|account| *account != but) {
         settling.tell(account, feed(said));
         settling.send(account, chat::notice(ChatChannel::Party, said));
@@ -549,14 +671,14 @@ fn feed(said: &str) -> Notification {
 
 fn may_send(
     society: &Society,
-    settings: &GameSettings,
+    content: &Content,
     asker: &AccountId,
     asked: &AccountId,
 ) -> Result<(), RequestUnsent> {
-    let Some(rules) = &settings.party else {
+    let Some(rules) = &content.built::<GameSettings>().party else {
         return Ok(());
     };
-    let words = &settings.words;
+    let words = &messages::of(content).party;
     let name = |account: &AccountId| {
         society
             .accounts()
@@ -564,17 +686,15 @@ fn may_send(
             .map_or("", |asked| &asked.name)
     };
     if society.parties().of_account(asked).is_some() {
-        return Err(RequestUnsent::Told(
-            words.in_a_party.replace("{name}", name(asked)),
-        ));
+        return Err(RequestUnsent::Told(words.in_a_party(name(asked)).into()));
     }
     let Some(party) = society.parties().of_account(asker) else {
         return Ok(());
     };
     if party.members.len() >= rules.size as usize {
-        return Err(RequestUnsent::Told(words.party_full.clone()));
+        return Err(RequestUnsent::Told(words.full().into()));
     }
-    // There is only ever one invitation from a party to a player.
+    // There is only ever one invitation from a party to a character.
     let invited = party.accounts().any(|member| {
         society
             .requests()
@@ -590,17 +710,17 @@ fn may_send(
 
 fn accepted(
     settling: &mut Settling,
-    settings: &GameSettings,
+    content: &Content,
     request: &SocialRequest,
 ) -> Result<(), RequestUnaccepted> {
-    let Some(rules) = &settings.party else {
+    let Some(rules) = &content.built::<GameSettings>().party else {
         return Ok(());
     };
-    let words = &settings.words;
+    let words = &messages::of(content).party;
     let (inviter, joiner) = (&request.asker, &request.asked);
     if settling.society.parties.of_account(joiner).is_some() {
-        let said = words.in_a_party.replace("{name}", &settling.name(joiner));
-        return Err(RequestUnaccepted::Over(said));
+        let said = words.in_a_party(settling.name(joiner));
+        return Err(RequestUnaccepted::Over(said.into()));
     }
     let id = match settling.society.parties.of.get(inviter) {
         Some(&id) => id,
@@ -611,7 +731,7 @@ fn accepted(
         return Ok(());
     };
     if party.members.len() >= rules.size as usize {
-        return Err(RequestUnaccepted::Over(words.party_full.clone()));
+        return Err(RequestUnaccepted::Over(words.full().into()));
     }
     party.members.push(PartyMember {
         account: joiner.clone(),
@@ -619,18 +739,20 @@ fn accepted(
     });
     let party = party.clone();
     parties.of.insert(joiner.clone(), id);
-    let said = words.party_joined.replace("{name}", &settling.name(joiner));
+    let said = words.joined(settling.name(joiner));
     tell(settling, &party, joiner, &said);
-    let said = words
-        .you_joined_party
-        .replace("{name}", &settling.name(&party.leader));
+    let said = words.you_joined(settling.name(&party.leader));
     settling.send(joiner, chat::notice(ChatChannel::Party, &said));
     changed(settling, id);
-    // A player is in one party at most: joining one denies the others.
-    social_request::deny_others(settling, settings, request);
+    // A character is in one party at most: joining one denies the others.
+    social_request::deny_others(settling, content, request);
     Ok(())
 }
 
 fn record_id(id: PartyId) -> RecordId {
     RecordId(id.0.to_string())
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
 }

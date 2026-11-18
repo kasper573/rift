@@ -1,3 +1,4 @@
+use crate::systems::area::stages::{RAIN, SKY};
 use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
@@ -9,10 +10,9 @@ use crate::core::math::{Pos, Rgb};
 use crate::core::render::camera::Tone;
 use crate::core::render::world::sky::Sky;
 use crate::core::units::{Degrees, Meters, Stops};
-use crate::core::vfx::shader::Stage;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::area::AreaDef;
-use crate::systems::script::SkyCondition;
+use crate::systems::area::sky::SkyCondition;
 
 /// How many point lights a tile of ground holds at most: the view takes in a few tiles, and the
 /// renderer lights every fragment by all the lights clustered over it, so a scene stays cheap while
@@ -199,11 +199,11 @@ pub fn check_area_shaders(loading: &mut Loading) {
             area.lighting
                 .dome
                 .as_ref()
-                .map(|dome| ("/lighting/dome", Stage::Sky, dome.shader, &dome.params)),
+                .map(|dome| ("/lighting/dome", SKY, dome.shader, &dome.params)),
             area.climate
                 .rain
                 .as_ref()
-                .map(|rain| ("/climate/rain", Stage::Rain, rain.shader, &rain.params)),
+                .map(|rain| ("/climate/rain", RAIN, rain.shader, &rain.params)),
         ];
         for (pointer, stage, shader, params) in drawn.into_iter().flatten() {
             let def = shader.get(&content);

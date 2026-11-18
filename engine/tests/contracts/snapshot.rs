@@ -6,13 +6,16 @@ use engine::core::content::{
 };
 use engine::core::math::Pos;
 use engine::core::script::Value;
+use engine::core::text::LineText;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Seconds;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Appearance, Name};
 use engine::systems::area::AreaDef;
+use engine::systems::area::Place;
 use engine::systems::area::transition::Discovered;
 use engine::systems::class::{Class, ClassDef, NodeKey};
+use engine::systems::command::{CommandCooldowns, TerminalCommandDef};
 use engine::systems::equipment::{Equipment, EquipmentPlace};
 use engine::systems::history::{History, HistoryEntry, HistoryTopic};
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
@@ -20,20 +23,19 @@ use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::Position;
 use engine::systems::player::snapshot::{
     AtInitialSpawn, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, JoinOrigin, MemoryValue,
-    QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCooldown, SnapshotMemory,
-    SnapshotQuest, SnapshotRecord, SnapshotShop, SnapshotSkill, SnapshotSlot, SnapshotStatus,
+    QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCommandCooldown, SnapshotCooldown,
+    SnapshotInstanceCooldown, SnapshotMemory, SnapshotQuest, SnapshotRecord, SnapshotShop,
+    SnapshotSkill, SnapshotSlot, SnapshotStatus,
 };
 use engine::systems::player::{CharacterState, SpawnPoint, SpawnPolicy, SpawnRules, Xp};
 use engine::systems::quest::{QuestDef, QuestLog, QuestResult};
-use engine::systems::script::Place;
 use engine::systems::shop::{Sale, ShopDef, ShopLedger};
 use engine::systems::skill::{
     self, BasicAttack, Cooldowns, HotbarEntry, HotbarSlot, Rank, SkillDef,
 };
 use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::status::{self, StatusEffectDef, Statuses};
-use engine::systems::text::LineText;
-use engine::systems::{GameSettings, dialogue, script};
+use engine::systems::{GameSettings, dialogue};
 use serde_json::json;
 use testkit::{Declared, Game, Map, Sim};
 
@@ -129,7 +131,7 @@ fn a_character_joined_from_a_row_is_that_character() {
     let history = world.get::<History>(player).expect("history");
     let records: Vec<_> = history.records().collect();
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].entry.text, LineText::plain("Hello"));
+    assert_eq!(records[0].entry.text, hello());
     assert_eq!(records[0].at, joined_at.before(Seconds(5.0)));
 }
 
@@ -235,6 +237,12 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
     assert!(cooling(&forest, arrived), "and outlasts a reset of skills");
 
     let live = state(&forest, arrived);
+    assert!(
+        live.history
+            .records()
+            .any(|record| record.entry.text == hello()),
+        "history crosses a warp"
+    );
     let snapshot = CharacterSnapshot::of_live(&forest.world, arrived).expect("a character");
     let scope = ContentScope::of(&content);
     let (written, _) = with_content(scope.clone(), || serde_json::to_string(&snapshot));
@@ -243,7 +251,14 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
         serde_json::from_str::<CharacterSnapshot>(&written)
     });
     let read = read.expect("and read back");
-    assert_eq!(read, snapshot);
+    assert!(read.history.is_empty(), "history is never saved");
+    assert_eq!(
+        read,
+        CharacterSnapshot {
+            history: Vec::new(),
+            ..snapshot
+        }
+    );
     let CharacterStart::At(place) = read.start else {
         panic!(
             "a live character is saved where it stands: {:?}",
@@ -267,7 +282,21 @@ fn a_character_keeps_everything_across_a_warp_and_across_being_saved() {
         },
     );
     again.tick();
-    assert_eq!(state(&again, loaded), live);
+    let loaded_state = state(&again, loaded);
+    assert!(
+        !loaded_state
+            .history
+            .records()
+            .any(|record| record.entry.text == hello()),
+        "and is gone once the character comes back from being saved"
+    );
+    assert_eq!(
+        loaded_state,
+        CharacterState {
+            history: loaded_state.history.clone(),
+            ..live
+        }
+    );
     assert_eq!(
         stat::max_health(&again.world, loaded),
         unblessed + 7.0,
@@ -330,10 +359,14 @@ fn what_runs_on_the_clock_ran_while_a_saved_character_was_away_and_its_effects_w
         .get::<Cooldowns>(back)
         .and_then(|cooldowns| cooldowns.ready_at(guard))
         .expect("a cooldown");
+    let wave = forest.id::<TerminalCommandDef>("wave");
+    let command_left = world
+        .get::<CommandCooldowns>(back)
+        .and_then(|cooldowns| cooldowns.left(wave, now));
     assert_eq!(
-        ready,
-        now.after(Seconds(50.0)),
-        "250 of its 300 seconds are served"
+        (ready, command_left),
+        (now.after(Seconds(50.0)), Some(Seconds(50.0))),
+        "250 of its 300 seconds are served, a skill's and a command's alike"
     );
     let log = world.get::<QuestLog>(back).expect("quest log");
     let errand = log
@@ -468,6 +501,19 @@ fn returning_to(area: &str) -> Sim {
                 "mend": { "type": "heal", "who": { "type": "skill_targets" }, "by": 1.0 },
             }),
         )
+        .script(
+            "waves",
+            "command",
+            json!({
+                "sent": { "type": "on", "event": "invoked", "next": "wave" },
+                "wave": { "type": "heal", "by": 1.0 },
+            }),
+        )
+        .row(
+            "command",
+            "wave",
+            json!({ "script": "waves.script.json", "cooldown": 600.0 }),
+        )
         .row(
             "skill",
             "punch",
@@ -520,8 +566,8 @@ fn returning_to(area: &str) -> Sim {
             status::aspect::SettleAspects::default(),
             status::aspect::TickAspects::default(),
         ))
-        .plan(script::RunFlows::default());
-    script::spawn_stateless(&mut sim.world);
+        .plan(engine::core::script::run::FlowRunner::default());
+    engine::systems::spawn_scripts(&mut sim.world);
     sim.world.insert_resource(WallClock {
         now: UnixMillis(1_000_000_000),
         reset: UtcHour::MIDNIGHT,
@@ -596,7 +642,7 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         shops: vec![SnapshotShop {
             shop: id(content, "wares"),
             stock: vec![ShopStock {
-                offer: 1,
+                ware: 1,
                 left: 2,
                 restocks_in: Seconds(400.0),
             }],
@@ -605,7 +651,7 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         .into(),
         history: vec![SnapshotRecord {
             ago: Seconds(5.0),
-            entry: HistoryEntry::of(HistoryTopic::Talk, LineText::plain("Hello")),
+            entry: HistoryEntry::of(HistoryTopic::Talk, hello()),
         }],
         statuses: SavedList::default(),
         cooldowns: vec![SnapshotCooldown {
@@ -613,9 +659,23 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
             left: Seconds(300.0),
         }]
         .into(),
+        command_cooldowns: vec![SnapshotCommandCooldown {
+            command: id(content, "wave"),
+            left: Seconds(300.0),
+        }]
+        .into(),
+        instance_cooldowns: vec![SnapshotInstanceCooldown {
+            area: id(content, "forest"),
+            left: Seconds(900.0),
+        }]
+        .into(),
         rises_at: None,
         start: CharacterStart::At(start),
     }
+}
+
+fn hello() -> LineText {
+    LineText::plain("Hello")
 }
 
 fn sale(content: &Content) -> Sale {

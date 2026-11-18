@@ -1,44 +1,84 @@
 pub mod camera;
-pub mod stage;
+pub mod line;
+pub mod sheet;
+pub mod span;
 
+pub mod stage;
+pub(crate) mod windows;
+
+use crate::core::script::Expr;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use strum::{IntoStaticStr, VariantArray};
 
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::core::script::{
-    self, Answer, BoxEnding, ChoiceOffer, ChoiceState, DialogueView, RevealDef, ScriptFault,
+    self, Answer, BoxEnding, ChoiceOffer, ChoiceState, DialogueView, ScriptFault,
 };
+use crate::core::script::{
+    ChoiceReveal, DialogueCamera, DialogueHost, EventKind, FlowKey, Instances, Value, ValueType,
+    Vocabulary, condition,
+};
+use crate::core::text::LineText;
 use crate::core::units::{MeterPos, Meters};
-use crate::systems::GameSettings;
 use crate::systems::actor::Name;
 use crate::systems::actor::skeleton::GestureName;
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::Attitude;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
+use crate::systems::interact::Interacted;
 use crate::systems::interface::InterfaceSound;
+use crate::systems::item::effects::Items;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
+use crate::systems::messages::{self, messages};
 use crate::systems::movement::Position;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{CommandLock, player_requests};
 use crate::systems::quest::QuestId;
-use crate::systems::reach::{self, Tether};
-use crate::systems::script::{
-    Condition, EventKind, FlowKey, RiftEffect, RiftEvent, RiftInstances, RiftScripting, ScriptLine,
-    Speaker, condition,
-};
+use crate::systems::quest::effects::Decide;
+use crate::systems::reach::{self, Lapse, Tether};
+use crate::systems::requirement;
 use crate::systems::stat;
-use crate::systems::text::LineText;
 use crate::systems::visibility;
-use camera::DialogueCamera;
+use crate::systems::window::{WindowStep, WindowSteps};
+pub use line::{ScriptLine, Speaker};
+use span::ScriptSpan;
+
+messages! {
+    /// What the game says of a conversation's choices.
+    pub struct DialogueMessages {
+        /// What a player is told picking a choice not open to them yet.
+        locked,
+        /// What a player is told picking a choice no longer open to them.
+        no_longer,
+        /// What the player is told picking a choice that needs `{condition}`.
+        needs[condition: Line],
+        /// What the player is told when a conversation ends, with why, `{reason}`.
+        ended(reason: Text),
+        /// Why a conversation ended when the player died.
+        ended_you_died,
+        /// Why a conversation ended when the one spoken with is gone.
+        ended_gone,
+        /// Why a conversation ended when the one spoken with turned hostile.
+        ended_hostile,
+        /// Why a conversation ended when the player walked away.
+        ended_out_of_reach,
+        /// A line of a conversation said by `{speaker}`, who is named before what they say, `{line}`.
+        spoken[speaker: Line, line: Line],
+        /// A choice as a conversation lists it, `{choice}`, after its place in the list, `{number}`.
+        choice[number: Number, choice: Line],
+        /// What the player is told when a despawn is aimed at nobody.
+        nobody_to_send_away,
+        /// What the player is told when a despawn is aimed at what was never spawned.
+        only_spawned,
+    }
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -55,12 +95,9 @@ pub enum ChoiceTag {
     Dialogue,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ConversationStep(pub u32);
-
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Conversation {
-    pub step: ConversationStep,
+    pub step: WindowStep,
     pub node: String,
     #[entities]
     pub with: Option<Entity>,
@@ -104,7 +141,7 @@ pub struct SpokenLine {
 pub struct ChoiceView {
     pub label: LineText,
     pub tag: ChoiceTag,
-    pub icon: Option<String>,
+    pub icon: Option<ImageRef>,
     pub chips: Vec<ChoiceChip>,
     pub locked: bool,
     pub warn: Option<String>,
@@ -112,17 +149,19 @@ pub struct ChoiceView {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ChoiceChip {
-    Needs { what: condition::Wording, met: bool },
+    Needs { what: LineText, met: bool },
     Pays { item: ItemId, count: u32, have: u32 },
     Gets { item: ItemId, count: u32 },
 }
 
 impl ChoiceChip {
-    pub fn needs(world: &World, player: Entity, requires: &Condition) -> Vec<ChoiceChip> {
+    pub fn needs(world: &World, player: Entity, requires: &Expr) -> Vec<ChoiceChip> {
+        let content = world.resource::<Content>();
+        let messages = messages::of(content);
         condition::parts(requires)
             .into_iter()
             .map(|part| ChoiceChip::Needs {
-                what: condition::describe(world.resource::<Content>(), part),
+                what: requirement::describe(content, messages, part),
                 met: condition::holds(world, player, part),
             })
             .collect()
@@ -131,8 +170,8 @@ impl ChoiceChip {
 
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum ConversationRequest {
-    Pick { step: ConversationStep, choice: u32 },
-    Leave { step: ConversationStep },
+    Pick { step: WindowStep, choice: u32 },
+    Leave { step: WindowStep },
 }
 
 pub type CardPick = Arc<dyn Fn(&mut World, Entity) -> Result<Answer, LineText> + Send + Sync>;
@@ -167,6 +206,14 @@ impl Heard {
     }
 }
 
+pub fn spoken(world: &World, subject: Entity, spans: &[ScriptSpan]) -> LineText {
+    let values: Vec<Value> = ScriptSpan::values(spans)
+        .into_iter()
+        .map(|value| condition::eval(world, subject, value, ValueType::Text))
+        .collect();
+    ScriptSpan::said(spans, &values)
+}
+
 pub fn heard(world: &World, player: Entity, script: &str, node: &str) -> bool {
     world
         .get::<Heard>(player)
@@ -177,38 +224,6 @@ pub struct Revealable {
     pub needs: bool,
     pub costs: bool,
     pub gains: bool,
-}
-
-#[derive(
-    JsonSchema,
-    Serialize,
-    Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    IntoStaticStr,
-    VariantArray,
-)]
-#[serde(rename_all = "snake_case")]
-#[strum(serialize_all = "snake_case")]
-pub enum ChoiceReveal {
-    Locked,
-    Needs,
-    Costs,
-    Gains,
-}
-
-impl RevealDef for ChoiceReveal {
-    fn shows_while_locked(self) -> bool {
-        self == ChoiceReveal::Locked
-    }
-
-    fn name(self) -> &'static str {
-        self.into()
-    }
 }
 
 pub fn check_reveal(reveal: &[ChoiceReveal], revealable: Revealable) -> Result<(), ScriptFault> {
@@ -228,7 +243,7 @@ pub fn check_reveal(reveal: &[ChoiceReveal], revealable: Revealable) -> Result<(
     script::check_reveals_unique(reveal)
 }
 
-pub fn show(world: &mut World, flow: FlowKey, subject: Entity, view: DialogueView<RiftScripting>) {
+pub fn show(world: &mut World, flow: FlowKey, subject: Entity, view: DialogueView<'_>) {
     if !begin(world, flow, subject) {
         return;
     }
@@ -242,11 +257,12 @@ pub fn show(world: &mut World, flow: FlowKey, subject: Entity, view: DialogueVie
     let lines: Vec<SpokenLine> = view
         .lines
         .iter()
+        .filter_map(|(line, values)| Some((line.downcast_ref::<ScriptLine>()?, values)))
         .map(|(line, values)| SpokenLine {
             by: line.by,
             gesture: line.gesture.clone(),
             camera: line.camera,
-            text: LineText::spoken(&line.text, values),
+            text: ScriptSpan::said(&line.text, values),
         })
         .collect();
     let bystanders = bystanders(world, subject, &lines);
@@ -269,11 +285,9 @@ pub fn show(world: &mut World, flow: FlowKey, subject: Entity, view: DialogueVie
         .choices
         .iter()
         .flat_map(|choice| choice.leads.iter())
-        .find_map(|effect| match effect {
-            RiftEffect::Decide(decide) => Some(ConversationPanel::QuestDecision(decide.quest)),
-            _ => None,
-        });
-    let step = next_step(world);
+        .find_map(|effect| effect.downcast_ref::<Decide>())
+        .map(|decide| ConversationPanel::QuestDecision(decide.quest));
+    let step = world.resource_mut::<WindowSteps>().deal();
     if let Some(mut session) = world.get_mut::<ConversationSession>(subject) {
         session.step = step;
         session.node = view.node.to_owned();
@@ -302,7 +316,7 @@ pub fn card(
     if !begin(world, flow, subject) {
         return false;
     }
-    let step = next_step(world);
+    let step = world.resource_mut::<WindowSteps>().deal();
     if let Some(mut session) = world.get_mut::<ConversationSession>(subject) {
         session.step = step;
         session.camera = camera;
@@ -313,7 +327,7 @@ pub fn card(
                 view: ChoiceView {
                     label: offer.label,
                     tag: offer.tag,
-                    icon: offer.icon.map(|icon| icon.path()),
+                    icon: offer.icon,
                     chips: offer.chips,
                     locked: offer.locked,
                     warn: offer.warn,
@@ -338,7 +352,7 @@ pub fn close(world: &mut World, flow: FlowKey, subject: Entity, ending: BoxEndin
     }
     close_for(world, subject);
     if ending == BoxEnding::Gone {
-        tell_ended(world, subject, "they're gone");
+        tell_ended_by(world, subject, Ending::Gone);
     }
 }
 
@@ -354,7 +368,7 @@ pub fn remark(world: &mut World, player: Entity, to: Entity, line: &ScriptLine) 
         by: line.by,
         gesture: line.gesture.clone(),
         camera: line.camera,
-        text: condition::spoken(world, player, &line.text),
+        text: spoken(world, player, &line.text),
     };
     record_line(world, player, &line);
     if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
@@ -459,7 +473,7 @@ pub fn hold(world: &mut World, sessions: &mut QueryState<Entity, With<Conversati
     for player in players {
         if let Some(reason) = broken(world, player) {
             leave(world, player);
-            tell_ended(world, player, reason);
+            tell_ended_by(world, player, reason);
         }
     }
 }
@@ -481,8 +495,7 @@ pub fn refresh(world: &mut World, sessions: &mut QueryState<Entity, With<Convers
             })
             .collect();
         for (index, choice) in choices {
-            let locked = script::run::choice_state::<RiftScripting>(world, flow, choice)
-                == ChoiceState::Locked;
+            let locked = script::run::choice_state(world, flow, choice) == ChoiceState::Locked;
             if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
                 session.offers[index].view.locked = locked;
             }
@@ -498,13 +511,13 @@ pub fn speaker_name(world: &World, player: Entity, who: Speaker) -> Option<Strin
         Speaker::Object => counterpart_of(world, player)
             .and_then(|with| world.get::<Name>(with))
             .map(|name| name.name.clone()),
-        Speaker::Narrator | Speaker::Player => None,
+        Speaker::Narrator | Speaker::Character => None,
     }
 }
 
 #[derive(Component)]
 pub struct ConversationSession {
-    step: ConversationStep,
+    step: WindowStep,
     flow: FlowKey,
     node: String,
     with: Option<Entity>,
@@ -531,14 +544,11 @@ struct Offer {
 enum Pick {
     Choice {
         index: usize,
-        requires: Option<Condition>,
+        requires: Option<Expr>,
         costs: Vec<ItemStack>,
     },
     Card(CardPick),
 }
-
-#[derive(Resource, Default)]
-pub(crate) struct StepCounter(u32);
 
 /// The npcs in sight of `player` that say `lines` beside the one the conversation is with: of each
 /// kind that speaks, the nearest.
@@ -588,26 +598,22 @@ fn begin(world: &mut World, flow: FlowKey, subject: Entity) -> bool {
         }
         let old = session.flow;
         close_for(world, subject);
-        world
-            .resource_mut::<RiftInstances>()
-            .answer(old, Answer::Left);
+        world.resource_mut::<Instances>().answer(old, Answer::Left);
     }
     if stat::is_dead(world, subject) {
         return false;
     }
     let with = flow.owner.entity();
     let reach = world
-        .resource::<RiftInstances>()
-        .entries(flow.owner, EventKind::Interacted)
-        .filter_map(|event| match event {
-            RiftEvent::Interacted { reach, .. } => Some(reach.0),
-            _ => None,
-        })
+        .resource::<Instances>()
+        .entries(flow.owner, EventKind::of::<Interacted>())
+        .filter_map(|event| event.downcast_ref::<Interacted>())
+        .map(|event| event.reach.0)
         .reduce(f32::max)
         .map_or_else(|| visibility::sight(world), Meters);
-    let tether = with.and_then(|with| Tether::around(world, subject, reach, Some(with)));
+    let tether = with.and_then(|to| Tether::around(world, subject, to, reach));
     reach::forget(world, subject);
-    let step = next_step(world);
+    let step = world.resource_mut::<WindowSteps>().deal();
     world.entity_mut(subject).insert((
         ConversationSession {
             step,
@@ -653,9 +659,7 @@ pub fn interrupt(world: &mut World, player: Entity, reason: &str) {
 
 pub fn close_for(world: &mut World, player: Entity) {
     if let Some(session) = world.entity_mut(player).take::<ConversationSession>() {
-        world
-            .resource_mut::<RiftInstances>()
-            .box_closed(session.flow);
+        world.resource_mut::<Instances>().box_closed(session.flow);
     }
     world
         .entity_mut(player)
@@ -668,10 +672,38 @@ fn leave(world: &mut World, player: Entity) {
     };
     let (flow, answer) = (session.flow, session.on_leave.clone());
     close_for(world, player);
-    world.resource_mut::<RiftInstances>().answer(flow, answer);
+    world.resource_mut::<Instances>().answer(flow, answer);
+}
+
+#[derive(Clone, Copy)]
+enum Ending {
+    YouDied,
+    Gone,
+    Hostile,
+    OutOfReach,
+}
+
+impl Ending {
+    fn said(self, words: &DialogueMessages) -> &str {
+        match self {
+            Ending::YouDied => words.ended_you_died(),
+            Ending::Gone => words.ended_gone(),
+            Ending::Hostile => words.ended_hostile(),
+            Ending::OutOfReach => words.ended_out_of_reach(),
+        }
+    }
+}
+
+fn tell_ended_by(world: &mut World, player: Entity, ending: Ending) {
+    let words = &messages::of(world.resource::<Content>()).dialogue;
+    let reason = ending.said(words).to_owned();
+    tell_ended(world, player, &reason);
 }
 
 fn tell_ended(world: &mut World, player: Entity, reason: &str) {
+    let told = messages::of(world.resource::<Content>())
+        .dialogue
+        .ended(reason);
     notification::notify(
         world,
         player,
@@ -680,7 +712,7 @@ fn tell_ended(world: &mut World, player: Entity, reason: &str) {
             NotificationKind::Error {
                 sfx: Some(InterfaceSound::UiClose.id(world.resource::<Content>())),
             },
-            LineText::plain(format!("Conversation ended: {reason}")),
+            LineText::plain(told),
         ),
     );
 }
@@ -694,7 +726,7 @@ fn record_line(world: &mut World, player: Entity, line: &SpokenLine) {
     );
 }
 
-fn choice_view(world: &World, player: Entity, choice: &ChoiceOffer<RiftScripting>) -> ChoiceView {
+fn choice_view(world: &World, player: Entity, choice: &ChoiceOffer) -> ChoiceView {
     let inventory = world.get::<Inventory>(player);
     let have = |item| inventory.map_or(0, |inventory| inventory.count(item));
     let mut chips = Vec::new();
@@ -703,10 +735,10 @@ fn choice_view(world: &World, player: Entity, choice: &ChoiceOffer<RiftScripting
     {
         chips.extend(ChoiceChip::needs(world, player, requires));
     }
-    let items = choice.leads.iter().find_map(|effect| match effect {
-        RiftEffect::Items(items) => Some(items),
-        _ => None,
-    });
+    let items = choice
+        .leads
+        .iter()
+        .find_map(|effect| effect.downcast_ref::<Items>());
     if let Some(items) = items {
         if choice.reveal.contains(&ChoiceReveal::Costs) {
             for stack in items.named_take() {
@@ -727,7 +759,13 @@ fn choice_view(world: &World, player: Entity, choice: &ChoiceOffer<RiftScripting
         }
     }
     ChoiceView {
-        label: LineText::spoken(choice.label, &choice.label_values),
+        label: ScriptSpan::said(
+            choice
+                .label
+                .downcast_ref::<Vec<ScriptSpan>>()
+                .expect("a choice is labelled with spans"),
+            &choice.label_values,
+        ),
         tag: ChoiceTag::Dialogue,
         icon: None,
         chips,
@@ -760,7 +798,7 @@ fn refresh_view(world: &mut World, player: Entity) {
     }
 }
 
-fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) {
+fn pick(world: &mut World, player: Entity, step: WindowStep, choice: u32) {
     let Some(session) = world.get::<ConversationSession>(player) else {
         return;
     };
@@ -775,7 +813,7 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
     let picked = offer.pick.clone();
     if let Some(reason) = broken(world, player) {
         leave(world, player);
-        tell_ended(world, player, reason);
+        tell_ended_by(world, player, reason);
         return;
     }
     let said = HistoryEntry::of(HistoryTopic::Talk, label)
@@ -787,11 +825,13 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
             index,
             requires,
             costs,
-        } => match script::run::choice_state::<RiftScripting>(world, flow, index) {
+        } => match script::run::choice_state(world, flow, index) {
             ChoiceState::Open => affordable(world, player, &costs).map(|()| Answer::Pick(index)),
             ChoiceState::Locked => Err(unmet(world, player, requires.as_ref())),
             ChoiceState::Gone => Err(LineText::plain(
-                world.resource::<GameSettings>().words.no_longer.clone(),
+                messages::of(world.resource::<Content>())
+                    .dialogue
+                    .no_longer(),
             )),
         },
         Pick::Card(card) => card(world, player),
@@ -801,23 +841,21 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
             if let Some(mut session) = world.get_mut::<ConversationSession>(player) {
                 session.answered = true;
             }
-            world.resource_mut::<RiftInstances>().answer(flow, answer);
+            world.resource_mut::<Instances>().answer(flow, answer);
         }
         Err(reason) => refuse(world, player, choice, reason),
     }
 }
 
-fn revealed_costs(choice: &ChoiceOffer<RiftScripting>) -> Vec<ItemStack> {
+fn revealed_costs(choice: &ChoiceOffer) -> Vec<ItemStack> {
     if !choice.reveal.contains(&ChoiceReveal::Costs) {
         return Vec::new();
     }
     choice
         .leads
         .iter()
-        .find_map(|effect| match effect {
-            RiftEffect::Items(items) => Some(items.named_take()),
-            _ => None,
-        })
+        .find_map(|effect| effect.downcast_ref::<Items>())
+        .map(Items::named_take)
         .unwrap_or_default()
 }
 
@@ -826,18 +864,16 @@ fn affordable(world: &World, player: Entity, costs: &[ItemStack]) -> Result<(), 
         return Ok(());
     }
     let content = world.resource::<Content>();
-    world
-        .get::<Inventory>(player)
-        .cloned()
-        .unwrap_or_else(Inventory::empty)
+    Inventory::of(world, player)
         .exchange(content, costs, &[])
         .map_err(|refusal| refusal.line(content))
 }
 
-fn unmet(world: &World, player: Entity, requires: Option<&Condition>) -> LineText {
-    condition::first_unmet(world, player, requires).map_or_else(
-        || LineText::plain(world.resource::<GameSettings>().words.locked.clone()),
-        |unmet| LineText::plain("Needs ").then(LineText::from(&unmet)),
+fn unmet(world: &World, player: Entity, requires: Option<&Expr>) -> LineText {
+    let words = &messages::of(world.resource::<Content>()).dialogue;
+    requirement::first_unmet(world, player, requires).map_or_else(
+        || LineText::plain(words.locked()),
+        |unmet| words.needs(unmet),
     )
 }
 
@@ -857,27 +893,26 @@ pub(crate) fn talking(world: &World, player: Entity) -> Option<AttentionId> {
     in_conversation(world, player).then_some(AttentionMark::Talking.id(world.resource::<Content>()))
 }
 
-fn broken(world: &World, player: Entity) -> Option<&'static str> {
+fn broken(world: &World, player: Entity) -> Option<Ending> {
     let session = world.get::<ConversationSession>(player)?;
-    if stat::is_dead(world, player) {
-        return Some("you died");
+    let lapse = reach::lapse(world, player, session.tether.as_ref());
+    if lapse == Some(Lapse::Fell) {
+        return Some(Ending::YouDied);
     }
     if let Some(with) = session.with {
         if world.get_entity(with).is_err() || stat::is_dead(world, with) {
-            return Some("they're gone");
+            return Some(Ending::Gone);
         }
         if world.get::<Attitude>(with) == Some(&Attitude::Hostile) {
-            return Some("they turned hostile");
+            return Some(Ending::Hostile);
         }
     }
-    session
-        .tether
-        .filter(|tether| !tether.holds(world, player))
-        .map(|_| "you walked out of reach")
+    lapse.map(|_| Ending::OutOfReach)
 }
 
-fn next_step(world: &mut World) -> ConversationStep {
-    let mut counter = world.resource_mut::<StepCounter>();
-    counter.0 = counter.0.wrapping_add(1);
-    ConversationStep(counter.0)
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .line::<ScriptLine>()
+        .label::<Vec<ScriptSpan>>()
+        .dialogue(DialogueHost { show, close });
 }

@@ -5,32 +5,25 @@ use ui::float;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use ui::controls::{self, Pill, RowHover, RowLook};
-use ui::egui::{
-    Align, Align2, Color32, Id, LayerId, Layout, Pos2, Rect, Sense, Ui, UiBuilder, Vec2,
-    WidgetInfo, WidgetType,
-};
-use ui::face::TextRole;
-use ui::glyph::{self, Mark};
+use ui::egui::{LayerId, Rect, Vec2};
 use ui::motion::SheetPose;
-use ui::sheet::{self, Sheet};
-use ui::{ink, slip};
 
-use super::camera::DialogueCamera;
+use super::sheet::{self, DialogueSheet, SheetChoice};
 use super::{
-    ChoiceChip, ChoiceView, Conversation, ConversationRequest, ConversationStep, RefusedPick,
-    Speaker, SpokenLine,
+    ChoiceChip, ChoiceView, Conversation, ConversationRequest, RefusedPick, Speaker, SpokenLine,
+    WindowStep, windows,
 };
 use crate::core::audio::playback::SfxPlace;
 use crate::core::babble::{BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, Tier};
-use crate::core::text::{self, StyledLine, TextLook, TextPiece, Typewriter};
+use crate::core::script::DialogueCamera;
+use crate::core::text::Typewriter;
 use crate::core::time::{self};
 use crate::core::units::MeterPos;
 use crate::systems::actor::Name;
 use crate::systems::actor::render::Said;
-use crate::systems::hud::{self, day_clock};
+use crate::systems::hud::{self, WindowKey};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{ItemId, card};
@@ -50,20 +43,8 @@ const CHOICE_SHORTCUTS: [InputAction; 9] = [
     InputAction::Choice8,
     InputAction::Choice9,
 ];
-const SHEET_WIDTH: f32 = 800.0;
-const NAME_INSET: f32 = 40.0;
-const SHEET_LIFT: f32 = 14.0;
-const PANEL_GAP: f32 = 12.0;
-const SCREEN_SHARE: f32 = 0.94;
-const SCREEN_MARGIN: f32 = 8.0;
-const HINT_ROOM: f32 = 22.0;
-const CONTINUE_MARK: f32 = 12.0;
-const CHOICE_ICON: f32 = 18.0;
-const LINE_MARGIN: egui::Margin = egui::Margin::symmetric(8, 4);
-const PILL_ICON: f32 = 14.0;
 const REFUSED: Duration = Duration::from_millis(320);
-const DIALOGUE: &str = "stage";
-const DOCKED: &str = "docked";
+const DIALOGUE: WindowKey = WindowKey::Stage;
 
 pub struct DialogueStagePlugin;
 
@@ -72,6 +53,7 @@ impl Plugin for DialogueStagePlugin {
         app.init_resource::<Stage>()
             .init_resource::<StageDrawn>()
             .init_resource::<StageSheets>()
+            .init_resource::<windows::Seating>()
             .add_systems(OnExit(ClientScreen::Area), forget_stage)
             .add_systems(
                 Update,
@@ -107,29 +89,6 @@ pub struct StageChoice {
     pub selected: bool,
 }
 
-#[derive(Clone, Copy)]
-pub struct DockedPanel {
-    pub head: fn(&World) -> Option<PanelHead>,
-    pub show: fn(&mut Ui, &mut World, f32, f32),
-}
-
-pub struct PanelHead {
-    pub width: f32,
-    pub chrome: PanelChrome,
-}
-
-pub enum PanelChrome {
-    Card,
-    Sheet { title: String, height: f32 },
-}
-
-pub fn dock(app: &mut App, panel: DockedPanel) {
-    app.world_mut()
-        .get_resource_or_init::<DockedPanels>()
-        .0
-        .push(panel);
-}
-
 pub fn view(world: &World) -> Option<StageView> {
     let shown = world.resource::<Stage>().shown.as_ref()?;
     Some(StageView {
@@ -141,16 +100,22 @@ pub fn view(world: &World) -> Option<StageView> {
         speaker: shown
             .current()
             .and_then(|line| speaker_name(world, line.by)),
-        text: shown
-            .current()
-            .map(|line| line.text.words(world.resource::<InputMap>())),
+        text: shown.current().map(|line| {
+            line.text.words(
+                world.resource::<Content>(),
+                &world.resource::<InputMap>().key_names(),
+            )
+        }),
         typing: shown.typed_since.is_none(),
         choices: shown
             .choices
             .iter()
             .enumerate()
             .map(|(index, choice)| StageChoice {
-                label: choice.label.words(world.resource::<InputMap>()),
+                label: choice.label.words(
+                    world.resource::<Content>(),
+                    &world.resource::<InputMap>().key_names(),
+                ),
                 gets: choice
                     .chips
                     .iter()
@@ -200,16 +165,22 @@ pub(super) fn cast(world: &mut World) -> Option<Cast> {
     })
 }
 
+/// Where the dialogue's text stands, while it is on show.
 pub fn dialogue_rect(world: &World) -> Option<Rect> {
     world.resource::<StageDrawn>().dialogue
 }
 
+/// Where the dialogue and the windows it opened stand, which a camera that frames the
+/// conversation leaves room for.
 pub fn rects(world: &World) -> Vec<Rect> {
-    let drawn = world.resource::<StageDrawn>();
-    drawn
-        .dialogue
+    let drawn = world.resource::<gui::WidgetRects>();
+    dialogue_rect(world)
         .into_iter()
-        .chain(drawn.panels.clone())
+        .chain(
+            WindowKey::OF_A_CONVERSATION
+                .iter()
+                .filter_map(|key| drawn.0.get(key.name()).copied()),
+        )
         .collect()
 }
 
@@ -222,7 +193,7 @@ pub fn leavable(world: &World) -> bool {
 }
 
 pub fn layer() -> LayerId {
-    sheet_layer(DIALOGUE)
+    sheet::layer()
 }
 
 pub fn leave(world: &mut World) -> bool {
@@ -242,15 +213,12 @@ pub fn leave(world: &mut World) -> bool {
 }
 
 #[derive(Resource, Default)]
-struct DockedPanels(Vec<DockedPanel>);
-
-#[derive(Resource, Default)]
 struct Stage {
     shown: Option<Shown>,
 }
 
 struct Shown {
-    step: ConversationStep,
+    step: WindowStep,
     node: String,
     with: Option<Entity>,
     line: usize,
@@ -271,7 +239,6 @@ struct Shown {
 #[derive(Resource, Default, Clone)]
 struct StageDrawn {
     dialogue: Option<Rect>,
-    panels: Vec<Rect>,
     choices: HashMap<usize, Rect>,
 }
 
@@ -416,7 +383,7 @@ fn show_line(world: &mut World) {
     else {
         return;
     };
-    let styled = line.text.styled();
+    let styled = line.text.styled(world.resource::<Content>());
     let typing = world.spawn((styled, Typewriter::default())).id();
     let with = world
         .resource::<Stage>()
@@ -585,7 +552,7 @@ fn babble_along(world: &mut World, by: Speaker, line: Entity) {
     let content = world.resource::<Content>().clone();
     let babble = match by {
         Speaker::Npc(npc) => npc.get(&content).voice(),
-        Speaker::Player => session::me(world)
+        Speaker::Character => session::me(world)
             .and_then(|seen| world.get::<Babbler>(seen))
             .map(|babbler| babbler.0),
         Speaker::Object | Speaker::Narrator => None,
@@ -603,7 +570,7 @@ fn babble_along(world: &mut World, by: Speaker, line: Entity) {
 /// the nearest.
 fn body_of(world: &mut World, by: Speaker, with: Option<Entity>) -> Option<Entity> {
     let npc = match by {
-        Speaker::Player => return session::me(world),
+        Speaker::Character => return session::me(world),
         Speaker::Npc(npc) => npc,
         Speaker::Object | Speaker::Narrator => return None,
     };
@@ -635,67 +602,42 @@ fn typing_line(world: &World) -> Option<Entity> {
 }
 
 fn draw_stage(world: &mut World) {
+    windows::begin_pass(world);
     let before = std::mem::take(&mut *world.resource_mut::<StageDrawn>());
     let Some(gui) = gui::context(world) else {
         return;
     };
-    let screen = gui.content_rect();
     let talking = world
         .resource::<Stage>()
         .shown
         .as_ref()
         .is_some_and(Shown::speaks);
-    let dialogue = match hud::sheet_pose(world, &gui, DIALOGUE, talking) {
-        Some(pose) if talking => Some(dialogue_sheet(world, &gui, screen, pose, &before)),
-        Some(pose) => lift_off(world, &gui, DIALOGUE, pose),
-        None => None,
-    };
-    let panels = docked_heads(world);
-    let bottom = dialogue.map_or(screen.bottom() - SHEET_LIFT, |dialogue| {
-        dialogue.top() - PANEL_GAP
-    });
-    match hud::sheet_pose(world, &gui, DOCKED, !panels.is_empty()) {
-        Some(pose) if !panels.is_empty() => {
-            docked_panels(world, &gui, panels, screen, bottom, pose)
-        }
-        Some(pose) => {
-            lift_off(world, &gui, DOCKED, pose);
-        }
+    match hud::sheet_pose(world, &gui, DIALOGUE, talking) {
+        Some(pose) if talking => dialogue_text(world, &gui, pose, &before),
+        Some(pose) => lift_off(world, &gui, pose),
         None => {}
     }
-    for key in [DIALOGUE, DOCKED] {
-        gui::stack(&gui, Tier::Front, sheet_layer(key));
-    }
+    gui::stack(&gui, Tier::Front, layer());
 }
 
-/// What a stage sheet last drew and where, to lift off once what it showed has gone.
+/// What the dialogue last drew and how tall it stood, to lift off once what it showed has gone.
 #[derive(Resource, Default)]
 struct StageSheets {
     dialogue_height: f32,
-    drawn: HashMap<&'static str, (float::Afterimage, Rect)>,
+    drawn: Option<(float::Afterimage, Rect)>,
 }
 
-fn sheet_layer(key: &'static str) -> LayerId {
-    LayerId::new(Band::Stage.order(), Id::new(key))
+fn keep_afterimage(world: &mut World, gui: &egui::Context, rect: Rect) {
+    let image = float::Afterimage::of(gui, layer());
+    world.resource_mut::<StageSheets>().drawn = Some((image, rect));
 }
 
-fn keep_afterimage(world: &mut World, gui: &egui::Context, key: &'static str, rect: Rect) {
-    let image = float::Afterimage::of(gui, sheet_layer(key));
-    world
-        .resource_mut::<StageSheets>()
-        .drawn
-        .insert(key, (image, rect));
-}
-
-fn lift_off(
-    world: &World,
-    gui: &egui::Context,
-    key: &'static str,
-    pose: SheetPose,
-) -> Option<Rect> {
-    let (image, rect) = world.resource::<StageSheets>().drawn.get(key)?.clone();
-    gui.set_transform_layer(sheet_layer(key), pose.transform(gui, rect, rect.min));
-    egui::Area::new(Id::new(key))
+fn lift_off(world: &World, gui: &egui::Context, pose: SheetPose) {
+    let Some((image, rect)) = world.resource::<StageSheets>().drawn.clone() else {
+        return;
+    };
+    gui.set_transform_layer(layer(), pose.transform(gui, rect, rect.min));
+    egui::Area::new(layer().id)
         .order(Band::Stage.order())
         .fixed_pos(rect.min)
         .constrain(false)
@@ -705,298 +647,89 @@ fn lift_off(
             ui.multiply_opacity(pose.opacity);
             image.paint(ui.painter());
         });
-    Some(rect)
 }
 
-fn docked_heads(world: &World) -> Vec<(PanelHead, DockedPanel)> {
-    world
-        .get_resource::<DockedPanels>()
-        .map(|docked| {
-            docked
-                .0
-                .iter()
-                .filter_map(|&panel| Some(((panel.head)(world)?, panel)))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn docked_panels(
-    world: &mut World,
-    gui: &egui::Context,
-    panels: Vec<(PanelHead, DockedPanel)>,
-    screen: Rect,
-    bottom: f32,
-    pose: SheetPose,
-) {
-    let most = (bottom - screen.top() - SCREEN_MARGIN).max(0.0);
-    let id = Id::new(DOCKED);
-    let rest = gui
-        .memory(|memory| memory.area_rect(id))
-        .unwrap_or(Rect::from_center_size(screen.center(), Vec2::ZERO));
-    gui.set_transform_layer(sheet_layer(DOCKED), pose.transform(gui, rest, rest.min));
-    let area = egui::Area::new(id)
-        .order(Band::Stage.order())
-        .pivot(Align2::CENTER_BOTTOM)
-        .fixed_pos(Pos2::new(screen.center().x, bottom))
-        .constrain(false)
-        .fade_in(false);
-    let shown = float::anchored(gui, area, |ui| {
-        ui.multiply_opacity(pose.opacity);
-        ui.spacing_mut().item_spacing.x = PANEL_GAP;
-        ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
-            for (index, (head, panel)) in panels.into_iter().enumerate() {
-                let width = head.width.min(screen.width() * SCREEN_SHARE);
-                let rect = ui
-                    .push_id(("docked", index), |ui| match head.chrome {
-                        PanelChrome::Card => {
-                            ui.vertical(|ui| (panel.show)(ui, world, width, most))
-                                .response
-                                .rect
-                        }
-                        PanelChrome::Sheet { title, height } => docked_sheet(
-                            ui,
-                            world,
-                            panel,
-                            &title,
-                            Vec2::new(width, height.min(most)),
-                            pose,
-                        ),
-                    })
-                    .inner;
-                world.resource_mut::<StageDrawn>().panels.push(rect);
-            }
-        });
-    });
-    keep_afterimage(world, gui, DOCKED, shown.response.rect);
-}
-
-fn docked_sheet(
-    ui: &mut Ui,
-    world: &mut World,
-    panel: DockedPanel,
-    title: &str,
-    size: Vec2,
-    pose: SheetPose,
-) -> Rect {
-    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    let sheet = Sheet {
-        title: Some(title),
-        closable: false,
-        curl: false,
-        depth: sheet::Depth::Front,
+/// The conversation as free text over the world, as the sheet draws it, and what the player does
+/// with it.
+fn dialogue_text(world: &mut World, gui: &egui::Context, pose: SheetPose, before: &StageDrawn) {
+    let pointed = pointed_choice(gui, before);
+    let moved = gui.input(|input| input.pointer.delta() != Vec2::ZERO);
+    point_at(world, pointed, moved);
+    let Some(shown) = sheet_of(world) else {
+        return;
     };
-    let parts = sheet.paint_at(ui.painter(), rect, pose.shadow, Color32::WHITE);
-    titled(ui, parts.band, title);
-    let body = parts.body;
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(body)
-            .layout(Layout::top_down(Align::Min)),
-        |ui| (panel.show)(ui, world, body.width(), body.height()),
-    );
-    rect
-}
-
-fn dialogue_sheet(
-    world: &mut World,
-    gui: &egui::Context,
-    screen: Rect,
-    pose: SheetPose,
-    before: &StageDrawn,
-) -> Rect {
-    let width = SHEET_WIDTH.min(screen.width() * SCREEN_SHARE);
     let height = world.resource::<StageSheets>().dialogue_height;
-    let rect = Rect::from_min_size(
-        Pos2::new(
-            screen.center().x - width / 2.0,
-            screen.bottom() - SHEET_LIFT - height,
-        ),
-        Vec2::new(width, height),
-    );
-    let speaker = world
-        .resource::<Stage>()
-        .shown
-        .as_ref()
-        .and_then(Shown::current)
-        .and_then(|spoken| speaker_name(world, spoken.by));
-    gui.set_transform_layer(layer(), pose.transform(gui, rect, rect.min));
-    egui::Area::new(layer().id)
-        .order(Band::Stage.order())
-        .fixed_pos(rect.min)
-        .constrain(false)
-        .fade_in(false)
-        .show(gui, |ui| {
-            ui.multiply_opacity(pose.opacity);
-            let (outer, held) = ui.allocate_exact_size(rect.size(), Sense::click());
-            let sheet = Sheet {
-                title: None,
-                closable: false,
-                curl: false,
-                depth: sheet::Depth::Front,
-            };
-            let body = sheet
-                .paint_at(ui.painter(), outer, pose.shadow, Color32::WHITE)
-                .body;
-            let written = ui
-                .scope_builder(
-                    UiBuilder::new()
-                        .max_rect(Rect::from_min_size(
-                            body.min,
-                            Vec2::new(body.width(), f32::INFINITY),
-                        ))
-                        .layout(Layout::top_down(Align::Min)),
-                    |ui| {
-                        ui.spacing_mut().item_spacing.y = 12.0;
-                        line(ui, world);
-                        choices(ui, world, before);
-                    },
-                )
-                .response
-                .rect;
-            let needed =
-                written.bottom() - outer.top() + HINT_ROOM + outer.bottom() - body.bottom();
-            let mut sheets = world.resource_mut::<StageSheets>();
-            if (needed - sheets.dialogue_height).abs() > 0.5 {
-                sheets.dialogue_height = needed;
-                gui.request_discard("the conversation grew or shrank");
-            }
-            foot(ui, world, body);
-            if let Some(speaker) = &speaker {
-                name_tag(ui, outer, speaker);
-            }
-            if map::clicked(world, InputAction::Advance, &held) {
-                press_advance(world);
-            }
-        });
-    keep_afterimage(world, gui, DIALOGUE, rect);
-    world.resource_mut::<StageDrawn>().dialogue = Some(rect);
-    rect
-}
-
-fn titled(ui: &Ui, band: Rect, title: &str) {
-    ui.interact(band, ui.id().with(("title", title)), Sense::hover())
-        .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, title));
-}
-
-/// The speaker's name on a slip of its own over the sheet's top edge, so it takes no room from the
-/// line beneath.
-fn name_tag(ui: &Ui, sheet: Rect, name: &str) {
-    let galley = ui
-        .painter()
-        .layout_job(TextRole::Title.job(name, ink::RUBRIC));
-    let padding = Vec2::new(f32::from(slip::PADDING.left), f32::from(slip::PADDING.top));
-    let size = galley.size() + 2.0 * padding;
-    let rect = Rect::from_min_size(
-        Pos2::new(
-            sheet.right() - NAME_INSET - size.x,
-            sheet.top() - size.y / 2.0,
-        ),
-        size,
-    );
-    slip::paint(ui.painter(), rect);
-    ui.painter().galley(rect.min + padding, galley, ink::RUBRIC);
-    ui.interact(rect, ui.id().with(("speaker", name)), Sense::hover())
-        .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, name));
-}
-
-fn line(ui: &mut Ui, world: &mut World) {
-    let Some(shown) = world.resource::<Stage>().shown.as_ref() else {
-        return;
-    };
-    let Some(spoken) = shown.current() else {
-        return;
-    };
-    let typing = shown.typing;
-    let (styled, revealed) = typing
-        .and_then(|line| {
-            Some((
-                world.get::<StyledLine>(line)?.clone(),
-                world.get::<Typewriter>(line)?.shown(),
-            ))
-        })
-        .unwrap_or_else(|| (spoken.text.styled(), None));
-    egui::Frame::new().inner_margin(LINE_MARGIN).show(ui, |ui| {
-        text::show(
-            ui,
-            world,
-            &styled,
-            TextLook::role(TextRole::Line, ink::INK),
-            revealed,
-        );
-    });
-}
-
-fn choices(ui: &mut Ui, world: &mut World, before: &StageDrawn) {
-    let Some(shown) = world.resource::<Stage>().shown.as_ref() else {
-        return;
-    };
-    if !shown.choosing() {
-        return;
+    let drawn = sheet::draw(world, gui, &shown, pose, height);
+    world.resource_mut::<StageSheets>().dialogue_height = drawn.height;
+    if map::clicked(world, InputAction::Advance, &drawn.held) {
+        press_advance(world);
     }
-    let now = world.resource::<Time>().elapsed();
-    let rows: Vec<(ChoiceView, bool)> = shown
-        .choices
-        .iter()
-        .enumerate()
-        .map(|(index, choice)| {
-            let refused = shown.refused.is_some_and(|(refused, since)| {
-                refused == index && now.saturating_sub(since) < REFUSED
-            });
-            (choice.clone(), refused)
-        })
-        .collect();
-    let moved = ui.input(|input| input.pointer.delta() != Vec2::ZERO);
-    point_at(world, pointed_choice(ui, before), moved);
-    let selected = world
-        .resource::<Stage>()
-        .shown
-        .as_ref()
-        .map(|shown| shown.selected);
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for (index, (choice, refused)) in rows.into_iter().enumerate() {
-            let look = RowLook {
-                selected: selected == Some(index),
-                faint: choice.locked,
-                failed: refused,
-                hover: RowHover::Unlit,
-            };
-            let row = ui.push_id(("choice", index), |ui| {
-                controls::row(ui, look, |ui| choice_row(ui, world, &choice, index))
-            });
-            let (label, chip_item) = row.inner.inner;
-            let response = row.inner.response;
-            response.widget_info(|| {
-                WidgetInfo::selected(WidgetType::SelectableLabel, true, look.selected, &label)
-            });
-            if map::clicked(world, InputAction::PickChoice, &response) {
-                pick_at(world, index);
-            }
-            if let Some((item, chip)) = chip_item
-                && map::clicked(world, InputAction::InspectItem, &response)
-            {
-                card::open(world, item, Some(chip));
-            }
-            let pointed: Vec<ItemId> = chip_item.iter().map(|(item, _)| *item).collect();
-            card::chat_shortcut(world, &response, &pointed);
-            world
-                .resource_mut::<StageDrawn>()
-                .choices
-                .insert(index, response.rect);
+    for (index, row) in drawn.rows.iter().enumerate() {
+        if map::clicked(world, InputAction::PickChoice, &row.response) {
+            pick_at(world, index);
         }
-    });
+        if let Some((item, chip)) = row.pointed_item
+            && map::clicked(world, InputAction::InspectItem, &row.response)
+        {
+            card::open(world, item, Some(chip));
+        }
+        let pointed: Vec<ItemId> = row.pointed_item.iter().map(|(item, _)| *item).collect();
+        card::chat_shortcut(world, &row.response, &pointed);
+        world
+            .resource_mut::<StageDrawn>()
+            .choices
+            .insert(index, row.response.rect);
+    }
+    keep_afterimage(world, gui, drawn.rect);
+    world.resource_mut::<StageDrawn>().dialogue = Some(drawn.rect);
+}
+
+/// What the conversation on show puts on the sheet: its line as far as it has typed, and its
+/// choices once the last line is out.
+fn sheet_of(world: &World) -> Option<DialogueSheet> {
+    let shown = world.resource::<Stage>().shown.as_ref()?;
+    let spoken = shown.current();
+    let typed = shown
+        .typing
+        .and_then(|line| world.get::<Typewriter>(line))
+        .and_then(Typewriter::shown);
+    let choosing = shown.choosing();
+    let now = world.resource::<Time>().elapsed();
+    let choices = if choosing {
+        shown
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(index, choice)| SheetChoice {
+                view: choice.clone(),
+                lit: index == shown.selected,
+                refused: shown.refused.is_some_and(|(refused, since)| {
+                    refused == index && now.saturating_sub(since) < REFUSED
+                }),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Some(DialogueSheet {
+        speaker: spoken
+            .as_ref()
+            .and_then(|line| speaker_name(world, line.by)),
+        line: spoken.map(|line| line.text),
+        typed,
+        waits: shown.typed_since.is_some() && !choosing,
+        choices,
+    })
 }
 
 /// Found where the rows stood the pass before, as egui finds what is hovered, so the selection it
 /// moves lights its row on the pass the pointer reaches it.
-fn pointed_choice(ui: &Ui, before: &StageDrawn) -> Option<usize> {
-    let pointer = ui.ctx().pointer_hover_pos()?;
-    if ui.ctx().layer_id_at(pointer) != Some(layer()) {
+fn pointed_choice(gui: &egui::Context, before: &StageDrawn) -> Option<usize> {
+    let pointer = gui.pointer_hover_pos()?;
+    if gui.layer_id_at(pointer) != Some(layer()) {
         return None;
     }
-    let local = ui
-        .ctx()
+    let local = gui
         .layer_transform_to_global(layer())
         .map_or(pointer, |transform| transform.inverse() * pointer);
     before
@@ -1022,128 +755,6 @@ fn point_at(world: &mut World, pointed: Option<usize>, moved: bool) {
     shown.pointed = pointed;
 }
 
-/// Hands back the item of the pill under the pointer, since the row takes every click.
-fn choice_row(
-    ui: &mut Ui,
-    world: &mut World,
-    choice: &ChoiceView,
-    index: usize,
-) -> (String, Option<(ItemId, Rect)>) {
-    let keys = world.resource::<InputMap>();
-    let shortcut = CHOICE_SHORTCUTS
-        .get(index)
-        .and_then(|&action| keys.name(action));
-    let label = choice.label.words(keys);
-    let color = ui.visuals().override_text_color.unwrap_or(ink::INK);
-    let mut chip_item = None;
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            chip_item = pills(ui, world, choice);
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                if let Some(shortcut) = &shortcut {
-                    controls::key_hint(ui, shortcut);
-                }
-                if let Some(icon) = &choice.icon
-                    && let Some(image) = gui::image_file(world, icon)
-                {
-                    ui.add(image.widget(Vec2::splat(CHOICE_ICON)));
-                }
-                let look = TextLook::new(TextRole::Body.size(), color);
-                text::show(ui, world, &choice.label.styled(), look, None);
-            });
-        });
-    });
-    (label, chip_item)
-}
-
-fn pills(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId, Rect)> {
-    let content = world.resource::<Content>().clone();
-    let mut pointed = None;
-    if let Some(warn) = &choice.warn {
-        controls::pill(ui, warn, Pill::Rubric);
-    }
-    for shown in choice.chips.iter().rev() {
-        match shown {
-            ChoiceChip::Needs { what, met } => {
-                let (mark, pill) = if *met {
-                    (Mark::Check, Pill::Verdigris)
-                } else {
-                    (Mark::Lock, Pill::Rubric)
-                };
-                controls::pill_with(ui, pill, |ui| {
-                    glyph::show(ui, mark, PILL_ICON, pill.color());
-                    let color = ui.visuals().text_color();
-                    day_clock::wording(ui, world, what, TextRole::Body, color);
-                });
-            }
-            ChoiceChip::Pays { item, count, have } => {
-                let pill = if have >= count {
-                    Pill::Gold
-                } else {
-                    Pill::Rubric
-                };
-                let icon = item.get(&content).icon.clone();
-                controls::pill_with(ui, pill, |ui| {
-                    hud::icon(ui, world, &icon, PILL_ICON);
-                    ui.label(count.to_string());
-                });
-            }
-            ChoiceChip::Gets { item, count } => {
-                let icon = item.get(&content).icon.clone();
-                let response = controls::pill_with(ui, Pill::Verdigris, |ui| {
-                    hud::icon(ui, world, &icon, PILL_ICON);
-                    ui.label(format!("+{count}"));
-                })
-                .response
-                .interact(Sense::hover());
-                card::tooltip(world, &response, *item);
-                if response.contains_pointer() {
-                    pointed = Some((*item, response.rect));
-                }
-            }
-        }
-    }
-    pointed
-}
-
-fn foot(ui: &mut Ui, world: &mut World, body: Rect) {
-    let room = Rect::from_min_max(Pos2::new(body.left(), body.bottom() - HINT_ROOM), body.max);
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(room)
-            .layout(Layout::left_to_right(Align::Max)),
-        |ui| {
-            let look = TextLook::new(TextRole::Small.size(), ink::INK3);
-            text::show(ui, world, &StyledLine::new(player_hint()), look, None);
-        },
-    );
-    let waits = world
-        .resource::<Stage>()
-        .shown
-        .as_ref()
-        .is_some_and(|shown| shown.typed_since.is_some() && !shown.choosing());
-    if waits {
-        let mark = Rect::from_min_max(body.max - Vec2::splat(CONTINUE_MARK), body.max);
-        Mark::CaretDown.paint(ui.painter(), mark, ink::INK3);
-    }
-}
-
-fn player_hint() -> Vec<TextPiece> {
-    vec![
-        map::input(InputAction::ChoosePrevious),
-        map::input(InputAction::ChooseNext),
-        TextPiece::text(" choose · "),
-        map::input(InputAction::PickChoice),
-        TextPiece::text(" pick · "),
-        map::input(InputAction::Choice1),
-        TextPiece::text("–"),
-        map::input(InputAction::Choice9),
-        TextPiece::text(" shortcut · "),
-        map::input(InputAction::Dismiss),
-        TextPiece::text(" leave"),
-    ]
-}
-
 fn speaker_name(world: &World, who: Speaker) -> Option<String> {
     let content = world.resource::<Content>();
     match who {
@@ -1155,7 +766,7 @@ fn speaker_name(world: &World, who: Speaker) -> Option<String> {
             .and_then(|shown| shown.with)
             .and_then(|with| world.get::<Name>(with))
             .map(|name| name.name.clone()),
-        Speaker::Player => session::me(world)
+        Speaker::Character => session::me(world)
             .and_then(|seen| world.get::<Name>(seen))
             .map(|name| name.name.clone()),
         Speaker::Narrator => None,

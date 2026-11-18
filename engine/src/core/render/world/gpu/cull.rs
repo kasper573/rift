@@ -907,7 +907,7 @@ impl ViewCull {
     }
 
     /// The instances the commands draw, each by its place among the arena's, the scale it is drawn
-    /// at, how far it shows, and how far it fades in with whether the eye stands inside it.
+    /// at, how far it shows, and how far it fades in.
     pub fn drawn(&self) -> &Buffer {
         &self.drawn
     }
@@ -945,8 +945,7 @@ impl ViewCull {
                     record,
                     scale: f32::from_bits(scale),
                     shown: f32::from_bits(shown),
-                    around_eye: packed & 1 != 0,
-                    faded_in: (packed >> 1) as f32 / 65535.0,
+                    faded_in: packed as f32 / 65535.0,
                 })
                 .collect()
         };
@@ -986,14 +985,12 @@ pub struct CullReadback {
 }
 
 /// An instance a view draws: its place among the arena's, the scale it is drawn at, how far it
-/// shows, whether the eye stands inside it, so that it clears away whole, and how far it has
-/// faded into the representation the listing draws it as.
+/// shows, and how far it has faded into the representation the listing draws it as.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ListedInstance {
     pub record: u32,
     pub scale: f32,
     pub shown: f32,
-    pub around_eye: bool,
     pub faded_in: f32,
 }
 
@@ -1089,7 +1086,7 @@ struct MissingReadback {
 }
 
 /// The bytes a drawn instance takes: its place among the arena's, its scale, how far it shows,
-/// and whether the eye stands inside it.
+/// and how far it fades in.
 const DRAWN_BYTES: u64 = 16;
 
 /// The threads of a workgroup of the count and list passes, as the kernel lays them out.

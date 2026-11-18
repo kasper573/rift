@@ -11,10 +11,10 @@ use ui::words;
 
 use engine::core::content::{ContentFile, SETTINGS_FILE, fields_file, version};
 use engine::core::render::video;
+use engine::core::script::ScriptDef;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::player::PlayerDef;
-use engine::systems::script::ScriptDef;
+use engine::systems::player::CharacterDef;
 use strum::VariantArray;
 use ui::egui::{Context, RichText, Ui};
 use ui::glyph::{self, Mark};
@@ -114,7 +114,7 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
                 {
                     dialog.folder_touched = true;
                 }
-                if ui.button("pick…").clicked()
+                if controls::button(ui, "pick…").clicked()
                     && let Some(folder) = rfd::FileDialog::new()
                         .set_title("Folder for the new game (new or empty)")
                         .pick_folder()
@@ -169,30 +169,26 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
                 ui.colored_label(theme::DANGER, error);
             }
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let label = if copy_source.is_some() {
-                    "Create and open"
-                } else {
-                    "Create"
-                };
-                if controls::primary(ui, label).clicked() {
-                    outcome = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    outcome = Some(false);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(
-                        theme::faint(format!(
-                            "{} picks · {} creates · {} cancels",
-                            EditorKey::Move.name(),
-                            EditorKey::Confirm.name(),
-                            EditorKey::Cancel.name()
-                        ))
-                        .size(12.0),
-                    );
-                });
-            });
+            let label = if copy_source.is_some() {
+                "Create and open"
+            } else {
+                "Create"
+            };
+            let keys = format!(
+                "{} picks · {} creates · {} cancels",
+                EditorKey::Move.name(),
+                EditorKey::Confirm.name(),
+                EditorKey::Cancel.name()
+            );
+            match dialog::AnswerRow::new(label, crate::modal::CANCEL)
+                .confirm_key(false)
+                .hint(keys)
+                .show(ui)
+            {
+                Some(dialog::Answer::Confirm) => outcome = Some(true),
+                Some(dialog::Answer::Cancel) => outcome = Some(false),
+                None => {}
+            }
         },
     );
     if pressed.confirm && !ctx.egui_wants_keyboard_input() {
@@ -288,12 +284,12 @@ fn template_cards(ui: &mut Ui, picked: &mut String, templates: &[GameTemplate]) 
 
 fn template_counts(template: &GameTemplate) -> String {
     let areas = template.rows_in(AreaDef::TABLE);
-    let players = template.rows_in(PlayerDef::TABLE);
+    let characters = template.rows_in(CharacterDef::TABLE);
     let scripts = template.rows_in(ScriptDef::TABLE);
     format!(
-        "{areas} area{} · {players} player{} · {scripts} script{}",
+        "{areas} area{} · {characters} character{} · {scripts} script{}",
         words::plural(areas),
-        words::plural(players),
+        words::plural(characters),
         words::plural(scripts)
     )
 }
@@ -332,7 +328,6 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
     match dialog {
         ModalDialog::Confirm(confirm) => {
             let mut outcome = None;
-            let mut pressed = dialog::Keys::default();
             dialog::card(
                 ctx,
                 "confirm",
@@ -342,7 +337,6 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                     440.0
                 },
                 |ui| {
-                    pressed = dialog::keys(ui);
                     dialog::title(ui, &confirm.title);
                     ui.label(theme::muted(&confirm.body));
                     if let Some(compare) = &confirm.compare {
@@ -355,27 +349,16 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                         });
                     }
                     ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        let clicked = if confirm.action.destroys() {
-                            controls::danger(ui, &confirm.label).clicked()
-                        } else {
-                            controls::primary(ui, &confirm.label).clicked()
-                        };
-                        if clicked {
-                            outcome = Some(true);
-                        }
-                        if ui.button("Cancel").clicked() {
-                            outcome = Some(false);
-                        }
-                    });
+                    match dialog::AnswerRow::new(&confirm.label, crate::modal::CANCEL)
+                        .danger(confirm.action.destroys())
+                        .show(ui)
+                    {
+                        Some(dialog::Answer::Confirm) => outcome = Some(true),
+                        Some(dialog::Answer::Cancel) => outcome = Some(false),
+                        None => {}
+                    }
                 },
             );
-            if pressed.confirm {
-                outcome = Some(true);
-            }
-            if pressed.cancel {
-                outcome = Some(false);
-            }
             match outcome {
                 Some(true) => {
                     confirmed(editor, confirm.action);
@@ -391,13 +374,13 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                 let count = editor.project.as_ref().map_or(0, |p| p.unsaved().len());
                 ui.label(format!("{count} files are unsaved."));
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if controls::primary(ui, "Save").clicked() {
                         outcome = Some(Some(true));
                     }
-                    if ui.button("Don't save").clicked() {
+                    if controls::button(ui, "Don't save").clicked() {
                         outcome = Some(Some(false));
                     }
-                    if ui.button("Cancel").clicked() {
+                    if controls::button(ui, "Cancel").clicked() {
                         outcome = Some(None);
                     }
                 });
@@ -506,20 +489,21 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                         {
                             decided = Some(false);
                         }
-                        if ui
-                            .button("Take disk")
+                        if controls::button(ui, "Take disk")
                             .on_hover_text("The edits go")
                             .clicked()
                         {
                             decided = Some(true);
                         }
-                        if ui
-                            .button(if compare {
+                        if controls::button(
+                            ui,
+                            if compare {
                                 "Back to the summary"
                             } else {
                                 "Open both side by side"
-                            })
-                            .clicked()
+                            },
+                        )
+                        .clicked()
                         {
                             compare = !compare;
                             ctx.data_mut(|d| d.insert_temp(compare_id, compare));
@@ -539,9 +523,7 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
         }
         ModalDialog::Delete(mut dialog) => {
             let mut outcome = None;
-            let mut pressed = dialog::Keys::default();
             dialog::card(ctx, "delete", 620.0, |ui| {
-                pressed = dialog::keys(ui);
                 ui.horizontal(|ui| {
                     glyph::show(ui, Mark::Cross, 16.0, theme::DANGER);
                     dialog::title(ui, &rows::delete_title(&dialog));
@@ -555,39 +537,36 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                     UsageDecision::Repoint(key) => !key.is_empty(),
                     UsageDecision::Remove | UsageDecision::Unpack => true,
                 });
-                ui.horizontal(|ui| {
-                    let unpacked: usize = dialog
-                        .groups
-                        .iter()
-                        .filter(|group| group.decision == UsageDecision::Unpack)
-                        .map(|group| group.usages.len())
-                        .sum();
-                    let deleted = dialog.gone.len();
-                    let label = if edits == 0 && deleted <= 1 {
-                        "Delete".to_owned()
-                    } else if edits == 0 {
-                        format!("Delete {deleted} files")
-                    } else if unpacked == edits {
-                        format!(
-                            "Delete and unpack {edits} placement{}",
-                            words::plural(edits)
-                        )
-                    } else {
-                        format!("Delete and apply {edits} edit{}", words::plural(edits))
-                    };
-                    ui.add_enabled_ui(ready, |ui| {
-                        if controls::danger(ui, &label).clicked() {
-                            outcome = Some(true);
-                        }
-                    });
-                    if ui.button("Cancel").clicked() {
-                        outcome = Some(false);
-                    }
-                });
+                let unpacked: usize = dialog
+                    .groups
+                    .iter()
+                    .filter(|group| group.decision == UsageDecision::Unpack)
+                    .map(|group| group.usages.len())
+                    .sum();
+                let deleted = dialog.gone.len();
+                let label = if edits == 0 && deleted <= 1 {
+                    "Delete".to_owned()
+                } else if edits == 0 {
+                    format!("Delete {deleted} files")
+                } else if unpacked == edits {
+                    format!(
+                        "Delete and unpack {edits} placement{}",
+                        words::plural(edits)
+                    )
+                } else {
+                    format!("Delete and apply {edits} edit{}", words::plural(edits))
+                };
+                match dialog::AnswerRow::new(&label, crate::modal::CANCEL)
+                    .danger(true)
+                    .enabled(ready)
+                    .confirm_key(false)
+                    .show(ui)
+                {
+                    Some(dialog::Answer::Confirm) => outcome = Some(true),
+                    Some(dialog::Answer::Cancel) => outcome = Some(false),
+                    None => {}
+                }
             });
-            if pressed.cancel {
-                outcome = Some(false);
-            }
             match outcome {
                 Some(true) => {
                     rows::delete(editor, dialog);
@@ -623,7 +602,7 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                 }
                 ui.add_space(8.0);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Done").clicked() {
+                    if controls::button(ui, "Done").clicked() {
                         open = false;
                     }
                 });
@@ -638,7 +617,7 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                 ui.horizontal(|ui| {
                     dialog::title(ui, "Keys");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Done").clicked() {
+                        if controls::button(ui, "Done").clicked() {
                             open = false;
                         }
                     });
@@ -659,7 +638,7 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                                         .spacing([14.0, 4.0])
                                         .show(ui, |ui| {
                                             for key in scope.keys() {
-                                                controls::key_hint(ui, &key.name());
+                                                controls::key_hint(ui, &key.cap());
                                                 ui.label(RichText::new(key.about()).size(13.0));
                                                 ui.end_row();
                                             }
@@ -743,13 +722,6 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                 if let Some(to) = moved_to {
                     dialog.picked = Some(pickable[to].to_owned());
                 }
-                let pressed = dialog::keys(ui);
-                if pressed.confirm && dialog.picked.is_some() {
-                    outcome = Some(true);
-                }
-                if pressed.cancel {
-                    outcome = Some(false);
-                }
                 egui::ScrollArea::vertical()
                     .max_height(320.0)
                     .auto_shrink([false, true])
@@ -794,17 +766,14 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                             ui.label(theme::muted("nothing matches"));
                         }
                     });
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(dialog.picked.is_some(), egui::Button::new("Pick"))
-                        .clicked()
-                    {
-                        outcome = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        outcome = Some(false);
-                    }
-                });
+                match dialog::AnswerRow::new("Pick", crate::modal::CANCEL)
+                    .enabled(dialog.picked.is_some())
+                    .show(ui)
+                {
+                    Some(dialog::Answer::Confirm) => outcome = Some(true),
+                    Some(dialog::Answer::Cancel) => outcome = Some(false),
+                    None => {}
+                }
             });
             match outcome {
                 Some(true) => {

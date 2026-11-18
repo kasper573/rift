@@ -1,5 +1,9 @@
 pub mod render;
 
+use crate::core::script::EventDef;
+use crate::core::script::RunnerSpec;
+use crate::core::script::ValueType;
+use crate::core::script::Vocabulary;
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
@@ -15,6 +19,8 @@ use crate::core::content::{
 use crate::core::geometry::Capsule;
 use crate::core::math::{Pos, Rng};
 use crate::core::script::Value;
+use crate::core::script::{EventKind, Instances, Owner, RunnerKind, ScriptModule, ScriptedRow};
+use crate::core::text::LineText;
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{MeterPos, Meters, Percent, PlaybackRate, Seconds};
 use crate::systems::actor::playing::{self, Motion};
@@ -25,19 +31,37 @@ use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::item::{
     DropRow, ExchangeRefusal, Inventory, ItemDef, ItemId, ItemStack, ToolTypeDef, ToolTypeId,
 };
+use crate::systems::messages::{self, messages};
 use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{self, Bodies, Position, Spot, position};
 use crate::systems::notification;
+use crate::systems::notification::Audience;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
-use crate::systems::script::effect::Audience;
-use crate::systems::script::{
-    EventKind, Owner, RiftEvent, RiftInstances, RunnerKind, ScriptModule, ScriptedRow,
-};
 use crate::systems::stat::{self, StatKind};
-use crate::systems::text::LineText;
-use crate::systems::{GameSettings, area, visibility};
+use crate::systems::{area, visibility};
+
+messages! {
+    /// What the game says of working resources.
+    pub struct ResourceMessages {
+        /// What a player is told working a resource without a tool of the kind `{tool}` in their
+        /// tool slot.
+        needs_tool(tool: Text),
+        /// What a player is told working a resource as many already work as it has room for.
+        no_room,
+        /// What a player is told working a resource their bag has no room for the drops of.
+        bag_room,
+        /// What a player is told as the resource they work or set out for has nothing left.
+        ran_out,
+        /// What a resource's plate says while it is worked, by `{working}` of the `{room}` that may work it.
+        working_of(room: Number, working: Number),
+        /// What the hint under the screen says while the player works the resource `{name}`, where the input `{key}` stops the work too.
+        working_keyed[key: Line, name: Text],
+        /// What the hint under the screen says while the player works the resource `{name}`, where only moving stops the work.
+        working_unkeyed(name: Text),
+    }
+}
 
 pub type ResourceId = ContentId<ResourceDef>;
 
@@ -149,7 +173,7 @@ impl ModuleSet for ResourceDef {
 }
 
 impl ScriptedRow for ResourceDef {
-    const OWNER: RunnerKind = RunnerKind::Resource;
+    const OWNER: RunnerKind = RESOURCE_RUNNER;
 
     fn script(module: &ResourceModule) -> Option<&ScriptModule> {
         match module {
@@ -378,14 +402,14 @@ pub fn workable(
     resource: Entity,
 ) -> Result<Option<ItemId>, LineText> {
     let content = world.resource::<Content>().clone();
-    let words = &content.built::<GameSettings>().words;
+    let messages = &messages::of(&content).resource;
     let standing = world
         .get::<Resource>(resource)
         .zip(world.get::<Left>(resource))
         .filter(|(_, left)| left.0 > 0)
         .map(|(resource, _)| resource.def);
     let Some(def) = standing else {
-        return Err(words.ran_out.clone().into());
+        return Err(messages.ran_out().into());
     };
     let row = def.get(&content);
     let kind = row.tool.get(&content);
@@ -396,14 +420,11 @@ pub fn workable(
             worn.get(&content).wear().and_then(|wear| wear.tool_type()) == Some(row.tool)
         });
         let Some(worn) = worn else {
-            return Err(words.needs_tool.replace("{tool}", &kind.name).into());
+            return Err(messages.needs_tool(&kind.name).into());
         };
         Some(worn)
     };
-    let bag = world
-        .get::<Inventory>(worker)
-        .cloned()
-        .unwrap_or_else(Inventory::empty);
+    let bag = Inventory::of(world, worker);
     if let Err(missing) = bag.clone().exchange(&content, &row.spends, &[]) {
         return Err(unpaid(&content, missing));
     }
@@ -411,7 +432,7 @@ pub fn workable(
         .get::<Working>(worker)
         .is_some_and(|working| working.resource == resource);
     if !working_it && workers(world, resource) >= row.max_occupants {
-        return Err(words.no_room.clone().into());
+        return Err(messages.no_room().into());
     }
     let efficiency = Percent(stat::effective(
         world,
@@ -554,12 +575,7 @@ fn work_reach(world: &World, resource: Entity) -> Option<Meters> {
 fn unpaid(content: &Content, refusal: ExchangeRefusal) -> LineText {
     match refusal {
         ExchangeRefusal::Missing(_) => refusal.line(content),
-        ExchangeRefusal::NoRoom { .. } => content
-            .built::<GameSettings>()
-            .words
-            .bag_room
-            .clone()
-            .into(),
+        ExchangeRefusal::NoRoom { .. } => messages::of(content).resource.bag_room().into(),
     }
 }
 
@@ -614,7 +630,7 @@ fn interrupted(world: &mut World, worker: Entity, working: &Working) -> Option<O
         .get::<Left>(working.resource)
         .is_some_and(|left| left.0 > 0);
     if !standing {
-        return Some(Some(content.built::<GameSettings>().words.ran_out.clone()));
+        return Some(Some(messages::of(&content).resource.ran_out().to_owned()));
     }
     let blows = world.get::<Hurt>(worker).map_or(0, |hurt| hurt.0);
     let unhurt = world
@@ -648,7 +664,7 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
         .map(|(resource, left)| (resource.def, left.0));
     let Some((def, left)) = standing else {
         stop(world, worker);
-        let ran_out = content.built::<GameSettings>().words.ran_out.clone();
+        let ran_out = messages::of(content).resource.ran_out().to_owned();
         return notification::error(world, worker, ran_out);
     };
     let row = def.get(content);
@@ -668,7 +684,13 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
     }
     world.entity_mut(resource).insert(Left(left - 1));
     for stack in &dropped {
-        raise(world, def, EventKind::Extracted, worker, Some(*stack));
+        raise(
+            world,
+            def,
+            EventKind::of::<Extracted>(),
+            worker,
+            Some(*stack),
+        );
     }
     if left == 1 {
         notification::play_sound(
@@ -678,7 +700,7 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
             row.tool.get(content).sfx.ran_out,
             Audience::Everyone,
         );
-        raise(world, def, EventKind::RanOut, worker, None);
+        raise(world, def, EventKind::of::<RanOut>(), worker, None);
         stop(world, worker);
         world.despawn(resource);
         return;
@@ -705,17 +727,16 @@ fn raise(
             Value::Int(i64::from(stack.count)),
         ]
     });
-    world.resource_mut::<RiftInstances>().raise(
-        Owner::Row(RunnerKind::Resource, def.raw()),
+    world.resource_mut::<Instances>().raise(
+        Owner::Row(RESOURCE_RUNNER, def.raw()),
         kind,
         Some(worker),
         fields,
-        move |event| match event {
-            RiftEvent::Extracted { item } => {
+        move |event| match event.downcast_ref::<Extracted>() {
+            Some(Extracted { item }) => {
                 item.is_none_or(|item| stack.is_some_and(|stack| stack.item == item))
             }
-            RiftEvent::RanOut => true,
-            _ => false,
+            None => event.is::<RanOut>(),
         },
     );
 }
@@ -728,4 +749,46 @@ pub fn take_out(insert: On<Insert<Working>>, world: &World, mut commands: Comman
 /// Puts a worker's tool away as its work ends.
 pub fn put_away(remove: On<Remove<Working>>, world: &World, mut commands: Commands) {
     equipment::show(world, remove.entity, false, &mut commands);
+}
+
+pub const RESOURCE_RUNNER: RunnerKind = RunnerKind::new("resource");
+
+/// A stack an extraction drops into its worker's bag: raised once for every stack.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Extracted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item: Option<ItemId>,
+}
+
+/// The resource has nothing left to extract.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct RanOut {}
+
+impl EventDef for Extracted {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[RESOURCE_RUNNER]
+    }
+
+    fn fields(&self) -> &'static [(&'static str, ValueType)] {
+        &[("item", ValueType::Integer), ("count", ValueType::Integer)]
+    }
+}
+
+impl EventDef for RanOut {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[RESOURCE_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .runner(
+            RESOURCE_RUNNER,
+            RunnerSpec::named_row::<ResourceDef>()
+                .stateless()
+                .starting_with_world(),
+        )
+        .binder(|loading, content, bind| bind.bind_table::<ResourceDef>(loading, content))
+        .event::<Extracted>("extracted")
+        .event::<RanOut>("ran_out");
 }

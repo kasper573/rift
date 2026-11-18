@@ -11,18 +11,19 @@ use crate::core::par;
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, ScriptFault, Value, ValueType,
 };
+use crate::core::script::{
+    EffectCall, EffectLook, Expr, FlowKey, Instances, Reach, ReachDef, RunnerKind, Vocabulary,
+};
 use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::{self, Actor};
+use crate::systems::aim;
+use crate::systems::area::Place;
 use crate::systems::area::{self, AreaTag, object};
 use crate::systems::dialogue::ConversationSession;
 use crate::systems::movement::{self, Approach, ApproachPlan, NavMesh};
+use crate::systems::npc::NPC_RUNNER;
 use crate::systems::npc::{Home, Npc, Roams};
-use crate::systems::script::event::NPC;
-use crate::systems::script::{
-    Condition, EffectCall, EffectLook, EffectReach, FlowKey, Place, RiftInstances, RiftScripting,
-    RunnerKind, query,
-};
 use crate::systems::{dialogue, reach, skill, stat};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -362,7 +363,7 @@ fn answer(world: &mut World, running: Running, outcome: Outcome) {
         && let Some(flow) = running.flow
     {
         world
-            .resource_mut::<RiftInstances>()
+            .resource_mut::<Instances>()
             .answer(flow, Answer::Output(outcome.name()));
     }
 }
@@ -390,7 +391,14 @@ fn step(world: &mut World, npc: Entity, running: Running) -> Option<Outcome> {
                 intent.target.actor() == Some(target) && intent.cast() == Some(skill)
             });
             if !casting
-                && skill::cast(world, npc, skill, skill::CastAim::Actor(target), true).is_err()
+                && skill::cast(
+                    world,
+                    npc,
+                    skill,
+                    skill::CastAim::Actor(target),
+                    skill::CastWay::Repeated,
+                )
+                .is_err()
             {
                 return Some(Outcome::Lost);
             }
@@ -459,7 +467,7 @@ fn destination(
 pub struct Wander {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(transform = SchemaMark::Value.with("number"))]
-    pub leash: Option<Condition>,
+    pub leash: Option<Expr>,
     #[schemars(extend("minimum" = Priority::LOWEST, "maximum" = Priority::HIGHEST))]
     pub priority: u8,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -472,7 +480,7 @@ pub struct Wander {
 pub struct WalkTo {
     pub to: WalkTarget,
     #[schemars(extend("default" = 1.0))]
-    pub within: Condition,
+    pub within: Expr,
     #[schemars(extend("minimum" = Priority::LOWEST, "maximum" = Priority::HIGHEST))]
     pub priority: u8,
     /// Taken on getting there.
@@ -494,7 +502,7 @@ pub enum WalkTarget {
     Place(Place),
     Object(String),
     #[schemars(extend("default" = {"type": "subject"}))]
-    Actor(Condition),
+    Actor(Expr),
 }
 
 /// Chases and swings at a target.
@@ -502,9 +510,9 @@ pub enum WalkTarget {
 #[schemars(transform = SchemaMark::System.with("npc body"))]
 pub struct Attack {
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub target: Condition,
+    pub target: Expr,
     #[schemars(extend("default" = 1.5))]
-    pub within: Condition,
+    pub within: Expr,
     #[schemars(extend("minimum" = Priority::LOWEST, "maximum" = Priority::HIGHEST))]
     pub priority: u8,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -535,7 +543,7 @@ pub struct Stop {
 pub struct FaceToward {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub toward: FaceTarget,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
@@ -546,23 +554,20 @@ pub struct FaceToward {
 pub enum FaceTarget {
     Place(Place),
     #[schemars(extend("default" = {"type": "subject"}))]
-    Actor(Condition),
+    Actor(Expr),
 }
 
 type Aimed<T> = Box<dyn Fn(&World, &FlowCx) -> Option<T> + Send + Sync>;
 
-impl EffectDef<RiftScripting> for Wander {
+impl EffectDef for Wander {
     fn owners(&self) -> &'static [RunnerKind] {
-        NPC
+        &[NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
     }
     crate::outputs!(Outcome::Next.name() => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let priority = Priority::checked(self.priority)?;
         let leash = cx.opt_expr(self.leash.as_ref(), ValueType::Number)?;
         Ok(Box::new(move |world, _, cx| {
@@ -575,10 +580,7 @@ impl EffectDef<RiftScripting> for Wander {
             EffectStep::Done
         }))
     }
-    fn look<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<Option<EffectLook>, ScriptFault> {
+    fn look<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<Option<EffectLook>, ScriptFault> {
         let priority = Priority::checked(self.priority)?;
         let leash = cx.opt_expr(self.leash.as_ref(), ValueType::Number)?;
         Ok(Some(Box::new(move |world, _, cx| {
@@ -589,14 +591,14 @@ impl EffectDef<RiftScripting> for Wander {
             doing(world, npc, Act::Wander { leash }, priority).then_some(EffectStep::Done)
         })))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Walks]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Walks)]
     }
 }
 
-impl EffectDef<RiftScripting> for WalkTo {
+impl EffectDef for WalkTo {
     fn owners(&self) -> &'static [RunnerKind] {
-        NPC
+        &[NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
@@ -605,10 +607,7 @@ impl EffectDef<RiftScripting> for WalkTo {
     fn pauses(&self) -> bool {
         true
     }
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let priority = Priority::checked(self.priority)?;
         let within = cx.expr(&self.within, ValueType::Number)?;
         let to: Aimed<Destination> = match &self.to {
@@ -625,7 +624,7 @@ impl EffectDef<RiftScripting> for WalkTo {
             }
             WalkTarget::Actor(actor) => {
                 let actor: Eval = cx.expr(actor, ValueType::Actor)?;
-                Box::new(move |world, cx| query::actor(world, cx, &actor).map(Destination::Actor))
+                Box::new(move |world, cx| aim::actor(world, cx, &actor).map(Destination::Actor))
             }
         };
         Ok(Box::new(move |world, flow, cx| {
@@ -640,14 +639,14 @@ impl EffectDef<RiftScripting> for WalkTo {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Walks]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Walks)]
     }
 }
 
-impl EffectDef<RiftScripting> for Attack {
+impl EffectDef for Attack {
     fn owners(&self) -> &'static [RunnerKind] {
-        NPC
+        &[NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
@@ -656,10 +655,7 @@ impl EffectDef<RiftScripting> for Attack {
     fn pauses(&self) -> bool {
         true
     }
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let priority = Priority::checked(self.priority)?;
         let target = cx.expr(&self.target, ValueType::Actor)?;
         let within = cx.expr(&self.within, ValueType::Number)?;
@@ -667,7 +663,7 @@ impl EffectDef<RiftScripting> for Attack {
             let Some(npc) = cx.owner else {
                 return EffectStep::Output(Outcome::Lost.name());
             };
-            let Some(target) = query::actor(world, cx, &target) else {
+            let Some(target) = aim::actor(world, cx, &target) else {
                 return EffectStep::Output(Outcome::Lost.name());
             };
             let within = Meters(within(world, cx).as_num() as f32);
@@ -681,20 +677,20 @@ impl EffectDef<RiftScripting> for Attack {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Targets]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Targets)]
     }
 }
 
-impl EffectDef<RiftScripting> for Stop {
+impl EffectDef for Stop {
     fn owners(&self) -> &'static [RunnerKind] {
-        NPC
+        &[NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
     }
     crate::outputs!(Outcome::Next.name() => next);
-    fn compile(&self, _cx: &mut Compiler<RiftScripting>) -> Result<EffectCall, ScriptFault> {
+    fn compile(&self, _cx: &mut Compiler) -> Result<EffectCall, ScriptFault> {
         let priority = Priority::checked(self.priority)?;
         Ok(Box::new(move |world, _, cx| {
             if let Some(npc) = cx.owner {
@@ -703,27 +699,21 @@ impl EffectDef<RiftScripting> for Stop {
             EffectStep::Done
         }))
     }
-    fn look(&self, _cx: &mut Compiler<RiftScripting>) -> Result<Option<EffectLook>, ScriptFault> {
+    fn look(&self, _cx: &mut Compiler) -> Result<Option<EffectLook>, ScriptFault> {
         let priority = Priority::checked(self.priority)?;
         Ok(Some(Box::new(move |world, _, cx| {
             let npc = cx.owner?;
             doing(world, npc, Act::Stop, priority).then_some(EffectStep::Done)
         })))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
-    }
 }
 
-impl EffectDef<RiftScripting> for FaceToward {
+impl EffectDef for FaceToward {
     fn needs_subject(&self) -> bool {
         false
     }
     crate::outputs!(Outcome::Next.name() => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let toward: Aimed<Pos<Meters>> = match &self.toward {
             FaceTarget::Place(place) => {
                 let at = place.at;
@@ -751,7 +741,7 @@ impl EffectDef<RiftScripting> for FaceToward {
             .transpose()?;
         Ok(Box::new(move |world, _, cx| {
             let turning = match &who {
-                Some(who) => query::actor(world, cx, who),
+                Some(who) => aim::actor(world, cx, who),
                 None => cx
                     .owner
                     .filter(|owner| world.get::<Actor>(*owner).is_some())
@@ -763,7 +753,25 @@ impl EffectDef<RiftScripting> for FaceToward {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
-    }
+}
+
+/// A script that may make an npc walk.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Walks;
+
+impl ReachDef for Walks {}
+
+/// A script that may make an npc go for a target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Targets;
+
+impl ReachDef for Targets {}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .effect::<Wander>("wander")
+        .effect::<WalkTo>("walk_to")
+        .effect::<Attack>("attack")
+        .effect::<Stop>("stop")
+        .effect::<FaceToward>("face");
 }

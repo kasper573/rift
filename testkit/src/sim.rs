@@ -34,6 +34,11 @@ pub struct Sim {
 struct Step(usize);
 
 impl Sim {
+    /// The game the sim plays, which words what its lines name.
+    pub fn content(&self) -> &Content {
+        self.world.resource::<Content>()
+    }
+
     pub fn new(content: Content) -> Sim {
         let mut world = World::new();
         world.insert_resource(Rng::new(drawn_seed()));

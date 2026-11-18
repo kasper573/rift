@@ -1,26 +1,49 @@
+pub mod query;
 pub mod tray;
 
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::Vocabulary;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::{Content, SchemaMark};
+use crate::core::script::DialogueCamera;
 use crate::core::script::{
-    Answer, Arrow, Compiler, EffectDef, EffectStep, REFUSED, ScriptFault, ValueType,
+    Answer, Arrow, CLOSED, Compiler, DONE, EffectDef, EffectStep, REFUSED, ScriptFault, ValueType,
 };
+use crate::core::script::{EffectCall, Expr, FlowKey, Instances};
+use crate::core::text::LineText;
+use crate::systems::aim as effects;
 use crate::systems::dialogue;
-use crate::systems::dialogue::camera::DialogueCamera;
-use crate::systems::item::{ExchangeRefusal, Inventory, ItemStack};
+use crate::systems::dialogue::span::ScriptSpan;
+use crate::systems::item::{self, Inventory, ItemStack};
+use crate::systems::messages::{self, messages};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, effect as effects,
-};
-use crate::systems::text::{self, LineText, Span};
+use crate::systems::window::{OpenWindow, WindowStep, WindowSteps};
+
+messages! {
+    /// What the game says in an item prompt.
+    pub struct PromptMessages {
+        /// The button submitting what a player placed in a prompt.
+        confirm,
+        /// The heading over the items a player placed in a prompt.
+        placed,
+        /// The heading over the player's bag beside a prompt.
+        your_inventory,
+        /// The button that leaves a prompt.
+        leave,
+        /// What a bag's slot says of an item that is placed in a prompt.
+        placed_note,
+        /// What a player is told as a prompt takes an offer from nobody.
+        nobody_offered,
+    }
+}
 
 pub const SUBMITTED: &str = "submitted";
-pub const CLOSED: &str = "closed";
 
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
@@ -36,10 +59,10 @@ pub fn register(app: &mut App) {
 pub struct ItemPrompt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     pub title: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub text: Vec<Span>,
+    pub text: Vec<ScriptSpan>,
     #[schemars(transform = SchemaMark::Count.with(true))]
     pub slots: u32,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -48,7 +71,7 @@ pub struct ItemPrompt {
     pub closed: Arrow,
 }
 
-impl EffectDef<RiftScripting> for ItemPrompt {
+impl EffectDef for ItemPrompt {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
@@ -59,13 +82,10 @@ impl EffectDef<RiftScripting> for ItemPrompt {
     fn keeps_box(&self) -> bool {
         true
     }
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         check_slots(self.slots)?;
         let who = effects::aim(cx, &self.who)?;
-        let values = text::values(&self.text)
+        let values = ScriptSpan::values(&self.text)
             .into_iter()
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
@@ -78,9 +98,10 @@ impl EffectDef<RiftScripting> for ItemPrompt {
             let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
             let asked = Asked {
                 title: title.clone(),
-                text: (!spans.is_empty()).then(|| LineText::spoken(&spans, &spoken)),
+                text: (!spans.is_empty()).then(|| ScriptSpan::said(&spans, &spoken)),
                 slots,
                 camera,
+                on_leave: CLOSED,
             };
             if open(world, player, flow, asked, PromptKind::Offer) {
                 EffectStep::Pause
@@ -89,8 +110,8 @@ impl EffectDef<RiftScripting> for ItemPrompt {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Prompts]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Prompts)]
     }
 }
 
@@ -100,7 +121,7 @@ impl EffectDef<RiftScripting> for ItemPrompt {
 pub struct TakeOffer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
-    pub who: Option<Condition>,
+    pub who: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
     #[schemars(transform = SchemaMark::Fails.with(true))]
@@ -108,20 +129,22 @@ pub struct TakeOffer {
     pub refused: Arrow,
 }
 
-impl EffectDef<RiftScripting> for TakeOffer {
+impl EffectDef for TakeOffer {
     fn needs_subject(&self) -> bool {
         self.who.is_none()
     }
-    crate::outputs!("done" => done, REFUSED => refused);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    crate::outputs!(DONE => done, REFUSED => refused);
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
         let refused = self.refused.clone();
         Ok(Box::new(move |world, _, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
-                return effects::refuse(world, cx, &refused, "Nobody offered anything");
+                let said = LineText::from(
+                    messages::of(world.resource::<Content>())
+                        .prompt
+                        .nobody_offered(),
+                );
+                return effects::refuse(world, cx, &refused, said);
             };
             match take_offer(world, player) {
                 Ok(()) => EffectStep::Done,
@@ -129,20 +152,15 @@ impl EffectDef<RiftScripting> for TakeOffer {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::TakesOffer]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(TakesOffered)]
     }
 }
-
-/// The turn of a prompt a request answers, so a second press or a late packet answers a turn
-/// that is already over.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PromptStep(pub u32);
 
 /// What a prompt shows its player: its words, how many slots it has, and what it is for.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PromptView {
-    pub step: PromptStep,
+    pub step: WindowStep,
     pub title: String,
     pub text: Option<LineText>,
     pub slots: u32,
@@ -160,7 +178,7 @@ pub enum PromptKind {
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum PromptRequest {
     Submit {
-        step: PromptStep,
+        step: WindowStep,
         offer: Vec<ItemStack>,
     },
 }
@@ -185,17 +203,16 @@ pub struct Asked {
     pub text: Option<LineText>,
     pub slots: u32,
     pub camera: DialogueCamera,
+    /// What the flow that asked is answered when the player leaves the prompt.
+    pub on_leave: &'static str,
 }
 
 #[derive(Component)]
 pub struct PromptSession {
     flow: FlowKey,
-    step: PromptStep,
+    step: WindowStep,
     slots: u32,
 }
-
-#[derive(Resource, Default)]
-pub(crate) struct PromptSteps(u32);
 
 pub fn check_slots(slots: u32) -> Result<(), ScriptFault> {
     if slots == 0 {
@@ -221,13 +238,13 @@ pub fn open(
         flow,
         player,
         Vec::new(),
-        Answer::Output(CLOSED),
+        Answer::Output(asked.on_leave),
         None,
         asked.camera,
     ) {
         return false;
     }
-    let step = next_step(world);
+    let step = world.resource_mut::<WindowSteps>().deal();
     world.entity_mut(player).insert((
         PromptSession {
             flow,
@@ -251,7 +268,7 @@ pub fn open(
 pub fn submitted(
     world: &mut World,
     player: Entity,
-    step: PromptStep,
+    step: WindowStep,
     offer: &[ItemStack],
 ) -> Result<Option<FlowKey>, LineText> {
     let Some(session) = world.get::<PromptSession>(player) else {
@@ -262,11 +279,7 @@ pub fn submitted(
     }
     let flow = session.flow;
     let content = world.resource::<Content>().clone();
-    let covered = world
-        .get::<Inventory>(player)
-        .cloned()
-        .unwrap_or_else(Inventory::empty)
-        .exchange(&content, offer, &[]);
+    let covered = Inventory::of(world, player).exchange(&content, offer, &[]);
     if let Err(refusal) = covered {
         return Err(refusal.line(&content));
     }
@@ -293,7 +306,7 @@ pub fn requests(world: &mut World) {
         close(world, player);
         world.entity_mut(player).insert(Offer(offer));
         world
-            .resource_mut::<RiftInstances>()
+            .resource_mut::<Instances>()
             .answer(flow, Answer::Output(SUBMITTED));
         Ok(())
     });
@@ -308,7 +321,7 @@ pub fn hosted(world: &World, player: Entity) -> bool {
 
 /// Begins a new turn of `player`'s prompt, so whoever submitted knows the turn before was answered.
 pub fn ask_again(world: &mut World, player: Entity) {
-    let step = next_step(world);
+    let step = world.resource_mut::<WindowSteps>().deal();
     if let Some(mut session) = world.get_mut::<PromptSession>(player) {
         session.step = step;
     }
@@ -317,14 +330,12 @@ pub fn ask_again(world: &mut World, player: Entity) {
     }
 }
 
-/// Closes the prompt of whoever is no longer in the conversation that holds it.
-pub fn hold(world: &mut World, sessions: &mut QueryState<(Entity, &'static PromptSession)>) {
-    let over: Vec<Entity> = sessions
-        .iter(world)
-        .filter(|(player, session)| dialogue::flow_of(world, *player) != Some(session.flow))
-        .map(|(player, _)| player)
-        .collect();
-    for player in over {
+impl OpenWindow for PromptSession {
+    fn kept(&self, world: &World, player: Entity) -> bool {
+        dialogue::flow_of(world, player) == Some(self.flow)
+    }
+
+    fn close(world: &mut World, player: Entity) {
         close(world, player);
     }
 }
@@ -335,20 +346,51 @@ pub fn close(world: &mut World, player: Entity) {
         .remove::<(PromptSession, PromptView)>();
 }
 
-fn next_step(world: &mut World) -> PromptStep {
-    let mut steps = world.resource_mut::<PromptSteps>();
-    steps.0 = steps.0.wrapping_add(1);
-    PromptStep(steps.0)
-}
-
 fn take_offer(world: &mut World, player: Entity) -> Result<(), LineText> {
-    let content = world.resource::<Content>().clone();
     let offer = world.get::<Offer>(player).cloned().unwrap_or_default();
-    world
-        .get_mut::<Inventory>(player)
-        .ok_or(ExchangeRefusal::NoRoom { slots: 0 })
-        .and_then(|mut bag| bag.exchange(&content, &offer.0, &[]))
-        .map_err(|refusal| refusal.line(&content))?;
+    item::effects::exchange(world, player, &offer.0, &[])?;
     world.entity_mut(player).insert(Offer::default());
     Ok(())
+}
+
+/// A script that may open a prompt.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Prompts;
+
+impl ReachDef for Prompts {}
+
+/// A script that may take what was offered to it in a prompt.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TakesOffered;
+
+impl ReachDef for TakesOffered {
+    fn unmet(&self, all: &[Reach]) -> Option<ScriptFault> {
+        offered_without_prompt(all)
+    }
+}
+
+/// A script that may read what was offered to it in a prompt.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReadsOffer;
+
+impl ReachDef for ReadsOffer {
+    fn unmet(&self, all: &[Reach]) -> Option<ScriptFault> {
+        offered_without_prompt(all)
+    }
+}
+
+fn offered_without_prompt(all: &[Reach]) -> Option<ScriptFault> {
+    (!all.iter().any(Reach::is::<Prompts>)).then(|| {
+        ScriptFault::new(
+            "offered without a prompt",
+            "a script that opens a prompt before it reads or takes what was offered to it",
+        )
+    })
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    vocabulary
+        .effect::<ItemPrompt>("item_prompt")
+        .effect::<TakeOffer>("take_offer");
 }

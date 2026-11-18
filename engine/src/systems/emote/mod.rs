@@ -8,13 +8,14 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::{
     Content, ContentFile, ContentId, ImageRef, Loading, NamedContent, Nearby, RowCheck,
 };
+use crate::core::text::LineText;
 use crate::systems::actor::skeleton::{Declared, GestureName};
 use crate::systems::actor::{
     Action, Actor, ActorModel, Appearance, Motion, Playing, Pose, held, playing,
 };
+use crate::systems::messages::{self, messages};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{PlayedBy, player_requests};
-use crate::systems::text::LineText;
 use crate::systems::{movement, reach};
 
 pub type EmoteId = ContentId<EmoteDef>;
@@ -61,7 +62,7 @@ pub fn perform(world: &mut World, actor: Entity, emote: EmoteId) -> Result<(), L
     let content = world.resource::<Content>().clone();
     let def = emote.get(&content);
     if !offered(world, actor, def) {
-        return Err(format!("You can't {} like this", def.name.to_lowercase()).into());
+        return Err(messages::of(&content).emote.cannot(&def.name).into());
     }
     reach::drop_intent(world, actor);
     movement::halt(world, actor);
@@ -169,5 +170,13 @@ impl ContentFile for EmoteDef {
 impl NamedContent for EmoteDef {
     fn shown_name(&self) -> &str {
         &self.name
+    }
+}
+
+messages! {
+    /// What the game says of emotes.
+    pub struct EmoteMessages {
+        /// What the player is told doing an emote `{emote}` they can't do now.
+        cannot(emote: Text),
     }
 }

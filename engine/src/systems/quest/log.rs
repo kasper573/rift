@@ -7,28 +7,31 @@ use ui::face::{self, TextRole};
 use ui::glyph::{self, Mark};
 use ui::{card, ink, sheet};
 
-use super::card::{
-    Countdown, Standing, caption, inspectable, objective_row, picks, reward_chips, time_left,
+use super::card::{Countdown, Standing, caption, objective_row, picks, reward_chips, time_left};
+use super::{
+    ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestMessages, QuestRequest,
+    QuestResult, words,
 };
-use super::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestRequest, QuestResult};
 use crate::core::content::Content;
 use crate::core::gui;
-use crate::core::text::{self, TextLook};
+use crate::core::script::ChoiceReveal;
+use crate::core::text::LineText;
+use crate::core::text::TextLook;
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
-use crate::systems::dialogue::ChoiceReveal;
 use crate::systems::hud::menu::{MenuTab, MenuTabName, SubTabs};
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::card::detail_line;
-use crate::systems::item::widget::slot_note_source;
+use crate::systems::item::inline;
+use crate::systems::item::widget::{answer_drawn, slot_note_source};
 use crate::systems::item::{Inventory, ItemModuleKind, ItemStack};
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::quest::{Objective, QuestDef};
 use crate::systems::screen::ClientScreen;
-use crate::systems::text::LineText;
 use ui::paint;
 
 const LIST_WIDTH: f32 = 250.0;
@@ -73,10 +76,11 @@ impl MenuTab for QuestsMenuTab {
             LogTab::Completed => log.map_or(0, |log| log.finished.len()),
         };
         let chosen = world.resource::<Browse>().tab;
+        let words = words(world.resource::<Content>());
         Some(SubTabs {
             labels: LogTab::VARIANTS
                 .iter()
-                .map(|&tab| format!("{} · {}", tab.title(), count(tab)))
+                .map(|&tab| words.tab_label(count(tab), tab.named(words)))
                 .collect(),
             chosen: LogTab::VARIANTS
                 .iter()
@@ -89,12 +93,13 @@ impl MenuTab for QuestsMenuTab {
             world.resource_mut::<Browse>().tab = tab;
         }
     }
-    fn hints(&self, world: &World) -> Vec<(InputAction, &'static str)> {
+    fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
         let page = Page::of(world, world.resource::<Browse>().tab);
-        if page.listed(world.resource::<Content>()).is_empty() {
+        let content = world.resource::<Content>();
+        if page.listed(content).is_empty() {
             Vec::new()
         } else {
-            vec![(InputAction::Select, "select")]
+            vec![(InputAction::Select, words(content).select_hint().to_owned())]
         }
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
@@ -113,6 +118,13 @@ pub enum LogTab {
 impl LogTab {
     fn title(self) -> &'static str {
         self.into()
+    }
+
+    fn named(self, words: &QuestMessages) -> &str {
+        match self {
+            LogTab::Active => words.tab_active(),
+            LogTab::Completed => words.completed(),
+        }
     }
 }
 
@@ -163,10 +175,7 @@ impl Page {
                 .and_then(|seen| world.get::<QuestLog>(seen))
                 .cloned()
                 .unwrap_or_default(),
-            inventory: seen
-                .and_then(|seen| world.get::<Inventory>(seen))
-                .cloned()
-                .unwrap_or_else(Inventory::empty),
+            inventory: Inventory::of(world, seen),
             now: super::card::clock_now(),
             selected: world.resource::<Browse>().of(tab),
         }
@@ -225,21 +234,18 @@ fn page_ui(ui: &mut Ui, world: &mut World, page: &Page) {
 
 fn list(ui: &mut Ui, world: &mut World, page: &Page, listed: &[QuestId], shown: Option<QuestId>) {
     let content = world.resource::<Content>().clone();
+    let words = words(&content);
     let (title, count) = match page.tab {
         LogTab::Active => (
-            "Active quests",
-            format!(
-                "{} of {} quests",
+            words.active_title(),
+            words.active_count(
                 page.log.active.len(),
-                content.built::<GameSettings>().slots.quest_log
+                content.built::<GameSettings>().slots.quest_log,
             ),
         ),
         LogTab::Completed => (
-            "Completed",
-            match page.log.finished.len() {
-                1 => "1 quest".to_owned(),
-                finished => format!("{finished} quests"),
-            },
+            words.completed(),
+            words.finished_count(page.log.finished.len()),
         ),
     };
     sheet::section(ui, title);
@@ -250,7 +256,7 @@ fn list(ui: &mut Ui, world: &mut World, page: &Page, listed: &[QuestId], shown: 
         if category != Some(&def.category) {
             category = Some(&def.category);
             ui.add_space(6.0);
-            sheet::label(ui, TextRole::Tab, &def.category.to_lowercase(), ink::INK3);
+            sheet::label(ui, TextRole::Tab, &def.category, ink::INK3);
             ui.add_space(2.0);
         }
         ui.push_id(("quest row", quest.index()), |ui| {
@@ -259,16 +265,16 @@ fn list(ui: &mut Ui, world: &mut World, page: &Page, listed: &[QuestId], shown: 
     }
     ui.add_space(6.0);
     if listed.is_empty() {
-        caption(ui, empty_note(page.tab));
+        caption(ui, empty_note(page.tab, words));
     } else {
         caption(ui, count);
     }
 }
 
-fn empty_note(tab: LogTab) -> &'static str {
+fn empty_note(tab: LogTab, words: &QuestMessages) -> &str {
     match tab {
-        LogTab::Active => "No quests yet. Look for a ! over someone's head.",
-        LogTab::Completed => "Nothing finished yet",
+        LogTab::Active => words.none_yet(),
+        LogTab::Completed => words.nothing_finished(),
     }
 }
 
@@ -292,7 +298,12 @@ fn row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, selected: bo
                     Tone::Done => {
                         let (rect, _) =
                             ui.allocate_exact_size(Vec2::new(44.0, 18.0), Sense::hover());
-                        controls::stamp(ui.painter(), rect.center(), "done", ink::INK);
+                        controls::stamp(
+                            ui.painter(),
+                            rect.center(),
+                            words(&content).status_done(),
+                            ink::INK,
+                        );
                     }
                     Tone::Failed => {
                         ui.label(TextRole::Small.rich(status.as_str()).color(ink::RUBRIC));
@@ -306,7 +317,11 @@ fn row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, selected: bo
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     hud::icon(ui, world, def.icon(&content), ROW_ICON);
-                    ui.add(Label::new(face::bold(def.title.as_str())).truncate());
+                    ui.add(
+                        Label::new(face::bold(def.title.as_str()))
+                            .truncate()
+                            .show_tooltip_when_elided(false),
+                    );
                 });
             });
         });
@@ -337,41 +352,42 @@ enum Tone {
 
 fn status(content: &Content, page: &Page, quest: QuestId) -> (String, Tone) {
     let def = quest.get(content);
+    let words = words(content);
     if let Some(active) = page.active(quest) {
         if def.decision().is_some() {
-            return ("choice".to_owned(), Tone::Notice);
+            return (words.status_choice().to_owned(), Tone::Notice);
         }
         if active.ready(content, &page.parties, Some(&page.inventory)) {
-            return ("ready".to_owned(), Tone::Notice);
+            return (words.status_ready().to_owned(), Tone::Notice);
         }
         if active.deadline.is_some() {
             let left = Countdown::Left
-                .label(&page.log, quest, page.now)
+                .label(content, &page.log, quest, page.now)
                 .unwrap_or_default();
             return (left, Tone::Plain);
         }
         if def.daily() {
-            return ("daily".to_owned(), Tone::Plain);
+            return (words.status_daily().to_owned(), Tone::Plain);
         }
         let counted = def
             .progress(content, &page.parties, active, Some(&page.inventory))
             .into_iter()
             .find(|progress| progress.counted && !progress.done())
-            .map(|progress| format!("{}/{}", progress.have, progress.need))
+            .map(|progress| words.progress(progress.have, progress.need))
             .unwrap_or_default();
         return (counted, Tone::Plain);
     }
     match page.finished(quest) {
         Some(finished) if finished.result == QuestResult::Failed => {
-            ("failed".to_owned(), Tone::Failed)
+            (words.status_failed().to_owned(), Tone::Failed)
         }
         Some(finished) if finished.resets_in(page.now).is_some() => (
             Countdown::Resets
-                .label(&page.log, quest, page.now)
+                .label(content, &page.log, quest, page.now)
                 .unwrap_or_default(),
             Tone::Plain,
         ),
-        Some(_) => ("done".to_owned(), Tone::Done),
+        Some(_) => (words.status_done().to_owned(), Tone::Done),
         None => (String::new(), Tone::Plain),
     }
 }
@@ -426,7 +442,7 @@ fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, pane: she
             hud::icon(ui, world, def.icon(&content), TITLE_ICON);
             ui.add(Label::new(face::bold(def.title.as_str())).wrap());
         });
-        card::overview(ui, &super::card::overview(def));
+        card::overview(ui, &def.kinds(&content));
         plate(ui, world, page, quest);
     });
     if trackable {
@@ -450,7 +466,9 @@ fn art_opacity(at: Vec2) -> f32 {
 fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
     let content = world.resource::<Content>().clone();
     let def = quest.get(&content);
-    card::overview(ui, &def.meta(&page.parties, quest));
+    let words = words(&content);
+    let interface = &messages::of(&content).interface;
+    card::overview(ui, &def.meta(&content, &page.parties, quest));
     if page
         .active(quest)
         .is_some_and(|active| active.deadline.is_some())
@@ -458,7 +476,7 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         timer(ui, &content, page, quest);
     }
     card::flavour(ui, &def.blurb);
-    sheet::section(ui, "Objectives");
+    sheet::section(ui, words.objectives());
     let fresh = ActiveQuest::fresh(&content, quest);
     let progress = def.progress(
         &content,
@@ -467,67 +485,69 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         Some(&page.inventory),
     );
     let finished = page.finished(quest);
-    for (index, (objective, mut progress)) in def.objectives().zip(progress).enumerate() {
+    for (index, mut progress) in progress.into_iter().enumerate() {
         let standing = match finished.map(|finished| finished.result) {
             Some(QuestResult::Completed) => Standing::Done,
             Some(QuestResult::Failed) => Standing::Failed,
             None => Standing::Open,
         };
         progress.counted &= finished.is_none();
-        ui.push_id(("objective", index), |ui| {
-            objective_row(ui, world, &content, objective, &progress, standing);
-        });
+        let shown = ui
+            .push_id(("objective", index), |ui| {
+                objective_row(ui, world, &content, &progress, standing)
+            })
+            .inner;
+        answer_drawn(world, shown);
     }
     if let Some(paths) = def.decision() {
-        sheet::section(ui, "Choices");
+        sheet::section(ui, words.choices());
         for path in paths {
-            card::fact(ui, &format!("{}: {}", path.choice, path.means.join("; ")));
+            let means = interface.listed_words(path.means.clone());
+            card::fact(ui, &words.choice_means(&path.choice, means));
         }
     }
     let handed_in = finished.is_some_and(|finished| finished.result == QuestResult::Completed);
     if def.reveals(ChoiceReveal::Gains) || handed_in {
-        sheet::section(ui, "Rewards");
+        sheet::section(ui, words.rewards());
         let shown = reward_chips(ui, world, &content, def);
-        inspectable(world, shown);
+        answer_drawn(world, shown);
     }
     if def.reveals(ChoiceReveal::Gains) && !def.pick_one().is_empty() && finished.is_none() {
-        sheet::section(ui, "Pick one when you return");
+        sheet::section(ui, words.pick_one());
         let shown = picks(ui, world, &content, def);
-        inspectable(world, shown);
+        answer_drawn(world, shown);
     }
     if def.time_limit().is_some() {
-        sheet::section(ui, "If time runs out");
-        let fails = LineText::plain("The quest fails. ")
-            .then(def.retry_hint(&content, &page.parties, quest))
-            .then(".");
+        sheet::section(ui, words.time_runs_out());
+        let fails = words.fails_retry(def.retry_hint(&content, &page.parties, quest));
         detail_line(ui, world, None, &fails);
     }
     if let Some(finished) = finished {
         let (outcome, color) = match finished.result {
             QuestResult::Completed if finished.resets_in(page.now).is_some() => (
                 Countdown::ResetsDetail
-                    .label(&page.log, quest, page.now)
+                    .label(&content, &page.log, quest, page.now)
                     .unwrap_or_default(),
                 ink::VERDIGRIS,
             ),
-            QuestResult::Completed => ("Completed".to_owned(), ink::VERDIGRIS),
-            QuestResult::Failed => ("Failed".to_owned(), ink::RUBRIC),
+            QuestResult::Completed => (words.completed().to_owned(), ink::VERDIGRIS),
+            QuestResult::Failed => (words.failed().to_owned(), ink::RUBRIC),
         };
         let outcome = match finished.result {
-            QuestResult::Failed if finished.offered_again => LineText::plain(outcome)
-                .then(" · ")
-                .then(def.retry_hint(&content, &page.parties, quest)),
+            QuestResult::Failed if finished.offered_again => {
+                words.failed_retry(def.retry_hint(&content, &page.parties, quest))
+            }
             _ => LineText::plain(outcome),
         };
         let look = TextLook::role(TextRole::CardBody, color).bold();
-        text::show(ui, world, &outcome.styled(), look, None);
+        inline::show_line(ui, world, &outcome, look, None);
     }
 }
 
 fn timer(ui: &mut Ui, content: &Content, page: &Page, quest: QuestId) {
     ui.horizontal(|ui| {
         let left = Countdown::LeftDetail
-            .label(&page.log, quest, page.now)
+            .label(content, &page.log, quest, page.now)
             .unwrap_or_default();
         ui.label(
             face::bold(&left)
@@ -540,11 +560,13 @@ fn timer(ui: &mut Ui, content: &Content, page: &Page, quest: QuestId) {
 }
 
 fn footer_row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
+    let content = world.resource::<Content>().clone();
+    let words = words(&content);
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let tracked = page.log.tracked.contains(&quest);
         let mut track = tracked;
-        if ui.checkbox(&mut track, "Track on HUD").changed() {
+        if controls::toggle(ui, words.track(), &mut track).changed() {
             world.write_message(QuestRequest::Track {
                 quest,
                 tracked: track,
@@ -552,7 +574,7 @@ fn footer_row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         }
         if page.active(quest).is_some() {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if controls::danger(ui, "Abandon").clicked() {
+                if controls::danger(ui, words.abandon()).clicked() {
                     confirm_abandon(world, quest);
                 }
             });
@@ -563,30 +585,26 @@ fn footer_row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
 fn confirm_abandon(world: &mut World, quest: QuestId) {
     let content = world.resource::<Content>().clone();
     let def = quest.get(&content);
-    let taken = def.grants().iter().map(|stack| {
-        Mention::Item(stack.item)
-            .line(&content)
-            .then(" is taken from your inventory.")
-    });
+    let words = words(&content);
+    let taken = def
+        .grants()
+        .iter()
+        .map(|stack| words.item_taken_back(Mention::Item(stack.item).line(&content)));
     let again = match world.resource::<Parties>().giver(quest) {
-        Some(party) if party.item.is_some() => {
-            format!("Use the {} to start it again.", party.name)
-        }
-        Some(party) => format!("{} will offer the quest again.", party.name),
-        None => "Nobody offers it again.".to_owned(),
+        Some(party) if party.item.is_some() => words.offered_again_item(&party.name),
+        Some(party) => words.offered_again(&party.name),
+        None => words.offered_nobody().to_owned(),
     };
     let body = taken
-        .chain(["Your progress is lost.".into(), again.into()])
+        .chain([words.progress_lost().into(), again.into()])
         .collect();
     hud::confirm(
         world,
         Confirm {
-            title: LineText::plain("Abandon ")
-                .then(Mention::Quest(quest).span(&content))
-                .then("?"),
+            title: words.abandon_title(Mention::Quest(quest).span(&content)),
             body,
-            confirm: "Abandon quest".to_owned(),
-            cancel: "Keep quest".to_owned(),
+            confirm: words.abandon_confirm().to_owned(),
+            cancel: words.abandon_cancel().to_owned(),
             answer: Box::new(move |world, abandoned| {
                 if abandoned {
                     world.write_message(QuestRequest::Abandon { quest });
@@ -598,25 +616,23 @@ fn confirm_abandon(world: &mut World, quest: QuestId) {
 
 fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
     let content = world.resource::<Content>();
+    let words = words(content);
     let parties = world.resource::<Parties>();
     if content.table::<QuestDef>().ids().any(|quest| {
         parties
             .giver(quest)
             .is_some_and(|party| party.item == Some(stack.item))
     }) {
-        return Some("begins a quest · use to read it".to_owned());
+        return Some(words.item_begins().to_owned());
     }
     let log = session::me(world).and_then(|seen| world.get::<QuestLog>(seen));
     if !stack.item.get(content).has(ItemModuleKind::QuestItem) {
         return log?.active.iter().find_map(|active| {
             let quest = active.quest.get(content);
             quest.objectives().find_map(|objective| match objective {
-                Objective::Hold(wanted) if wanted.item == stack.item => Some(format!(
-                    "{} {} wanted for {}",
-                    wanted.count,
-                    if wanted.count == 1 { "is" } else { "are" },
-                    quest.title
-                )),
+                Objective::Hold(wanted) if wanted.item == stack.item => {
+                    Some(words.item_wanted(wanted.count, &quest.title))
+                }
                 _ => None,
             })
         });
@@ -634,9 +650,7 @@ fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
         })
         .map(|active| active.quest.get(content).title.as_str());
     Some(match granted_by {
-        Some(title) => {
-            format!("quest item · can't be sold or dropped · taken back if you abandon {title}")
-        }
-        None => "quest item · can't be sold or dropped".to_owned(),
+        Some(title) => words.item_quest_given(title),
+        None => words.item_quest().to_owned(),
     })
 }

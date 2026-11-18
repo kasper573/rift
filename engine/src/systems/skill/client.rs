@@ -54,7 +54,7 @@ impl Plugin for SkillClientPlugin {
                 action: InputAction::PinToBar,
                 active: |_| true,
                 act: bar::pin_bag_slot,
-                verb: "put it on the bar",
+                does: |messages| messages.item.pin_to_bar(),
             },
         );
     }

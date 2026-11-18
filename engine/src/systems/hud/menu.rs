@@ -3,14 +3,19 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 use ui::controls::{self, KeyHint};
 use ui::egui::{self, Pos2, Rect, Sense, Ui, UiBuilder, Vec2};
+use ui::keys::KeyCap;
 use ui::sheet::{self, Tab, TabSize};
 
-use super::panel::{self, WindowFrame};
+use super::HudMessages;
+use super::panel::{self, Sizing, WindowFrame, WindowKey};
 use crate::core::content::{Content, Fixture};
 use crate::core::gui;
 use crate::systems::dialogue::stage;
+use crate::systems::input::escape::{self, Dismissal};
 use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::input::scope;
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
+use crate::systems::messages;
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::{self, Placed, UserSettings};
@@ -34,7 +39,7 @@ pub trait MenuTab: Send + Sync {
     }
     fn choose_sub_tab(&self, _world: &mut World, _chosen: usize) {}
     /// The inputs that do something on the tab as it stands, and what each does.
-    fn hints(&self, _world: &World) -> Vec<(InputAction, &'static str)> {
+    fn hints(&self, _world: &World) -> Vec<(InputAction, String)> {
         Vec::new()
     }
     fn show(&self, ui: &mut Ui, world: &mut World);
@@ -60,8 +65,16 @@ pub enum MenuTabName {
 }
 
 impl MenuTabName {
-    pub fn title(self) -> &'static str {
-        self.into()
+    pub fn named(self, words: &HudMessages) -> &str {
+        match self {
+            MenuTabName::Character => words.tab_character(),
+            MenuTabName::Skills => words.tab_skills(),
+            MenuTabName::Quests => words.tab_quests(),
+            MenuTabName::Map => words.tab_map(),
+            MenuTabName::History => words.tab_history(),
+            MenuTabName::Social => words.tab_social(),
+            MenuTabName::Settings => words.tab_settings(),
+        }
     }
 }
 
@@ -84,7 +97,7 @@ pub(crate) fn open_on(world: &mut World, tab: MenuTabName) {
     let was = menu.open.replace(tab);
     menu.last_open = Some(tab);
     if let Some(gui) = gui::context(world) {
-        gui.move_to_top(panel::layer(WINDOW_KEY));
+        gui.move_to_top(panel::layer(WindowKey::Menu));
     }
     match was {
         None => InterfaceSound::UiOpen.play(world),
@@ -128,7 +141,7 @@ pub(super) fn plugin(app: &mut App) {
 
 pub(super) fn draw(world: &mut World, gui: &egui::Context) {
     let Menu { open, last_open } = *world.resource::<Menu>();
-    let Some(pose) = panel::sheet_pose(world, gui, WINDOW_KEY, open.is_some()) else {
+    let Some(pose) = panel::sheet_pose(world, gui, WindowKey::Menu, open.is_some()) else {
         return;
     };
     let Some(shown) = open.or(last_open).filter(|&tab| tab_of(tab).shown(world)) else {
@@ -136,28 +149,23 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context) {
     };
     let screen = gui.content_rect();
     let frame = WindowFrame {
-        key: WINDOW_KEY,
+        key: WindowKey::Menu,
         of: Placed::Menu,
         title: None,
         start: Rect::from_min_size(
             (screen.center() - SIZE / 2.0).max(Pos2::new(super::MARGIN, super::MARGIN)),
             SIZE,
         ),
-        min: SMALLEST,
+        sizing: Sizing::Resizable { min: SMALLEST },
     };
-    let mut stays = open.is_some();
-    panel::window(world, gui, frame, pose, &mut stays, |ui, world| {
-        if open.is_none() {
-            ui.disable();
-        }
+    let windowed = panel::window(world, gui, frame, pose, open.is_some(), |ui, world| {
         page(ui, world, frame, shown);
     });
-    if open.is_some() && !stays {
+    if windowed.closed {
         close(world);
     }
 }
 
-pub(crate) const WINDOW_KEY: &str = "menu";
 const SIZE: Vec2 = Vec2::new(960.0, 540.0);
 const SMALLEST: Vec2 = Vec2::new(360.0, 240.0);
 const SMALLEST_PAGE: Vec2 = Vec2::new(800.0, 330.0);
@@ -228,7 +236,9 @@ fn page(ui: &mut Ui, world: &mut World, frame: WindowFrame, shown: MenuTabName) 
         Pos2::new(body.max.x - cross_room, tabs.max.y),
     );
     if bare.is_positive() {
-        panel::window_handle(ui, world, frame, "Menu", bare);
+        let content = world.resource::<Content>().clone();
+        let words = &messages::of(&content).hud;
+        panel::window_handle(ui, world, frame, words.menu(), bare);
     }
     if chosen != shown {
         open_on(world, chosen);
@@ -247,13 +257,12 @@ fn page(ui: &mut Ui, world: &mut World, frame: WindowFrame, shown: MenuTabName) 
         let strip = ui
             .scope_builder(UiBuilder::new().max_rect(row), |ui| {
                 let room = row.width() - 2.0 * pad.x;
-                sheet::tabs_inset(ui, TabSize::Sub, &tabs, &mut chosen, room, pad.x)
+                super::tabs(ui, world, TabSize::Sub, &tabs, &mut chosen, room, pad.x)
             })
             .inner;
         top = strip.max.y;
         if chosen != sub.chosen {
             tab.choose_sub_tab(world, chosen);
-            InterfaceSound::UiPage.play(world);
         }
     }
     let room = Rect::from_min_max(Pos2::new(body.min.x, top), body.max);
@@ -264,7 +273,7 @@ fn page(ui: &mut Ui, world: &mut World, frame: WindowFrame, shown: MenuTabName) 
         .hline(body.x_range(), foot.min.y, sheet::rule_stroke());
     let squeezed = panes.width() < SMALLEST_PAGE.x || panes.height() < SMALLEST_PAGE.y;
     if squeezed {
-        let area = egui::ScrollArea::both().id_salt(("menu page", shown.title()));
+        let area = egui::ScrollArea::both().id_salt(("menu page", <&str>::from(shown)));
         sheet::scroll_page(ui, panes, SMALLEST_PAGE, area, |ui| tab.show(ui, world));
     } else {
         ui.scope_builder(UiBuilder::new().max_rect(panes), |ui| {
@@ -290,6 +299,8 @@ const SUB_STRIP_TOP: f32 = 8.0;
 const FOOT_PAD: f32 = 8.0;
 
 fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).hud;
     let shown: Vec<&dyn MenuTab> = TABS
         .iter()
         .copied()
@@ -301,9 +312,11 @@ fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {
             let image = tab.icon().get(world.resource::<Content>()).image.clone();
             Tab {
                 icon: gui::image(world, &image).map(|image| image.texture),
-                keys: world.resource::<InputMap>().name(tab.opens()),
-                badge: tab.badge(world).map(badge_text),
-                ..Tab::new(tab.name(), tab.name().title())
+                keys: scope::reads(world, tab.opens())
+                    .then(|| world.resource::<InputMap>().cap(tab.opens()))
+                    .flatten(),
+                badge: tab.badge(world).map(|waiting| badge_text(waiting, words)),
+                ..Tab::new(tab.name(), tab.name().named(words))
             }
         })
         .collect()
@@ -317,10 +330,10 @@ pub(crate) fn tab_names(world: &World) -> Vec<MenuTabName> {
         .collect()
 }
 
-fn badge_text(waiting: u32) -> String {
+fn badge_text(waiting: u32, words: &HudMessages) -> String {
     match waiting {
-        0..=MOST_COUNTED => waiting.to_string(),
-        _ => format!("{MOST_COUNTED}+"),
+        0..=MOST_COUNTED => words.badge_count(waiting),
+        _ => words.badge_over(MOST_COUNTED),
     }
 }
 
@@ -328,19 +341,23 @@ const MOST_COUNTED: u32 = 99;
 
 fn hints(ui: &mut Ui, world: &World, tab: &dyn MenuTab) {
     let keys = world.resource::<InputMap>();
-    let named: Vec<(String, &str)> = tab
+    let words = &messages::of(world.resource::<Content>()).hud;
+    let named: Vec<(KeyCap, String)> = tab
         .hints(world)
         .into_iter()
-        .filter_map(|(action, does)| Some((keys.name(action)?, does)))
+        .filter(|(action, _)| scope::reads(world, *action))
+        .filter_map(|(action, does)| Some((keys.cap(action)?, does)))
         .collect();
     let hints: Vec<KeyHint> = named
         .iter()
         .map(|(keys, does)| KeyHint { keys, does })
         .collect();
-    let leaves = keys.name(InputAction::Dismiss);
-    let leaves = leaves.as_deref().map(|keys| KeyHint {
+    let leaves = (escape::dismisses(world) == Some(Dismissal::Sheet(WindowKey::Menu)))
+        .then(|| keys.cap(InputAction::Dismiss))
+        .flatten();
+    let leaves = leaves.as_ref().map(|keys| KeyHint {
         keys,
-        does: "close",
+        does: words.closes(),
     });
     controls::hint_line(ui, &hints, leaves);
 }

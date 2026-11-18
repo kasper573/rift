@@ -92,7 +92,7 @@ struct ImpostorOutput {
     @location(3) @interpolate(flat) middle: vec3<f32>,
     @location(4) @interpolate(flat) turn: vec4<f32>,
     @location(5) @interpolate(flat) radius_layer: vec2<f32>,
-    @location(6) @interpolate(flat) shown: vec3<f32>,
+    @location(6) @interpolate(flat) shown: vec2<f32>,
     @location(7) world_normal: vec3<f32>,
     @location(8) @interpolate(flat) color: vec3<f32>,
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION)

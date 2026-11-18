@@ -6,13 +6,16 @@ description = "The website, the game server and the game client smoke-tested tog
 publish = false
 
 [dependencies]
+axum.workspace = true
 engine = { path = "../engine" }
+flate2.workspace = true
 image.workspace = true
 oauth2-test-server.workspace = true
 oidc = { path = "../oidc" }
 openidconnect.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tar.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 ureq.workspace = true

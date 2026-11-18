@@ -305,7 +305,7 @@ fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
     ];
     let points: Vec<Value> = cup.iter().map(|(x, y)| json!({ "x": x, "y": y })).collect();
     let round_the_cup = Walk::among(
-        json!({ "type": "polygon", "points": points }),
+        json!({ "type": "polygon", "parts": [points] }),
         json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
         Pos::new(7.0, 9.5),
     )
@@ -362,6 +362,49 @@ fn a_footprint_fitted_to_a_model_takes_the_ground_under_all_of_it_a_walker_meets
         !takes(&small, 1.4),
         "the bulge is over a small walker's head"
     );
+
+    // An archway: two legs and a lintel two metres up, spanning from one to the other.
+    let archway: Vec<Triangle> = [
+        block((-2.25, -1.75), (0.0, 2.0)),
+        block((1.75, 2.25), (0.0, 2.0)),
+        block((-2.25, 2.25), (2.0, 2.5)),
+    ]
+    .concat();
+    let arch = |tall: f32| {
+        Footprint::fitted(&archway, Meters(tall), ModelHash("arch".to_owned()))
+            .expect("an archway stands on the ground")
+    };
+    let ordinary = arch(1.8);
+    assert!(
+        takes(&ordinary, -2.0) && takes(&ordinary, 2.0),
+        "the legs block"
+    );
+    assert!(!takes(&ordinary, 0.0), "a walker passes between the legs");
+    assert!(
+        takes(&arch(2.2), 0.0),
+        "the lintel blocks a walker taller than the opening"
+    );
+}
+
+/// The four walls of a box over `x` and `height`, a metre deep to each side of the origin.
+fn block(x: (f32, f32), height: (f32, f32)) -> Vec<Triangle> {
+    let corner = |at: f32, turn: usize| {
+        let (side, z) = [(0, -0.5), (1, -0.5), (1, 0.5), (0, 0.5)][turn % 4];
+        let x = if side == 0 { x.0 } else { x.1 };
+        Vec3::new(x, at, z)
+    };
+    let (low, high) = (height.0, height.1);
+    (0..4)
+        .flat_map(|turn| {
+            let (a, b) = (corner(low, turn), corner(low, turn + 1));
+            let (c, d) = (corner(high, turn + 1), corner(high, turn));
+            [[a, b, c], [a, c, d]]
+        })
+        .map(|corners| Triangle {
+            corners,
+            normals: None,
+        })
+        .collect()
 }
 
 /// The four walls of a square shaft that is `low.1` to each side at the height `low.0` and
@@ -409,7 +452,7 @@ fn a_walker_covers_ground_in_the_gait_whose_clip_covers_nearest_its_speed() {
                 .area("field", &Map::open(19, 19), json!([]))
                 .skeleton_of(BODY, &rig_clips(), json!({}))
                 .hero("field", 2.0, 9.0)
-                .edit("player", "hero", |hero| {
+                .edit("character", "hero", |hero| {
                     hero["stats"]["movement_speed"] = json!(speed)
                 }),
         )

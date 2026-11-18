@@ -6,10 +6,10 @@ use engine::core::content::{
     with_content,
 };
 use engine::core::ground::GroundSize;
+use engine::core::script::Variable;
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{self, ModuleNode, SceneFolder, SceneNode};
 use engine::systems::area::{AreaDef, AreaModule};
-use engine::systems::script::Variable;
 
 use crate::app::Editor;
 use crate::doc::ops::{Held, NodeHead, NodeMove, NodePath, follow_through};

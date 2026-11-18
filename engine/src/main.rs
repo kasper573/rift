@@ -1,8 +1,7 @@
-use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use bevy::window::Window;
 use engine::core::os::{Http, Profile, SignIn, StartParams, exit_when_stdin_closes};
+use engine::core::update;
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, CLIENT_ENV_PREFIX, ClientConfig, LaunchSettings, build_info_line,
 };
@@ -29,9 +28,14 @@ fn main() {
     let params = StartParams {
         sign_in,
         game_server_url: config.game_server_url,
+        other_build: update::answer(
+            config.releases_url.as_deref(),
+            update::release_key(),
+            config.updated_from.as_deref(),
+        ),
     };
     let profile = Profile(settings.path(&config.profile_dir));
-    let mut app = client_app(profile, http, params, window());
+    let mut app = client_app(profile, http, params);
     if let Some(driver) = config.probe {
         probe::install(&mut app, driver);
     }
@@ -40,14 +44,3 @@ fn main() {
     }
     app.run();
 }
-
-fn window() -> Window {
-    Window {
-        desired_maximum_frame_latency: Some(FRAMES_IN_FLIGHT),
-        ..Default::default()
-    }
-}
-
-// A compositor hands a frame's buffer back only when it next refreshes, so it's the frames in
-// flight, not the client, that would otherwise cap the frame rate at a few per refresh.
-const FRAMES_IN_FLIGHT: NonZeroU32 = NonZeroU32::new(8).unwrap();

@@ -6,7 +6,9 @@ use engine::core::math::{Offset, Pos, Rgba};
 use engine::core::time::UnixMillis;
 use engine::core::units::{Degrees, Meters, Radians};
 use engine::core::vfx::{ParamValue, VfxDef, VfxInstance, VfxParams, VfxSite};
+use engine::systems::actor;
 use engine::systems::area::AreaDef;
+use engine::systems::area::vfx;
 use engine::systems::class::{self, NodeKey};
 use engine::systems::combat::{self, Attitude};
 use engine::systems::movement::{self, position};
@@ -14,7 +16,6 @@ use engine::systems::npc::{self, NpcDef};
 use engine::systems::skill::{self, CastAim, Rank, SkillDef, UseSkillRequest};
 use engine::systems::stat::{self, StatKind, Vital};
 use engine::systems::visibility::Presence;
-use engine::systems::{actor, script, vfx};
 use serde_json::{Value, json};
 use testkit::{Declared, Game, Map, Sim, path};
 
@@ -280,14 +281,14 @@ fn arena() -> (Sim, Entity) {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
     sim.run(0.5);
     (sim, player)

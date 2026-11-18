@@ -3,6 +3,7 @@ use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
+use engine::systems::area::vfx;
 use engine::systems::class::{self, NodeKey, SkillPoints};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::equipment::{self, Equipment, EquipmentPlace, UnequipRequest};
@@ -15,7 +16,7 @@ use engine::systems::skill::{
     ResetPrompt, SkillDef, SkillId, UseSkillRequest,
 };
 use engine::systems::stat::{self, StatKind, Vital};
-use engine::systems::{actor, reach, script, vfx};
+use engine::systems::{actor, reach};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -416,7 +417,7 @@ fn yard() -> (Sim, Entity) {
         .area("yard", &Map::open(15, 9), json!([]))
         .hero("yard", 4.0, 4.0)
         .sword()
-        .edit("player", "hero", |hero| {
+        .edit("character", "hero", |hero| {
             hero["stats"]["mana"] = json!(4.0);
             hero["stats"]["max_mana"] = json!(6.0);
         })
@@ -536,14 +537,14 @@ fn yard() -> (Sim, Entity) {
         .add(reach::mirror_engaged)
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
     sim.equip(player, "sword");
     sim.run(0.5);

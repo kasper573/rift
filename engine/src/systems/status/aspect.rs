@@ -1,25 +1,33 @@
+use crate::core::script::EventDef;
+use crate::core::script::RunnerKind;
+use crate::core::script::ScriptFault;
+use crate::systems::item::ITEM_RUNNER;
+use crate::systems::mount::MOUNT_RUNNER;
+use crate::systems::skill::SKILL_RUNNER;
+use crate::systems::status::STATUS_EFFECT_RUNNER;
 use bevy_ecs::prelude::*;
 use rayon::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Boosts, StatusEffectId, Statuses, boost};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::par;
+use crate::core::script::{EventKind, Instances, Owner, OwnerRow, Scripts};
 use crate::core::tick::{Cached, Planner};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
 use crate::systems::actor::Actor;
+use crate::systems::area::vfx;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind};
 use crate::systems::mount::{MountId, Riding};
 use crate::systems::notification;
-use crate::systems::script::effect::Audience;
-use crate::systems::script::event::RiftEvent;
-use crate::systems::script::{EventKind, Owner, OwnerRow, RiftInstances, RiftScripts};
+use crate::systems::notification::Audience;
+use crate::systems::notification::pop::PopShader;
 use crate::systems::skill::{self, Learned, Rank, SkillId, SkillKind};
 use crate::systems::stat::Stat;
-use crate::systems::vfx::{self, VfxShaderFixture};
 
 /// Where the aspects of an actor or an object come from: a status it carries, an item it wears or
 /// carries as a resource, a passive skill it knows, a mount it drives. Each is a scripted row,
@@ -216,13 +224,15 @@ impl Planner for TickAspects {
         let now = world.resource::<WallClock>().now;
         for (actor, source, seconds) in self.fired.drain(..) {
             advance(world, actor, source, seconds, now);
-            world.resource_mut::<RiftInstances>().raise(
+            world.resource_mut::<Instances>().raise(
                 source.owner(),
-                EventKind::Interval,
+                EventKind::of::<Interval>(),
                 Some(actor),
                 Vec::new(),
                 move |event| {
-                    matches!(event, RiftEvent::Interval { seconds: every } if *every == seconds)
+                    event
+                        .downcast_ref::<Interval>()
+                        .is_some_and(|every| every.seconds == seconds)
                 },
             );
         }
@@ -271,7 +281,7 @@ fn active(world: &World, actor: Entity) -> Vec<Wanted> {
 
 fn desired(world: &World, actor: Entity) -> Vec<Wanted> {
     let content = world.resource::<Content>();
-    let scripts = world.resource::<RiftScripts>();
+    let scripts = world.resource::<Scripts>();
     let held = |source: AspectSource| Wanted {
         source,
         since: None,
@@ -306,7 +316,7 @@ fn desired(world: &World, actor: Entity) -> Vec<Wanted> {
             wanted.push(held(AspectSource::Skill(skill)));
         }
     }
-    if let Some(riding) = world.get::<Riding>(actor).filter(|riding| riding.drives()) {
+    if let Some(riding) = world.get::<Riding>(actor) {
         wanted.push(held(AspectSource::Mount(riding.mount)));
     }
     wanted.retain(|aspect| {
@@ -329,13 +339,13 @@ fn activate(world: &mut World, actor: Entity, Wanted { source, since }: Wanted) 
             sound(world, actor, heard);
         }
         if def.pops {
-            notification::pop_as(world, actor, def.name.clone(), VfxShaderFixture::StatusPop);
+            notification::pop_as(world, actor, def.name.clone(), PopShader::StatusPop);
         }
         stay(world, actor, effect, now);
     }
-    world.resource_mut::<RiftInstances>().raise(
+    world.resource_mut::<Instances>().raise(
         source.owner(),
-        EventKind::Activated,
+        EventKind::of::<Activated>(),
         Some(actor),
         Vec::new(),
         |_| true,
@@ -365,11 +375,11 @@ fn hold(
     beats: &[StatusBeat],
 ) {
     let now = world.resource::<WallClock>().now;
-    let scripts = world.resource::<RiftScripts>().clone();
+    let scripts = world.resource::<Scripts>().clone();
     let mut cadences: Vec<Cadence> = Vec::new();
     for procedure in scripts.of(source.row()) {
-        for (_, event) in procedure.entry(EventKind::Interval) {
-            let &RiftEvent::Interval { seconds } = event else {
+        for (_, event) in procedure.entry(EventKind::of::<Interval>()) {
+            let Some(&Interval { seconds }) = event.downcast_ref::<Interval>() else {
                 continue;
             };
             if cadences.iter().all(|cadence| cadence.seconds != seconds) {
@@ -438,9 +448,9 @@ fn deactivate(world: &mut World, actor: Entity, source: AspectSource) {
             sound(world, actor, heard);
         }
     }
-    world.resource_mut::<RiftInstances>().raise(
+    world.resource_mut::<Instances>().raise(
         source.owner(),
-        EventKind::Deactivated,
+        EventKind::of::<Deactivated>(),
         Some(actor),
         Vec::new(),
         |_| true,
@@ -488,4 +498,61 @@ fn advance(
 
 fn sound(world: &mut World, actor: Entity, sfx: SfxId) {
     notification::play_sound(world, Some(actor), Some(actor), sfx, Audience::Everyone);
+}
+
+/// The owners whose scripts an aspect event is raised for: what a status, an item, a mount or a
+/// passive skill gives while it holds.
+const ASPECTS: &[RunnerKind] = &[
+    ITEM_RUNNER,
+    SKILL_RUNNER,
+    STATUS_EFFECT_RUNNER,
+    MOUNT_RUNNER,
+];
+
+/// The aspect began to hold on someone.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Activated {}
+
+/// The aspect stopped holding on someone.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Deactivated {}
+
+/// Every `seconds` the aspect holds.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Interval {
+    pub seconds: Seconds,
+}
+
+/// An interval fires at most this often, so no script can beat a tick.
+pub const SHORTEST_INTERVAL: Seconds = Seconds(0.1);
+
+impl EventDef for Activated {
+    fn owners(&self) -> &'static [RunnerKind] {
+        ASPECTS
+    }
+}
+
+impl EventDef for Deactivated {
+    fn owners(&self) -> &'static [RunnerKind] {
+        ASPECTS
+    }
+}
+
+impl EventDef for Interval {
+    fn owners(&self) -> &'static [RunnerKind] {
+        ASPECTS
+    }
+
+    fn check(&self) -> Result<(), ScriptFault> {
+        if self.seconds < SHORTEST_INTERVAL {
+            return Err(ScriptFault::new(
+                "interval too short",
+                format!(
+                    "{} seconds or more, got {}",
+                    SHORTEST_INTERVAL.0, self.seconds.0
+                ),
+            ));
+        }
+        Ok(())
+    }
 }

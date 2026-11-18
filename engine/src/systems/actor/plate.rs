@@ -16,16 +16,15 @@ use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::window_point;
 use crate::core::render::world::opacity::Opacity;
 use crate::core::units::Meters;
-use crate::systems::GameSettings;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
 use crate::systems::attention;
 use crate::systems::combat::Attitude;
-use crate::systems::mount;
+use crate::systems::messages;
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::{Away, PlayedBy, session};
-use crate::systems::resource;
+use crate::systems::resource::{self, ResourceMessages};
 use crate::systems::screen::ClientScreen;
 use ui::paint;
 
@@ -86,20 +85,20 @@ impl PlateLabel {
         }
     }
 
-    pub fn resource(name: &str, working: u32, room: u32) -> PlateLabel {
+    pub fn resource(words: &ResourceMessages, name: &str, working: u32, room: u32) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
-            state: resource::render::plate_line(working, room),
+            state: resource::render::plate_line(words, working, room),
             color: Color32::WHITE,
         }
     }
 
-    /// A player's plate, under its name what is `said` of a character whose player is gone.
-    pub fn player(name: &str, said: Option<&str>) -> PlateLabel {
+    /// A character's plate, under its name what is `said` of it while its player is gone.
+    pub fn character(name: &str, said: Option<&str>) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
             state: said.map(str::to_owned),
-            color: dusk::PLAYER,
+            color: dusk::CHARACTER,
         }
     }
 }
@@ -182,12 +181,6 @@ pub fn draw_plates(world: &mut World) {
             },
         )
         .collect();
-    let seat_free = content.built::<GameSettings>().words.seat_free.clone();
-    for (actor, label, ..) in &mut labelled {
-        if label.state.is_none() && mount::seat::free_seat(world, *actor).is_some() {
-            label.state = Some(seat_free.clone());
-        }
-    }
     labelled.extend(resource::render::plates(world));
     let plates: Vec<Plate> = labelled
         .into_iter()
@@ -323,10 +316,10 @@ fn label(
                 .then(|| PlateLabel::npc(&def.name, matches!(attitude, Some(Attitude::Hostile))))
         }
         (None, Some(_)) => {
-            let words = &content.built::<GameSettings>().words;
-            Some(PlateLabel::player(
+            let party = &messages::of(content).party;
+            Some(PlateLabel::character(
                 &name?.name,
-                away.then_some(words.away.as_str()),
+                away.then(|| party.away()),
             ))
         }
         (None, None) => None,

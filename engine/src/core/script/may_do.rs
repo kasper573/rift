@@ -1,36 +1,26 @@
-use super::{EventDef, Vocabulary};
+use super::{EventKind, Reach, ReachDef};
 
-#[derive(Clone)]
-pub struct MayDo<V: Vocabulary> {
-    pub answers: Vec<<V::Event as EventDef<V>>::Kind>,
-    pub reaches: Vec<V::Reach>,
+#[derive(Clone, Default)]
+pub struct MayDo {
+    pub answers: Vec<EventKind>,
+    pub reaches: Vec<Reach>,
     pub dialogue: Vec<String>,
     pub calls: Vec<String>,
     pub waits: bool,
 }
 
-impl<V: Vocabulary> Default for MayDo<V> {
-    fn default() -> Self {
-        MayDo {
-            answers: Vec::new(),
-            reaches: Vec::new(),
-            dialogue: Vec::new(),
-            calls: Vec::new(),
-            waits: false,
-        }
-    }
-}
-
-impl<V: Vocabulary> MayDo<V> {
-    pub fn answers(&self, kind: <V::Event as EventDef<V>>::Kind) -> bool {
+impl MayDo {
+    pub fn answers(&self, kind: EventKind) -> bool {
         self.answers.contains(&kind)
     }
 
+    /// Every reach of the kind `R` the owner's scripts may have.
+    pub fn reaching<R: ReachDef>(&self) -> impl Iterator<Item = &R> {
+        self.reaches.iter().filter_map(Reach::downcast_ref::<R>)
+    }
+
     /// What one owner's procedures may do between them, the events each answers included.
-    pub fn owned<'a>(parts: impl IntoIterator<Item = &'a MayDo<V>>) -> MayDo<V>
-    where
-        V: 'a,
-    {
+    pub fn owned<'a>(parts: impl IntoIterator<Item = &'a MayDo>) -> MayDo {
         let mut all = MayDo::default();
         for part in parts {
             all.absorb(part);
@@ -40,7 +30,7 @@ impl<V: Vocabulary> MayDo<V> {
     }
 
     /// Takes in what a called procedure may do; the events it answers stay its own.
-    pub fn absorb(&mut self, other: &MayDo<V>) {
+    pub fn absorb(&mut self, other: &MayDo) {
         self.reaches.extend(other.reaches.iter().cloned());
         self.dialogue.extend(other.dialogue.iter().cloned());
         self.calls.extend(other.calls.iter().cloned());

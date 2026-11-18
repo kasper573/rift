@@ -14,10 +14,12 @@ use ui::theme;
 
 use engine::core::content::{Content, ContentFile, ContentId, FolderReader, fields_file};
 use engine::core::math::Pos;
+use engine::core::script::Scripts;
 use engine::core::script::ValueType;
 use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::field;
 use engine::systems::actor::Appearance;
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::{ClassDef, NodeKey, SkillTree};
 use engine::systems::item::{ItemDef, ItemStack};
@@ -29,15 +31,13 @@ use engine::systems::player::snapshot::{
 use engine::systems::quest::{
     Objective, Parties, QuestDef, QuestId, QuestLog, QuestModule, QuestParty, QuestResult,
 };
-use engine::systems::script::condition as script_condition;
-use engine::systems::script::{Place, RiftScripts};
 use engine::systems::skill::{HotbarEntry, HotbarSlot, Rank, SkillDef};
 use engine::systems::stat::StatKind;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::controls;
 use ui::egui::{Align, Layout, Ui, Vec2};
-use ui::glyph::{self, Mark};
+use ui::glyph::Mark;
 
 use crate::app::{Editor, PlacePick};
 use crate::browser::BrowserAction;
@@ -91,7 +91,6 @@ pub enum CharacterSection {
     #[strum(serialize = "Lines heard")]
     LinesHeard,
     Shops,
-    History,
 }
 
 impl CharacterSection {
@@ -125,10 +124,9 @@ impl CharacterSection {
             CharacterSection::Quests | CharacterSection::Memories => {
                 (&[CharacterSection::Quests], &[CharacterSection::Memories])
             }
-            CharacterSection::LinesHeard | CharacterSection::Shops | CharacterSection::History => (
-                &[CharacterSection::LinesHeard, CharacterSection::Shops],
-                &[CharacterSection::History],
-            ),
+            CharacterSection::LinesHeard | CharacterSection::Shops => {
+                (&[CharacterSection::LinesHeard], &[CharacterSection::Shops])
+            }
         }
     }
 }
@@ -346,13 +344,6 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                         &mut character.shops,
                                         field!(CharacterSnapshot, shops),
                                     ),
-                                    CharacterSection::History => section_of(
-                                        ui,
-                                        &mut cx,
-                                        "History",
-                                        &mut character.history,
-                                        field!(CharacterSnapshot, history),
-                                    ),
                                 };
                                 changed |= result;
                                 ui.add_space(8.0);
@@ -388,7 +379,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         CharacterSection::Hotbar => {
             "slots count from 0; a slot may hold a known skill or a held item".to_owned()
         }
-        _ => "every section is what the server keeps for a player".to_owned(),
+        _ => "every section is what the server keeps for a character".to_owned(),
     });
     if let Some(request) = pick {
         if let Some(area) = request.area.clone() {
@@ -469,8 +460,7 @@ fn appearance(
         changed = forms::of_type(ui, cx, &mut character.appearance, path);
         if let Some(class_look) = class_look
             && class_look != character.appearance
-            && ui
-                .button("copy from class")
+            && controls::button(ui, "copy from class")
                 .on_hover_text("Look as a new character of the class starts")
                 .clicked()
         {
@@ -539,7 +529,7 @@ fn bag(
         if character.bag.is_empty() {
             ui.label(theme::muted("empty").size(13.0));
         }
-        if ui.button("+ item").clicked()
+        if controls::button(ui, "+ item").clicked()
             && let Some(item) = first_item
         {
             character.bag.push(ItemStack { item, count: 1 });
@@ -601,7 +591,7 @@ fn equipment(
             ui.label(theme::muted("nothing worn").size(13.0));
         }
         if let Some(first) = wearable.first()
-            && ui.button("+ item").clicked()
+            && controls::button(ui, "+ item").clicked()
             && let Some(item) = sheet.reader.id_of::<ItemDef>(first)
         {
             character.equipped.push(item);
@@ -679,7 +669,7 @@ fn skills(
         }
         if tree.is_empty() {
             ui.label(theme::faint("the class has no tree to learn from").size(12.0));
-        } else if ui.button("+ skill").clicked()
+        } else if controls::button(ui, "+ skill").clicked()
             && let Some(node) = tree.0.keys().next()
         {
             character.skills.push(SnapshotSkill {
@@ -750,7 +740,7 @@ fn hotbar(ui: &mut Ui, cx: &mut FormCx, character: &mut CharacterSnapshot) -> Fo
         if character.hotbar.is_empty() {
             ui.label(theme::muted("empty").size(13.0));
         }
-        if ui.button("+ slot").clicked() {
+        if controls::button(ui, "+ slot").clicked() {
             let next = character
                 .hotbar
                 .iter()
@@ -913,10 +903,7 @@ fn start(
                     area: Some(area_key.clone()),
                 });
             }
-            if ui
-                .add_enabled(!at_spawn, egui::Button::new("Use the initial spawn"))
-                .clicked()
-            {
+            if controls::button_if(ui, !at_spawn, "Use the initial spawn").clicked() {
                 character.start = CharacterStart::InitialSpawn(AtInitialSpawn::InitialSpawn);
                 changed = FormChange::at(path);
             }
@@ -1098,11 +1085,11 @@ fn quests(
     let parties = cx
         .content
         .as_ref()
-        .filter(|content| content.has_built::<RiftScripts>())
+        .filter(|content| content.has_built::<Scripts>())
         .map(|content| {
             (
                 content.clone(),
-                Parties::of(content, content.built::<RiftScripts>()),
+                Parties::of(content, content.built::<Scripts>()),
             )
         });
     let mut order = in_log.clone();
@@ -1133,9 +1120,7 @@ fn quests(
                     giver_of(sheet, parties.as_ref(), quest).map(|party| party.name.clone());
                 let requires = sheet.read(cx, quest).and_then(|def| {
                     def.modules.iter().find_map(|module| match module {
-                        QuestModule::Requires { condition } => {
-                            Some(script_condition::describe(cx.project, condition).to_string())
-                        }
+                        QuestModule::Requires { condition } => Some(cx.project.describe(condition)),
                         _ => None,
                     })
                 });
@@ -1491,7 +1476,7 @@ fn memories(
                 match def.ty {
                     ValueType::Boolean => {
                         let mut on = matches!(value, Some(MemoryValue::Bool(true)));
-                        if ui.checkbox(&mut on, "").changed() {
+                        if controls::tick(ui, &mut on).changed() {
                             updates.push((key.clone(), Some(MemoryValue::Bool(on))));
                         }
                     }
@@ -1547,7 +1532,7 @@ fn memories(
                     .monospace(),
                 );
                 if entry.is_some()
-                    && glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
+                    && controls::remove(ui, "Remove")
                         .on_hover_text("Unset")
                         .clicked()
                 {
@@ -1621,10 +1606,10 @@ pub(crate) fn preview_extras(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .map(|tier| format!(" · {xp} of {} xp to {}", tier.xp, level + 1))
         .unwrap_or_else(|| format!(" · {xp} xp · top tier"));
     let base = reader
-        .path_of(settings.player)
+        .path_of(settings.character)
         .and_then(|player| {
             project
-                .read::<engine::systems::player::PlayerDef>(player)
+                .read::<engine::systems::player::CharacterDef>(player)
                 .ok()
         })
         .map_or(0.0, |player| player.stats.get(StatKind::MaxHealth));

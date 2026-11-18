@@ -7,29 +7,35 @@ use rayon::prelude::*;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::Content;
 use crate::core::content::SchemaMark;
+use crate::core::content::{Content, ContentProblem, Loading};
 use crate::core::ground::TileAt;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::par;
+use crate::core::script::condition::CompiledCondition;
+use crate::core::script::owner_site;
+use crate::core::script::{
+    EventDef, EventKind, Expr, Instances, Owner, OwnerRow, RunnerKind, ScriptModule, Scripts,
+    Vocabulary,
+};
 use crate::core::spatial::SpatialIndex;
 use crate::core::tick::{Cached, Planner};
 use crate::core::units::{Degrees, Meters};
 use crate::systems::WorldArea;
 use crate::systems::actor::Name as ActorName;
+use crate::systems::area::AreaDef;
 use crate::systems::area::AreaModule;
+use crate::systems::area::Place;
 use crate::systems::area::PropId;
 use crate::systems::area::prop::PropPlacement;
 use crate::systems::area::{self, AreaId, AreaTag};
+use crate::systems::area::{OBJECT_RUNNER, Started, Warps};
 use crate::systems::interact::Interactive;
 use crate::systems::movement::Position;
+use crate::systems::npc::NPC_RUNNER;
 use crate::systems::npc::Npc;
+use crate::systems::npc::NpcId;
 use crate::systems::player::PlayedBy;
-use crate::systems::script::condition::CompiledCondition;
-use crate::systems::script::{
-    self, Condition, EventKind, Owner, OwnerRow, Place, RiftEvent, RiftInstances, RunnerKind,
-    ScriptModule,
-};
 use crate::systems::status::{ActiveAspects, Statuses};
 use crate::systems::visibility::Presence;
 
@@ -49,7 +55,7 @@ pub struct ObjectDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<PropId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shown: Option<Condition>,
+    pub shown: Option<Expr>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scripts: Vec<ScriptModule>,
 }
@@ -268,17 +274,14 @@ pub fn spawn_in(world: &mut World, tile: TileAt) {
 /// area's scene, or one a script spawned.
 pub fn stand(world: &mut World, object: AreaObject, row: OwnerRow) -> Entity {
     let zone = world.resource::<WorldArea>().0;
-    let scripts = world.resource::<script::RiftScripts>().clone();
+    let scripts = world.resource::<Scripts>().clone();
     let procedures = scripts.of(row).to_vec();
     let interactive = Interactive::of(&procedures);
     let warp = scripts
         .may_do(row)
-        .reaches
-        .iter()
-        .find_map(|reach| match reach {
-            script::EffectReach::Warp(place) => Some(*place),
-            _ => None,
-        });
+        .reaching::<Warps>()
+        .next()
+        .map(|warps| warps.0);
     let seen = object.look.is_some() || object.title.is_some() || interactive.is_some();
     let title = object.title.clone();
     let mut entity = world.spawn((
@@ -304,18 +307,20 @@ pub fn stand(world: &mut World, object: AreaObject, row: OwnerRow) -> Entity {
         entity.insert(interactive);
     }
     let id = entity.id();
-    let owner = Owner::Entity(RunnerKind::Object, id);
-    let mut instances = world.resource_mut::<RiftInstances>();
+    let owner = Owner::Entity(OBJECT_RUNNER, id);
+    let mut instances = world.resource_mut::<Instances>();
     instances.spawn_owner(owner, procedures);
-    instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
+    instances.raise(owner, EventKind::of::<Started>(), None, Vec::new(), |_| {
+        true
+    });
     id
 }
 
 /// Takes an object out of the world, its scripts with it.
 pub fn remove(world: &mut World, object: Entity) {
     world
-        .resource_mut::<RiftInstances>()
-        .remove_owner(Owner::Entity(RunnerKind::Object, object));
+        .resource_mut::<Instances>()
+        .remove_owner(Owner::Entity(OBJECT_RUNNER, object));
     world.despawn(object);
 }
 
@@ -370,12 +375,12 @@ impl Planner for TrackUnderfoot {
             return;
         }
         self.watchers = watchers(world);
-        let instances = world.resource::<RiftInstances>();
-        let crossing: HashSet<Entity> = [EventKind::Entered, EventKind::Left]
+        let instances = world.resource::<Instances>();
+        let crossing: HashSet<Entity> = [EventKind::of::<Entered>(), EventKind::of::<Left>()]
             .iter()
             .flat_map(|kind| instances.owners_answering(*kind))
             .filter_map(|owner| match owner {
-                Owner::Entity(RunnerKind::Object, object) => Some(*object),
+                Owner::Entity(OBJECT_RUNNER, object) => Some(*object),
                 _ => None,
             })
             .collect();
@@ -456,10 +461,10 @@ impl Planner for TrackUnderfoot {
                 raise_standing(world, &self.placed, &self.watchers, *object, actor, is_npc);
             }
             for object in now.iter().filter(|object| !before.inside.contains(object)) {
-                raise_crossing(world, *object, EventKind::Entered, actor, is_npc);
+                raise_crossing(world, *object, EventKind::of::<Entered>(), actor, is_npc);
             }
             for object in before.inside.iter().filter(|object| !now.contains(object)) {
-                raise_crossing(world, *object, EventKind::Left, actor, is_npc);
+                raise_crossing(world, *object, EventKind::of::<Left>(), actor, is_npc);
             }
             world.entity_mut(actor).insert(ObjectContact {
                 inside: now,
@@ -512,17 +517,17 @@ struct Watcher {
 }
 
 fn watchers(world: &World) -> Vec<Watcher> {
-    let instances = world.resource::<RiftInstances>();
+    let instances = world.resource::<Instances>();
     let mut watchers = Vec::new();
-    for owner in instances.owners_answering(EventKind::StoodOn) {
-        let Owner::Entity(RunnerKind::Npc, npc) = *owner else {
+    for owner in instances.owners_answering(EventKind::of::<StoodOn>()) {
+        let Owner::Entity(NPC_RUNNER, npc) = *owner else {
             continue;
         };
         let Some(area) = world.get::<AreaTag>(npc).map(|tag| tag.area) else {
             continue;
         };
-        for event in instances.entries(*owner, EventKind::StoodOn) {
-            if let RiftEvent::StoodOn { object, .. } = event {
+        for event in instances.entries(*owner, EventKind::of::<StoodOn>()) {
+            if let Some(StoodOn { object, .. }) = event.downcast_ref::<StoodOn>() {
                 watchers.push(Watcher {
                     npc,
                     area,
@@ -548,34 +553,137 @@ fn raise_standing(
     let Some(name) = stood.name.clone() else {
         return;
     };
-    let mut instances = world.resource_mut::<RiftInstances>();
+    let mut instances = world.resource_mut::<Instances>();
     for watcher in watchers
         .iter()
         .filter(|watcher| watcher.area == stood.area && watcher.object == name)
     {
         let name = name.clone();
         instances.raise(
-            Owner::Entity(RunnerKind::Npc, watcher.npc),
-            EventKind::StoodOn,
+            Owner::Entity(NPC_RUNNER, watcher.npc),
+            EventKind::of::<StoodOn>(),
             Some(actor),
             Vec::new(),
-            move |event| match event {
-                RiftEvent::StoodOn { by, object } => *object == name && by.admits(is_npc),
-                _ => false,
+            move |event| {
+                event
+                    .downcast_ref::<StoodOn>()
+                    .is_some_and(|stood| stood.object == name && stood.by.admits(is_npc))
             },
         );
     }
 }
 
 fn raise_crossing(world: &mut World, object: Entity, kind: EventKind, actor: Entity, is_npc: bool) {
-    world.resource_mut::<RiftInstances>().raise(
-        Owner::Entity(RunnerKind::Object, object),
+    world.resource_mut::<Instances>().raise(
+        Owner::Entity(OBJECT_RUNNER, object),
         kind,
         Some(actor),
         Vec::new(),
-        move |event| match event {
-            RiftEvent::Entered { by } | RiftEvent::Left { by } => by.admits(is_npc),
-            _ => false,
+        move |event| {
+            event
+                .downcast_ref::<Entered>()
+                .map(|crossed| crossed.by)
+                .or_else(|| event.downcast_ref::<Left>().map(|crossed| crossed.by))
+                .is_some_and(|by| by.admits(is_npc))
         },
     );
+}
+
+/// Whom a crossing or a stand concerns.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Who {
+    Characters,
+    Npcs,
+    Anyone,
+}
+
+impl Who {
+    pub fn admits(self, is_npc: bool) -> bool {
+        match self {
+            Who::Characters => !is_npc,
+            Who::Npcs => is_npc,
+            Who::Anyone => true,
+        }
+    }
+}
+
+const CROSSED: &[RunnerKind] = &[
+    OBJECT_RUNNER,
+    super::spawnable::SPAWNABLE_RUNNER,
+    super::AREA_RUNNER,
+];
+
+/// Someone walked into an object's shape, or the area's.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Entered {
+    pub by: Who,
+}
+
+/// Someone walked out of an object's shape, or the area's.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Left {
+    pub by: Who,
+}
+
+/// Someone stands on the object named `object`: an npc's script watches it.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct StoodOn {
+    pub by: Who,
+    pub object: String,
+}
+
+impl EventDef for Entered {
+    fn owners(&self) -> &'static [RunnerKind] {
+        CROSSED
+    }
+}
+
+impl EventDef for Left {
+    fn owners(&self) -> &'static [RunnerKind] {
+        CROSSED
+    }
+}
+
+impl EventDef for StoodOn {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[NPC_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary
+        .event::<Entered>("entered")
+        .event::<Left>("left")
+        .event::<StoodOn>("stood_on");
+}
+
+/// Every object an npc's script watches a stand on must be one in an area the npc is placed in.
+pub fn check_watched(loading: &mut Loading) {
+    let content = loading.content();
+    let scripts = content.built::<Scripts>();
+    for heard in scripts.hearing::<StoodOn>() {
+        if heard.row.kind != NPC_RUNNER {
+            continue;
+        }
+        let npc: NpcId = heard.row.id();
+        let object = heard.event.object.as_str();
+        let placed = content.ids::<AreaDef>().any(|area| {
+            let modules = area::placed(&content, area);
+            area::npcs(modules).any(|placed| placed == npc)
+                && area::objects(modules).any(|(_, placed)| placed.name.as_deref() == Some(object))
+        });
+        if !placed {
+            let site = owner_site(&content, heard.row);
+            loading.json_error(
+                &site.file,
+                &site.pointer,
+                ContentProblem::new(
+                    "watched object not here",
+                    format!("{} watches {object}", heard.label),
+                    "an object of that name in an area the npc is placed in",
+                ),
+            );
+        }
+    }
 }

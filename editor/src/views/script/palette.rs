@@ -5,7 +5,6 @@ use ui::paint;
 use ui::theme;
 use ui::words;
 
-use engine::core::script::RunnerKindDef;
 use ui::egui::{Align2, Pos2, Ui};
 use ui::glyph::Mark;
 

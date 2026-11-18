@@ -7,15 +7,15 @@
 use std::time::{Duration, Instant};
 
 use bevy::app::PluginsState;
-use bevy::pbr::MATERIAL_BIND_GROUP_INDEX;
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
 use bevy::render::settings::{RenderCreation, WgpuSettings};
-use bevy::shader::{ShaderCache, ShaderCacheError, ShaderCacheSource, ShaderDefVal};
+use bevy::shader::{ShaderCache, ShaderCacheError, ShaderCacheSource};
 use bevy::window::ExitCondition;
 
 use super::render::{VfxMaterialsPlugin, compiled_shader};
-use super::shader::{Stage, VfxShaderDef, VfxShaderId};
+use super::shader::{VfxShaderDef, VfxShaderId};
+use super::stage::ShaderPass;
 use crate::core::content::Content;
 use crate::core::render::Look;
 use crate::core::render::world::WorldScenePlugin;
@@ -62,7 +62,7 @@ pub fn uncompiled(content: &Content, look: Look) -> Vec<UncompiledShader> {
         let Some(handle) = compiled_shader(app.world(), id) else {
             continue;
         };
-        for (pass, defs) in passes(id.get(content).stage) {
+        for ShaderPass { name, defs } in (id.get(content).stage.spec().passes)() {
             let message = match cache.get(0, handle.id(), &defs) {
                 Ok(_) => continue,
                 Err(ShaderCacheError::ShaderImportNotYetAvailable) => {
@@ -72,7 +72,7 @@ pub fn uncompiled(content: &Content, look: Look) -> Vec<UncompiledShader> {
             };
             failed.push(UncompiledShader {
                 shader: id,
-                pass: pass.to_owned(),
+                pass: name.to_owned(),
                 message,
             });
         }
@@ -102,54 +102,6 @@ fn settle(app: &mut App) {
 
 const STEADY_FRAMES: u32 = 30;
 const LOADING_AT_MOST: Duration = Duration::from_secs(30);
-
-/// The passes a shader of `stage` draws in, each with the defs its pipeline compiles it under: as
-/// a lit mesh with positions, normals, uvs and colours, in the main pass, and in the prepass where
-/// the stage writes depth and normals ahead of it; a surface leaves the prepass to the material it
-/// plays over, and a cover's sheet and blades, blended over the ground, draw in the main pass
-/// alone. A prop's shader bakes its model's impostor as well.
-fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
-    let main: Vec<ShaderDefVal> = vec![
-        ShaderDefVal::UInt(
-            "MATERIAL_BIND_GROUP".into(),
-            MATERIAL_BIND_GROUP_INDEX as u32,
-        ),
-        "MESH_PIPELINE".into(),
-        "VERTEX_OUTPUT_INSTANCE_INDEX".into(),
-        "VERTEX_POSITIONS".into(),
-        "VERTEX_NORMALS".into(),
-        "VERTEX_UVS".into(),
-        "VERTEX_UVS_A".into(),
-        "VERTEX_COLORS".into(),
-        "VIEW_PROJECTION_PERSPECTIVE".into(),
-        "AVAILABLE_STORAGE_BUFFER_BINDINGS__GE_3".into(),
-    ];
-    let with = |base: &[ShaderDefVal], more: &[&'static str]| -> Vec<ShaderDefVal> {
-        base.iter()
-            .cloned()
-            .chain(more.iter().map(|def| ShaderDefVal::from(*def)))
-            .collect()
-    };
-    let prepass = with(
-        &main,
-        &["PREPASS_PIPELINE", "DEPTH_PREPASS", "NORMAL_PREPASS"],
-    );
-    match stage {
-        Stage::Cover => vec![
-            ("copies", with(&main, &["VERTEX_UVS_B"])),
-            ("copies prepass", with(&prepass, &["VERTEX_UVS_B"])),
-            ("blades", with(&main, &["GRASS_BLADE", "VERTEX_UVS_B"])),
-            ("sheet", with(&main, &["SHEET_PATCH", "VERTEX_UVS_B"])),
-        ],
-        Stage::Prop => vec![
-            ("main", main.clone()),
-            ("prepass", prepass.clone()),
-            ("bake", with(&main, &["IMPOSTOR_BAKE"])),
-        ],
-        Stage::Surface | Stage::Sky | Stage::Rain => vec![("main", main)],
-        Stage::Ground | Stage::Billboard | Stage::Screen | Stage::Text => Vec::new(),
-    }
-}
 
 /// Parses and validates a composed module as the GPU driver would.
 fn validate(

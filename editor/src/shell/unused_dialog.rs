@@ -110,7 +110,7 @@ pub(crate) fn find_unused_dialog(
                         outcome = Some(true);
                     }
                 });
-                if ui.button("Close").clicked() {
+                if controls::button(ui, "Close").clicked() {
                     outcome = Some(false);
                 }
             });
@@ -244,10 +244,7 @@ fn group_lines(
     ui.horizontal(|ui| {
         let mut on = ticked > 0;
         let mixed = on && ticked < group.members.len();
-        if ui
-            .add(egui::Checkbox::without_text(&mut on).indeterminate(mixed))
-            .changed()
-        {
+        if controls::tick_mixed(ui, &mut on, mixed).changed() {
             toggles.push((
                 group
                     .members
@@ -287,7 +284,7 @@ fn group_lines(
         ui.horizontal(|ui| {
             ui.add_space(24.0);
             let mut on = !dialog.unticked.contains(&member.item);
-            if ui.checkbox(&mut on, face::mono(&member.name)).changed() {
+            if controls::check(ui, &mut on, face::mono(&member.name)).changed() {
                 toggles.push((vec![member.item.clone()], on));
             }
             if !member.note.is_empty() {

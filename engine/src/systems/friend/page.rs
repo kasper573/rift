@@ -6,32 +6,37 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Sense, Ui};
 use ui::face::TextRole;
-use ui::{controls, face, form, ink, input, sheet, words};
+use ui::{controls, face, form, ink, input, sheet};
 
-use super::search::{self, FindPlayers, PlayersFound};
+use super::search::{self, CharactersFound, FindCharacters};
 use super::{AskFriendship, RemoveFriend};
 use crate::core::content::Content;
+use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::InputAction;
 use crate::systems::mention::Mention;
+use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card as request_card;
 use crate::systems::social_request::{
-    AnswerSocialRequest, BlockPlayer, RequestAnswer, SocialRequestId, SocialRequestKind,
+    AnswerSocialRequest, BlockCharacter, RequestAnswer, SocialRequestId, SocialRequestKind,
 };
 use crate::systems::society::tab::{self, SocialPage};
 use crate::systems::society::{AccountNumber, FriendRow, RequestCard, SocietyMember, SocietyView};
-use crate::systems::text::LineText;
 
 pub struct FriendsPage;
 
 impl SocialPage for FriendsPage {
-    fn title(&self) -> &'static str {
-        "Friends"
+    fn key(&self) -> &'static str {
+        "friends"
+    }
+
+    fn title<'a>(&self, messages: &'a messages::Messages) -> &'a str {
+        messages.friends.title()
     }
 
     fn on(&self, world: &World) -> bool {
@@ -42,8 +47,18 @@ impl SocialPage for FriendsPage {
         view(world).map_or(0, |view| asked_of_me(&view).count() as u32)
     }
 
-    fn hints(&self, _: &World) -> Vec<(InputAction, &'static str)> {
-        vec![(InputAction::Select, "choose")]
+    fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
+        let messages = messages::of(world.resource::<Content>());
+        let listed = view(world).is_some_and(|view| !view.friends.is_empty());
+        listed
+            .then(|| {
+                (
+                    InputAction::Select,
+                    messages.friends.hint_choose().to_owned(),
+                )
+            })
+            .into_iter()
+            .collect()
     }
 
     fn show(&self, ui: &mut Ui, world: &mut World) {
@@ -51,19 +66,21 @@ impl SocialPage for FriendsPage {
             return;
         };
         hear(world);
+        let content = world.resource::<Content>().clone();
+        let words = messages::of(&content);
         let room = ui.available_rect_before_wrap();
         let ([beside], list) = sheet::columns(ui, room, [BESIDE_WIDTH]);
         let mut done = None;
         let area = egui::ScrollArea::vertical().id_salt("friends beside");
         sheet::scroll_pane(ui, beside, area, |ui| {
-            done = done.take().or(find(ui, world, &view));
+            done = done.take().or(find(ui, world, words, &view));
             if world.resource::<Finding>().typed.trim().is_empty() {
-                done = done.take().or(waiting(ui, &view));
+                done = done.take().or(waiting(ui, words, &view));
             }
         });
         let area = egui::ScrollArea::vertical().id_salt("friends list");
         sheet::scroll_pane(ui, list, area, |ui| {
-            done = done.take().or(friends(ui, world, &view));
+            done = done.take().or(friends(ui, world, words, &view));
         });
         ui.allocate_rect(room, Sense::hover());
         if let Some(done) = done {
@@ -82,7 +99,7 @@ pub struct ShownFriends {
     pub asked: Vec<String>,
     pub blocked: Vec<String>,
     /// What the search found for what is typed, once the server has answered.
-    pub found: Option<Vec<FoundPlayer>>,
+    pub found: Option<Vec<FoundCharacter>>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -93,15 +110,15 @@ pub struct ShownFriend {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct FoundPlayer {
+pub struct FoundCharacter {
     pub name: String,
-    pub standing: PlayerStanding,
+    pub standing: CharacterStanding,
 }
 
 /// What a player found by name is to the player who searched.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PlayerStanding {
+pub enum CharacterStanding {
     You,
     Friend,
     /// They have a request for friendship from the player, waiting.
@@ -125,7 +142,7 @@ pub fn shown(world: &World) -> ShownFriends {
             .friends
             .iter()
             .map(|friend| ShownFriend {
-                name: friend.player.name.clone(),
+                name: friend.character.name.clone(),
                 online_in: friend.online_in.map(|area| area.get(content).name.clone()),
             })
             .collect(),
@@ -138,9 +155,9 @@ pub fn shown(world: &World) -> ShownFriends {
             .collect(),
         found: finding.answer().map(|found| {
             found
-                .players
+                .characters
                 .iter()
-                .map(|player| FoundPlayer {
+                .map(|player| FoundCharacter {
                     name: player.name.clone(),
                     standing: standing(&view, player).0,
                 })
@@ -161,13 +178,13 @@ struct Finding {
     /// When what is typed last changed, on the interface's clock.
     typed_at: f64,
     asked: Option<String>,
-    found: Option<PlayersFound>,
+    found: Option<CharactersFound>,
     chosen: Option<AccountNumber>,
 }
 
 impl Finding {
     /// What the server found for what is typed now.
-    fn answer(&self) -> Option<&PlayersFound> {
+    fn answer(&self) -> Option<&CharactersFound> {
         self.found
             .as_ref()
             .filter(|found| found.starts == self.typed)
@@ -185,7 +202,7 @@ enum Done {
     Block(SocietyMember),
     Remove(SocietyMember),
     Choose(AccountNumber),
-    Act(&'static dyn tab::PlayerAction, SocietyMember),
+    Act(&'static dyn tab::CharacterAction, SocietyMember),
 }
 
 impl Done {
@@ -198,7 +215,7 @@ impl Done {
                 world.write_message(AnswerSocialRequest { request, answer });
             }
             Done::Unblock(account) => {
-                world.write_message(BlockPlayer {
+                world.write_message(BlockCharacter {
                     account,
                     blocked: false,
                 });
@@ -233,52 +250,63 @@ fn asked_by_me(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
 fn standing(
     view: &SocietyView,
     player: &SocietyMember,
-) -> (PlayerStanding, Option<SocialRequestId>) {
+) -> (CharacterStanding, Option<SocialRequestId>) {
     let is = |other: &SocietyMember| other.account == player.account;
     if view.account == player.account {
-        return (PlayerStanding::You, None);
+        return (CharacterStanding::You, None);
     }
     if view.blocked.iter().any(is) {
-        return (PlayerStanding::Blocked, None);
+        return (CharacterStanding::Blocked, None);
     }
-    if view.friends.iter().any(|friend| is(&friend.player)) {
-        return (PlayerStanding::Friend, None);
+    if view.friends.iter().any(|friend| is(&friend.character)) {
+        return (CharacterStanding::Friend, None);
     }
     if let Some(card) = asked_of_me(view).find(|card| is(&card.other)) {
-        return (PlayerStanding::Asking, Some(card.id));
+        return (CharacterStanding::Asking, Some(card.id));
     }
     if asked_by_me(view).any(|card| is(&card.other)) {
-        return (PlayerStanding::Asked, None);
+        return (CharacterStanding::Asked, None);
     }
-    (PlayerStanding::Stranger, None)
+    (CharacterStanding::Stranger, None)
 }
 
 /// Takes what the server found, and asks it for what is typed once the typing has paused.
 fn hear(world: &mut World) {
     let found = world
-        .resource_mut::<Messages<PlayersFound>>()
+        .resource_mut::<Messages<CharactersFound>>()
         .drain()
         .last();
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
+    let content = world.resource::<Content>().clone();
     let mut finding = world.resource_mut::<Finding>();
+    let searches = search::searches(&content, &finding.typed);
     if let Some(found) = found {
         finding.found = Some(found);
     }
     let paused = now - finding.typed_at >= TYPING_PAUSE;
     let unasked = finding.asked.as_deref() != Some(finding.typed.as_str());
-    if paused && unasked && search::searches(&finding.typed) {
+    if paused && unasked && searches {
         let typed = finding.typed.clone();
         finding.asked = Some(typed.clone());
-        world.write_message(FindPlayers(typed));
+        world.write_message(FindCharacters(typed));
     }
 }
 
-fn find(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
-    sheet::section(ui, "Find a player");
+fn find(
+    ui: &mut Ui,
+    world: &mut World,
+    words: &messages::Messages,
+    view: &SocietyView,
+) -> Option<Done> {
+    let all = words;
+    let words = &all.friends;
+    sheet::section(ui, words.find_heading());
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
+    let content = world.resource::<Content>().clone();
     let mut finding = world.resource_mut::<Finding>();
     let mut typed = finding.typed.clone();
-    input::search(ui, &mut typed, "A name, two characters or more", None);
+    let hint = words.search_hint(search::least_letters(&content));
+    input::search(ui, &mut typed, &hint, None);
     if typed != finding.typed {
         finding.typed = typed;
         finding.typed_at = now;
@@ -288,69 +316,77 @@ fn find(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
         return None;
     }
     ui.add_space(GAP);
-    if !search::searches(&finding.typed) {
-        caption(ui, "Two characters or more");
+    if !search::searches(&content, &finding.typed) {
+        caption(ui, &words.type_more(search::least_letters(&content)));
         return None;
     }
     let Some(found) = finding.answer() else {
-        caption(ui, "Looking");
+        caption(ui, words.looking());
         ui.ctx().request_repaint();
         return None;
     };
-    if found.players.is_empty() {
-        caption(ui, "Nobody by that name");
+    if found.characters.is_empty() {
+        caption(ui, words.nobody_found());
         return None;
     }
     let mut done = None;
-    for player in &found.players {
+    for player in &found.characters {
         ui.push_id(("found", player.account.0), |ui| {
-            done = done.take().or(found_row(ui, view, player));
+            done = done.take().or(found_row(ui, all, view, player));
         });
     }
-    if found.in_all as usize > found.players.len() {
-        let shown = found.players.len();
-        let in_all = words::counted(found.in_all, "players");
-        caption(ui, &format!("{in_all} · the first {shown} are shown"));
+    if found.in_all as usize > found.characters.len() {
+        let shown = found.characters.len();
+        caption(ui, &words.found_shown(found.in_all, shown));
     }
     done
 }
 
-fn found_row(ui: &mut Ui, view: &SocietyView, player: &SocietyMember) -> Option<Done> {
+fn found_row(
+    ui: &mut Ui,
+    words: &messages::Messages,
+    view: &SocietyView,
+    player: &SocietyMember,
+) -> Option<Done> {
     let (standing, request) = standing(view, player);
     let name = &player.name;
     let mut done = None;
     line(
         ui,
         name,
-        standing == PlayerStanding::You,
+        standing == CharacterStanding::You,
         |ui| match standing {
-            PlayerStanding::You => {
-                ui.label(face::small_faint("You"));
+            CharacterStanding::You => {
+                ui.label(face::small_faint(words.friends.you()));
             }
-            PlayerStanding::Friend => {
-                controls::pill(ui, "Friend", controls::Pill::Verdigris);
+            CharacterStanding::Friend => {
+                controls::pill(ui, words.friends.friend(), controls::Pill::Verdigris);
             }
-            PlayerStanding::Asked => {
-                controls::pill(ui, "Request sent", controls::Pill::Ink);
+            CharacterStanding::Asked => {
+                controls::pill(ui, words.friends.request_sent(), controls::Pill::Ink);
             }
-            PlayerStanding::Asking => {
-                ui.label(face::small_faint("asked you"));
+            CharacterStanding::Asking => {
+                ui.label(face::small_faint(words.friends.asked_you()));
+                let accept = words.requests.accept();
                 if let Some(request) = request
-                    && named(controls::primary(ui, "Accept"), "Accept", name).clicked()
+                    && named(words, controls::primary(ui, accept), accept, name).clicked()
                 {
                     done = Some(Done::Answer(request, RequestAnswer::Accept));
                 }
             }
-            PlayerStanding::Blocked => {
-                if named(controls::button(ui, "Unblock"), "Unblock", name).clicked() {
+            CharacterStanding::Blocked => {
+                let unblock = words.requests.unblock();
+                if named(words, controls::button(ui, unblock), unblock, name).clicked() {
                     done = Some(Done::Unblock(player.account));
                 }
             }
-            PlayerStanding::Stranger => {
-                if named(controls::button(ui, "Block"), "Block", name).clicked() {
+            CharacterStanding::Stranger => {
+                let block = words.requests.block();
+                if named(words, controls::button(ui, block), block, name).clicked() {
                     done = Some(Done::Block(player.clone()));
                 }
-                if named(controls::primary(ui, "Add friend"), "Add friend", name).clicked() {
+                let add = words.friends.add_friend();
+                if named(words, controls::primary(ui, add), add, name).clicked() {
                     done = Some(Done::Ask(player.account));
                 }
             }
@@ -360,20 +396,22 @@ fn found_row(ui: &mut Ui, view: &SocietyView, player: &SocietyMember) -> Option<
 }
 
 /// The requests in and out and the players kept away, each with the one thing to do about it.
-fn waiting(ui: &mut Ui, view: &SocietyView) -> Option<Done> {
+fn waiting(ui: &mut Ui, words: &messages::Messages, view: &SocietyView) -> Option<Done> {
     let mut done = None;
     let asking: Vec<&RequestCard> = asked_of_me(view).collect();
     if !asking.is_empty() {
         ui.add_space(GAP);
-        form::section_count(ui, "Requests", asking.len());
+        form::section_count(ui, words.friends.requests_heading(), asking.len());
         for card in asking {
             let name = &card.other.name;
             ui.push_id(("asking", card.id.0), |ui| {
                 line(ui, name, false, |ui| {
-                    if named(controls::button(ui, "Deny"), "Deny", name).clicked() {
+                    let deny = words.requests.deny();
+                    if named(words, controls::button(ui, deny), deny, name).clicked() {
                         done = Some(Done::Answer(card.id, RequestAnswer::Deny));
                     }
-                    if named(controls::primary(ui, "Accept"), "Accept", name).clicked() {
+                    let accept = words.requests.accept();
+                    if named(words, controls::primary(ui, accept), accept, name).clicked() {
                         done = Some(Done::Answer(card.id, RequestAnswer::Accept));
                     }
                 });
@@ -383,27 +421,29 @@ fn waiting(ui: &mut Ui, view: &SocietyView) -> Option<Done> {
     let asked: Vec<&RequestCard> = asked_by_me(view).collect();
     if !asked.is_empty() {
         ui.add_space(GAP);
-        form::section_count(ui, "Sent", asked.len());
+        form::section_count(ui, words.friends.sent_heading(), asked.len());
         for card in asked {
             let name = &card.other.name;
             ui.push_id(("asked", card.id.0), |ui| {
                 line(ui, name, false, |ui| {
-                    if named(controls::button(ui, "Withdraw"), "Withdraw", name).clicked() {
+                    let withdraw = words.friends.withdraw();
+                    if named(words, controls::button(ui, withdraw), withdraw, name).clicked() {
                         done = Some(Done::Answer(card.id, RequestAnswer::TakeBack));
                     }
-                    ui.label(face::small_faint("waiting"));
+                    ui.label(face::small_faint(words.friends.waiting()));
                 });
             });
         }
     }
     if !view.blocked.is_empty() {
         ui.add_space(GAP);
-        form::section_count(ui, "Blocked", view.blocked.len());
+        form::section_count(ui, words.requests.blocked_heading(), view.blocked.len());
         for player in &view.blocked {
             let name = &player.name;
             ui.push_id(("blocked", player.account.0), |ui| {
                 line(ui, name, false, |ui| {
-                    if named(controls::button(ui, "Unblock"), "Unblock", name).clicked() {
+                    let unblock = words.requests.unblock();
+                    if named(words, controls::button(ui, unblock), unblock, name).clicked() {
                         done = Some(Done::Unblock(player.account));
                     }
                 });
@@ -413,21 +453,22 @@ fn waiting(ui: &mut Ui, view: &SocietyView) -> Option<Done> {
     done
 }
 
-fn friends(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
+fn friends(
+    ui: &mut Ui,
+    world: &mut World,
+    words: &messages::Messages,
+    view: &SocietyView,
+) -> Option<Done> {
     let most = world
         .resource::<GameSettings>()
         .friends
         .map_or(0, |friends| friends.most);
-    form::section_count(ui, "Friends", format!("{} of {most}", view.friends.len()));
+    let count = words.friends.friends_of_most(view.friends.len(), most);
+    form::section_count(ui, words.friends.friends_heading(), count);
     if view.friends.is_empty() {
         ui.add_space(GAP);
-        ui.add(
-            egui::Label::new(face::body(
-                "Friends can write to each other and find each other in the world.",
-            ))
-            .wrap(),
-        );
-        caption(ui, "Find a player by name to ask them.");
+        ui.add(egui::Label::new(face::body(words.friends.friends_intro())).wrap());
+        caption(ui, words.friends.find_to_ask());
         return None;
     }
     let now = time::server_now(world);
@@ -436,37 +477,39 @@ fn friends(ui: &mut Ui, world: &mut World, view: &SocietyView) -> Option<Done> {
     let chosen = view
         .friends
         .iter()
-        .find(|friend| Some(friend.player.account) == chosen)
+        .find(|friend| Some(friend.character.account) == chosen)
         .or(view.friends.first());
     let mut done = None;
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for friend in &view.friends {
             let selected =
-                chosen.is_some_and(|chosen| chosen.player.account == friend.player.account);
-            ui.push_id(("friend", friend.player.account.0), |ui| {
-                if friend_row(ui, world, &content, friend, selected, now) {
-                    done = Some(Done::Choose(friend.player.account));
+                chosen.is_some_and(|chosen| chosen.character.account == friend.character.account);
+            ui.push_id(("friend", friend.character.account.0), |ui| {
+                if friend_row(ui, world, &content, words, friend, selected, now) {
+                    done = Some(Done::Choose(friend.character.account));
                 }
             });
         }
     });
     let chosen = chosen?;
-    let name = &chosen.player.name;
+    let name = &chosen.character.name;
     ui.add_space(GAP);
     ui.horizontal(|ui| {
-        for action in tab::player_actions(world) {
-            let label = action.label();
-            if named(controls::button(ui, label), label, name).clicked() {
-                done = Some(Done::Act(action, chosen.player.clone()));
+        for action in tab::character_actions(world) {
+            let label = action.label(words);
+            if named(words, controls::button(ui, label), label, name).clicked() {
+                done = Some(Done::Act(action, chosen.character.clone()));
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if named(controls::danger(ui, "Remove friend"), "Remove friend", name).clicked() {
-                done = Some(Done::Remove(chosen.player.clone()));
+            let remove = words.friends.remove_friend();
+            if named(words, controls::danger(ui, remove), remove, name).clicked() {
+                done = Some(Done::Remove(chosen.character.clone()));
             }
-            if named(controls::button(ui, "Block"), "Block", name).clicked() {
-                done = Some(Done::Block(chosen.player.clone()));
+            let block = words.requests.block();
+            if named(words, controls::button(ui, block), block, name).clicked() {
+                done = Some(Done::Block(chosen.character.clone()));
             }
         });
     });
@@ -478,32 +521,43 @@ fn friend_row(
     ui: &mut Ui,
     world: &World,
     content: &Content,
+    words: &messages::Messages,
     friend: &FriendRow,
     selected: bool,
     now: Option<UnixMillis>,
 ) -> bool {
     let online = friend.online_in;
     let state = match (online, now) {
-        (Some(area), _) => LineText::plain("Online · ").then(Mention::Area(area).span(content)),
+        (Some(area), _) => words.friends.online_in(Mention::Area(area).span(content)),
         (None, Some(now)) => {
-            let seen = words::ago(now.since(friend.last_seen).0);
-            LineText::plain(format!("Offline · seen {seen}"))
+            let seen = words.time.since(now.since(friend.last_seen));
+            LineText::plain(words.friends.offline_seen(seen))
         }
-        (None, None) => LineText::plain("Offline"),
+        (None, None) => LineText::plain(words.friends.offline()),
     };
     let look = controls::RowLook {
         selected,
         faint: online.is_none(),
         ..controls::RowLook::default()
     };
-    let name = &friend.player.name;
+    let name = &friend.character.name;
     let shown = controls::row(ui, look, |ui| {
         ui.horizontal(|ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let look = TextLook::role(TextRole::Small, ink::INK3);
-                text::show(ui, world, &state.styled(), look, None);
+                text::show(
+                    ui,
+                    world,
+                    &state.styled(world.resource::<Content>()),
+                    look,
+                    None,
+                );
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(egui::Label::new(face::bold(name.as_str())).truncate());
+                    ui.add(
+                        egui::Label::new(face::bold(name.as_str()))
+                            .truncate()
+                            .show_tooltip_when_elided(false),
+                    );
                 });
             });
         });
@@ -512,7 +566,7 @@ fn friend_row(
         .response
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| {
-        let said = format!("{name}, {}", state.plain_words());
+        let said = words.friends.row_named(name, state.plain_words(content));
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, said)
     });
     crate::systems::input::map::clicked(world, InputAction::Select, &response)
@@ -520,14 +574,16 @@ fn friend_row(
 
 /// Asks the player whether to end the friendship with `player`, and ends it once they confirm.
 fn remove(world: &mut World, player: SocietyMember) {
+    let content = world.resource::<Content>().clone();
+    let words = messages::of(&content);
     let name = &player.name;
     hud::confirm(
         world,
         Confirm {
-            title: format!("Remove {name} from your friends?").into(),
-            body: vec![format!("You come off {name}'s list too. {name} is not told.").into()],
-            confirm: "Remove".to_owned(),
-            cancel: "Keep".to_owned(),
+            title: words.friends.remove_title(name).into(),
+            body: vec![words.friends.remove_body(name).into()],
+            confirm: words.interface.remove().to_owned(),
+            cancel: words.friends.keep().to_owned(),
             answer: Box::new(move |world, removed| {
                 if removed {
                     world.write_message(RemoveFriend(player.account));
@@ -547,18 +603,27 @@ fn line(ui: &mut Ui, name: &str, faint: bool, ends: impl FnOnce(&mut Ui)) {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let name = face::body(name);
                 let name = if faint { name.color(ink::INK3) } else { name };
-                ui.add(egui::Label::new(name).truncate());
+                ui.add(
+                    egui::Label::new(name)
+                        .truncate()
+                        .show_tooltip_when_elided(false),
+                );
             });
         });
     });
 }
 
 /// Names a button for what it does and to whom, so two alike in one list are told apart.
-fn named(response: egui::Response, does: &str, name: &str) -> egui::Response {
+fn named(
+    words: &messages::Messages,
+    response: egui::Response,
+    does: &str,
+    name: &str,
+) -> egui::Response {
     let enabled = response.enabled();
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, format!("{does} {name}"))
-    });
+    let said = words.friends.button_for(does, name);
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, said.clone()));
     response
 }
 

@@ -19,17 +19,17 @@ use crate::core::render::world::outline::Outline;
 use crate::core::render::{self, window_point};
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Seconds};
-use crate::systems::GameSettings;
 use crate::systems::actor::Name;
 use crate::systems::dialogue;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::rarity::{DropNaming, ItemRarityDef, RarityRank};
 use crate::systems::item::render::DropAnim;
-use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
+use crate::systems::item::{self, DroppedItem, ItemId, ItemStack, Reservation};
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
+use crate::systems::{GameSettings, messages};
 
 pub struct ItemPlatePlugin;
 
@@ -323,10 +323,11 @@ fn whose(
         .iter(world)
         .find(|(by, _)| by.client == holder)
         .map(|(_, name)| name.name.clone())?;
+    let messages = &messages::of(world.resource::<Content>()).item;
     Some(if taker.party.contains(&holder) {
-        format!("{name}'s party")
+        messages.reserved_for_party(name)
     } else {
-        format!("{name}'s")
+        messages.reserved_for(name)
     })
 }
 
@@ -435,7 +436,7 @@ const EDGE: f32 = 1.5;
 const NAME_WIDEST: f32 = 190.0;
 const OVER_PILE: Meters = Meters(0.7);
 /// How small and how pale a plate at the edge of the key's reach is, against one at the
-/// player's feet.
+/// character's feet.
 const FAR_SCALE: f32 = 0.82;
 const FAR_OPACITY: f32 = 0.7;
 /// How long a name that has run out takes to fade away.
@@ -578,7 +579,7 @@ fn draw_plates(world: &mut World) {
                         Named::ByKey | Named::ByPointer => 1.0,
                     },
                     note: (hovered && full)
-                        .then(|| content.built::<GameSettings>().words.needs_a_slot.clone())
+                        .then(|| messages::of(&content).item.needs_slots(1))
                         .or_else(|| line.whose.clone()),
                     scale,
                 }
@@ -602,7 +603,8 @@ fn draw_plates(world: &mut World) {
             .iter()
             .filter_map(|item| Some(world.get::<DroppedItem>(*item)?.item))
             .collect();
-        let chip = (!kinds.is_empty()).then(|| chip_size(&gui, kinds.len(), scale));
+        let said = (!kinds.is_empty()).then(|| messages::of(&content).item.more_kinds(kinds.len()));
+        let chip = said.as_deref().map(|said| chip_size(&gui, said, scale));
         let width = sizes
             .iter()
             .chain(&chip)
@@ -622,14 +624,14 @@ fn draw_plates(world: &mut World) {
             top += size.y + LINE_GAP;
             placed.push((at, line));
         }
-        let chip = chip.map(|size| {
+        let chip = chip.zip(said).map(|(size, said)| {
             let at = Rect::from_min_size(Pos2::new(rect.center().x - size.x / 2.0, top), size);
-            (at, kinds.len())
+            (at, said)
         });
         drawn.columns.push(DrawnColumn {
             rect,
             order: placed.iter().map(|(_, line)| line.item).collect(),
-            chip: chip.map(|(at, _)| at),
+            chip: chip.as_ref().map(|(at, _)| *at),
             folded: column.folded.clone(),
         });
         drawn
@@ -660,8 +662,8 @@ fn draw_plates(world: &mut World) {
                     ],
                     Stroke::new(1.0, TIE),
                 );
-                if let Some((at, kinds)) = column.chip {
-                    paint_chip(ui.painter(), at, kinds, column.scale);
+                if let Some((at, said)) = &column.chip {
+                    paint_chip(ui.painter(), *at, said, column.scale);
                 }
                 for (at, line) in &column.lines {
                     ui.set_opacity(column.opacity * line.strength);
@@ -747,17 +749,15 @@ fn rest_on_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>, n
     }
 }
 
-/// Whether the player's bag has no room for `item`, as taking it would find out.
+/// Whether the character's bag has no room for `item`, as taking it would find out.
 fn bag_refuses(world: &World, content: &Content, item: Option<Entity>) -> bool {
     let Some(dropped) = item.and_then(|item| world.get::<DroppedItem>(item)) else {
         return false;
     };
-    session::my_character(world)
-        .and_then(|me| me.get::<Inventory>().cloned())
-        .is_some_and(|mut bag| {
-            bag.exchange(content, &[], &[ItemStack::new(dropped.item, dropped.count)])
-                .is_err()
-        })
+    item::my_bag(world).cloned().is_some_and(|mut bag| {
+        bag.exchange(content, &[], &[ItemStack::new(dropped.item, dropped.count)])
+            .is_err()
+    })
 }
 
 /// How far to move `rect` so that it lies inside `screen`.
@@ -785,7 +785,7 @@ struct LaidColumn {
     opacity: f32,
     scale: f32,
     lines: Vec<(Rect, PlateLook)>,
-    chip: Option<(Rect, usize)>,
+    chip: Option<(Rect, String)>,
 }
 
 /// One plate as it is drawn.
@@ -939,24 +939,20 @@ impl PlateLook {
     }
 }
 
-fn chip_text(kinds: usize) -> String {
-    format!("+{kinds} more")
-}
-
 fn chip_font(scale: f32) -> FontId {
     Face::Book.id(PLAIN_NAME_SIZE * scale)
 }
 
-fn chip_size(gui: &egui::Context, kinds: usize, scale: f32) -> Vec2 {
-    paint::text_size(gui, &chip_text(kinds), chip_font(scale)) + PADDING * 2.0
+fn chip_size(gui: &egui::Context, said: &str, scale: f32) -> Vec2 {
+    paint::text_size(gui, said, chip_font(scale)) + PADDING * 2.0
 }
 
-fn paint_chip(painter: &egui::Painter, rect: Rect, kinds: usize, scale: f32) {
+fn paint_chip(painter: &egui::Painter, rect: Rect, said: &str, scale: f32) {
     dusk::plate(painter, rect, 0.7);
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
-        chip_text(kinds),
+        said,
         chip_font(scale),
         dusk::TEXT,
     );

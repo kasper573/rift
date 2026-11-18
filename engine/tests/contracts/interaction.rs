@@ -1,11 +1,11 @@
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
+use engine::systems::movement;
 use engine::systems::player::commands_locked;
 use engine::systems::region;
-use engine::systems::{movement, script};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, dialogue, lines, path};
+use testkit::{Game, Map, Sim, dialogue, path};
 
 const DAY: u64 = 24 * 3_600_000;
 
@@ -17,7 +17,10 @@ fn reading_a_map_object_opens_its_conversation_with_the_object() {
 
     let opened = sim.open_with(1, board);
 
-    assert_eq!(lines(&opened), vec!["Notices flap on the post.".to_owned()]);
+    assert_eq!(
+        sim.lines(&opened),
+        vec!["Notices flap on the post.".to_owned()]
+    );
     assert_eq!(opened.with, Some(board));
     assert!(commands_locked(&sim.world, player));
 }
@@ -30,14 +33,14 @@ fn a_chest_gives_its_gold_once_a_day() {
 
     let found = sim.open_with(1, chest);
     assert_eq!(
-        lines(&found),
+        sim.lines(&found),
         vec!["Five coins glint in the sand.".to_owned()]
     );
     assert_eq!(sim.count(player, "gold"), 5);
     sim.leave(1);
 
     let empty = sim.open_with(1, chest);
-    assert_eq!(lines(&empty), vec!["Only sand.".to_owned()]);
+    assert_eq!(sim.lines(&empty), vec!["Only sand.".to_owned()]);
     assert_eq!(sim.count(player, "gold"), 5);
     sim.leave(1);
 
@@ -47,7 +50,7 @@ fn a_chest_gives_its_gold_once_a_day() {
     });
     let refilled = sim.open_with(1, chest);
     assert_eq!(
-        lines(&refilled),
+        sim.lines(&refilled),
         vec!["Five coins glint in the sand.".to_owned()]
     );
     assert_eq!(sim.count(player, "gold"), 10);
@@ -71,7 +74,7 @@ fn two_players_open_the_same_chest_for_themselves() {
     for (client, player) in [(1, first), (2, second)] {
         let opened = sim.conversation(client).expect("open");
         assert_eq!(
-            lines(&opened),
+            sim.lines(&opened),
             vec!["Five coins glint in the sand.".to_owned()]
         );
         assert_eq!(sim.count(player, "gold"), 5);
@@ -131,11 +134,11 @@ fn beach() -> Sim {
         .accept::<ConversationRequest>()
         .add((interact::interact_request, dialogue::requests))
         .plan((
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((interact::interactions, dialogue::hold, dialogue::refresh));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }

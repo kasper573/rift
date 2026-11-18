@@ -1,21 +1,36 @@
+use engine::systems::area::AREA_RUNNER;
+use engine::systems::area::BLUEPRINT_RUNNER;
+use engine::systems::area::OBJECT_RUNNER;
+use engine::systems::npc::NPC_RUNNER;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
+use crate::reaches::{QuestVerb, does, quest_reach};
 use engine::core::content::id::LeafKind;
 use engine::core::content::{Content, ContentFile, fields_file, name_of};
 use engine::core::math::{Pos, Size};
 use engine::core::script::Expr;
+use engine::core::script::OwnerRow;
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptDef;
+use engine::core::script::Scripts;
+use engine::core::script::{Reach, ScriptQuery};
 use engine::core::units::Meters;
-use engine::systems::GameSettings;
+use engine::systems::area::Warps;
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, ObjectShape};
 use engine::systems::item::ItemDef;
+use engine::systems::item::effects::{Drops, Gives};
 use engine::systems::memory::MemoryDef;
+use engine::systems::memory::Remembers;
+use engine::systems::memory::query::{Memory, SetWithin};
+use engine::systems::npc::summon::Spawns;
 use engine::systems::npc::{self, NpcDef, NpcId};
+use engine::systems::quest::query::{OnQuest, QuestDone};
 use engine::systems::quest::{Objective, QuestDef, QuestId};
-use engine::systems::script::{
-    Condition, EffectReach, OwnerRow, RiftQuery, RiftScripts, RunnerKind, ScriptDef, condition,
-};
+use engine::systems::requirement;
+use engine::systems::shop::OpensShop;
 use engine::systems::shop::ShopDef;
+use engine::systems::{GameSettings, messages};
 use strum::VariantArray;
 
 use crate::project::ProjectFiles;
@@ -77,7 +92,7 @@ pub struct AtlasOwner {
     pub name: String,
     pub label: String,
     pub at: Option<Pos<Meters>>,
-    pub reaches: Vec<EffectReach>,
+    pub reaches: Vec<Reach>,
     pub opens: OpenTarget,
 }
 
@@ -269,8 +284,8 @@ impl WorldAtlas {
             atlas.ids.insert(info.key.clone(), id);
             atlas.areas.insert(id, info);
         }
-        if content.has_built::<RiftScripts>() {
-            let scripts = content.built::<RiftScripts>();
+        if content.has_built::<Scripts>() {
+            let scripts = content.built::<Scripts>();
             for id in content.ids::<AreaDef>() {
                 atlas.add_owners(content, scripts, id);
             }
@@ -385,10 +400,12 @@ impl WorldAtlas {
     pub fn givers(&self, area: AreaId) -> impl Iterator<Item = &AtlasOwner> {
         self.owners.iter().filter(move |owner| {
             owner.area == area
-                && owner
-                    .reaches
-                    .iter()
-                    .any(|reach| matches!(reach, EffectReach::Offers(_) | EffectReach::Accepts(_)))
+                && owner.reaches.iter().any(|reach| {
+                    matches!(
+                        quest_reach(reach),
+                        Some((QuestVerb::Offers | QuestVerb::Accepts, _))
+                    )
+                })
         })
     }
 
@@ -504,12 +521,12 @@ impl WorldAtlas {
             .min_by(|a, b| self.owners[a.owner].label.cmp(&self.owners[b.owner].label))
     }
 
-    fn add_owners(&mut self, content: &Content, scripts: &RiftScripts, id: AreaId) {
+    fn add_owners(&mut self, content: &Content, scripts: &Scripts, id: AreaId) {
         let key = id.path(content);
         let placed = area::placed(content, id);
         let mut seeds = vec![AtlasOwner {
             area: id,
-            kind: RunnerKind::Area,
+            kind: AREA_RUNNER,
             name: name_of(key).to_owned(),
             label: shown_path(key).to_owned(),
             at: None,
@@ -520,7 +537,7 @@ impl WorldAtlas {
             },
         }];
         let mut rows = vec![OwnerRow {
-            kind: RunnerKind::Area,
+            kind: AREA_RUNNER,
             row: id.raw(),
             object: None,
         }];
@@ -532,7 +549,7 @@ impl WorldAtlas {
                 .unwrap_or_else(|| format!("object {index}"));
             seeds.push(AtlasOwner {
                 area: id,
-                kind: RunnerKind::Object,
+                kind: OBJECT_RUNNER,
                 label: format!("{} › {name}", name_of(key)),
                 name,
                 at: Some(match object.shape {
@@ -546,7 +563,7 @@ impl WorldAtlas {
                 },
             });
             rows.push(OwnerRow {
-                kind: RunnerKind::Object,
+                kind: OBJECT_RUNNER,
                 row: id.raw(),
                 object: Some(index),
             });
@@ -558,7 +575,7 @@ impl WorldAtlas {
             let blueprint = placement.blueprint.path(content);
             seeds.push(AtlasOwner {
                 area: id,
-                kind: RunnerKind::Blueprint,
+                kind: BLUEPRINT_RUNNER,
                 name: name_of(blueprint).to_owned(),
                 label: format!("{} in {} {ordinal}", name_of(blueprint), name_of(key)),
                 at: Some(placement.at),
@@ -569,7 +586,7 @@ impl WorldAtlas {
                 },
             });
             rows.push(OwnerRow {
-                kind: RunnerKind::Blueprint,
+                kind: BLUEPRINT_RUNNER,
                 row: id.raw(),
                 object: Some(ordinal as u32),
             });
@@ -590,7 +607,7 @@ impl WorldAtlas {
             let npc_key = npc.path(content);
             seeds.push(AtlasOwner {
                 area: id,
-                kind: RunnerKind::Npc,
+                kind: NPC_RUNNER,
                 name: npc.get(content).name.clone(),
                 label: shown_path(npc_key).to_owned(),
                 at,
@@ -601,7 +618,7 @@ impl WorldAtlas {
                 },
             });
             rows.push(OwnerRow {
-                kind: RunnerKind::Npc,
+                kind: NPC_RUNNER,
                 row: npc.raw(),
                 object: None,
             });
@@ -610,7 +627,7 @@ impl WorldAtlas {
             owner.reaches = scripts.may_do(row).reaches;
             let index = self.owners.len();
             for reach in &owner.reaches {
-                let EffectReach::Warp(place) = reach else {
+                let Some(Warps(place)) = reach.downcast_ref::<Warps>() else {
                     continue;
                 };
                 self.warps.push(AtlasWarp {
@@ -695,56 +712,67 @@ impl WorldAtlas {
         for owner in self.owners.iter().filter(|owner| owner.area == id) {
             let by = |kind: AtlasSourceKind| source(kind, &owner.name, &owner.opens);
             for reach in &owner.reaches {
-                match reach {
-                    EffectReach::Warp(place) => found.push((
+                if let Some(Warps(place)) = reach.downcast_ref::<Warps>() {
+                    found.push((
                         AreaDef::TABLE,
                         place.area.path(content).to_owned(),
                         by(AtlasSourceKind::Warp),
-                    )),
-                    EffectReach::Spawns(npc) => found.push((
+                    ));
+                }
+                if let Some(Spawns(npc)) = reach.downcast_ref::<Spawns>() {
+                    found.push((
                         NpcDef::TABLE,
                         npc.path(content).to_owned(),
                         by(AtlasSourceKind::Spawns),
-                    )),
-                    EffectReach::Gives(item) | EffectReach::Drops(item) => found.push((
+                    ));
+                }
+                let dropped = reach
+                    .downcast_ref::<Gives>()
+                    .map(|Gives(item)| item)
+                    .or_else(|| reach.downcast_ref::<Drops>().map(|Drops(item)| item));
+                if let Some(item) = dropped {
+                    found.push((
                         ItemDef::TABLE,
                         item.path(content).to_owned(),
                         by(AtlasSourceKind::Gives),
-                    )),
-                    EffectReach::OpensShop(shop) => {
-                        let shop_key = shop.path(content);
-                        let opens = OpenTarget::Row {
-                            table: ShopDef::TABLE,
-                            key: shop_key.to_owned(),
-                        };
-                        for offer in shop.get(content).sells() {
-                            found.push((
-                                ItemDef::TABLE,
-                                offer.item.path(content).to_owned(),
-                                source(AtlasSourceKind::Sells, shop_key, &opens),
-                            ));
-                        }
+                    ));
+                }
+                if let Some(OpensShop(shop)) = reach.downcast_ref::<OpensShop>() {
+                    let shop_key = shop.path(content);
+                    let opens = OpenTarget::Row {
+                        table: ShopDef::TABLE,
+                        key: shop_key.to_owned(),
+                    };
+                    for offer in shop.get(content).sells() {
                         found.push((
-                            ShopDef::TABLE,
-                            shop_key.to_owned(),
-                            by(AtlasSourceKind::Opens),
+                            ItemDef::TABLE,
+                            offer.item.path(content).to_owned(),
+                            source(AtlasSourceKind::Sells, shop_key, &opens),
                         ));
                     }
-                    EffectReach::Remembers(memory) => found.push((
+                    found.push((
+                        ShopDef::TABLE,
+                        shop_key.to_owned(),
+                        by(AtlasSourceKind::Opens),
+                    ));
+                }
+                if let Some(Remembers(memory)) = reach.downcast_ref::<Remembers>() {
+                    found.push((
                         MemoryDef::TABLE,
                         memory.path(content).to_owned(),
                         by(AtlasSourceKind::Remembers),
-                    )),
-                    _ => {}
+                    ));
                 }
-                let (kind, quest) = match reach {
-                    EffectReach::Offers(quest) => (AtlasSourceKind::Offers, quest),
-                    EffectReach::Accepts(quest) => (AtlasSourceKind::Accepts, quest),
-                    EffectReach::TurnsIn(quest) => (AtlasSourceKind::TurnsIn, quest),
-                    EffectReach::Fails(quest) => (AtlasSourceKind::Fails, quest),
-                    EffectReach::Completes(quest) => (AtlasSourceKind::Completes, quest),
-                    EffectReach::Decides(quest) => (AtlasSourceKind::Decides, quest),
-                    _ => continue,
+                let Some((verb, quest)) = quest_reach(reach) else {
+                    continue;
+                };
+                let kind = match verb {
+                    QuestVerb::Offers => AtlasSourceKind::Offers,
+                    QuestVerb::Accepts => AtlasSourceKind::Accepts,
+                    QuestVerb::TurnsIn => AtlasSourceKind::TurnsIn,
+                    QuestVerb::Fails => AtlasSourceKind::Fails,
+                    QuestVerb::Completes => AtlasSourceKind::Completes,
+                    QuestVerb::Decides => AtlasSourceKind::Decides,
                 };
                 let quest_key = quest.path(content);
                 found.push((QuestDef::TABLE, quest_key.to_owned(), by(kind)));
@@ -754,12 +782,13 @@ impl WorldAtlas {
                         table: QuestDef::TABLE,
                         key: quest_key.to_owned(),
                     };
-                    for stack in def
+                    let stacks = def
                         .grants()
                         .iter()
+                        .copied()
                         .chain(def.rewards())
-                        .chain(def.pick_one())
-                    {
+                        .chain(def.pick_one().iter().copied());
+                    for stack in stacks {
                         found.push((
                             ItemDef::TABLE,
                             stack.item.path(content).to_owned(),
@@ -815,7 +844,8 @@ impl WorldAtlas {
             let key = id.path(content).to_owned();
             let def = id.get(content);
             let mut steps = Vec::new();
-            let offering = |reach: &EffectReach| matches!(reach, EffectReach::Offers(quest) | EffectReach::Accepts(quest) if *quest == id);
+            let offering =
+                |reach: &Reach| does(reach, &[QuestVerb::Offers, QuestVerb::Accepts], id);
             let giver = self.who_does(&offering);
             let offered = self.areas_where(&offering);
             if !offered.is_empty() {
@@ -851,15 +881,11 @@ impl WorldAtlas {
                     ),
                     Objective::Task { label, .. } => (
                         label.clone(),
-                        self.areas_where(
-                            &|reach| matches!(reach, EffectReach::Completes(quest) if *quest == id),
-                        ),
+                        self.areas_where(&|reach| does(reach, &[QuestVerb::Completes], id)),
                     ),
                     Objective::Decide { label, .. } => (
                         label.clone(),
-                        self.areas_where(
-                            &|reach| matches!(reach, EffectReach::Decides(quest) if *quest == id),
-                        ),
+                        self.areas_where(&|reach| does(reach, &[QuestVerb::Decides], id)),
                     ),
                 };
                 steps.push(AtlasQuestStep {
@@ -868,8 +894,7 @@ impl WorldAtlas {
                     who: None,
                 });
             }
-            let turning_in =
-                |reach: &EffectReach| matches!(reach, EffectReach::TurnsIn(quest) if *quest == id);
+            let turning_in = |reach: &Reach| does(reach, &[QuestVerb::TurnsIn], id);
             let turn_in = self.areas_where(&turning_in);
             if !turn_in.is_empty() {
                 steps.push(AtlasQuestStep {
@@ -878,8 +903,7 @@ impl WorldAtlas {
                     who: self.who_does(&turning_in),
                 });
             }
-            let failed = self
-                .areas_where(&|reach| matches!(reach, EffectReach::Fails(quest) if *quest == id));
+            let failed = self.areas_where(&|reach| does(reach, &[QuestVerb::Fails], id));
             if !failed.is_empty() {
                 steps.push(AtlasQuestStep {
                     kind: QuestStepKind::Failed,
@@ -890,7 +914,10 @@ impl WorldAtlas {
             let requires: Vec<String> = [def.shown(), def.requires()]
                 .into_iter()
                 .flatten()
-                .map(|condition| condition::describe(content, condition).to_string())
+                .map(|condition| {
+                    requirement::describe(content, messages::of(content), condition)
+                        .plain_words(content)
+                })
                 .collect();
             quests.push(AtlasQuest {
                 key,
@@ -944,56 +971,56 @@ impl WorldAtlas {
             }
         };
         for query in queries {
-            match query {
-                RiftQuery::OnQuest { quest, .. } if *quest != id => {
-                    link(*quest, QuestLinkHow::During)
-                }
-                RiftQuery::QuestDone { quest, .. } if *quest != id => {
-                    link(*quest, QuestLinkHow::Done)
-                }
-                RiftQuery::Memory { memory, .. } | RiftQuery::SetWithin { memory, .. } => {
-                    for owner in self
-                        .owners
+            if let Some(OnQuest { quest, .. }) = query.downcast_ref::<OnQuest>()
+                && *quest != id
+            {
+                link(*quest, QuestLinkHow::During);
+            }
+            if let Some(QuestDone { quest, .. }) = query.downcast_ref::<QuestDone>()
+                && *quest != id
+            {
+                link(*quest, QuestLinkHow::Done);
+            }
+            let memory = query
+                .downcast_ref::<Memory>()
+                .map(|query| query.memory)
+                .or_else(|| query.downcast_ref::<SetWithin>().map(|query| query.memory));
+            if let Some(memory) = memory {
+                for owner in self.owners.iter().filter(|owner| {
+                    owner
+                        .reaches
                         .iter()
-                        .filter(|owner| owner.reaches.contains(&EffectReach::Remembers(*memory)))
-                    {
-                        for reach in &owner.reaches {
-                            if let EffectReach::Offers(other)
-                            | EffectReach::Accepts(other)
-                            | EffectReach::TurnsIn(other)
-                            | EffectReach::Completes(other)
-                            | EffectReach::Decides(other) = reach
-                                && *other != id
-                            {
-                                link(
-                                    *other,
-                                    QuestLinkHow::Memory(memory.path(content).to_owned()),
-                                );
-                            }
+                        .any(|reach| reach.downcast_ref::<Remembers>() == Some(&Remembers(memory)))
+                }) {
+                    for reach in &owner.reaches {
+                        if let Some((verb, other)) = quest_reach(reach)
+                            && verb != QuestVerb::Fails
+                            && other != id
+                        {
+                            link(other, QuestLinkHow::Memory(memory.path(content).to_owned()));
                         }
                     }
                 }
-                _ => {}
             }
         }
         for owner in self.owners.iter().filter(|owner| {
             owner
                 .reaches
                 .iter()
-                .any(|reach| matches!(reach, EffectReach::Offers(quest) | EffectReach::Accepts(quest) if *quest == id))
+                .any(|reach| does(reach, &[QuestVerb::Offers, QuestVerb::Accepts], id))
         }) {
             for reach in &owner.reaches {
-                if let EffectReach::Fails(other) = reach
-                    && *other != id
+                if let Some((QuestVerb::Fails, other)) = quest_reach(reach)
+                    && other != id
                 {
-                    link(*other, QuestLinkHow::Failed);
+                    link(other, QuestLinkHow::Failed);
                 }
             }
         }
         after
     }
 
-    fn areas_where(&self, pick: &dyn Fn(&EffectReach) -> bool) -> Vec<AreaId> {
+    fn areas_where(&self, pick: &dyn Fn(&Reach) -> bool) -> Vec<AreaId> {
         let areas: BTreeSet<AreaId> = self
             .owners
             .iter()
@@ -1003,7 +1030,7 @@ impl WorldAtlas {
         areas.into_iter().collect()
     }
 
-    fn who_does(&self, pick: &dyn Fn(&EffectReach) -> bool) -> Option<String> {
+    fn who_does(&self, pick: &dyn Fn(&Reach) -> bool) -> Option<String> {
         self.owners
             .iter()
             .find(|owner| owner.reaches.iter().any(pick))
@@ -1066,7 +1093,7 @@ fn area_info(content: &Content, files: &ProjectFiles, id: AreaId) -> AtlasArea {
                     at: spawner
                         .within
                         .map_or_else(|| loaded.center(), |within| within.center()),
-                    count: spawner.count,
+                    count: spawner.most_at_once(),
                 }
             })),
             _ => {}
@@ -1088,7 +1115,7 @@ fn area_info(content: &Content, files: &ProjectFiles, id: AreaId) -> AtlasArea {
     }
 }
 
-fn positive_queries<'a>(condition: &'a Condition, out: &mut Vec<&'a RiftQuery>) {
+fn positive_queries<'a>(condition: &'a Expr, out: &mut Vec<&'a ScriptQuery>) {
     match condition {
         Expr::Not { .. } => {}
         Expr::Query(query) => out.push(query),

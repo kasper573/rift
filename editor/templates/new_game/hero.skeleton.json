@@ -8,10 +8,12 @@
   "hands": [
     {
       "name": "right hand",
+      "label": "Right hand",
       "joint": "hand.r"
     },
     {
       "name": "left hand",
+      "label": "Left hand",
       "joint": "hand.l",
       "turn": [
         0.0,

@@ -1,6 +1,13 @@
 pub mod channel;
 pub mod embed;
 
+use crate::core::script::EventDef;
+use crate::core::script::Reach;
+use crate::core::script::ReachDef;
+use crate::core::script::Vocabulary;
+use crate::systems::area::OBJECT_RUNNER;
+use crate::systems::area::spawnable::SPAWNABLE_RUNNER;
+use crate::systems::npc::NPC_RUNNER;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -20,26 +27,54 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::{Content, SchemaMark};
 use crate::core::math::Rgb;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
+use crate::core::script::{EffectCall, EventKind, Expr, Instances, Owner, RunnerKind};
+use crate::core::text::LineText;
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::actor::{Appearance, Name as ActorName};
 use crate::systems::area::AreaTag;
+use crate::systems::dialogue::span::ScriptSpan;
 use crate::systems::input::map::InputMap;
+use crate::systems::messages::{self, messages};
 use crate::systems::movement::position;
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
 use crate::systems::player::{self, CharacterAccount, ClientId, PlayedBy, Players};
-use crate::systems::script::event::OBJECT_OR_NPC;
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, EventKind, Owner, RiftEvent, RiftInstances, RiftScripting,
-    RunnerKind,
-};
 use crate::systems::society::{Settling, SocietyView};
 use crate::systems::stat;
-use crate::systems::text::{self, LineText, Span};
 use crate::systems::visibility;
+
+messages! {
+    /// What the game says of chat.
+    pub struct ChatMessages {
+        /// What a player is told saying more lines than the game lets them in a while.
+        too_fast,
+        /// What the items a chat line may hold are called together.
+        items,
+        /// What the quests a chat line may hold are called together.
+        quests,
+        /// What the skills a chat line may hold are called together.
+        skills,
+        /// What the locations a chat line may hold are called together.
+        locations,
+        /// What a chat line says an item it may hold is.
+        item_hint,
+        /// What a chat line says a quest it may hold is.
+        quest_hint,
+        /// What a chat line says a skill it may hold is.
+        skill_hint,
+        /// What a chat line says a location it may hold is.
+        location_hint,
+        /// The name a line is said under by a player who has none, `{number}` the number of their connection.
+        player_number(number: Number),
+        /// The name a line is said under by a speaker who has none.
+        player,
+        /// What a location set in a chat line is called: the area `{area}` it is in and where, `{x}` and `{y}`.
+        location_spot(area: Text, x: Number, y: Number),
+    }
+}
 
 pub fn register(app: &mut App) {
     bevy_terminal::register(app, to_client);
@@ -60,6 +95,8 @@ pub struct ChatSettings {
     pub lines: u32,
     pub within: Seconds,
     pub name_colors: Vec<Rgb>,
+    /// How many lines the chat log keeps of each channel. The oldest go first.
+    pub kept_lines: u32,
 }
 
 impl ChatSettings {
@@ -156,7 +193,10 @@ pub fn speak(world: &mut World) {
             continue;
         };
         if !paced(world, said.conn) {
-            let refusal = world.resource::<GameSettings>().words.chat_too_fast.clone();
+            let refusal = messages::of(world.resource::<Content>())
+                .chat
+                .too_fast()
+                .to_owned();
             bevy_terminal::reply_failure(world, said.conn, refusal);
             continue;
         }
@@ -207,28 +247,25 @@ pub fn notice(channel: ChatChannel, text: &str) -> TerminalLine {
 #[schemars(transform = SchemaMark::System.with("chat"))]
 pub struct Say {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub text: Vec<Span>,
+    pub text: Vec<ScriptSpan>,
     /// Without one, as far as the speaker is seen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(transform = SchemaMark::Value.with("number"))]
-    pub within: Option<Condition>,
+    pub within: Option<Expr>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for Say {
+impl EffectDef for Say {
     fn owners(&self) -> &'static [RunnerKind] {
-        OBJECT_OR_NPC
+        &[OBJECT_RUNNER, SPAWNABLE_RUNNER, NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
-        let values = text::values(&self.text)
+    fn compile<'c>(&'c self, cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
+        let values = ScriptSpan::values(&self.text)
             .into_iter()
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
@@ -242,12 +279,12 @@ impl EffectDef<RiftScripting> for Say {
             let within = within.as_ref().map_or(visibility::sight(world), |within| {
                 Meters(within(world, cx).as_num() as f32)
             });
-            say(world, speaker, LineText::spoken(&spans, &spoken), within);
+            say(world, speaker, ScriptSpan::said(&spans, &spoken), within);
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        vec![EffectReach::Says]
+    fn reach(&self, _cx: &Compiler) -> Vec<Reach> {
+        vec![Reach::new(Says)]
     }
 }
 
@@ -256,7 +293,10 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
         .get::<ActorName>(speaker)
         .map(|name| name.name.clone())
         .unwrap_or_default();
-    let words = text.words(world.resource::<InputMap>());
+    let words = text.words(
+        world.resource::<Content>(),
+        &world.resource::<InputMap>().key_names(),
+    );
     let voice = LineSpeaker {
         name: name.clone(),
         typist: None,
@@ -310,8 +350,8 @@ fn raise_heard(world: &mut World, speaker: Entity, said: &str) {
         return;
     };
     let listeners: Vec<(Owner, Meters)> = world
-        .resource::<RiftInstances>()
-        .owners_answering(EventKind::Heard)
+        .resource::<Instances>()
+        .owners_answering(EventKind::of::<Heard>())
         .iter()
         .filter_map(|&owner| {
             let Owner::Entity(_, listener) = owner else {
@@ -328,16 +368,16 @@ fn raise_heard(world: &mut World, speaker: Entity, said: &str) {
     let spoken = Arc::new(spoken_words(said));
     for (owner, distance) in listeners {
         let spoken = spoken.clone();
-        world.resource_mut::<RiftInstances>().raise(
+        world.resource_mut::<Instances>().raise(
             owner,
-            EventKind::Heard,
+            EventKind::of::<Heard>(),
             Some(speaker),
             Vec::new(),
-            move |event| match event {
-                RiftEvent::Heard { words, within } => {
-                    distance <= *within && words.iter().any(|phrase| says(&spoken, phrase))
-                }
-                _ => false,
+            move |event| {
+                event.downcast_ref::<Heard>().is_some_and(|heard| {
+                    distance <= heard.within
+                        && heard.words.iter().any(|phrase| says(&spoken, phrase))
+                })
             },
         );
     }
@@ -358,11 +398,12 @@ fn spoken_words(text: &str) -> Vec<String> {
 fn say_to_area(world: &mut World, speaker: Entity, said: ChatSaid) {
     raise_heard(world, speaker, &said.text);
     let client = world.get::<PlayedBy>(speaker).map(|by| by.client);
+    let words = &messages::of(world.resource::<Content>()).chat;
     let name = world
         .get::<ActorName>(speaker)
         .map(|name| name.name.clone())
-        .or_else(|| client.map(|client| format!("player {}", client.0)))
-        .unwrap_or_else(|| "player".to_owned());
+        .or_else(|| client.map(|client| words.player_number(client.0)))
+        .unwrap_or_else(|| words.player().to_owned());
     let voice = LineSpeaker {
         name,
         typist: client.map(|client| u64::from(client.0)),
@@ -430,4 +471,27 @@ fn paced(world: &mut World, conn: Entity) -> bool {
     }
     conn.insert(said);
     room
+}
+
+/// A script that may have its owner say something in chat.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Says;
+
+impl ReachDef for Says {}
+
+/// A player said one of the `words` or phrases within `within` of the script's owner.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug)]
+pub struct Heard {
+    pub words: Vec<String>,
+    pub within: Meters,
+}
+
+impl EventDef for Heard {
+    fn owners(&self) -> &'static [RunnerKind] {
+        &[OBJECT_RUNNER, SPAWNABLE_RUNNER, NPC_RUNNER]
+    }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    vocabulary.event::<Heard>("heard").effect::<Say>("say");
 }

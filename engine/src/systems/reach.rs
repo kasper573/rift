@@ -4,10 +4,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::math::Pos;
 use crate::core::units::{MeterPos, Meters};
-use crate::systems::area::{self, AreaId, AreaTag};
+use crate::systems::area;
+use crate::systems::area::transition::Crossing;
+use crate::systems::interact::Interactive;
+use crate::systems::mount::{self, RiderAct};
 use crate::systems::movement::{self, Aim, Approach, ApproachPlan, Berths, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::skill::SkillId;
+use crate::systems::skill::casting::CastWay;
 use crate::systems::{stat, visibility};
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -40,7 +44,7 @@ pub fn chasing(world: &World, actor: Entity) -> bool {
 }
 
 /// Keeps every character's `Engaged` in step with the actor its cast intent aims at, and every
-/// player's `Chasing` with whether it reaches for a cast at all.
+/// character's `Chasing` with whether it reaches for a cast at all.
 pub fn mirror_engaged(
     world: &mut World,
     intents: &mut Intents,
@@ -97,17 +101,11 @@ pub enum ReachTarget {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReachAct {
-    /// `repeat` keeps the intent after a cast, so a basic attack lands again and again until the
-    /// target falls or the actor turns away.
-    Cast {
-        skill: SkillId,
-        repeat: bool,
-    },
+    Cast { skill: SkillId, way: CastWay },
     Pickup,
     Interact,
     Gather,
-    /// Asking the driver of a mount for a seat on it.
-    Board,
+    Trade,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,12 +115,51 @@ pub enum Pursuit {
     Lost,
 }
 
+/// What keeps a window open for a player: `to` still standing where they see it, and the player
+/// within `range` of `from`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tether {
-    pub anchor: Pos<Meters>,
-    pub area: AreaId,
+    pub to: Entity,
+    pub from: Pos<Meters>,
     pub range: Meters,
-    pub with: Option<Entity>,
+}
+
+impl Tether {
+    /// What ties `player` to `opener`, the thing in the world that opened a window for them, and
+    /// how far from it they may stand. A window opened by nothing, or by the player themselves,
+    /// ties them to nothing.
+    pub fn opened_by(world: &World, player: Entity, opener: Option<Entity>) -> Option<Tether> {
+        let to = opener.filter(|opener| *opener != player)?;
+        Tether::around(world, player, to, world.get::<Interactive>(to)?.reach)
+    }
+
+    /// What ties `player` to `to` for as long as they stay within `range` of where they stand now,
+    /// so a player who walked up to the edge of a reach isn't let go by the next small step.
+    pub fn around(world: &World, player: Entity, to: Entity, range: Meters) -> Option<Tether> {
+        Some(Tether {
+            to,
+            from: position(world, player)?,
+            range,
+        })
+    }
+
+    /// What ties `player` to `to` while they stand within `range` of each other, wherever that is.
+    pub fn beside(world: &World, to: Entity, range: Meters) -> Option<Tether> {
+        Some(Tether {
+            to,
+            from: position(world, to)?,
+            range,
+        })
+    }
+}
+
+/// Why a player can no longer keep a window open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lapse {
+    Fell,
+    Crossing,
+    Mounted,
+    OutOfReach,
 }
 
 impl ReachTarget {
@@ -152,34 +189,30 @@ impl ReachIntent {
     pub fn cast(&self) -> Option<SkillId> {
         match self.act {
             ReachAct::Cast { skill, .. } => Some(skill),
-            ReachAct::Pickup | ReachAct::Interact | ReachAct::Gather | ReachAct::Board => None,
+            ReachAct::Pickup | ReachAct::Interact | ReachAct::Gather | ReachAct::Trade => None,
         }
     }
 }
 
-impl Tether {
-    pub fn around(
-        world: &World,
-        actor: Entity,
-        range: Meters,
-        with: Option<Entity>,
-    ) -> Option<Tether> {
-        Some(Tether {
-            anchor: position(world, actor)?,
-            area: world.get::<AreaTag>(actor)?.area,
-            range,
-            with,
-        })
+/// Why `player` can no longer keep a window open, if they can't: they fell, are crossing to
+/// another area, sit a seat that bars interacting, or, when the window has a `tether`, are out of
+/// reach of what it ties them to. This is the one rule that closes every window.
+pub fn lapse(world: &World, player: Entity, tether: Option<&Tether>) -> Option<Lapse> {
+    if stat::is_dead(world, player) {
+        return Some(Lapse::Fell);
     }
-
-    pub fn holds(&self, world: &World, actor: Entity) -> bool {
-        !stat::is_dead(world, actor)
-            && world.get::<AreaTag>(actor).map(|tag| tag.area) == Some(self.area)
-            && position(world, actor).is_some_and(|at| at.distance(self.anchor) <= self.range)
-            && self.with.is_none_or(|with| {
-                stat::stands(world, with) && visibility::coexist(world, actor, with)
-            })
+    if world.get::<Crossing>(player).is_some() {
+        return Some(Lapse::Crossing);
     }
+    if !mount::seat::lets(world, player, RiderAct::Interact) {
+        return Some(Lapse::Mounted);
+    }
+    let tether = tether?;
+    let within = stat::stands(world, tether.to)
+        && area::same_area(world, player, tether.to)
+        && visibility::coexist(world, player, tether.to)
+        && position(world, player).is_some_and(|at| at.distance(tether.from) <= tether.range);
+    (!within).then_some(Lapse::OutOfReach)
 }
 
 pub fn intend(world: &mut World, actor: Entity, target: ReachTarget, act: ReachAct) {

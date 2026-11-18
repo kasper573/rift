@@ -234,6 +234,10 @@ pub struct SkeletonDef {
     /// body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slots: Vec<EquipmentSlot>,
+    /// What the player calls each slot, as the equipment panel heads it; a slot not named here is
+    /// headed by its name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub slot_labels: BTreeMap<EquipmentSlot, String>,
     /// The colours a body's parts are painted in, in the order they are painted where their masks
     /// overlap.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -430,6 +434,9 @@ pub struct BuildSets {
 #[serde(deny_unknown_fields)]
 pub struct Hand {
     pub name: String,
+    /// What the player calls the hand, as the equipment panel heads it; its `name` when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub joint: JointName,
     #[serde(default, skip_serializing_if = "LocalOffset::is_zero")]
     pub offset: LocalOffset,
@@ -441,6 +448,13 @@ pub struct Hand {
     pub strap: Option<HandStrap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clasp: Option<Clasp>,
+}
+
+impl Hand {
+    /// What the player calls the hand.
+    pub fn label(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.name)
+    }
 }
 
 /// How a hand carries a prop strapped to the arm it is on: each joint from the one under `arm`
@@ -957,6 +971,7 @@ impl ContentFile for SkeletonDef {
             regions: Vec::new(),
             portrait: Vec::new(),
             slots: Vec::new(),
+            slot_labels: BTreeMap::new(),
             tints: Vec::new(),
             base: ClipSet::default(),
             stances: Vec::new(),
@@ -990,6 +1005,9 @@ impl ContentFile for SkeletonDef {
         let mut names = BTreeSet::new();
         for (index, hand) in self.hands.iter().enumerate() {
             cx.text(format!("/hands/{index}/name"), &hand.name, 1, 32);
+            if let Some(label) = &hand.label {
+                cx.text(format!("/hands/{index}/label"), label, 1, 32);
+            }
             if !names.insert(hand.name.as_str()) {
                 cx.error(
                     format!("/hands/{index}/name"),
@@ -1013,6 +1031,18 @@ impl ContentFile for SkeletonDef {
             }
         }
         check_names(cx, "slots", "slot twice", &self.slots);
+        for (slot, label) in &self.slot_labels {
+            let at = format!("/slot_labels/{}", slot.as_str());
+            cx.text(at.clone(), label, 1, 32);
+            if !self.slots.contains(slot) {
+                cx.error(
+                    at,
+                    "label of no slot",
+                    slot.as_str(),
+                    "one of the skeleton's slots",
+                );
+            }
+        }
         let mut tints = BTreeSet::new();
         for (index, tint) in self.tints.iter().enumerate() {
             cx.text(format!("/tints/{index}/name"), tint.name.as_str(), 1, 32);
@@ -1529,6 +1559,13 @@ pub struct Naming {
 }
 
 impl SkeletonDef {
+    /// What the player calls `slot`.
+    pub fn slot_label<'a>(&'a self, slot: &'a EquipmentSlot) -> &'a str {
+        self.slot_labels
+            .get(slot)
+            .map_or(slot.as_str(), String::as_str)
+    }
+
     /// The colour of each of its tints, where nothing laid over a body says otherwise.
     pub fn tint_colours(&self) -> Colours {
         Colours(
@@ -1749,7 +1786,7 @@ impl SkeletonDef {
 
     /// What a body needs of the skeleton that it lacks yet, each said of the skeleton: a skeleton
     /// is made up step by step, and only a finished one may be worn. The moves `sat` are the
-    /// game's seats', which land nowhere and so need no apex.
+    /// game's mounts' riders, which land nowhere and so need no apex.
     pub fn unfinished(&self, sat: &BTreeSet<MoveName>) -> Vec<String> {
         let mut lacking = Vec::new();
         if self.rig.files.is_empty() {

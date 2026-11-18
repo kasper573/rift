@@ -8,18 +8,21 @@ use ui::theme;
 use ui::{panel, sheet};
 
 use super::{
-    HistoryEntry, HistoryMark, HistoryNews, HistoryRecord, HistoryTopic, KEPT, RecordTally,
+    HistoryEntry, HistoryMark, HistoryMessages, HistoryNews, HistoryRecord, HistoryTopic,
+    RecordTally,
 };
+use crate::core::content::Content;
 use crate::core::text::{self, StyledLine, StyledSpan, TextLook};
 use crate::core::time::LocalClock;
+use crate::systems::GameSettings;
 use crate::systems::hud;
 use crate::systems::hud::menu::{self, MenuTab, MenuTabName, SubTabs};
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
+use crate::systems::messages::{self, Direction};
 use crate::systems::player::ClientId;
 use crate::systems::screen::ClientScreen;
 use ui::form;
-use ui::words;
 
 const TIME_WIDTH: f32 = 72.0;
 const ICON: f32 = 16.0;
@@ -31,7 +34,7 @@ pub struct HistoryPlugin;
 impl Plugin for HistoryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HistoryBook>()
-            .add_systems(Update, receive_news)
+            .add_systems(Update, receive_news.run_if(resource_exists::<Content>))
             .add_systems(OnExit(ClientScreen::Area), forget);
     }
 }
@@ -48,8 +51,26 @@ pub enum HistoryTab {
 }
 
 impl HistoryTab {
-    pub fn title(self) -> &'static str {
-        self.into()
+    pub fn named(self, words: &HistoryMessages) -> &str {
+        match self {
+            HistoryTab::All => words.tab_all(),
+            HistoryTab::Talk => words.tab_talk(),
+            HistoryTab::Quests => words.tab_quests(),
+            HistoryTab::Items => words.tab_items(),
+            HistoryTab::Notifications => words.tab_notifications(),
+            HistoryTab::Errors => words.tab_errors(),
+        }
+    }
+
+    fn empty(self, words: &HistoryMessages) -> &str {
+        match self {
+            HistoryTab::All => words.empty_all(),
+            HistoryTab::Talk => words.empty_talk(),
+            HistoryTab::Quests => words.empty_quests(),
+            HistoryTab::Items => words.empty_items(),
+            HistoryTab::Notifications => words.empty_notifications(),
+            HistoryTab::Errors => words.empty_errors(),
+        }
     }
 
     fn shows(self, entry: &HistoryEntry) -> bool {
@@ -77,7 +98,7 @@ impl HistoryBook {
         &self.records
     }
 
-    fn upsert(&mut self, record: HistoryRecord) {
+    fn upsert(&mut self, record: HistoryRecord, kept: usize) {
         match self
             .records
             .binary_search_by_key(&record.nth, |kept| kept.nth)
@@ -85,7 +106,7 @@ impl HistoryBook {
             Ok(index) => self.records[index] = record,
             Err(index) => self.records.insert(index, record),
         }
-        let overflow = self.records.len().saturating_sub(KEPT);
+        let overflow = self.records.len().saturating_sub(kept);
         self.records.drain(..overflow);
     }
 }
@@ -109,10 +130,11 @@ impl MenuTab for HistoryMenuTab {
     }
     fn sub_tabs(&self, world: &World) -> Option<SubTabs> {
         let chosen = world.resource::<HistoryBook>().tab;
+        let words = &messages::of(world.resource::<Content>()).history;
         Some(SubTabs {
             labels: HistoryTab::VARIANTS
                 .iter()
-                .map(|tab| tab.title().to_owned())
+                .map(|tab| tab.named(words).to_owned())
                 .collect(),
             chosen: HistoryTab::VARIANTS
                 .iter()
@@ -130,7 +152,7 @@ impl MenuTab for HistoryMenuTab {
         let rows = rows(world, tab);
         let clock = LocalClock::of_this_machine();
         let area = egui::ScrollArea::vertical()
-            .id_salt(("history", tab.title()))
+            .id_salt(("history", <&str>::from(tab)))
             .stick_to_bottom(true);
         let ([], pane) = sheet::columns(ui, ui.available_rect_before_wrap(), []);
         sheet::scroll_pane(ui, pane, area, |ui| {
@@ -153,6 +175,7 @@ pub(crate) fn tallied(
     tally: Option<RecordTally>,
     icon: bool,
     ground: Ground,
+    words: &HistoryMessages,
 ) {
     let (base, gained, earned) = match ground {
         Ground::Paper => (ink::INK, ink::VERDIGRIS, ink::OCHRE),
@@ -167,13 +190,13 @@ pub(crate) fn tallied(
             };
             prefix(
                 text,
-                format!("{} ", words::signed(f64::from(change))),
+                words.change_mark(change.unsigned_abs(), Direction::of(change)),
                 color,
             );
         }
         Some(RecordTally::Progress { have, need }) => {
             text.pieces
-                .push(StyledSpan::plain(format!(" {have}/{need}")).into());
+                .push(StyledSpan::plain(words.progress_mark(have, need)).into());
         }
         None => {}
     }
@@ -204,7 +227,12 @@ impl Row {
     }
 }
 
-fn receive_news(mut news: MessageReader<HistoryNews>, mut book: ResMut<HistoryBook>) {
+fn receive_news(
+    mut news: MessageReader<HistoryNews>,
+    mut book: ResMut<HistoryBook>,
+    content: Res<Content>,
+) {
+    let kept = content.built::<GameSettings>().history.kept as usize;
     for news in news.read() {
         match news.clone() {
             HistoryNews::Backfill { subject, records } => {
@@ -215,7 +243,7 @@ fn receive_news(mut news: MessageReader<HistoryNews>, mut book: ResMut<HistoryBo
                 if *book.subject.get_or_insert(subject) != subject {
                     continue;
                 }
-                book.upsert(record);
+                book.upsert(record, kept);
             }
         }
     }
@@ -250,37 +278,29 @@ fn rows(world: &World, tab: HistoryTab) -> Vec<Row> {
 }
 
 fn show_row(ui: &mut Ui, world: &mut World, row: &Row, clock: LocalClock) {
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).history;
     match row {
-        Row::Trimmed => form::caption(
-            ui,
-            format!("Older records are gone. The last {KEPT} are kept."),
-            ink::INK2,
-        ),
-        Row::Empty(tab) => form::caption(ui, empty_text(*tab).to_owned(), ink::INK2),
+        Row::Trimmed => {
+            let kept = content.built::<GameSettings>().history.kept;
+            form::caption(ui, words.trimmed(kept), ink::INK2)
+        }
+        Row::Empty(tab) => form::caption(ui, tab.empty(words), ink::INK2),
         Row::Record(record) => record_row(ui, world, record, clock),
-    }
-}
-
-fn empty_text(tab: HistoryTab) -> &'static str {
-    match tab {
-        HistoryTab::All => "Nothing yet. What you say, see and get is kept here.",
-        HistoryTab::Talk => "Nothing said yet.",
-        HistoryTab::Quests => "No quest news yet.",
-        HistoryTab::Items => "Nothing gained or lost yet.",
-        HistoryTab::Notifications => "No notifications yet.",
-        HistoryTab::Errors => "No errors yet.",
     }
 }
 
 fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: LocalClock) {
     let entry = &record.entry;
     let time = clock.label(record.at);
+    let content = world.resource::<Content>().clone();
+    let words = &messages::of(&content).history;
     match entry.mark {
         Some(HistoryMark::Began) => {
             let who = entry
                 .by
                 .clone()
-                .unwrap_or_else(|| "Conversation".to_owned());
+                .unwrap_or_else(|| words.conversation().to_owned());
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(face::bold(who).color(ink::VERDIGRIS));
@@ -289,12 +309,18 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
             return;
         }
         Some(HistoryMark::Arrived) => {
-            form::divider(ui, format!("{} · {time}", entry.text.plain_words()));
+            form::divider(
+                ui,
+                format!(
+                    "{} · {time}",
+                    entry.text.plain_words(world.resource::<Content>())
+                ),
+            );
             return;
         }
         _ => {}
     }
-    let line = record_line(entry);
+    let line = record_line(entry, &content);
     let color = match (entry.topic, entry.mark) {
         (_, Some(HistoryMark::Failed)) | (HistoryTopic::Error, _) => ink::RUBRIC,
         _ => ink::INK,
@@ -310,7 +336,7 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
         });
         ui.add_space(indent);
         if let Some(icon) = &entry.icon {
-            hud::file_icon(ui, world, icon, ICON);
+            hud::icon(ui, world, icon, ICON);
         }
         let look = TextLook::new(TextRole::Body.size(), color);
         let look = match entry.topic {
@@ -321,28 +347,35 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
     });
 }
 
-fn record_line(entry: &HistoryEntry) -> StyledLine {
-    let mut line = entry.text.styled();
-    tallied(&mut line, entry.tally, entry.icon.is_some(), Ground::Paper);
+fn record_line(entry: &HistoryEntry, content: &Content) -> StyledLine {
+    let words = &messages::of(content).history;
+    let mut line = entry.text.styled(content);
+    tallied(
+        &mut line,
+        entry.tally,
+        entry.icon.is_some(),
+        Ground::Paper,
+        words,
+    );
     if entry.repeats > 1 {
         line.pieces.push(
-            StyledSpan::plain(format!(" \u{d7}{}", entry.repeats))
+            StyledSpan::plain(words.repeated(entry.repeats))
                 .ink(ink::INK3)
                 .into(),
         );
     }
     match (entry.topic, entry.mark) {
         (HistoryTopic::Talk, Some(HistoryMark::You)) => {
-            prefix(&mut line, "You  ".to_owned(), ink::VERDIGRIS);
+            prefix(&mut line, words.you().to_owned(), ink::VERDIGRIS);
         }
         (HistoryTopic::Talk, _) => {
             if let Some(by) = &entry.by {
-                prefix(&mut line, format!("{by}  "), ink::VERDIGRIS);
+                prefix(&mut line, words.speaker(by), ink::VERDIGRIS);
             }
         }
         (HistoryTopic::Notification | HistoryTopic::Quest, _) => {
             if let Some(by) = &entry.by {
-                prefix(&mut line, format!("{by}  "), ink::MAGIC);
+                prefix(&mut line, words.speaker(by), ink::MAGIC);
             }
         }
         _ => {}

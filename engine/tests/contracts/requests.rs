@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
+use engine::core::content::Content;
 use engine::core::units::Seconds;
-use engine::systems::GameSettings;
 use engine::systems::friend;
 use engine::systems::player::Xp;
 use engine::systems::social_request::{
@@ -20,26 +20,31 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     let wren = server.sign_in(1, "Wren", "village");
     server.sign_in(2, "Hale", "forest");
 
-    server.ask(1, SocialRequestKind::Seat, "Hale");
+    server.ask(1, SocialRequestKind::PartyInvitation, "Hale");
     let asked_at = server.now();
     server.step();
     assert_eq!(
         server.cards(1),
-        [("You asked Hale for a seat".to_owned(), true)],
+        [("You invited Hale".to_owned(), true)],
         "the asker sees what they asked"
     );
     assert_eq!(
         server.cards(2),
-        [("Wren asks for a seat on your Rowboat".to_owned(), false)],
+        [("Wren invites you to their party".to_owned(), false)],
         "and the player asked sees who asks, wherever they are"
+    );
+    assert_eq!(
+        (server.told(1), server.told(2)),
+        (vec!["Invite sent to Hale".to_owned()], vec![]),
+        "the asker is told it was sent"
     );
     let waits = server.view(2).requests[0].clone();
     assert_eq!(
         (waits.other.name.as_str(), waits.until, waits.shown_until),
         ("Wren", asked_at.after(Seconds(20.0)), waits.until),
-        "a seat waits as long as its card shows"
+        "an invitation waits as long as its card shows"
     );
-    server.ask(1, SocialRequestKind::Seat, "Hale");
+    server.ask(1, SocialRequestKind::PartyInvitation, "Hale");
     server.step();
     assert_eq!(
         server.view(2).requests,
@@ -53,38 +58,42 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     server.answer(2, RequestAnswer::Accept);
     server.step();
     assert_eq!((server.cards(1), server.cards(2)), (vec![], vec![]));
-    assert_eq!(rides(&server, wren), 1, "accepting does what the kind does");
-    assert_eq!(server.told(1), ["Hale let you aboard"]);
+    assert_eq!(
+        joined(&server, wren),
+        1,
+        "accepting does what the kind does"
+    );
+    assert_eq!(server.told(1), ["Invite sent to Hale", "Hale joined you"]);
 
-    server.ask(1, SocialRequestKind::Seat, "Hale");
+    server.ask(1, SocialRequestKind::PartyInvitation, "Hale");
     server.step();
     server.answer(2, RequestAnswer::Accept);
     server.step();
     assert_eq!(
-        rides(&server, wren),
+        joined(&server, wren),
         1,
         "accepting what the kind refuses does nothing"
     );
     for client in [1, 2] {
         assert_eq!(
             server.village_or_forest(client).errors(client),
-            ["Every seat is taken"],
+            ["Every place is taken"],
             "and both are told why"
         );
     }
 
-    server.ask(2, SocialRequestKind::Seat, "Wren");
+    server.ask(2, SocialRequestKind::PartyInvitation, "Wren");
     server.step();
     server.answer(1, RequestAnswer::Deny);
     server.step();
     assert_eq!((server.cards(1), server.cards(2)), (vec![], vec![]));
     assert_eq!(
         server.told(2),
-        ["Wren denied"],
+        ["Invite sent to Wren", "Wren denied"],
         "a denial is told to the asker"
     );
 
-    server.ask(2, SocialRequestKind::Seat, "Wren");
+    server.ask(2, SocialRequestKind::PartyInvitation, "Wren");
     server.step();
     server.answer(2, RequestAnswer::TakeBack);
     server.step();
@@ -94,7 +103,7 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
         "the asker takes it back"
     );
 
-    server.ask(2, SocialRequestKind::Seat, "Wren");
+    server.ask(2, SocialRequestKind::PartyInvitation, "Wren");
     server.step();
     server.later(21.0);
     assert_eq!(
@@ -102,7 +111,11 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
         (vec![], vec![]),
         "it is gone when its wait is over"
     );
-    assert_eq!(server.told(2), ["Wren denied"], "and nobody is told");
+    assert_eq!(
+        server.told(2).last().map(String::as_str),
+        Some("Invite sent to Wren"),
+        "and nobody is told"
+    );
 
     server.ask(1, SocialRequestKind::Friendship, "Hale");
     server.ask(2, SocialRequestKind::Friendship, "Wren");
@@ -115,7 +128,9 @@ fn a_request_waits_on_both_players_cards_until_it_is_answered_taken_back_or_laps
     assert_eq!(
         server.told(1),
         [
-            "Hale let you aboard",
+            "Invite sent to Hale",
+            "Hale joined you",
+            "Invite sent to Hale",
             "Friend request sent to Hale",
             "Hale is now your friend"
         ],
@@ -131,7 +146,7 @@ fn every_request_passes_one_gate() {
     server.sign_in(3, "Marrow", "village");
     let refused = |server: &mut Server, why: &str, case: &str| {
         server.village.forget_notified();
-        server.ask(1, SocialRequestKind::Seat, "Hale");
+        server.ask(1, SocialRequestKind::PartyInvitation, "Hale");
         server.step();
         assert_eq!(server.village.errors(1), [why], "{case}");
         assert_eq!(server.cards(1), [], "{case}");
@@ -169,7 +184,7 @@ fn every_request_passes_one_gate() {
     server.step();
     server.answer(1, RequestAnswer::Accept);
     server.step();
-    server.ask(1, SocialRequestKind::Seat, "Hale");
+    server.ask(1, SocialRequestKind::PartyInvitation, "Hale");
     server.step();
     assert_eq!(
         server.cards(2).len(),
@@ -185,7 +200,7 @@ fn every_request_passes_one_gate() {
     refused(
         &mut server,
         "Hale is not here",
-        "the player asked is away from their character, and a seat needs them at it",
+        "the player asked is away from their character, and an invitation needs them at it",
     );
     server.later(31.0);
     refused(&mut server, "Hale is not here", "the player asked is gone");
@@ -205,7 +220,7 @@ fn every_request_passes_one_gate() {
         "and waits for them"
     );
 
-    server.ask(2, SocialRequestKind::Seat, "Wren");
+    server.ask(2, SocialRequestKind::PartyInvitation, "Wren");
     server.step();
     assert_eq!(server.cards(1).len(), 1, "otherwise it is sent");
 }
@@ -216,9 +231,9 @@ fn a_blocked_player_is_kept_away_until_it_is_undone() {
     server.sign_in(1, "Wren", "village");
     server.sign_in(2, "Hale", "village");
     server.sign_in(3, "Marrow", "village");
-    server.ask(2, SocialRequestKind::Seat, "Wren");
+    server.ask(2, SocialRequestKind::PartyInvitation, "Wren");
     server.ask(1, SocialRequestKind::Friendship, "Hale");
-    server.ask(3, SocialRequestKind::Seat, "Wren");
+    server.ask(3, SocialRequestKind::PartyInvitation, "Wren");
     server.step();
     assert_eq!((server.cards(1).len(), server.cards(2).len()), (3, 2));
 
@@ -227,7 +242,7 @@ fn a_blocked_player_is_kept_away_until_it_is_undone() {
     assert_eq!(
         (server.cards(1), server.cards(2)),
         (
-            vec![("Marrow asks for a seat on your Rowboat".to_owned(), false)],
+            vec![("Marrow invites you to their party".to_owned(), false)],
             vec![]
         ),
         "every request between the two is gone, whoever asked, and no other"
@@ -240,7 +255,7 @@ fn a_blocked_player_is_kept_away_until_it_is_undone() {
     assert_eq!(blocked(&mut server, 2), Vec::<String>::new());
     assert_eq!(
         (server.told(2), server.village.errors(2)),
-        (vec![], vec![]),
+        (vec!["Invite sent to Wren".to_owned()], vec![]),
         "the blocked player is not told"
     );
     server.ask(2, SocialRequestKind::Friendship, "Wren");
@@ -276,7 +291,7 @@ fn what_an_account_set_blocked_befriended_and_was_asked_is_kept_from_one_server_
     server.send(1, ChooseAcceptsRequests(AcceptsRequestsFrom::Nobody));
     server.block(1, "Marrow", true);
     server.ask(1, SocialRequestKind::Friendship, "Hale");
-    server.ask(1, SocialRequestKind::Seat, "Hale");
+    server.ask(1, SocialRequestKind::PartyInvitation, "Hale");
     server.step();
     let friendship = server.cards(2)[..1].to_vec();
     let report = checkpoint(
@@ -301,7 +316,7 @@ fn what_an_account_set_blocked_befriended_and_was_asked_is_kept_from_one_server_
     let friends: Vec<&str> = wren
         .friends
         .iter()
-        .map(|friend| friend.player.name.as_str())
+        .map(|friend| friend.character.name.as_str())
         .collect();
     assert_eq!(friends, ["Osric"]);
     assert_eq!(
@@ -311,8 +326,8 @@ fn what_an_account_set_blocked_befriended_and_was_asked_is_kept_from_one_server_
     );
 }
 
-/// How many rides `character` was given.
-fn rides(server: &Server, character: Entity) -> u32 {
+/// How many parties `character` was taken into.
+fn joined(server: &Server, character: Entity) -> u32 {
     server
         .village
         .world
@@ -320,38 +335,38 @@ fn rides(server: &Server, character: Entity) -> u32 {
         .map_or(0, |xp| xp.amount)
 }
 
-/// The kinds of request the tests ask: a seat, which needs both players here and is given once,
-/// and friendship, which reaches a player who is gone.
+/// The kinds of request the tests ask: an invitation, the test's own, which needs both players
+/// here and is taken once, and friendship, which reaches a player who is gone.
 fn sources() -> Vec<SocialRequestSource> {
-    fn seated(
+    fn joins(
         settling: &mut Settling,
-        _: &GameSettings,
+        _: &Content,
         request: &SocialRequest,
     ) -> Result<(), RequestUnaccepted> {
-        let gone = || RequestUnaccepted::Over("The asker is gone".to_owned());
+        let gone = || RequestUnaccepted::Over("The asker is gone".into());
         let (world, asker) = settling.reach(&request.asker).ok_or_else(gone)?;
-        let mut rides = world.get_mut::<Xp>(asker).ok_or_else(gone)?;
-        if rides.amount > 0 {
-            return Err(RequestUnaccepted::Over("Every seat is taken".to_owned()));
+        let mut joined = world.get_mut::<Xp>(asker).ok_or_else(gone)?;
+        if joined.amount > 0 {
+            return Err(RequestUnaccepted::Over("Every place is taken".into()));
         }
-        rides.gain(1);
+        joined.gain(1);
         Ok(())
     }
     vec![
         SocialRequestSource {
-            kind: SocialRequestKind::Seat,
+            kind: SocialRequestKind::PartyInvitation,
             lasts: |settings| Some(settings.requests.card_shows),
             reaches_offline: false,
-            words: |_| SocialRequestWords {
-                asks: "{name} asks for a seat on your {about}",
-                asked: "You asked {name} for a seat",
-                sent: None,
-                accepted: Some("{name} let you aboard"),
-                denied: Some("{name} denied"),
+            words: SocialRequestWords {
+                asks: |_, name| format!("{name} invites you to their party"),
+                asked: |_, name| format!("You invited {name}"),
+                sent: |_, name| format!("Invite sent to {name}"),
+                accepted: Some(|_, name| format!("{name} joined you")),
+                denied: Some(|_, name| format!("{name} denied")),
                 lapsed: None,
             },
             may_send: |_, _, _, _| Ok(()),
-            accepted: seated,
+            accepted: joins,
             stands: |_, _| true,
         },
         friend::request_source(),

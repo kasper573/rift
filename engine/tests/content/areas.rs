@@ -1,18 +1,19 @@
+use engine::systems::area::stages::COVER;
 use std::io;
 use std::sync::Arc;
 
 use engine::core::content::{
-    Content, ContentFolder, FileHash, FolderEntry, LoadPurpose, LoadReport, MemoryFolder,
-    SETTINGS_FILE, load, version, write,
+    Content, ContentFolder, FileHash, FolderEntry, FolderReader, LoadPurpose, LoadReport,
+    MemoryFolder, SETTINGS_FILE, load, version, write,
 };
 use engine::core::ground::{
     self as ground, GroundSize, Heightfield, MIN_SIDE, PaintMap, ShareMap, TileAt, WaterSurface,
 };
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
-use engine::core::vfx::shader::Stage;
 use engine::systems::area::scenery::{Sources, prop_transform};
 use engine::systems::area::{self, AreaDef, AreaId};
+use engine::systems::player;
 use serde_json::{Value, json};
 use testkit::{Game, HEIGHTS, Map, path};
 
@@ -253,9 +254,10 @@ fn fog_lies_over_the_ground_where_it_is_placed_and_no_further_than_the_ground_re
 }
 
 #[test]
-fn a_footprint_is_refused_when_it_crosses_itself_or_was_fitted_to_a_model_since_changed() {
+fn a_footprint_is_refused_when_it_crosses_itself_or_was_fitted_to_a_model_since_changed_and_refits_from_the_folder()
+ {
     let polygon = |points: Value, fitted_to: Option<&str>| {
-        let mut footprint = json!({ "type": "polygon", "points": points });
+        let mut footprint = json!({ "type": "polygon", "parts": [points] });
         if let Some(hash) = fitted_to {
             footprint["fitted_to"] = json!(hash);
         }
@@ -279,6 +281,14 @@ fn a_footprint_is_refused_when_it_crosses_itself_or_was_fitted_to_a_model_since_
         let found: Vec<&str> = rules(&report);
         assert!(found.contains(&rule), "{rule}: {report}");
     }
+
+    let stale = game().prop("hut", polygon(square.clone(), Some("0000000000000000")));
+    let reader = FolderReader::new(stale.registry(), Arc::new(stale.folder()));
+    assert_eq!(
+        player::stature_in_folder(&reader).expect("the character reads from the folder"),
+        Meters(2.0),
+        "a refit learns how tall the character stands while the game is refused",
+    );
 
     assert!(game().prop("hut", polygon(square, None)).try_load().is_ok());
 }
@@ -524,8 +534,8 @@ fn ground_nothing_reaches_fails_the_load_pointing_at_what_stands_there() {
     ]);
     let stranded = json!([
         { "type": "resident", "npc": path("npc", "hermit"), "at": { "x": 9.0, "y": 4.0 } },
-        { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "hermit") }], "count": 1, "within": { "x": 8.0, "y": 1.0, "w": 3.0, "h": 3.0 } },
-        { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "hermit") }], "count": 1, "within": { "x": 1.0, "y": 1.0, "w": 10.0, "h": 3.0 } },
+        { "type": "spawner", "populations": [{ "spawns": [{ "type": "npc", "npc": path("npc", "hermit") }], "max_spawned_at_once": 1 }], "within": { "x": 8.0, "y": 1.0, "w": 3.0, "h": 3.0 } },
+        { "type": "spawner", "populations": [{ "spawns": [{ "type": "npc", "npc": path("npc", "hermit") }], "max_spawned_at_once": 1 }], "within": { "x": 1.0, "y": 1.0, "w": 10.0, "h": 3.0 } },
     ]);
     let report = Game::new()
         .npc("hermit", 10.0, json!([]))
@@ -600,7 +610,7 @@ fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_gr
     };
     let game = || {
         game()
-            .shader_on("blades", Stage::Cover)
+            .shader_on("blades", COVER)
             .edit("vfx_shader", "blades", |row| {
                 row["params"] =
                     json!([{ "name": "tip", "kind": "color", "default": [255, 255, 255, 255] }]);

@@ -16,11 +16,11 @@ use crate::core::time::{
     self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock, server_now,
 };
 use crate::core::units::{DayHours, Degrees, HourOfDay, Meters, Seconds};
-use crate::core::vfx::rain::NEAREST_SHELL;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::area::AreaId;
+use crate::systems::area::heavens::NEAREST_SHELL;
+use crate::systems::area::sky::{self, Sky};
 use crate::systems::launch::{ServerDay, ServerDaylight};
-use crate::systems::script::sky::{self, Sky};
 use crate::systems::{GameSettings, WorldArea};
 
 /// How many shells rain is drawn on round the eye at most, each over the whole picture.

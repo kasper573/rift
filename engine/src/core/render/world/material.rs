@@ -25,8 +25,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::render::Look;
+use crate::core::vfx::board::ShaderBoardImage;
 use crate::core::vfx::shader::PARAMS_BYTES;
-use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
+use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
 
 pub type WorldMaterial = ExtendedMaterial<StandardMaterial, WorldLook>;
 
@@ -44,7 +45,7 @@ pub fn textures(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Ima
 }
 
 /// How the world draws a mesh beyond its standard material, which has none of these: the game's
-/// shader where one draws the mesh, with its parameters, the weather it reads and
+/// shader where one draws the mesh, with its parameters, the shader board it reads and
 /// the site its prelude reads.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 #[bind_group_data(WorldLookKey)]
@@ -52,7 +53,7 @@ pub struct WorldLook {
     #[uniform(101)]
     pub params: ParamsUniform,
     #[texture(102, sample_type = "float", filterable = false)]
-    pub weather: Handle<Image>,
+    pub board: Handle<Image>,
     #[uniform(103)]
     pub site: SiteUniform,
     pub shader: Option<Handle<Shader>>,
@@ -187,7 +188,7 @@ pub fn world_material(
         base,
         extension: WorldLook {
             params: ParamsUniform::default(),
-            weather: Handle::default(),
+            board: Handle::default(),
             site: SiteUniform::default(),
             shader: None,
         },
@@ -204,7 +205,7 @@ pub(super) fn dielectric(base: StandardMaterial, finish: &SurfaceFinish) -> Stan
     }
 }
 
-/// The world material a mesh gets for `base` when the game's shader draws it, reading `weather`:
+/// The world material a mesh gets for `base` when the game's shader draws it, reading `board`:
 /// both of a face's sides drawn and lit alike by the normal the mesh carries, as foliage, which a
 /// look is mostly for, points its normals where its light should fall rather than off its faces,
 /// and as translucent as the look says.
@@ -212,7 +213,7 @@ pub fn looked_material(
     base: StandardMaterial,
     finish: &SurfaceFinish,
     look: &MaterialLook,
-    weather: Handle<Image>,
+    board: Handle<Image>,
 ) -> WorldMaterial {
     let mut material = world_material(base, finish, Glass::Solid);
     material.base.double_sided = false;
@@ -220,7 +221,7 @@ pub fn looked_material(
     material.base.diffuse_transmission = look.translucency;
     material.extension.shader = Some(look.shader.clone());
     material.extension.params = look.params;
-    material.extension.weather = weather;
+    material.extension.board = board;
     material
 }
 
@@ -253,7 +254,7 @@ pub(super) struct Wardrobe<'w> {
     standard: Res<'w, Assets<StandardMaterial>>,
     materials: ResMut<'w, Assets<WorldMaterial>>,
     cache: ResMut<'w, MaterialCache>,
-    weather: Option<Res<'w, WeatherImage>>,
+    board: Option<Res<'w, ShaderBoardImage>>,
     look: Option<Res<'w, Look>>,
 }
 
@@ -268,13 +269,13 @@ impl Wardrobe<'_> {
     ) -> Option<Handle<WorldMaterial>> {
         let base = self.standard.get(standard)?.clone();
         let finish = self.look.as_ref()?.materials;
-        let weather = self
-            .weather
+        let board = self
+            .board
             .as_ref()
-            .map(|weather| weather.0.clone())
+            .map(|board| board.image.clone())
             .unwrap_or_default();
         let make = |base: StandardMaterial| match look {
-            Some(look) => looked_material(base, &finish, look, weather),
+            Some(look) => looked_material(base, &finish, look, board),
             None => world_material(base, &finish, glass),
         };
         let looked = look.map(|look| {

@@ -6,28 +6,29 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum::{IntoStaticStr, VariantArray};
 use ui::face::Face;
 use ui::raster::raster;
 
 use super::{Notification, NotificationKind, NotificationSent};
-use crate::core::content::{Content, Fixture};
+use crate::core::content::fixture::FixtureLock;
+use crate::core::content::{Content, Fixture, Nearby};
 use crate::core::math::Rng;
 use crate::core::render::camera;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::window_point;
+use crate::core::text::LineText;
 use crate::core::time;
 use crate::core::units::{Meters, Seconds};
 use crate::core::vfx::render::{
     Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
 };
 use crate::core::vfx::uniform::ParamsUniform;
-use crate::core::vfx::{VfxParams, VfxShaderId};
+use crate::core::vfx::{Stage, VfxParams, VfxShaderDef, VfxShaderId};
 use crate::systems::GameSettings;
 use crate::systems::actor::Hitbox;
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
-use crate::systems::text::LineText;
-use crate::systems::vfx::fixture::VfxShaderFixture;
 use crate::systems::visibility;
 
 const FACE: Face = Face::SmallCapsBold;
@@ -62,8 +63,34 @@ pub fn pop(
     }
 }
 
+/// The shaders every game provides for the pops that burst out of actors, one look for each kind of
+/// moment they mark.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum PopShader {
+    Pop,
+    DamagePop,
+    HealPop,
+    StatusPop,
+    LevelPop,
+    FailurePop,
+}
+
+impl Fixture for PopShader {
+    type Row = VfxShaderDef;
+    const FOLDER: Option<&'static str> = Some("vfx");
+
+    fn locks(self) -> Vec<FixtureLock> {
+        VfxShaderDef::fixture_locks(Stage::TEXT, &[])
+    }
+
+    fn fresh(self, near: &Nearby) -> Result<VfxShaderDef, String> {
+        VfxShaderDef::fixture_fresh(near, Stage::TEXT, Vec::new())
+    }
+}
+
 /// A pop drawn by the game's own shader for the kind of moment it marks.
-pub fn pop_as(world: &mut World, actor: Entity, text: impl Into<String>, look: VfxShaderFixture) {
+pub fn pop_as(world: &mut World, actor: Entity, text: impl Into<String>, look: PopShader) {
     let shader = look.id(world.resource::<Content>());
     pop(world, actor, text, Some(shader), VfxParams::default());
 }
@@ -91,8 +118,11 @@ pub fn show(world: &mut World, sent: NotificationSent) {
     let Some(actor) = sent.actor.filter(|actor| world.get_entity(*actor).is_ok()) else {
         return;
     };
-    let shader = shader.unwrap_or_else(|| VfxShaderFixture::Pop.id(world.resource::<Content>()));
-    let text = sent.notification.text.plain_words();
+    let shader = shader.unwrap_or_else(|| PopShader::Pop.id(world.resource::<Content>()));
+    let text = sent
+        .notification
+        .text
+        .plain_words(world.resource::<Content>());
     let texture = text_texture(world, &text);
     let piece = screen_piece(world);
     world

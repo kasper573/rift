@@ -1,8 +1,8 @@
 use editor::app::Editor;
 use editor::project::ContentEdit;
+use engine::systems::area::sky;
 use engine::systems::area::{AreaDef, AreaModule, TimeOfDay, TimeOfDayName};
 use engine::systems::npc::NpcDef;
-use engine::systems::script::condition;
 use serde_json::json;
 use testkit::{Game, Map, path};
 
@@ -63,11 +63,13 @@ fn named(editor: &Editor) -> [String; 2] {
         .expect("the area reads");
     let wolves = nodes_of(&area)
         .find_map(|module| match module {
-            AreaModule::Spawner(spawner) => spawner.spawns[0].when.clone(),
+            AreaModule::Spawner(spawner) => {
+                spawner.shares().next().and_then(|share| share.when.clone())
+            }
             _ => None,
         })
         .expect("the wolves follow the sky");
-    let out = condition::times(wolves.condition())[0].0.clone();
+    let out = sky::times(wolves.condition())[0].0.clone();
     [away, out]
 }
 
@@ -89,13 +91,15 @@ fn game_with_a_day() -> Game {
             &Map::open(30, 30),
             json!([{
                 "type": "spawner",
-                "spawns": [{
-                    "type": "npc",
-                    "npc": path("npc", "wolf"),
-                    "when": { "type": "during", "time": "Night" },
+                "populations": [{
+                    "spawns": [{
+                        "type": "npc",
+                        "npc": path("npc", "wolf"),
+                        "when": { "type": "during", "time": "Night" },
+                    }],
+                    "max_spawned_at_once": 2,
+                    "respawn": 30.0,
                 }],
-                "count": 2,
-                "respawn": 30.0,
             }]),
         )
         .hero(support::AREA, 1.0, 1.0)

@@ -4,38 +4,42 @@ use bevy::prelude::*;
 use ui::egui::Ui;
 
 use super::SocietyMember;
+use crate::core::content::Content;
 use crate::systems::friend::page::FriendsPage;
 use crate::systems::hud::menu::{self, MenuTab, MenuTabName, SubTabs};
-use crate::systems::inbox::draft::WriteToPlayer;
-use crate::systems::inbox::page::MessagesPage;
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
+use crate::systems::mail::draft::WriteToCharacter;
+use crate::systems::mail::page::MailPage;
+use crate::systems::messages::{self, Messages};
 use crate::systems::party::page::{InviteToParty, PartyPage};
 
 /// A page of the Social tab, brought by the system it shows.
 pub trait SocialPage: Send + Sync {
-    fn title(&self) -> &'static str;
+    /// What names the page apart from the others, in the player's last page and in what opens it.
+    fn key(&self) -> &'static str;
+    fn title<'a>(&self, messages: &'a Messages) -> &'a str;
     /// Whether the game has the page's system on.
     fn on(&self, world: &World) -> bool;
     /// How much waits on the page for the player to see or answer.
     fn waiting(&self, world: &World) -> u32;
     /// The inputs that do something on the page as it stands, and what each does.
-    fn hints(&self, _world: &World) -> Vec<(InputAction, &'static str)> {
+    fn hints(&self, _world: &World) -> Vec<(InputAction, String)> {
         Vec::new()
     }
     fn show(&self, ui: &mut Ui, world: &mut World);
 }
 
 /// Something a page offers to do with a player it lists, brought by the system that does it.
-pub trait PlayerAction: Send + Sync {
-    fn label(&self) -> &'static str;
+pub trait CharacterAction: Send + Sync {
+    fn label<'a>(&self, messages: &'a Messages) -> &'a str;
     /// Whether the game has the action's system on.
     fn on(&self, world: &World) -> bool;
     fn act(&self, world: &mut World, player: &SocietyMember);
 }
 
 /// What the systems the game has on offer to do with a player.
-pub fn player_actions(world: &World) -> Vec<&'static dyn PlayerAction> {
+pub fn character_actions(world: &World) -> Vec<&'static dyn CharacterAction> {
     PLAYER_ACTIONS
         .iter()
         .copied()
@@ -43,18 +47,18 @@ pub fn player_actions(world: &World) -> Vec<&'static dyn PlayerAction> {
         .collect()
 }
 
-/// Whether the menu shows the page titled `title`.
-pub fn showing(world: &World, title: &str) -> bool {
+/// Whether the menu shows the page keyed `key`.
+pub fn showing(world: &World, key: &str) -> bool {
     menu::showing(world) == Some(MenuTabName::Social)
-        && open_page(world).is_some_and(|page| page.title() == title)
+        && open_page(world).is_some_and(|page| page.key() == key)
 }
 
-/// Opens the menu on the page titled `title`, when the game has it.
-pub fn open_on(world: &mut World, title: &str) {
-    let Some(page) = pages(world).into_iter().find(|page| page.title() == title) else {
+/// Opens the menu on the page keyed `key`, when the game has it.
+pub fn open_on(world: &mut World, key: &str) {
+    let Some(page) = pages(world).into_iter().find(|page| page.key() == key) else {
         return;
     };
-    world.resource_mut::<LastPage>().0 = Some(page.title());
+    world.resource_mut::<LastPage>().0 = Some(page.key());
     menu::open_on(world, MenuTabName::Social);
 }
 
@@ -80,26 +84,27 @@ impl MenuTab for SocialMenuTab {
     fn sub_tabs(&self, world: &World) -> Option<SubTabs> {
         let pages = pages(world);
         let open = open_page(world)?;
+        let messages = messages::of(world.resource::<Content>());
         Some(SubTabs {
             labels: pages
                 .iter()
                 .map(|page| match page.waiting(world) {
-                    0 => page.title().to_owned(),
-                    waiting => format!("{} · {waiting}", page.title()),
+                    0 => page.title(messages).to_owned(),
+                    waiting => format!("{} · {waiting}", page.title(messages)),
                 })
                 .collect(),
             chosen: pages
                 .iter()
-                .position(|page| page.title() == open.title())
+                .position(|page| page.key() == open.key())
                 .unwrap_or_default(),
         })
     }
     fn choose_sub_tab(&self, world: &mut World, chosen: usize) {
         if let Some(page) = pages(world).get(chosen) {
-            world.resource_mut::<LastPage>().0 = Some(page.title());
+            world.resource_mut::<LastPage>().0 = Some(page.key());
         }
     }
-    fn hints(&self, world: &World) -> Vec<(InputAction, &'static str)> {
+    fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
         open_page(world).map_or_else(Vec::new, |page| page.hints(world))
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
@@ -113,14 +118,14 @@ pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<LastPage>();
 }
 
-/// The page the player used last, by its title.
+/// The page the player used last, by its key.
 #[derive(Resource, Default)]
 struct LastPage(Option<&'static str>);
 
 // Their sub-tabs line up in this order.
-static PAGES: &[&dyn SocialPage] = &[&FriendsPage, &MessagesPage, &PartyPage];
+static PAGES: &[&dyn SocialPage] = &[&FriendsPage, &MailPage, &PartyPage];
 
-static PLAYER_ACTIONS: &[&dyn PlayerAction] = &[&WriteToPlayer, &InviteToParty];
+static PLAYER_ACTIONS: &[&dyn CharacterAction] = &[&WriteToCharacter, &InviteToParty];
 
 /// The pages of the systems the game has on.
 fn pages(world: &World) -> Vec<&'static dyn SocialPage> {
@@ -138,6 +143,6 @@ fn open_page(world: &World) -> Option<&'static dyn SocialPage> {
     pages
         .iter()
         .copied()
-        .find(|page| Some(page.title()) == last)
+        .find(|page| Some(page.key()) == last)
         .or_else(|| pages.first().copied())
 }

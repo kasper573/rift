@@ -7,10 +7,10 @@ use ui::menu;
 use ui::theme;
 
 use engine::core::script::Expr;
-use engine::core::text::{TextMotion, TextVoice};
+use engine::core::text::{TextFx, TextInk, TextMotion, TextVoice};
 use engine::core::units::Millis;
+use engine::systems::dialogue::span::ScriptSpan;
 use engine::systems::input::map::InputAction;
-use engine::systems::text::{Fx, Ink, Span};
 use strum::VariantArray;
 use ui::egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat};
 use ui::egui::{Color32, FontId, RichText, Stroke, Ui};
@@ -28,13 +28,19 @@ const PAUSE: Millis = Millis(400.0);
 const PAUSE_WIDTH: f32 = 96.0;
 
 pub struct SpanLineEdit {
-    pub spans: Option<Vec<Span>>,
+    pub spans: Option<Vec<ScriptSpan>>,
     pub entered: bool,
     pub response: egui::Response,
 }
 
-pub fn line(ui: &mut Ui, stored: &[Span], id: egui::Id, font: FontId, hint: &str) -> SpanLineEdit {
-    let draft: Option<Vec<Span>> = ui.ctx().data(|d| d.get_temp(id));
+pub fn line(
+    ui: &mut Ui,
+    stored: &[ScriptSpan],
+    id: egui::Id,
+    font: FontId,
+    hint: &str,
+) -> SpanLineEdit {
+    let draft: Option<Vec<ScriptSpan>> = ui.ctx().data(|d| d.get_temp(id));
     let mut dirty = draft.is_some();
     let mut spans_now = draft.unwrap_or_else(|| stored.to_vec());
     let plain_before = plain(&spans_now);
@@ -118,7 +124,7 @@ pub fn line(ui: &mut Ui, stored: &[Span], id: egui::Id, font: FontId, hint: &str
     if dirty {
         ui.ctx().data_mut(|d| d.insert_temp(id, spans_now.clone()));
     }
-    let forget = |ui: &Ui| ui.ctx().data_mut(|d| d.remove_temp::<Vec<Span>>(id));
+    let forget = |ui: &Ui| ui.ctx().data_mut(|d| d.remove_temp::<Vec<ScriptSpan>>(id));
     let escape = ui.input(|i| EditorKey::Cancel.pressed(i));
     if escape && focused {
         forget(ui);
@@ -145,27 +151,29 @@ pub fn line(ui: &mut Ui, stored: &[Span], id: egui::Id, font: FontId, hint: &str
     }
 }
 
-pub fn plain(spans: &[Span]) -> String {
+pub fn plain(spans: &[ScriptSpan]) -> String {
     spans.iter().map(token).collect()
 }
 
-pub fn layout_job(spans: &[Span], font: FontId, ink: Color32, wrap_width: f32) -> LayoutJob {
+pub fn layout_job(spans: &[ScriptSpan], font: FontId, ink: Color32, wrap_width: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
     job.wrap.max_width = wrap_width;
     for span in spans {
         let mut format = TextFormat::simple(font.clone(), ink);
         match span {
-            Span::Value { .. } | Span::Input(_) => {
+            ScriptSpan::Value { .. } | ScriptSpan::Input(_) => {
                 format.color = theme::CODE;
                 format.background = theme::INPUT;
             }
-            Span::Text { fx, .. } => {
+            ScriptSpan::Text { fx, .. } => {
                 for fx in fx {
                     match fx {
-                        Fx::Ink(ink) => format.color = ink.prose().on(Ground::Paper),
-                        Fx::Voice(_) | Fx::Motion(_) => format.background = ink::gold_wash(0.2),
-                        Fx::Slow => format.underline = Stroke::new(1.0, format.color),
-                        Fx::PauseAfter(_) => {
+                        TextFx::Ink(ink) => format.color = ink.prose().on(Ground::Paper),
+                        TextFx::Voice(_) | TextFx::Motion(_) => {
+                            format.background = ink::gold_wash(0.2)
+                        }
+                        TextFx::Slow => format.underline = Stroke::new(1.0, format.color),
+                        TextFx::PauseAfter(_) => {
                             format.strikethrough = Stroke::NONE;
                             format.italics = true;
                         }
@@ -178,7 +186,7 @@ pub fn layout_job(spans: &[Span], font: FontId, ink: Color32, wrap_width: f32) -
     job
 }
 
-pub fn retype(spans: &[Span], before: &str, after: &str) -> Option<Vec<Span>> {
+pub fn retype(spans: &[ScriptSpan], before: &str, after: &str) -> Option<Vec<ScriptSpan>> {
     let old: Vec<char> = before.chars().collect();
     let new: Vec<char> = after.chars().collect();
     let prefix = old
@@ -206,26 +214,26 @@ pub fn retype(spans: &[Span], before: &str, after: &str) -> Option<Vec<Span>> {
     Some(cells.spans())
 }
 
-fn toolbar(ui: &mut Ui, spans: &[Span], range: (usize, usize)) -> Option<Vec<Span>> {
+fn toolbar(ui: &mut Ui, spans: &[ScriptSpan], range: (usize, usize)) -> Option<Vec<ScriptSpan>> {
     let mut outcome = None;
     chip::holding(ui, theme::RAISED, theme::BORDER, |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let mut styled = |kind: FxKind, to: Option<Fx>| {
+        let mut styled = |kind: FxKind, to: Option<TextFx>| {
             outcome = Some(restyle(spans, range, |fx| kind.set(fx, to)));
         };
-        fx_menu(ui, FxKind::Ink, Ink::VARIANTS, Fx::Ink, &mut styled);
+        fx_menu(ui, FxKind::Ink, TextInk::VARIANTS, TextFx::Ink, &mut styled);
         fx_menu(
             ui,
             FxKind::Voice,
             TextVoice::VARIANTS,
-            Fx::Voice,
+            TextFx::Voice,
             &mut styled,
         );
         fx_menu(
             ui,
             FxKind::Motion,
             TextMotion::VARIANTS,
-            Fx::Motion,
+            TextFx::Motion,
             &mut styled,
         );
         if ui
@@ -233,7 +241,7 @@ fn toolbar(ui: &mut Ui, spans: &[Span], range: (usize, usize)) -> Option<Vec<Spa
             .clicked()
         {
             outcome = Some(restyle(spans, range, |fx| {
-                FxKind::Slow.toggle(fx, Fx::Slow)
+                FxKind::Slow.toggle(fx, TextFx::Slow)
             }));
         }
         if ui
@@ -242,7 +250,7 @@ fn toolbar(ui: &mut Ui, spans: &[Span], range: (usize, usize)) -> Option<Vec<Spa
             .clicked()
         {
             outcome = Some(restyle(spans, range, |fx| {
-                FxKind::PauseAfter.toggle(fx, Fx::PauseAfter(PAUSE))
+                FxKind::PauseAfter.toggle(fx, TextFx::PauseAfter(PAUSE))
             }));
         }
         if ui
@@ -261,18 +269,18 @@ fn fx_menu<T: Copy + Into<&'static str>>(
     ui: &mut Ui,
     kind: FxKind,
     options: &[T],
-    wrap: fn(T) -> Fx,
-    styled: &mut impl FnMut(FxKind, Option<Fx>),
+    wrap: fn(T) -> TextFx,
+    styled: &mut impl FnMut(FxKind, Option<TextFx>),
 ) {
     let field = kind.name();
     menu::button(ui, RichText::new(field).size(12.0), |ui| {
         for &option in options {
-            if ui.button(option.into()).clicked() {
+            if menu::entry(ui, option.into()).clicked() {
                 styled(kind, Some(wrap(option)));
                 ui.close();
             }
         }
-        if ui.button(format!("no {field}")).clicked() {
+        if menu::entry(ui, format!("no {field}")).clicked() {
             styled(kind, None);
             ui.close();
         }
@@ -280,7 +288,7 @@ fn fx_menu<T: Copy + Into<&'static str>>(
 }
 
 /// The line with the selection between `start` and `end` replaced by a value span.
-pub fn with_value(spans: &[Span], (start, end): (usize, usize)) -> Option<Vec<Span>> {
+pub fn with_value(spans: &[ScriptSpan], (start, end): (usize, usize)) -> Option<Vec<ScriptSpan>> {
     let mut cells = Cells::of(spans);
     if cells.cuts_atom(start) || cells.cuts_atom(end) {
         return None;
@@ -288,7 +296,7 @@ pub fn with_value(spans: &[Span], (start, end): (usize, usize)) -> Option<Vec<Sp
     cells.cells.drain(start..end);
     cells.insert_atom(
         start,
-        Span::Value {
+        ScriptSpan::Value {
             value: Box::new(Expr::Int(0)),
             fx: Vec::new(),
         },
@@ -297,10 +305,10 @@ pub fn with_value(spans: &[Span], (start, end): (usize, usize)) -> Option<Vec<Sp
 }
 
 pub fn restyle(
-    spans: &[Span],
+    spans: &[ScriptSpan],
     (start, end): (usize, usize),
-    apply: impl Fn(&mut Vec<Fx>),
-) -> Vec<Span> {
+    apply: impl Fn(&mut Vec<TextFx>),
+) -> Vec<ScriptSpan> {
     let Cells {
         mut runs,
         mut cells,
@@ -321,10 +329,10 @@ pub fn restyle(
 }
 
 /// One span as a form edits it: its text or what it shows, and its effects.
-pub fn edit(ui: &mut Ui, cx: &mut FormCx, span: &mut Span, path: &str) -> FormChange {
+pub fn edit(ui: &mut Ui, cx: &mut FormCx, span: &mut ScriptSpan, path: &str) -> FormChange {
     let mut changed = FormChange::default();
     ui.vertical(|ui| match span {
-        Span::Input(action) => {
+        ScriptSpan::Input(action) => {
             ui.horizontal(|ui| {
                 ui.label("key of");
                 let mut picked = *action;
@@ -341,12 +349,12 @@ pub fn edit(ui: &mut Ui, cx: &mut FormCx, span: &mut Span, path: &str) -> FormCh
                 }
             });
         }
-        Span::Value { value, fx } => {
+        ScriptSpan::Value { value, fx } => {
             ui.label(RichText::new("value").weak());
             changed |= forms::of_type(ui, cx, &mut **value, &format!("{path}/value"));
             changed |= effects(ui, fx, path);
         }
-        Span::Text { text, fx } => {
+        ScriptSpan::Text { text, fx } => {
             changed |= forms::text_of(ui, cx, text, &format!("{path}/text"));
             changed |= effects(ui, fx, path);
         }
@@ -359,7 +367,7 @@ pub fn edit(ui: &mut Ui, cx: &mut FormCx, span: &mut Span, path: &str) -> FormCh
 pub(crate) fn line_field(
     ui: &mut Ui,
     cx: &mut FormCx,
-    spans: &mut Vec<Span>,
+    spans: &mut Vec<ScriptSpan>,
     path: &str,
 ) -> FormChange {
     let id = ui.id().with(path).with("line");
@@ -373,7 +381,7 @@ pub(crate) fn line_field(
         edit.response
     });
     for (index, span) in spans.iter_mut().enumerate() {
-        let Span::Value { value, .. } = span else {
+        let ScriptSpan::Value { value, .. } = span else {
             continue;
         };
         form::kv(ui, "value", |ui| {
@@ -383,26 +391,33 @@ pub(crate) fn line_field(
     changed
 }
 
-fn effects(ui: &mut Ui, fx: &mut Vec<Fx>, path: &str) -> FormChange {
+fn effects(ui: &mut Ui, fx: &mut Vec<TextFx>, path: &str) -> FormChange {
     let mut changed = FormChange::default();
     ui.horizontal_wrapped(|ui| {
-        changed |= fx_combo(ui, fx, path, FxKind::Ink, Ink::VARIANTS, Fx::Ink);
-        changed |= fx_combo(ui, fx, path, FxKind::Voice, TextVoice::VARIANTS, Fx::Voice);
+        changed |= fx_combo(ui, fx, path, FxKind::Ink, TextInk::VARIANTS, TextFx::Ink);
+        changed |= fx_combo(
+            ui,
+            fx,
+            path,
+            FxKind::Voice,
+            TextVoice::VARIANTS,
+            TextFx::Voice,
+        );
         changed |= fx_combo(
             ui,
             fx,
             path,
             FxKind::Motion,
             TextMotion::VARIANTS,
-            Fx::Motion,
+            TextFx::Motion,
         );
         let mut slow = FxKind::Slow.of(fx).is_some();
-        if ui.checkbox(&mut slow, "slow").changed() {
-            FxKind::Slow.set(fx, slow.then_some(Fx::Slow));
+        if controls::check(ui, &mut slow, "slow").changed() {
+            FxKind::Slow.set(fx, slow.then_some(TextFx::Slow));
             changed = FormChange::at(path);
         }
         let mut pause = match FxKind::PauseAfter.of(fx) {
-            Some(Fx::PauseAfter(pause)) => pause.0,
+            Some(TextFx::PauseAfter(pause)) => pause.0,
             _ => 0.0,
         };
         ui.label("pause");
@@ -412,7 +427,7 @@ fn effects(ui: &mut Ui, fx: &mut Vec<Fx>, path: &str) -> FormChange {
             .width(PAUSE_WIDTH)
             .show(ui)
         {
-            let pause = (pause > 0.0).then_some(Fx::PauseAfter(Millis(pause)));
+            let pause = (pause > 0.0).then_some(TextFx::PauseAfter(Millis(pause)));
             FxKind::PauseAfter.set(fx, pause);
             changed = FormChange::at(path);
         }
@@ -422,11 +437,11 @@ fn effects(ui: &mut Ui, fx: &mut Vec<Fx>, path: &str) -> FormChange {
 
 fn fx_combo<T: Copy + PartialEq + Into<&'static str>>(
     ui: &mut Ui,
-    fx: &mut Vec<Fx>,
+    fx: &mut Vec<TextFx>,
     path: &str,
     kind: FxKind,
     options: &[T],
-    wrap: fn(T) -> Fx,
+    wrap: fn(T) -> TextFx,
 ) -> FormChange {
     let field = kind.name();
     let current = options
@@ -461,13 +476,13 @@ enum FxKind {
 }
 
 impl FxKind {
-    fn of_fx(fx: &Fx) -> FxKind {
+    fn of_fx(fx: &TextFx) -> FxKind {
         match fx {
-            Fx::Ink(_) => FxKind::Ink,
-            Fx::Voice(_) => FxKind::Voice,
-            Fx::Motion(_) => FxKind::Motion,
-            Fx::Slow => FxKind::Slow,
-            Fx::PauseAfter(_) => FxKind::PauseAfter,
+            TextFx::Ink(_) => FxKind::Ink,
+            TextFx::Voice(_) => FxKind::Voice,
+            TextFx::Motion(_) => FxKind::Motion,
+            TextFx::Slow => FxKind::Slow,
+            TextFx::PauseAfter(_) => FxKind::PauseAfter,
         }
     }
 
@@ -481,51 +496,51 @@ impl FxKind {
         }
     }
 
-    fn of(self, fx: &[Fx]) -> Option<Fx> {
+    fn of(self, fx: &[TextFx]) -> Option<TextFx> {
         fx.iter().copied().find(|held| FxKind::of_fx(held) == self)
     }
 
-    fn set(self, fx: &mut Vec<Fx>, to: Option<Fx>) {
+    fn set(self, fx: &mut Vec<TextFx>, to: Option<TextFx>) {
         fx.retain(|held| FxKind::of_fx(held) != self);
         fx.extend(to);
     }
 
-    fn toggle(self, fx: &mut Vec<Fx>, on: Fx) {
+    fn toggle(self, fx: &mut Vec<TextFx>, on: TextFx) {
         let to = self.of(fx).is_none().then_some(on);
         self.set(fx, to);
     }
 }
 
-fn token(span: &Span) -> String {
+fn token(span: &ScriptSpan) -> String {
     match span {
-        Span::Text { text, .. } => text.clone(),
-        Span::Value { .. } => VALUE_TOKEN.to_owned(),
-        Span::Input(_) => INPUT_TOKEN.to_owned(),
+        ScriptSpan::Text { text, .. } => text.clone(),
+        ScriptSpan::Value { .. } => VALUE_TOKEN.to_owned(),
+        ScriptSpan::Input(_) => INPUT_TOKEN.to_owned(),
     }
 }
 
 /// A line cut into the characters its plain text shows: a character keeps the run of effects it
 /// was written in, and a value or input span sits whole on the first cell of its token.
 struct Cells {
-    runs: Vec<Vec<Fx>>,
+    runs: Vec<Vec<TextFx>>,
     cells: Vec<GlyphCell>,
 }
 
 #[derive(Clone)]
 enum GlyphCell {
     Char(char, usize),
-    Atom(Span),
+    Atom(ScriptSpan),
     WithinAtom,
 }
 
 impl Cells {
-    fn of(spans: &[Span]) -> Cells {
+    fn of(spans: &[ScriptSpan]) -> Cells {
         let mut cells = Cells {
             runs: Vec::new(),
             cells: Vec::new(),
         };
         for span in spans {
-            let Span::Text { text, fx } = span else {
+            let ScriptSpan::Text { text, fx } = span else {
                 cells.insert_atom(cells.cells.len(), span.clone());
                 continue;
             };
@@ -538,7 +553,7 @@ impl Cells {
         cells
     }
 
-    fn insert_atom(&mut self, at: usize, span: Span) {
+    fn insert_atom(&mut self, at: usize, span: ScriptSpan) {
         let width = token(&span).chars().count();
         let cells = std::iter::once(GlyphCell::Atom(span)).chain(std::iter::repeat_n(
             GlyphCell::WithinAtom,
@@ -566,8 +581,8 @@ impl Cells {
             })
     }
 
-    fn spans(&self) -> Vec<Span> {
-        let mut spans: Vec<Span> = Vec::new();
+    fn spans(&self) -> Vec<ScriptSpan> {
+        let mut spans: Vec<ScriptSpan> = Vec::new();
         let mut run: Option<(usize, String)> = None;
         for cell in &self.cells {
             match cell {
@@ -586,27 +601,27 @@ impl Cells {
             }
         }
         spans.extend(run.map(|run| self.span_of(run)));
-        let mut merged: Vec<Span> = Vec::new();
+        let mut merged: Vec<ScriptSpan> = Vec::new();
         for span in spans {
             match (merged.last_mut(), span) {
                 (
-                    Some(Span::Text {
+                    Some(ScriptSpan::Text {
                         text: last,
                         fx: before,
                     }),
-                    Span::Text { text: next, fx },
+                    ScriptSpan::Text { text: next, fx },
                 ) if *before == fx => last.push_str(&next),
                 (_, span) => merged.push(span),
             }
         }
         if merged.is_empty() {
-            merged.push(engine::systems::text::plain(""));
+            merged.push(ScriptSpan::plain(""));
         }
         merged
     }
 
-    fn span_of(&self, (run, text): (usize, String)) -> Span {
-        Span::Text {
+    fn span_of(&self, (run, text): (usize, String)) -> ScriptSpan {
+        ScriptSpan::Text {
             text,
             fx: self.runs[run].clone(),
         }

@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use ui::egui;
 use ui::menu;
 use ui::theme;
 use ui::words;
@@ -349,8 +348,7 @@ impl<'a> SceneSource<'a> {
 
     fn group_menu(&self, ui: &mut Ui, folder: &str, kind: AreaModuleKind) -> Option<SceneAction> {
         let members = self.group_members(folder, kind);
-        let picked = ui
-            .button(format!("Select all {}", members.len()))
+        let picked = menu::entry(ui, format!("Select all {}", members.len()))
             .clicked()
             .then_some(SceneAction::Select(members));
         if picked.is_some() {
@@ -439,7 +437,7 @@ impl<'a> SceneSource<'a> {
         let mut item = |ui: &mut Ui, text: &str, key: Option<EditorKey>, action: SceneAction| {
             let clicked = match key {
                 Some(key) => ui.add(widgets::shortcut_button(text, key)).clicked(),
-                None => ui.button(text).clicked(),
+                None => menu::entry(ui, text).clicked(),
             };
             if clicked {
                 picked = Some(action);
@@ -540,10 +538,7 @@ impl<'a> SceneSource<'a> {
             };
             let door = matches!(module, Some(AreaModule::Object(object))
                 if !super::warps::warp_destinations(object, self.snapshot.reader.as_ref()).is_empty());
-            if ui
-                .add_enabled(door, egui::Button::new("Return door…"))
-                .clicked()
-            {
+            if menu::entry_if(ui, door, "Return door…").clicked() {
                 picked = Some(SceneAction::ReturnDoor(id.to_owned()));
                 ui.close();
             }
@@ -573,7 +568,7 @@ impl<'a> SceneSource<'a> {
         let mut item = |ui: &mut Ui, text: &str, key: Option<EditorKey>, action: SceneAction| {
             let clicked = match key {
                 Some(key) => ui.add(widgets::shortcut_button(text, key)).clicked(),
-                None => ui.button(text).clicked(),
+                None => menu::entry(ui, text).clicked(),
             };
             if clicked {
                 picked = Some(action);
@@ -662,7 +657,7 @@ impl<'a> SceneSource<'a> {
         let mut item = |ui: &mut Ui, text: &str, key: Option<EditorKey>, action: SceneAction| {
             let clicked = match key {
                 Some(key) => ui.add(widgets::shortcut_button(text, key)).clicked(),
-                None => ui.button(text).clicked(),
+                None => menu::entry(ui, text).clicked(),
             };
             if clicked {
                 picked = Some(action);
@@ -726,7 +721,7 @@ impl<'a> SceneSource<'a> {
         let mut item = |ui: &mut Ui, text: &str, key: Option<EditorKey>, action: SceneAction| {
             let clicked = match key {
                 Some(key) => ui.add(widgets::shortcut_button(text, key)).clicked(),
-                None => ui.button(text).clicked(),
+                None => menu::entry(ui, text).clicked(),
             };
             if clicked {
                 picked = Some(action);

@@ -8,9 +8,9 @@
 // count, and starts the counts over. `list` then lists each seen instance in its commands'
 // regions. The view that clears what hides the camera's subject moves each fading instance it
 // sees a step toward cleared while the way from its eye to the subject passes through the
-// instance's box, and back toward whole once it doesn't, and lists it with how far it shows and
-// whether the eye stands inside it. An instance drawn coarser than its size asks, for want of
-// its model or its impostor, is counted missing.
+// instance's box, and back toward whole once it doesn't, and lists it with how far it shows. An
+// instance drawn coarser than its size asks, for want of its model or its impostor, is counted
+// missing.
 
 struct CullView {
     // The frustum's half-spaces, each facing in: left, right, bottom, top, near and far.
@@ -125,7 +125,7 @@ struct Commands {
 @group(0) @binding(5) var<storage, read> levels: array<Level>;
 @group(0) @binding(6) var<storage, read_write> commands: Commands;
 // Each drawn instance by its place among `instances`, the scale it is drawn at, how far it shows,
-// and how far it fades into its other representation with whether the eye stands inside it.
+// and how far it fades into its other representation.
 @group(0) @binding(7) var<storage, read_write> drawn: array<vec4<u32>>;
 // How far each instance shows, by its place among `instances`: 1 whole, 0 cleared away.
 @group(0) @binding(8) var<storage, read_write> shown: array<f32>;
@@ -399,10 +399,10 @@ fn list_in(command: u32, listed: vec4<u32>) {
 }
 
 // A drawn instance as the stages read it: its place, its scale, how far it shows, and how far it
-// fades in with whether the eye stands inside it, packed as `instance.wesl` unpacks them.
-fn listing(index: u32, scale: f32, fade: vec2<f32>, faded_in: f32) -> vec4<u32> {
-    let packed = u32(fade.y) | (u32(clamp(faded_in, 0.0, 1.0) * 65535.0) << 1u);
-    return vec4<u32>(index, bitcast<u32>(scale), bitcast<u32>(fade.x), packed);
+// fades in, packed as `instance.wesl` unpacks them.
+fn listing(index: u32, scale: f32, fade: f32, faded_in: f32) -> vec4<u32> {
+    let packed = u32(clamp(faded_in, 0.0, 1.0) * 65535.0);
+    return vec4<u32>(index, bitcast<u32>(scale), bitcast<u32>(fade), packed);
 }
 
 fn sight(instance: Instance, far: bool) -> Sighted {
@@ -491,12 +491,12 @@ fn handing_over_at(off: f32) -> f32 {
 
 const EASED_PAST: f32 = 2.0;
 
-// How far the instance at `index` shows this frame, moved a step toward cleared while the way
-// from the eye to the subject passes through its box and toward whole once it doesn't, and
-// whether the eye stands inside the box: whole, outside, for a view that clears nothing.
-fn faded(index: u32, instance: Instance, prop: Prop, turn: vec2<f32>) -> vec2<f32> {
+// How far the instance at `index` shows this frame, moved a step toward cleared while the eye
+// stands inside its box or the way from the eye to the subject passes through it, and toward whole
+// once neither holds: whole for a view that clears nothing.
+fn faded(index: u32, instance: Instance, prop: Prop, turn: vec2<f32>) -> f32 {
     if view.fade_step <= 0.0 || prop.fades == 0u {
-        return vec2<f32>(1.0, 0.0);
+        return 1.0;
     }
     let low = vec3<f32>(prop.x - prop.half_x, prop.y - prop.half_y, prop.z - prop.half_z);
     let high = vec3<f32>(prop.x + prop.half_x, prop.y + prop.half_y, prop.z + prop.half_z);
@@ -508,7 +508,7 @@ fn faded(index: u32, instance: Instance, prop: Prop, turn: vec2<f32>) -> vec2<f3
     let was = shown[index];
     let now = was + clamp(wanted - was, -view.fade_step, view.fade_step);
     shown[index] = now;
-    return vec2<f32>(now, select(0.0, 1.0, inside));
+    return now;
 }
 
 // Where `world` lies in the model's own metres, for an instance standing at `at`, turned by

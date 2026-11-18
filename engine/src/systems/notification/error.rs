@@ -8,6 +8,7 @@ use ui::egui::{Rect, Vec2};
 
 use super::rows::{self, Clock, NoticePlace};
 use super::{Notification, NotificationSent};
+use crate::core::content::Content;
 use crate::core::text;
 use ui::motion::{Swell, Transit, TransitMove, Transits};
 
@@ -39,11 +40,12 @@ pub fn toast(world: &mut World, notification_sent: NotificationSent) {
 }
 
 pub fn shown(world: &World) -> Option<String> {
-    world
-        .resource::<Errors>()
-        .shown
-        .as_ref()
-        .map(|shown| shown.notification.text.plain_words())
+    world.resource::<Errors>().shown.as_ref().map(|shown| {
+        shown
+            .notification
+            .text
+            .plain_words(world.resource::<Content>())
+    })
 }
 
 pub(super) fn plugin(app: &mut App) {
@@ -79,7 +81,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
                         text::show(
                             ui,
                             world,
-                            &notification.text.styled(),
+                            &notification.text.styled(world.resource::<Content>()),
                             rows::look(SIZE, dusk::DANGER),
                             None,
                         );

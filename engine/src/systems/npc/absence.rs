@@ -9,21 +9,25 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{NpcDef, NpcId, NpcModule};
-use crate::core::content::{Content, RowCheck};
-use crate::core::script::{Arrow, DialogueNode, Node};
+use crate::core::content::{Content, Loading, RowCheck, fields_file};
+use crate::core::script::condition::CompiledCondition;
+use crate::core::script::{
+    Arrow, Bind, DialogueLine, DialogueNode, Node, ScriptEvent, ScriptSite, owner_label,
+};
+use crate::core::script::{OwnerRow, Procedure};
 use crate::core::units::{Degrees, Meters};
 use crate::systems::GameSettings;
 use crate::systems::area::object::{self, AreaObject, ObjectShape};
+use crate::systems::area::sky;
 use crate::systems::area::{DayCycle, PropId, Resident, TimeOfDayName};
 use crate::systems::combat::Attackers;
 use crate::systems::dialogue;
+use crate::systems::dialogue::span::ScriptSpan;
+use crate::systems::dialogue::{ScriptLine, Speaker};
+use crate::systems::interact::Interacted;
 use crate::systems::interact::{Interactive, Verb};
+use crate::systems::npc::NPC_RUNNER;
 use crate::systems::player::PlayedBy;
-use crate::systems::script::condition::CompiledCondition;
-use crate::systems::script::{
-    OwnerRow, Procedure, RiftEvent, RiftScripting, ScriptLine, Speaker, sky,
-};
-use crate::systems::text::Span;
 use crate::systems::visibility::Presence;
 
 /// When an npc is away: during each of its spans. With none it is never away.
@@ -49,7 +53,7 @@ pub struct AbsenceSpan {
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbsenceNotice {
-    pub text: Vec<Span>,
+    pub text: Vec<ScriptSpan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sign: Option<PropId>,
 }
@@ -206,7 +210,7 @@ pub fn notice_scripts(
     def: &NpcDef,
     own: &[Arc<Procedure>],
     settings: Option<&GameSettings>,
-) -> Vec<(AbsenceSpanAt, BTreeMap<String, Node<RiftScripting>>)> {
+) -> Vec<(AbsenceSpanAt, BTreeMap<String, Node>)> {
     let reach = settings
         .and_then(|settings| settings.absence_sign)
         .map(|sign| sign.reach)
@@ -226,24 +230,24 @@ pub fn notice_scripts(
                 (
                     READ.to_owned(),
                     Node::On {
-                        event: RiftEvent::Interacted {
+                        event: ScriptEvent::new(Interacted {
                             verb: Verb::Read,
                             reach,
                             marks: Vec::new(),
                             news: false,
-                        },
+                        }),
                         next: says,
                     },
                 ),
                 (
                     SAYS.to_owned(),
                     Node::Dialogue(DialogueNode {
-                        lines: vec![ScriptLine {
+                        lines: vec![DialogueLine::new(ScriptLine {
                             by: Speaker::Npc(npc),
                             gesture: None,
                             camera: None,
                             text: notice.text.clone(),
-                        }],
+                        })],
                         choices: Vec::new(),
                         next: Arrow::default(),
                         left: Arrow::default(),
@@ -267,4 +271,37 @@ fn notice_of(content: &Content, npc: NpcId, span: AbsenceSpanAt) -> Option<&Abse
         .get(span.0 as usize)?
         .notice
         .as_ref()
+}
+
+impl OwnerRow {
+    /// The sign an npc leaves for the span `span` of its absence.
+    pub fn of_notice(npc: NpcId, span: AbsenceSpanAt) -> OwnerRow {
+        OwnerRow {
+            kind: NPC_RUNNER,
+            row: npc.raw(),
+            object: Some(span.0),
+        }
+    }
+}
+
+/// Compiles the scripts of every npc, and the notice each of its absences leaves.
+pub fn bind(loading: &mut Loading, content: &Content, bind: &mut Bind) {
+    bind.bind_table::<NpcDef>(loading, content);
+    let settings = content.try_built::<GameSettings>();
+    for (id, def) in loading.rows::<NpcDef>(content) {
+        let key = id.path(content);
+        let notices = notice_scripts(id, def, bind.of(OwnerRow::of_row(id)), settings);
+        for (span, nodes) in &notices {
+            bind.bind_nodes(
+                content,
+                OwnerRow::of_notice(id, *span),
+                &owner_label(key, Some("notice")),
+                nodes,
+                ScriptSite {
+                    file: fields_file(key),
+                    pointer: notice_pointer(def, *span),
+                },
+            );
+        }
+    }
 }

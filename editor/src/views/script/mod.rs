@@ -27,8 +27,7 @@ use ui::theme;
 use ui::words;
 
 use engine::core::content::ContentFile;
-use engine::core::script::RunnerKindDef;
-use engine::systems::script::ScriptDef;
+use engine::core::script::ScriptDef;
 use graph::{ScriptGraphAction, ScriptGraphLayout};
 use ui::egui::emath::TSTransform;
 use ui::egui::{Pos2, Rect, Ui, vec2};

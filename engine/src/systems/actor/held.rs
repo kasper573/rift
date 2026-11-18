@@ -14,10 +14,10 @@ use super::stance::{self, HandIndex, HandRole, StanceId};
 use crate::core::content::Content;
 use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
+use crate::core::script::{EffectCall, RunnerKind};
 use crate::systems::area::PropId;
 use crate::systems::item::{Grip, ItemId, PropAxis, PropHold};
-use crate::systems::script::event::NPC;
-use crate::systems::script::{EffectCall, EffectReach, RiftScripting, RunnerKind};
+use crate::systems::npc::NPC_RUNNER;
 
 /// The item each hand of a body shows; a two-hander sits under both hands it takes.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -58,18 +58,15 @@ pub struct SetHeld {
     pub next: Arrow,
 }
 
-impl EffectDef<RiftScripting> for SetHeld {
+impl EffectDef for SetHeld {
     fn owners(&self) -> &'static [RunnerKind] {
-        NPC
+        &[NPC_RUNNER]
     }
     fn needs_subject(&self) -> bool {
         false
     }
     crate::outputs!(NEXT => next);
-    fn compile<'c>(
-        &'c self,
-        _cx: &mut Compiler<'c, RiftScripting>,
-    ) -> Result<EffectCall, ScriptFault> {
+    fn compile<'c>(&'c self, _cx: &mut Compiler<'c>) -> Result<EffectCall, ScriptFault> {
         let items = self.items.clone();
         Ok(Box::new(move |world, _, cx| {
             if let Some(npc) = cx.owner {
@@ -81,9 +78,6 @@ impl EffectDef<RiftScripting> for SetHeld {
             }
             EffectStep::Done
         }))
-    }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        Vec::new()
     }
 }
 

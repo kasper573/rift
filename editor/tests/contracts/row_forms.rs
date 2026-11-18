@@ -1,3 +1,8 @@
+use engine::systems::item::ITEM_RUNNER;
+use engine::systems::npc::NPC_RUNNER;
+use engine::systems::quest::QUEST_RUNNER;
+use engine::systems::shop::SHOP_RUNNER;
+use engine::systems::status::STATUS_EFFECT_RUNNER;
 use std::sync::Arc;
 use ui::egui;
 
@@ -10,6 +15,8 @@ use editor::views::{character, spreadsheet};
 use engine::core::audio::playback::{SfxDef, SfxScalar};
 use engine::core::content::Fixture;
 use engine::core::math::Pos;
+use engine::core::script::ScriptDef;
+use engine::core::script::VarValue;
 use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::{ParamFill, ParamValue, VfxDef, VfxLayer};
 use engine::systems::actor::{ModelDef, ModelPartDef};
@@ -20,7 +27,6 @@ use engine::systems::memory::{MemoryDef, Resets};
 use engine::systems::notification::{NotificationDef, NotificationDefKind};
 use engine::systems::npc::NpcDef;
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
-use engine::systems::script::{RunnerKind, ScriptDef, VarValue};
 use engine::systems::skill::{SkillDef, Targeting};
 use engine::systems::stat::StatKind;
 use serde_json::{Value, json};
@@ -106,7 +112,6 @@ fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
                     "title": "A Letter",
                     "category": "Errands",
                     "blurb": "A letter",
-                    "xp": 10,
                     "modules": [
                         { "type": "task", "task": "read", "label": "Read the letter" },
                         { "type": "hand_over", "text": ["I read it."] },
@@ -515,7 +520,7 @@ fn a_script_module_added_to_a_row_runs_a_script_of_its_kind_made_for_it_when_non
             .read::<ScriptDef>(&named)
             .expect("a project")
             .expect("the script reads");
-        assert_eq!(made.runs_on, RunnerKind::Item);
+        assert_eq!(made.runs_on, ITEM_RUNNER);
         let module = item.modules.iter().find_map(|module| match module {
             ItemModule::Script(module) => Some(module),
             _ => None,
@@ -533,11 +538,11 @@ fn a_script_module_added_to_a_row_runs_a_script_of_its_kind_made_for_it_when_non
     }
 
     for (table, kind) in [
-        ("npc", RunnerKind::Npc),
-        ("item", RunnerKind::Item),
-        ("status_effect", RunnerKind::StatusEffect),
-        ("quest", RunnerKind::Quest),
-        ("shop", RunnerKind::Shop),
+        ("npc", NPC_RUNNER),
+        ("item", ITEM_RUNNER),
+        ("status_effect", STATUS_EFFECT_RUNNER),
+        ("quest", QUEST_RUNNER),
+        ("shop", SHOP_RUNNER),
     ] {
         let scratch = tempfile::tempdir().expect("scratch");
         let game = support::game()
@@ -937,9 +942,14 @@ fn a_place_moved_to_another_area_lands_on_walkable_ground_there() {
         _ => None,
     });
     assert!(
-        place.is_some_and(|place| reader.path_of(place.area)
-            == Some(path("area", "hall").as_str())
-            && (place.at.x, place.at.y) != (4.0, 4.0)),
+        place
+            .map(|place| place
+                .downcast_ref::<engine::systems::area::Place>()
+                .expect("a place"))
+            .is_some_and(
+                |place| reader.path_of(place.area) == Some(path("area", "hall").as_str())
+                    && (place.at.x, place.at.y) != (4.0, 4.0)
+            ),
         "the place moved into the hall, off its wall"
     );
 }

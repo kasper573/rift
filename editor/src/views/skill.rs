@@ -27,7 +27,7 @@ pub fn ranks(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
             }
             let summed: Vec<String> = totals
                 .iter()
-                .map(|(stat, total)| format!("{} {total}", stat.label()))
+                .map(|(stat, total)| format!("{} {total}", <&str>::from(*stat)))
                 .collect();
             (!summed.is_empty()).then(|| format!("at this rank: {}", summed.join(" · ")))
         },
@@ -82,7 +82,11 @@ impl Level for SkillLevel {
     }
 
     fn unit(stat: SkillStat) -> Option<&'static str> {
-        stat.unit()
+        match stat {
+            SkillStat::Cooldown | SkillStat::Duration => Some("s"),
+            SkillStat::Range | SkillStat::Radius => Some("m"),
+            SkillStat::Power | SkillStat::Mana => None,
+        }
     }
 
     fn next(_: Option<&SkillLevel>) -> SkillLevel {

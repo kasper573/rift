@@ -6,7 +6,7 @@ use engine::systems::combat::{self, AttackRequest};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::region;
-use engine::systems::{actor, reach, script, skill, stat};
+use engine::systems::{actor, reach, skill, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, hunting, path};
 
@@ -17,7 +17,7 @@ const REFUGE: Pos<Meters> = Pos::new(9.5, 4.0);
 #[test]
 fn wild_monsters_never_set_foot_in_a_safe_zone() {
     let mut sim = border(json!([
-        { "type": "spawner", "spawns": [{ "type": "npc", "npc": "wanderer.npc.json" }], "count": 6 },
+        { "type": "spawner", "populations": [{ "spawns": [{ "type": "npc", "npc": "wanderer.npc.json" }], "max_spawned_at_once": 6 }] },
     ]));
     let monsters: Vec<Entity> = sim
         .world
@@ -189,8 +189,8 @@ fn border(modules: Value) -> Sim {
         ))
         .plan(skill::casting::StepCasts::default())
         .plan((
-            script::query::ListRoster::default(),
-            script::RunFlows::default(),
+            engine::systems::roster::ListRoster::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
@@ -198,7 +198,7 @@ fn border(modules: Value) -> Sim {
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
     region::hold_whole(&mut sim.world);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 

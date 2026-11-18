@@ -15,7 +15,10 @@ use crate::core::content::Content;
 use crate::core::math::{Pos, Size};
 use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
-use crate::core::render::video::{self, VideoPreferences};
+use crate::core::render::video::{
+    AmbientOcclusionQuality, AntiAliasingQuality, GrassQuality, PropDetail, Quality, ShadowQuality,
+    VideoPreferences, ViewDistance,
+};
 use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{CharactersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
@@ -27,6 +30,7 @@ use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::plates::ItemNaming;
 use crate::systems::item::rarity::{ItemRarityDef, RarityRank};
+use crate::systems::messages::{self, Messages, messages};
 use crate::systems::player::session;
 use crate::systems::skill::HotbarSlot;
 use crate::systems::social_request::{self, setting::SocialChoice};
@@ -80,10 +84,19 @@ pub(crate) struct Placement {
     pub size: Size<WindowPx>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A window the player places and the game keeps where they left it.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Placed {
     Menu,
     Chat,
+    Trade,
+    Market,
+    Roster,
+    Shop,
+    Crafting,
+    Prompt,
+    Entrance,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,7 +147,9 @@ impl MenuTab for SettingsMenuTab {
         InputAction::OpenSettings
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
+        let content = world.resource::<Content>().clone();
         let game = GameSide {
+            messages: messages::of(&content),
             typing: world.get_resource::<Typing>().copied(),
             turn_ease: world
                 .get_resource::<CameraRig>()
@@ -157,7 +172,8 @@ impl MenuTab for SettingsMenuTab {
 }
 
 /// What the settings show that is the game's or the server's to say, not the device's.
-struct GameSide {
+struct GameSide<'a> {
+    messages: &'a Messages,
     typing: Option<Typing>,
     turn_ease: Option<Seconds>,
     rarities: Vec<(RarityRank, String)>,
@@ -205,20 +221,21 @@ fn show_settings(
 }
 
 fn show_first_column(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: &GameSide) {
-    sheet::section(ui, "Interface");
+    let words = &game.messages.settings;
+    sheet::section(ui, words.section_interface());
     show_interface(ui, settings, game);
     ui.add_space(SECTION_GAP);
-    sheet::section(ui, "HUD");
-    show_hud(ui, settings);
+    sheet::section(ui, words.section_hud());
+    show_hud(ui, settings, words);
     ui.add_space(SECTION_GAP);
-    sheet::section(ui, "Items on the ground");
-    show_items(ui, settings, &game.rarities);
+    sheet::section(ui, words.section_items());
+    show_items(ui, settings, &game.rarities, words);
     ui.add_space(SECTION_GAP);
-    sheet::section(ui, "Camera");
+    sheet::section(ui, words.section_camera());
     controls::form(ui, ("settings", "camera"), |ui| {
         if let Some(turn_ease) = game.turn_ease {
-            let label = ui.label("Camera smoothing");
-            smoothing_slider(ui, settings, turn_ease, label.id);
+            let label = ui.label(words.camera_smoothing());
+            smoothing_slider(ui, settings, turn_ease, words, label.id);
             ui.end_row();
         }
     });
@@ -229,13 +246,14 @@ fn show_second_column(
     settings: &mut Mut<UserSettings>,
     game: &GameSide,
 ) -> Option<SocialChoice> {
-    sheet::section(ui, "Chat");
-    show_chat(ui, settings);
+    let words = &game.messages.settings;
+    sheet::section(ui, words.section_chat());
+    show_chat(ui, settings, words);
     ui.add_space(SECTION_GAP);
-    sheet::section(ui, "Video");
-    show_video(ui, settings);
+    sheet::section(ui, words.section_video());
+    show_video(ui, settings, words);
     ui.add_space(SECTION_GAP);
-    sheet::section(ui, "Audio");
+    sheet::section(ui, words.section_audio());
     controls::form(ui, ("settings", "audio"), |ui| {
         for fader in iter::once(AudioFader::Master).chain(
             AudioCategory::VARIANTS
@@ -243,102 +261,108 @@ fn show_second_column(
                 .copied()
                 .map(AudioFader::Category),
         ) {
-            let label = ui.label(fader_name(fader));
-            fader_slider(ui, settings, fader, label.id);
+            let label = ui.label(fader_name(fader, words));
+            fader_slider(ui, settings, words, fader, label.id);
             ui.end_row();
         }
     });
     let society = game.society.as_ref()?;
     ui.add_space(SECTION_GAP);
-    sheet::section(ui, "Social");
-    social_request::setting::section(ui, society, true)
+    sheet::section(ui, words.section_social());
+    social_request::setting::section(ui, &game.messages.requests, society, true)
 }
 
 fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: &GameSide) {
     let typing = game.typing;
+    let words = &game.messages.settings;
     controls::form(ui, ("settings", "interface"), |ui| {
-        let label = ui.label("Menu opens on");
-        menu_tab_picker(ui, settings, &game.tabs, label.id);
+        let label = ui.label(words.menu_opens_on());
+        menu_tab_picker(ui, settings, game, label.id);
         ui.end_row();
         let mut snapping = settings.snapping_enabled();
-        if controls::toggle(ui, "UI snapping", &mut snapping).changed() {
+        if controls::toggle(ui, words.snapping(), &mut snapping).changed() {
             settings.toggle_snapping();
         }
         ui.end_row();
         let mut frame_rate = settings.frame_rate_shown();
-        if controls::toggle(ui, "Show FPS", &mut frame_rate).changed() {
+        if controls::toggle(ui, words.show_fps(), &mut frame_rate).changed() {
             settings.toggle_frame_rate();
         }
         ui.end_row();
         let mut day_clock = settings.day_clock_shown();
-        if controls::toggle(ui, "Show the time of day", &mut day_clock).changed() {
+        if controls::toggle(ui, words.show_time_of_day(), &mut day_clock).changed() {
             settings.toggle_day_clock();
         }
         ui.end_row();
         let mut amounts = settings.globe_amounts_shown();
-        if controls::toggle(ui, "Show health and mana in numbers", &mut amounts)
-            .hinted("A globe under the pointer says how much it holds either way")
+        if controls::toggle(ui, words.globe_amounts(), &mut amounts)
+            .hinted(words.globe_amounts_hint())
             .changed()
         {
             settings.toggle_globe_amounts();
         }
         ui.end_row();
         let mut quick_cast = settings.quick_cast();
-        if controls::toggle(ui, "Quick cast skills", &mut quick_cast)
-            .hinted("A skill is cast the moment it is used, at what the pointer rests on")
+        if controls::toggle(ui, words.quick_cast(), &mut quick_cast)
+            .hinted(words.quick_cast_hint())
             .changed()
         {
             settings.toggle_quick_cast();
         }
         ui.end_row();
         let mut confirms = settings.confirms_risky_crafts();
-        if controls::toggle(ui, "Confirm crafts that may fail", &mut confirms)
-            .hinted("A craft that may fail asks before it spends its materials")
+        if controls::toggle(ui, words.confirm_crafts(), &mut confirms)
+            .hinted(words.confirm_crafts_hint())
             .changed()
         {
             settings.toggle_risky_craft_confirm();
         }
         ui.end_row();
         let mut tilts = settings.cards_tilt();
-        if controls::toggle(ui, "Tilt cards", &mut tilts)
-            .hinted("A card turns toward the pointer while it rests on it")
+        if controls::toggle(ui, words.tilt_cards(), &mut tilts)
+            .hinted(words.tilt_cards_hint())
             .changed()
         {
             settings.toggle_card_tilt();
         }
         ui.end_row();
         if let Some(typing) = typing {
-            let label = ui.label("Text speed");
-            text_speed_slider(ui, settings, typing, label.id);
+            let label = ui.label(words.text_speed());
+            text_speed_slider(ui, settings, typing, words, label.id);
             ui.end_row();
         }
-        let label = ui.label("Area transition");
+        let label = ui.label(words.area_transition());
         let current = settings.screen_transition();
-        if let Some(transition) = controls::variant_picker(ui, "area transition", current, label.id)
-        {
+        if let Some(transition) = picker(
+            ui,
+            "area transition",
+            current,
+            |transition| transition_name(transition, words),
+            label.id,
+        ) {
             settings.set_screen_transition(transition);
         }
         ui.end_row();
     });
 }
 
-fn show_hud(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+fn show_hud(ui: &mut Ui, settings: &mut Mut<UserSettings>, words: &SettingsMessages) {
     controls::form(ui, ("settings", "hud"), |ui| {
         let mut turns = settings.minimap_turns();
-        if controls::toggle(ui, "Minimap turns with the camera", &mut turns)
-            .hinted("Up on the map is where the camera looks, and north rides its rim")
+        if controls::toggle(ui, words.minimap_turns(), &mut turns)
+            .hinted(words.minimap_turns_hint())
             .changed()
         {
             settings.toggle_minimap_turning();
         }
         ui.end_row();
-        let label = ui.label("Quest tracker backing");
-        tracker_backing_slider(ui, settings, label.id);
+        let label = ui.label(words.tracker_backing());
+        tracker_backing_slider(ui, settings, words, label.id);
         ui.end_row();
-        let label = ui.label("HUD places");
-        if controls::button(ui, "Reset")
+        let label = ui.label(words.hud_places());
+        if controls::button(ui, words.reset())
             .labelled_by(label.id)
-            .hinted("Every piece of the HUD goes back to where it started, chat too")
+            .hinted(words.reset_hint())
             .clicked()
         {
             settings.reset_hud();
@@ -347,26 +371,31 @@ fn show_hud(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     });
 }
 
-fn show_items(ui: &mut Ui, settings: &mut Mut<UserSettings>, rarities: &[(RarityRank, String)]) {
+fn show_items(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    rarities: &[(RarityRank, String)],
+    words: &SettingsMessages,
+) {
     controls::form(ui, ("settings", "items"), |ui| {
         let naming = settings.item_naming();
         let mut switched = naming.switched;
-        if controls::toggle(ui, "Item names stay on", &mut switched)
-            .hinted("The key switches names on and off, rather than showing them while held")
+        if controls::toggle(ui, words.item_names_stay(), &mut switched)
+            .hinted(words.item_names_stay_hint())
             .changed()
         {
             settings.items.naming.switched = switched;
         }
         ui.end_row();
         let mut as_dropped = naming.as_dropped;
-        if controls::toggle(ui, "Name items as they drop", &mut as_dropped)
-            .hinted("Off, an item is named only under the pointer and by the key")
+        if controls::toggle(ui, words.name_as_dropped(), &mut as_dropped)
+            .hinted(words.name_as_dropped_hint())
             .changed()
         {
             settings.items.naming.as_dropped = as_dropped;
         }
         ui.end_row();
-        let label = ui.label("Name items from");
+        let label = ui.label(words.name_items_from());
         let name_of = |from: RarityRank| {
             rarities
                 .iter()
@@ -385,22 +414,22 @@ fn show_items(ui: &mut Ui, settings: &mut Mut<UserSettings>, rarities: &[(Rarity
             })
             .response
             .labelled_by(label.id)
-            .hinted("The lowest rarity the key names. The pointer names whatever it rests on");
+            .hinted(words.name_items_from_hint());
         if from != naming.from {
             settings.items.naming.from = from;
         }
         ui.end_row();
         let mut always = settings.outlines_items_always();
-        if controls::toggle(ui, "Always outline items", &mut always)
-            .hinted("Off, an item is outlined under the pointer and while its name is asked for")
+        if controls::toggle(ui, words.outline_items(), &mut always)
+            .hinted(words.outline_items_hint())
             .changed()
         {
             settings.items.outline_always = always;
         }
         ui.end_row();
         let mut calm = settings.rarity_effects_calm();
-        if controls::toggle(ui, "Calm rarity effects", &mut calm)
-            .hinted("What a rarity plays on its items stands still, and nothing bursts or pulses")
+        if controls::toggle(ui, words.calm_rarity(), &mut calm)
+            .hinted(words.calm_rarity_hint())
             .changed()
         {
             settings.items.calm_effects = calm;
@@ -409,30 +438,29 @@ fn show_items(ui: &mut Ui, settings: &mut Mut<UserSettings>, rarities: &[(Rarity
     });
 }
 
-fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>, words: &SettingsMessages) {
     controls::form(ui, ("settings", "chat"), |ui| {
         let mut chat = settings.chat_shown();
-        if controls::toggle(ui, "Show chat", &mut chat)
-            .hinted("Off, chat leaves the screen and its key does nothing")
+        if controls::toggle(ui, words.show_chat(), &mut chat)
+            .hinted(words.show_chat_hint())
             .changed()
         {
             settings.toggle_chat();
         }
         ui.end_row();
-        let label = ui.label("Chat background");
-        chat_background_slider(ui, settings, label.id);
+        let label = ui.label(words.chat_background());
+        chat_background_slider(ui, settings, words, label.id);
         ui.end_row();
-        let label = ui.label("Chat text size");
-        chat_text_slider(ui, settings, label.id);
+        let label = ui.label(words.chat_text_size());
+        chat_text_slider(ui, settings, words, label.id);
         ui.end_row();
-        let label = ui.label("Show embedded chat content");
+        let label = ui.label(words.embedded_chat());
         ui.horizontal(|ui| {
             for &kind in ChatEmbedKind::VARIANTS {
                 let mut shown = settings.shows_chat_embeds(kind);
-                if ui
-                    .checkbox(&mut shown, kind.plural())
+                if controls::check(ui, &mut shown, embed_name(kind, words))
                     .labelled_by(label.id)
-                    .hinted("Off, chat covers them with a black bar until you click it")
+                    .hinted(words.embedded_chat_hint())
                     .changed()
                 {
                     settings.show_chat_embeds(kind, shown);
@@ -446,18 +474,20 @@ fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
 fn menu_tab_picker(
     ui: &mut Ui,
     settings: &mut Mut<UserSettings>,
-    tabs: &[MenuTabName],
+    game: &GameSide,
     label: egui::Id,
 ) {
+    let last_used = game.messages.settings.last_used_tab();
+    let named = |tab: MenuTabName| tab.named(&game.messages.hud);
     let chosen = settings.menu_opens_on();
     let mut picked = chosen;
     controls::combo("menu opens on")
-        .selected_text(chosen.map_or(LAST_USED_TAB, MenuTabName::title))
+        .selected_text(chosen.map_or(last_used, named))
         .show_ui(ui, |ui| {
-            ui.selectable_value(&mut picked, None, LAST_USED_TAB);
+            ui.selectable_value(&mut picked, None, last_used);
             ui.separator();
-            for &tab in tabs {
-                ui.selectable_value(&mut picked, Some(tab), tab.title());
+            for &tab in &game.tabs {
+                ui.selectable_value(&mut picked, Some(tab), named(tab));
             }
         })
         .response
@@ -467,20 +497,111 @@ fn menu_tab_picker(
     }
 }
 
-const LAST_USED_TAB: &str = "The tab I last used";
-
-fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, words: &SettingsMessages) {
     let mut video = settings.video;
-    video::controls(ui, &mut video);
+    controls::form(ui, "video", |ui| {
+        let label = ui.label(words.quality());
+        let current = video.quality();
+        let mut picked = current;
+        controls::combo("quality")
+            .selected_text(current.map_or(words.quality_custom(), |quality| {
+                quality_name(quality, words)
+            }))
+            .show_ui(ui, |ui| {
+                for &quality in Quality::VARIANTS {
+                    ui.selectable_value(&mut picked, Some(quality), quality_name(quality, words));
+                }
+            })
+            .response
+            .labelled_by(label.id);
+        if let Some(quality) = picked.filter(|&quality| Some(quality) != current) {
+            video = video.at(quality);
+        }
+        ui.end_row();
+        controls::toggle(ui, words.fullscreen(), &mut video.fullscreen);
+        ui.end_row();
+        controls::toggle(ui, words.vsync(), &mut video.vsync).hinted(words.vsync_hint());
+        ui.end_row();
+        controls::toggle(ui, words.bloom(), &mut video.bloom).hinted(words.bloom_hint());
+        ui.end_row();
+        controls::toggle(ui, words.light_shafts(), &mut video.light_shafts)
+            .hinted(words.light_shafts_hint());
+        ui.end_row();
+        let label = ui.label(words.shadows());
+        let name = |shadows| shadow_name(shadows, words);
+        if let Some(shadows) = picker(ui, "shadows", video.shadows, name, label.id) {
+            video.shadows = shadows;
+        }
+        ui.end_row();
+        let label = ui.label(words.ambient_occlusion());
+        let name = |occlusion| occlusion_name(occlusion, words);
+        if let Some(occlusion) = picker(
+            ui,
+            "ambient occlusion",
+            video.ambient_occlusion,
+            name,
+            label.id,
+        ) {
+            video.ambient_occlusion = occlusion;
+        }
+        ui.end_row();
+        let label = ui.label(words.anti_aliasing());
+        let name = |anti_aliasing| anti_aliasing_name(anti_aliasing, words);
+        if let Some(anti_aliasing) =
+            picker(ui, "anti-aliasing", video.anti_aliasing, name, label.id)
+        {
+            video.anti_aliasing = anti_aliasing;
+        }
+        ui.end_row();
+        let label = ui.label(words.view_distance());
+        let name = |distance| distance_name(distance, words);
+        if let Some(distance) = picker(ui, "view distance", video.view_distance, name, label.id) {
+            video.view_distance = distance;
+        }
+        ui.end_row();
+        let label = ui.label(words.grass());
+        let name = |grass| grass_name(grass, words);
+        if let Some(grass) = picker(ui, "grass", video.grass, name, label.id) {
+            video.grass = grass;
+        }
+        ui.end_row();
+        let label = ui.label(words.detail());
+        let name = |detail| detail_name(detail, words);
+        if let Some(detail) = picker(ui, "detail", video.detail, name, label.id) {
+            video.detail = detail;
+        }
+        ui.end_row();
+    });
     if video != settings.video {
         settings.video = video;
     }
+}
+
+fn picker<'a, T: VariantArray + Copy + PartialEq>(
+    ui: &mut Ui,
+    id_salt: &str,
+    current: T,
+    name: impl Fn(T) -> &'a str,
+    label: egui::Id,
+) -> Option<T> {
+    let mut picked = current;
+    controls::combo(id_salt)
+        .selected_text(name(current))
+        .show_ui(ui, |ui| {
+            for &variant in T::VARIANTS {
+                ui.selectable_value(&mut picked, variant, name(variant));
+            }
+        })
+        .response
+        .labelled_by(label);
+    (picked != current).then_some(picked)
 }
 
 fn text_speed_slider(
     ui: &mut Ui,
     settings: &mut Mut<UserSettings>,
     typing: Typing,
+    words: &SettingsMessages,
     label: egui::Id,
 ) {
     let mut speed = typing
@@ -495,11 +616,17 @@ fn text_speed_slider(
         {
             settings.text.characters_per_second = Some(CharactersPerSecond(speed.round()));
         }
-        slider_says(ui, format!("{:.0} characters/s", speed.round()));
+        slider_says(ui, words.characters_per_second(speed.round()));
     });
 }
 
-fn smoothing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: Seconds, label: egui::Id) {
+fn smoothing_slider(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    game: Seconds,
+    words: &SettingsMessages,
+    label: egui::Id,
+) {
     let mut ease = smoothing(settings.camera.turn_ease, game).0;
     ui.horizontal(|ui| {
         if controls::slider(ui, &mut ease, SMOOTHINGS.0.0..=SMOOTHINGS.1.0)
@@ -509,15 +636,20 @@ fn smoothing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: Seconds
             settings.camera.turn_ease = Some(Seconds((ease * 100.0).round() / 100.0));
         }
         let shown = if ease > 0.0 {
-            format!("{ease:.2} s")
+            words.seconds_of((ease * 100.0).round() / 100.0)
         } else {
-            "off".to_owned()
+            words.smoothing_off().to_owned()
         };
         slider_says(ui, shown);
     });
 }
 
-fn chat_background_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+fn chat_background_slider(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    words: &SettingsMessages,
+    label: egui::Id,
+) {
     let mut background = settings.chat_background().0;
     ui.horizontal(|ui| {
         if controls::slider(ui, &mut background, 0.0..=Percent::WHOLE.0)
@@ -526,11 +658,16 @@ fn chat_background_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: 
         {
             settings.ui.chat.background = Some(Percent(background.round()));
         }
-        slider_says(ui, format!("{:.0}%", background.round()));
+        slider_says(ui, words.percent_of(background.round()));
     });
 }
 
-fn tracker_backing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+fn tracker_backing_slider(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    words: &SettingsMessages,
+    label: egui::Id,
+) {
     let mut backing = settings.tracker_backing().0;
     ui.horizontal(|ui| {
         if controls::slider(ui, &mut backing, 0.0..=Percent::WHOLE.0)
@@ -540,15 +677,20 @@ fn tracker_backing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: 
             settings.ui.tracker_backing = Percent(backing.round());
         }
         let shown = if backing > 0.0 {
-            format!("{:.0}%", backing.round())
+            words.percent_of(backing.round())
         } else {
-            "None".to_owned()
+            words.tracker_backing_none().to_owned()
         };
         slider_says(ui, shown);
     });
 }
 
-fn chat_text_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+fn chat_text_slider(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    words: &SettingsMessages,
+    label: egui::Id,
+) {
     let mut size = settings.chat_text_size().0;
     ui.horizontal(|ui| {
         let (_, smallest, largest) = CHAT_TEXT_SIZES;
@@ -558,11 +700,17 @@ fn chat_text_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::
         {
             settings.ui.chat.text_size = Some(WindowPx(size.round()));
         }
-        slider_says(ui, format!("{:.0} px", size.round()));
+        slider_says(ui, words.pixels_of(size.round()));
     });
 }
 
-fn fader_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, fader: AudioFader, label: egui::Id) {
+fn fader_slider(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    words: &SettingsMessages,
+    fader: AudioFader,
+    label: egui::Id,
+) {
     let mut volume = settings.volume(fader).0;
     ui.horizontal(|ui| {
         let range = AudioVolume::SILENT.0..=AudioVolume::FULL.0;
@@ -572,7 +720,7 @@ fn fader_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, fader: AudioFader
         {
             settings.set_volume(fader, AudioVolume((volume * 100.0).round() / 100.0));
         }
-        slider_says(ui, format!("{:.0}%", volume * 100.0));
+        slider_says(ui, words.percent_of((volume * 100.0).round()));
     });
 }
 
@@ -586,10 +734,94 @@ fn slider_says(ui: &mut Ui, set_to: String) {
     });
 }
 
-fn fader_name(fader: AudioFader) -> &'static str {
+fn fader_name(fader: AudioFader, words: &SettingsMessages) -> &str {
     match fader {
-        AudioFader::Master => "Master",
-        AudioFader::Category(category) => category.into(),
+        AudioFader::Master => words.master(),
+        AudioFader::Category(AudioCategory::Music) => words.audio_music(),
+        AudioFader::Category(AudioCategory::Ambience) => words.audio_ambience(),
+        AudioFader::Category(AudioCategory::Effects) => words.audio_effects(),
+        AudioFader::Category(AudioCategory::Voice) => words.audio_voice(),
+    }
+}
+
+fn transition_name(transition: ScreenTransition, words: &SettingsMessages) -> &str {
+    match transition {
+        ScreenTransition::Crumble => words.transition_crumble(),
+        ScreenTransition::TileWave => words.transition_tile_wave(),
+        ScreenTransition::Sweep => words.transition_sweep(),
+        ScreenTransition::Iris => words.transition_iris(),
+        ScreenTransition::Dither => words.transition_dither(),
+        ScreenTransition::Fade => words.transition_fade(),
+    }
+}
+
+fn embed_name(kind: ChatEmbedKind, words: &SettingsMessages) -> &str {
+    match kind {
+        ChatEmbedKind::Item => words.embed_items(),
+        ChatEmbedKind::Quest => words.embed_quests(),
+        ChatEmbedKind::Skill => words.embed_skills(),
+        ChatEmbedKind::Location => words.embed_locations(),
+    }
+}
+
+fn quality_name(quality: Quality, words: &SettingsMessages) -> &str {
+    match quality {
+        Quality::Lowest => words.level_lowest(),
+        Quality::Low => words.level_low(),
+        Quality::Medium => words.level_medium(),
+        Quality::High => words.level_high(),
+        Quality::Max => words.level_max(),
+    }
+}
+
+fn shadow_name(shadows: ShadowQuality, words: &SettingsMessages) -> &str {
+    match shadows {
+        ShadowQuality::Off => words.level_off(),
+        ShadowQuality::Low => words.level_low(),
+        ShadowQuality::High => words.level_high(),
+    }
+}
+
+fn occlusion_name(occlusion: AmbientOcclusionQuality, words: &SettingsMessages) -> &str {
+    match occlusion {
+        AmbientOcclusionQuality::Off => words.level_off(),
+        AmbientOcclusionQuality::Low => words.level_low(),
+        AmbientOcclusionQuality::Medium => words.level_medium(),
+        AmbientOcclusionQuality::High => words.level_high(),
+    }
+}
+
+fn anti_aliasing_name(anti_aliasing: AntiAliasingQuality, words: &SettingsMessages) -> &str {
+    match anti_aliasing {
+        AntiAliasingQuality::Off => words.level_off(),
+        AntiAliasingQuality::Low => words.level_low(),
+        AntiAliasingQuality::Medium => words.level_medium(),
+        AntiAliasingQuality::High => words.level_high(),
+        AntiAliasingQuality::Ultra => words.level_ultra(),
+    }
+}
+
+fn distance_name(distance: ViewDistance, words: &SettingsMessages) -> &str {
+    match distance {
+        ViewDistance::Near => words.level_near(),
+        ViewDistance::Middle => words.level_middle(),
+        ViewDistance::Far => words.level_far(),
+    }
+}
+
+fn grass_name(grass: GrassQuality, words: &SettingsMessages) -> &str {
+    match grass {
+        GrassQuality::Low => words.level_low(),
+        GrassQuality::Medium => words.level_medium(),
+        GrassQuality::High => words.level_high(),
+    }
+}
+
+fn detail_name(detail: PropDetail, words: &SettingsMessages) -> &str {
+    match detail {
+        PropDetail::Low => words.level_low(),
+        PropDetail::Medium => words.level_medium(),
+        PropDetail::High => words.level_high(),
     }
 }
 
@@ -695,22 +927,16 @@ impl UserSettings {
 
     pub(crate) fn reset_hud(&mut self) {
         self.ui.widgets.retain(|name, _| !hud::is_piece(name));
-        self.ui.chat.placement = None;
+        self.ui.placements.retain(|of, _| *of == Placed::Menu);
         self.ui.player_bar.shape = None;
     }
 
     pub(crate) fn placement(&self, of: Placed) -> Option<Placement> {
-        match of {
-            Placed::Menu => self.ui.menu.placement,
-            Placed::Chat => self.ui.chat.placement,
-        }
+        self.ui.placements.get(&of).copied()
     }
 
     pub(crate) fn set_placement(&mut self, of: Placed, placement: Placement) {
-        match of {
-            Placed::Menu => self.ui.menu.placement = Some(placement),
-            Placed::Chat => self.ui.chat.placement = Some(placement),
-        }
+        self.ui.placements.insert(of, placement);
     }
 
     pub(crate) fn menu_opens_on(&self) -> Option<MenuTabName> {
@@ -825,6 +1051,8 @@ struct UiSettings {
     #[serde(default)]
     widgets: BTreeMap<String, Pos<WindowPx>>,
     #[serde(default)]
+    placements: BTreeMap<Placed, Placement>,
+    #[serde(default)]
     menu: MenuSettings,
     #[serde(default)]
     player_bar: PlayerBarSettings,
@@ -844,6 +1072,7 @@ impl Default for UiSettings {
         UiSettings {
             snap: default_snap(),
             widgets: BTreeMap::new(),
+            placements: BTreeMap::new(),
             menu: MenuSettings::default(),
             player_bar: PlayerBarSettings::default(),
             chat: ChatSettings::default(),
@@ -856,8 +1085,6 @@ impl Default for UiSettings {
 
 #[derive(Serialize, Deserialize, Default)]
 struct MenuSettings {
-    #[serde(default)]
-    placement: Option<Placement>,
     /// None opens on the tab last used this session.
     #[serde(default)]
     opens_on: Option<MenuTabName>,
@@ -877,8 +1104,6 @@ struct ChatSettings {
     #[serde(default)]
     hidden: bool,
     #[serde(default)]
-    placement: Option<Placement>,
-    #[serde(default)]
     background: Option<Percent>,
     #[serde(default)]
     text_size: Option<WindowPx>,
@@ -887,7 +1112,7 @@ struct ChatSettings {
     embeds_hidden: BTreeSet<ChatEmbedKind>,
 }
 
-const CHAT_BACKGROUND: Percent = Percent(35.0);
+const CHAT_BACKGROUND: Percent = Percent(0.0);
 const CHAT_TEXT_SIZES: (WindowPx, WindowPx, WindowPx) =
     (WindowPx(15.0), WindowPx(12.0), WindowPx(22.0));
 
@@ -1026,5 +1251,195 @@ fn pace_typing(settings: Res<UserSettings>, typing: Option<Res<Typing>>, mut com
 fn apply_video(settings: Res<UserSettings>, mut video: ResMut<VideoPreferences>) {
     if settings.is_changed() {
         video.set_if_neq(settings.video);
+    }
+}
+
+messages! {
+    /// What the game says on its settings page.
+    pub struct SettingsMessages {
+        /// The heading of the settings page's interface section.
+        section_interface,
+        /// The heading of the settings page's hud section.
+        section_hud,
+        /// The heading of the settings page's items section.
+        section_items,
+        /// The heading of the settings page's camera section.
+        section_camera,
+        /// The heading of the settings page's chat section.
+        section_chat,
+        /// The heading of the settings page's video section.
+        section_video,
+        /// The heading of the settings page's audio section.
+        section_audio,
+        /// The heading of the settings page's social section.
+        section_social,
+        /// The label of the settings row for the tab the menu opens on.
+        menu_opens_on,
+        /// What the choice of the tab the menu opens on says for the tab last used.
+        last_used_tab,
+        /// The label of the settings row for snapping windows to a grid.
+        snapping,
+        /// The label of the settings row for showing the frame rate.
+        show_fps,
+        /// The label of the settings row for showing the day clock.
+        show_time_of_day,
+        /// The label of the settings row for writing health and mana in numbers.
+        globe_amounts,
+        /// What the tooltip of the settings row for writing health and mana in numbers says.
+        globe_amounts_hint,
+        /// The label of the settings row for casting skills at once.
+        quick_cast,
+        /// What the tooltip of the settings row for casting skills at once says.
+        quick_cast_hint,
+        /// The label of the settings row for asking before a craft that may fail.
+        confirm_crafts,
+        /// What the tooltip of the settings row for asking before a craft that may fail says.
+        confirm_crafts_hint,
+        /// The label of the settings row for cards turning toward the pointer.
+        tilt_cards,
+        /// What the tooltip of the settings row for cards turning toward the pointer says.
+        tilt_cards_hint,
+        /// What a slider says of a whole-number percentage, `{percent}` being the value.
+        percent_of(percent: Number),
+        /// What a slider says of a size in pixels, `{size}` being the value.
+        pixels_of(size: Number),
+        /// What a slider says of a number of seconds, `{seconds}` being the value.
+        seconds_of(seconds: Number),
+        /// The label of the settings row for how fast lines type.
+        text_speed,
+        /// What the text speed slider says of its value: the speed `{speed}`.
+        characters_per_second(speed: Number),
+        /// The label of the settings row for the transition between areas.
+        area_transition,
+        /// The name of the area transition `crumble` among the choices.
+        transition_crumble,
+        /// The name of the area transition `tile_wave` among the choices.
+        transition_tile_wave,
+        /// The name of the area transition `sweep` among the choices.
+        transition_sweep,
+        /// The name of the area transition `iris` among the choices.
+        transition_iris,
+        /// The name of the area transition `dither` among the choices.
+        transition_dither,
+        /// The name of the area transition `fade` among the choices.
+        transition_fade,
+        /// The label of the settings row for the minimap turning with the camera.
+        minimap_turns,
+        /// What the tooltip of the settings row for the minimap turning with the camera says.
+        minimap_turns_hint,
+        /// The label of the settings row for how dark the quest tracker's backing is.
+        tracker_backing,
+        /// What the quest tracker backing slider says of its value when there is no backing.
+        tracker_backing_none,
+        /// The label of the settings row for putting the HUD's pieces back.
+        hud_places,
+        /// The button that puts the HUD's pieces back where they started.
+        reset,
+        /// What the tooltip of the button that puts the HUD's pieces back says.
+        reset_hint,
+        /// The label of the settings row for item names staying on.
+        item_names_stay,
+        /// What the tooltip of the settings row for item names staying on says.
+        item_names_stay_hint,
+        /// The label of the settings row for naming items as they drop.
+        name_as_dropped,
+        /// What the tooltip of the settings row for naming items as they drop says.
+        name_as_dropped_hint,
+        /// The label of the settings row for the lowest rarity that is named.
+        name_items_from,
+        /// What the tooltip of the settings row for the lowest rarity that is named says.
+        name_items_from_hint,
+        /// The label of the settings row for outlining items.
+        outline_items,
+        /// What the tooltip of the settings row for outlining items says.
+        outline_items_hint,
+        /// The label of the settings row for holding rarity effects still.
+        calm_rarity,
+        /// What the tooltip of the settings row for holding rarity effects still says.
+        calm_rarity_hint,
+        /// The label of the settings row for how smoothly the camera turns.
+        camera_smoothing,
+        /// What the camera smoothing slider says of its value when there is none.
+        smoothing_off,
+        /// The label of the settings row for showing chat.
+        show_chat,
+        /// What the tooltip of the settings row for showing chat says.
+        show_chat_hint,
+        /// The label of the settings row for how dark chat's background is.
+        chat_background,
+        /// The label of the settings row for how large chat's text is.
+        chat_text_size,
+        /// The label of the settings row for showing what chat lines embed.
+        embedded_chat,
+        /// What the tooltip of the settings row for showing what chat lines embed says.
+        embedded_chat_hint,
+        /// The name of the items that chat lines embed, beside the checkbox that shows them.
+        embed_items,
+        /// The name of the quests that chat lines embed, beside the checkbox that shows them.
+        embed_quests,
+        /// The name of the skills that chat lines embed, beside the checkbox that shows them.
+        embed_skills,
+        /// The name of the locations that chat lines embed, beside the checkbox that shows them.
+        embed_locations,
+        /// The name of the volume slider that sets every volume at once.
+        master,
+        /// The name of the volume slider of the music.
+        audio_music,
+        /// The name of the volume slider of the ambience.
+        audio_ambience,
+        /// The name of the volume slider of the effects.
+        audio_effects,
+        /// The name of the volume slider of the voice.
+        audio_voice,
+        /// The label of the settings row for the video quality preset.
+        quality,
+        /// What the video quality preset picker says when the parts stand at no preset.
+        quality_custom,
+        /// The label of the settings row for filling the screen.
+        fullscreen,
+        /// The label of the settings row for waiting for the display's refresh.
+        vsync,
+        /// What the tooltip of the settings row for waiting for the display's refresh says.
+        vsync_hint,
+        /// The label of the settings row for bloom.
+        bloom,
+        /// What the tooltip of the settings row for bloom says.
+        bloom_hint,
+        /// The label of the settings row for light shafts.
+        light_shafts,
+        /// What the tooltip of the settings row for light shafts says.
+        light_shafts_hint,
+        /// The label of the settings row for the quality of shadows.
+        shadows,
+        /// The label of the settings row for the quality of ambient occlusion.
+        ambient_occlusion,
+        /// The label of the settings row for the quality of anti-aliasing.
+        anti_aliasing,
+        /// The label of the settings row for how far the world stands around the player.
+        view_distance,
+        /// The label of the settings row for the quality of grass.
+        grass,
+        /// The label of the settings row for how close props draw their models.
+        detail,
+        /// The name of the video setting level `off` among the choices of any video setting that has it.
+        level_off,
+        /// The name of the video setting level `lowest` among the choices of any video setting that has it.
+        level_lowest,
+        /// The name of the video setting level `low` among the choices of any video setting that has it.
+        level_low,
+        /// The name of the video setting level `medium` among the choices of any video setting that has it.
+        level_medium,
+        /// The name of the video setting level `high` among the choices of any video setting that has it.
+        level_high,
+        /// The name of the video setting level `ultra` among the choices of any video setting that has it.
+        level_ultra,
+        /// The name of the video setting level `max` among the choices of any video setting that has it.
+        level_max,
+        /// The name of the video setting level `near` among the choices of any video setting that has it.
+        level_near,
+        /// The name of the video setting level `middle` among the choices of any video setting that has it.
+        level_middle,
+        /// The name of the video setting level `far` among the choices of any video setting that has it.
+        level_far,
     }
 }

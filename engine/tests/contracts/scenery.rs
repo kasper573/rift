@@ -1,3 +1,4 @@
+use engine::systems::area::stages::COVER;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
@@ -20,7 +21,6 @@ use engine::core::render::world::gpu::draw::{GroundDraw, PATCH_CELLS};
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
-use engine::core::vfx::shader::Stage;
 use engine::systems::area::scenery::{Eyes, Sight};
 use engine::systems::area::{self, Area, AreaDef, scenery};
 use serde_json::json;
@@ -34,7 +34,7 @@ fn field(ratio: f32) -> Game {
 /// A game whose field is `map` with `scene` on it, its turf strewn with pebbles at `ratio`.
 fn strewn_field(ratio: f32, map: &Map, scene: serde_json::Value) -> Game {
     Game::new()
-        .shader_on("meadow", Stage::Cover)
+        .shader_on("meadow", COVER)
         .prop("pebble", json!({ "type": "none" }))
         .prop("tuft", json!({ "type": "none" }))
         .area("field", map, scene)

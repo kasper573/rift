@@ -5,6 +5,7 @@ mod files;
 mod image;
 mod load_errors;
 mod media;
+mod messages;
 mod model;
 mod pictures;
 mod rarity;

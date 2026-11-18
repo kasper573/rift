@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use engine::core::content::{Content, ContentFile, fields_file, name_of, parent_of};
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptDef;
+use engine::core::script::Scripts;
 use engine::field;
 use engine::systems::actor::ModelDef;
 use engine::systems::area::blueprint::BlueprintDef;
@@ -13,7 +16,6 @@ use engine::systems::item::ItemDef;
 use engine::systems::npc::{self, NpcDef, NpcId};
 use engine::systems::quest::QuestDef;
 use engine::systems::registry;
-use engine::systems::script::{RiftScripts, RunnerKind, ScriptDef};
 use engine::systems::skill::SkillDef;
 
 use super::{Dragged, PickLayout, PickSource, PickedKey, PickerCandidate, PickerCategory};
@@ -250,8 +252,8 @@ fn blocked(cx: &FormCx, table: &str, path: &str, key: &str) -> Option<String> {
         {
             let content = cx.content.as_ref()?;
             let scripts = content
-                .has_built::<RiftScripts>()
-                .then(|| content.built::<RiftScripts>())?;
+                .has_built::<Scripts>()
+                .then(|| content.built::<Scripts>())?;
             let id = content.by_path::<NpcDef>(key)?;
             (!npc::can_be_fought(scripts, id)).then(|| "no script sets it hostile".to_owned())
         }
@@ -263,14 +265,13 @@ fn blocked(cx: &FormCx, table: &str, path: &str, key: &str) -> Option<String> {
 }
 
 fn runner_kind(owner: &str) -> RunnerKind {
-    owner.parse().unwrap_or(RunnerKind::Any)
+    RunnerKind::named(owner).unwrap_or(RunnerKind::ANY)
 }
 
 fn script_runner(cx: &FormCx, key: &str) -> String {
-    cx.project.read::<ScriptDef>(key).map_or_else(
-        |_| String::new(),
-        |script| <&str>::from(script.runs_on).to_owned(),
-    )
+    cx.project
+        .read::<ScriptDef>(key)
+        .map_or_else(|_| String::new(), |script| script.runs_on.name().to_owned())
 }
 
 /// What sets the file `key` of `table` apart in the picker, beside its path, for the types that
@@ -305,8 +306,17 @@ fn npc_places(cx: &FormCx) -> Option<NpcPlaces> {
             match &placed.module {
                 AreaModule::Resident(resident) => *counts.entry(resident.npc).or_default() += 1,
                 AreaModule::Spawner(spawner) => {
-                    for npc in spawner.npcs() {
-                        *counts.entry(npc).or_default() += spawner.count
+                    for population in &spawner.populations {
+                        for npc in population
+                            .spawns
+                            .iter()
+                            .filter_map(|share| match share.what {
+                                engine::systems::spawner::Spawns::Npc { npc } => Some(npc),
+                                engine::systems::spawner::Spawns::Resource { .. } => None,
+                            })
+                        {
+                            *counts.entry(npc).or_default() += population.max_spawned_at_once;
+                        }
                     }
                 }
                 _ => {}

@@ -9,6 +9,7 @@ use egui::{
 };
 
 use crate::face::TextRole;
+use crate::keys::KeyCap;
 use crate::{controls, float, ink};
 
 const RULE_INSET: f32 = 7.0;
@@ -59,17 +60,21 @@ impl Sheet<'_> {
         vellum(painter, rect);
         let inset = if small { SMALL_RULE_INSET } else { RULE_INSET };
         rule(painter, rect, inset);
-        let band = Rect::from_min_size(rect.min, Vec2::new(rect.width(), TITLE_BAND));
         let cross_size = if small { SMALL_CROSS } else { CROSS };
+        let cross_inset = inset + CROSS_MARGIN;
+        let band = Rect::from_min_size(
+            rect.min + Vec2::new(0.0, title_top(cross_inset, cross_size)),
+            Vec2::new(rect.width(), TITLE_BAND),
+        );
         let bleeds = self.title.is_none() && !small;
         let cross = self.closable.then(|| {
-            let at = if bleeds {
-                let from_rule = inset + CROSS_MARGIN;
-                Pos2::new(rect.max.x - from_rule - cross_size, rect.min.y + from_rule)
-            } else {
-                Pos2::new(rect.max.x - 10.0 - cross_size, rect.min.y + 6.0)
-            };
-            Rect::from_min_size(at, Vec2::splat(cross_size))
+            Rect::from_min_size(
+                Pos2::new(
+                    rect.max.x - cross_inset - cross_size,
+                    rect.min.y + cross_inset,
+                ),
+                Vec2::splat(cross_size),
+            )
         });
         if let Some(title) = self.title {
             title_band(painter, title_room(band, small), title, !small);
@@ -83,14 +88,14 @@ impl Sheet<'_> {
         let top = if self.title.is_some() {
             band.max.y
         } else {
-            rect.min.y + inset + 4.0
+            rect.min.y + inset + BODY_INSET
         };
         let body = if bleeds {
             rect.shrink(inset)
         } else {
             Rect::from_min_max(
-                Pos2::new(rect.min.x + inset + 4.0, top),
-                rect.max - Vec2::splat(inset + 4.0),
+                Pos2::new(rect.min.x + inset + BODY_INSET, top),
+                rect.max - Vec2::splat(inset + BODY_INSET),
             )
         };
         if tint != Color32::WHITE {
@@ -105,7 +110,24 @@ impl Sheet<'_> {
     }
 }
 
+/// The size of a titled sheet whose body is `body`: the body with the title band above it and the
+/// rule and its margin round the rest.
+pub fn titled_size(body: Vec2) -> Vec2 {
+    let edge = RULE_INSET + BODY_INSET;
+    let top = title_top(RULE_INSET + CROSS_MARGIN, CROSS) + TITLE_BAND;
+    Vec2::new(body.x + 2.0 * edge, body.y + top + edge)
+}
+
+/// How far below a sheet's top edge its title band starts: so far that the title stands on the
+/// line through the middle of the close cross, which every closable sheet keeps the same way in
+/// from its corner.
+fn title_top(cross_inset: f32, cross_size: f32) -> f32 {
+    (cross_inset + cross_size / 2.0 - TITLE_BAND / 2.0).max(0.0)
+}
+
 pub const GUTTER: f32 = 16.0;
+/// The room under a strip of tabs, before the page they turn.
+pub const TABS_GAP: f32 = 6.0;
 const BODY_INSET: f32 = 4.0;
 pub const PAGE_MARGIN: f32 = GUTTER - BODY_INSET;
 
@@ -454,7 +476,7 @@ pub struct Tab<T> {
     /// A shut tab keeps its place in the strip, so the tabs beside it never move.
     pub shut_because: Option<String>,
     pub icon: Option<TextureId>,
-    pub keys: Option<String>,
+    pub keys: Option<KeyCap>,
     /// How much waits on the tab, counted on its face however little room it has.
     pub badge: Option<String>,
 }
@@ -480,7 +502,7 @@ pub fn tabs<T: PartialEq + Copy>(
     room: f32,
 ) -> Rect {
     let strip = tabs_inset(ui, size, tabs, active, room, 0.0);
-    ui.add_space(6.0);
+    ui.add_space(TABS_GAP);
     strip
 }
 
@@ -551,7 +573,7 @@ enum TabFit {
 struct TabFace {
     icon: Option<TextureId>,
     label: Option<Arc<Galley>>,
-    cap: Option<Arc<Galley>>,
+    cap: Option<controls::LaidCap>,
     badge: Option<Arc<Galley>>,
 }
 
@@ -559,11 +581,11 @@ impl TabFace {
     fn of<T>(ui: &Ui, size: TabSize, tab: &Tab<T>, color: Color32, fit: TabFit) -> TabFace {
         let lettered = fit != TabFit::IconsAlone || tab.icon.is_none();
         let label = lettered.then(|| ui.painter().layout_job(size.role().job(&tab.label, color)));
-        let keys = tab.keys.as_deref().filter(|_| fit == TabFit::Whole);
+        let keys = tab.keys.as_ref().filter(|_| fit == TabFit::Whole);
         TabFace {
             icon: tab.icon,
             label,
-            cap: keys.map(|keys| controls::key_galley(ui, keys, ink::INK3)),
+            cap: keys.map(|keys| controls::LaidCap::new(ui, keys, ink::INK3)),
             badge: tab.badge.as_ref().map(|count| {
                 let face = TextRole::Small.font_id();
                 ui.painter().layout_no_wrap(count.clone(), face, ink::LIGHT)
@@ -574,7 +596,7 @@ impl TabFace {
     fn parts(&self) -> impl Iterator<Item = Vec2> {
         let icon = self.icon.map(|_| Vec2::splat(TAB_ICON));
         let label = self.label.as_ref().map(|label| label.size());
-        let cap = self.cap.as_ref().map(controls::key_cap_size);
+        let cap = self.cap.as_ref().map(controls::LaidCap::size);
         let badge = self.badge.as_ref().map(badge_size);
         [icon, label, cap, badge].into_iter().flatten()
     }
@@ -583,10 +605,7 @@ impl TabFace {
         let across: f32 = self.parts().map(|part| part.x).sum();
         let gaps = TAB_GAP * self.parts().count().saturating_sub(1) as f32;
         let tall = self.label.as_ref().map_or(TAB_ICON, |label| label.size().y);
-        let tall = self
-            .cap
-            .as_ref()
-            .map_or(tall, |cap| tall.max(controls::key_cap_size(cap).y));
+        let tall = self.cap.as_ref().map_or(tall, |cap| tall.max(cap.size().y));
         Vec2::new(across + gaps, tall) + 2.0 * size.padding()
     }
 }
@@ -676,9 +695,9 @@ fn tab_button<T>(
         left += across + TAB_GAP;
     }
     if let Some(cap) = face.cap {
-        let cap_size = controls::key_cap_size(&cap);
+        let cap_size = cap.size();
         let at = Pos2::new(left, middle - cap_size.y / 2.0);
-        controls::paint_key_cap(painter, Rect::from_min_size(at, cap_size), cap, ink::INK3);
+        cap.paint(painter, Rect::from_min_size(at, cap_size), ink::INK3);
         left += cap_size.x + TAB_GAP;
     }
     if let Some(badge) = face.badge {
@@ -753,6 +772,107 @@ pub fn section_with<R>(ui: &mut Ui, text: &str, actions: impl FnOnce(&mut Ui) ->
     ui.add_space(4.0);
     made
 }
+
+/// Headings over a list's two columns, in the look of a section heading: `start` at the left
+/// edge, `end` ending where the right column ends, and the rule between them. It takes its room
+/// over the list, and is painted once the list has been drawn, which is when where its right
+/// column ends is known.
+pub struct ColumnHeads {
+    rect: Rect,
+    start: Arc<Galley>,
+    end: Arc<Galley>,
+}
+
+impl ColumnHeads {
+    pub fn new(ui: &Ui, start: &str, end: &str) -> ColumnHeads {
+        let painter = ui.painter();
+        ColumnHeads {
+            rect: Rect::NOTHING,
+            start: painter.layout_job(TextRole::Section.job(start, ink::RUBRIC)),
+            end: painter.layout_job(TextRole::Section.job(end, ink::RUBRIC)),
+        }
+    }
+
+    /// How tall the room it takes over the list is.
+    pub fn room(&self, ui: &Ui) -> f32 {
+        self.height() + COLUMN_HEADS_GAP + ui.spacing().item_spacing.y
+    }
+
+    /// Takes its room, where the list is about to start.
+    pub fn place(&mut self, ui: &mut Ui) {
+        let size = Vec2::new(ui.available_width(), self.height());
+        self.rect = ui.allocate_exact_size(size, Sense::hover()).0;
+        ui.add_space(COLUMN_HEADS_GAP);
+    }
+
+    fn height(&self) -> f32 {
+        self.start.size().y.max(self.end.size().y) + 2.0
+    }
+}
+
+const COLUMN_HEADS_GAP: f32 = 4.0;
+
+impl ColumnHeads {
+    /// Paints the headings, the right one ending at `end_x`.
+    pub fn paint(self, ui: &Ui, end_x: f32) {
+        let ColumnHeads { rect, start, end } = self;
+        let y = rect.center().y;
+        let start_at = Pos2::new(rect.min.x, y - start.size().y / 2.0);
+        let end_at = Pos2::new(end_x - end.size().x, y - end.size().y / 2.0);
+        for (at, galley) in [(start_at, &start), (end_at, &end)] {
+            let place = Rect::from_min_size(at, galley.size());
+            let text = galley.text().to_owned();
+            ui.interact(place, ui.id().with(("column head", &text)), Sense::hover())
+                .widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &text));
+        }
+        let from = start_at.x + start.size().x + RULE_GAP;
+        let to = end_at.x - RULE_GAP;
+        if to > from {
+            let middle = Pos2::new((from + to) / 2.0, y + 0.5);
+            let painter = ui.painter();
+            fading_line(painter, Pos2::new(from, y + 0.5), middle, ink::RUBRIC, 1.0);
+            fading_line(painter, Pos2::new(to, y + 0.5), middle, ink::RUBRIC, 1.0);
+        }
+        ui.painter().galley(start_at, start, ink::RUBRIC);
+        ui.painter().galley(end_at, end, ink::RUBRIC);
+    }
+}
+
+/// A heading over a run of a list's rows: a short rule, `text`, and a rule fading out across the
+/// rest of the row.
+pub fn list_heading(ui: &mut Ui, text: &str) {
+    let galley = ui
+        .painter()
+        .layout_job(TextRole::Small.job(text, ink::RUBRIC));
+    let height = galley.size().y + 6.0;
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    let y = rect.center().y + 0.5;
+    let lead_end = rect.min.x + LIST_HEADING_LEAD;
+    let painter = ui.painter();
+    painter.line_segment(
+        [Pos2::new(rect.min.x, y), Pos2::new(lead_end, y)],
+        Stroke::new(1.0, ink::RUBRIC),
+    );
+    let at = Pos2::new(
+        lead_end + RULE_GAP / 2.0,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    let rule_start = at.x + galley.size().x + RULE_GAP / 2.0;
+    painter.galley(at, galley, ink::RUBRIC);
+    if rect.max.x > rule_start {
+        fading_line(
+            painter,
+            Pos2::new(rule_start, y),
+            Pos2::new(rect.max.x, y),
+            ink::RUBRIC,
+            1.0,
+        );
+    }
+}
+
+const LIST_HEADING_LEAD: f32 = 10.0;
 
 pub fn scroll<R>(
     ui: &mut Ui,

@@ -4,7 +4,7 @@
 use bevy_ecs::prelude::*;
 
 use super::ClientId;
-use crate::systems::text::LineText;
+use crate::core::text::LineText;
 
 /// Something to do to the character of `to`, in the world it stands in, and what the world that
 /// asked does once it knows how that went.

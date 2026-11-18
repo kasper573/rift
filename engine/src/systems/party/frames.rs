@@ -9,7 +9,7 @@ use super::{PartyMemberRow, PartyShown};
 use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::hud::{self, HudWidget};
-use crate::systems::mount::{Riding, SeatIndex};
+use crate::systems::messages::{self, Messages};
 use crate::systems::player::{ClientId, PlayedBy, session};
 use crate::systems::settings::UserSettings;
 use crate::systems::social_request::card::time_left;
@@ -43,19 +43,37 @@ impl HudWidget for PartyFramesWidget {
         let others: Vec<&PartyMemberRow> = party
             .members
             .iter()
-            .filter(|member| member.player.account != view.account)
+            .filter(|member| member.character.account != view.account)
             .collect();
         let now = time::server_now(world);
         let folded = world.resource::<Folded>().0;
         let opacity = world.resource::<UserSettings>().tracker_backing();
-        let heading = TrackerHeading {
-            title: "Party",
-            listed: others.len(),
-            lists: "party members",
+        let content = world.resource::<Content>().clone();
+        let messages = messages::of(&content);
+        let words = &messages.party;
+        let title = words.tracker_title_folded(others.len());
+        let heading = if folded {
+            TrackerHeading {
+                title: &title,
+                said: words.tracker_show(),
+            }
+        } else {
+            TrackerHeading {
+                title: words.title(),
+                said: words.tracker_hide(),
+            }
         };
         let shown = tracker::show(ui, heading, folded, opacity.0 / 100.0, |ui, at| {
             others.iter().fold(at.y, |foot, member| {
-                frame(ui, world, party, member, now, Pos2::new(at.x, foot))
+                frame(
+                    ui,
+                    world,
+                    messages,
+                    party,
+                    member,
+                    now,
+                    Pos2::new(at.x, foot),
+                )
             })
         });
         if shown.toggled {
@@ -110,15 +128,14 @@ pub(super) fn character_of(world: &mut World, client: ClientId) -> Option<Entity
 }
 
 /// What `standing` says in words, to whoever reads the interface.
-pub(super) fn said(standing: &Standing, now: Option<UnixMillis>) -> String {
+pub(super) fn said(messages: &Messages, standing: &Standing, now: Option<UnixMillis>) -> String {
+    let words = &messages.party;
     match standing {
-        Standing::Seen { health } => format!("health {:.0}%", health * 100.0),
+        Standing::Seen { health } => words.health_percent((health * 100.0).round()),
         Standing::Elsewhere(area) => area.clone(),
         Standing::Away(leaves_at) => match leaves_at.zip(now) {
-            Some((leaves_at, now)) => {
-                format!("Away · leaves the party in {}", time_left(leaves_at, now))
-            }
-            None => "Away".to_owned(),
+            Some((leaves_at, now)) => words.away_leaves(time_left(&messages.time, leaves_at, now)),
+            None => words.away_stays().to_owned(),
         },
     }
 }
@@ -133,23 +150,23 @@ fn party(world: &World) -> Option<&PartyShown> {
 fn frame(
     ui: &mut Ui,
     world: &mut World,
+    messages: &Messages,
     party: &PartyShown,
     member: &PartyMemberRow,
     now: Option<UnixMillis>,
     at: Pos2,
 ) -> f32 {
     let standing = standing(world, member);
-    let seat = shared_seat(world, member);
-    let id = ui.id().with(("party member", member.player.account));
+    let id = ui.id().with(("party member", member.character.account));
     let top = at.y + tracker::ENTRY_GAP;
     let rows = Pos2::new(at.x + INDENT, top);
     tracker::bullet(ui, Pos2::new(at.x, top));
-    let leads = party.leader == member.player.account;
+    let leads = party.leader == member.character.account;
     let mut foot = TrackerLine {
         at: rows,
         width: WIDTH - INDENT,
         mark: leads.then_some((Mark::Crown, ink::GOLD2)),
-        text: &member.player.name,
+        text: &member.character.name,
         font: Face::BookBold.id(TextRole::Body.size()),
         color: Color32::WHITE,
     }
@@ -171,17 +188,24 @@ fn frame(
         Standing::Seen { health } => {
             health_over_the_world(ui, Pos2::new(rows.x, foot + BAR_GAP), *health).bottom()
         }
-        Standing::Elsewhere(_) => row(ui, foot, &said(&standing, now), TrackerTone::Plain, "at"),
-        Standing::Away(_) => row(ui, foot, &said(&standing, now), TrackerTone::Timed, "at"),
+        Standing::Elsewhere(_) => row(
+            ui,
+            foot,
+            &said(messages, &standing, now),
+            TrackerTone::Plain,
+            "at",
+        ),
+        Standing::Away(_) => row(
+            ui,
+            foot,
+            &said(messages, &standing, now),
+            TrackerTone::Timed,
+            "at",
+        ),
     };
-    if let Some(seat) = seat {
-        let seat = format!("seat {}", seat.0 + 1);
-        foot = row(ui, foot, &seat, TrackerTone::Plain, "seat");
-    }
-    let said = format!(
-        "{}, {}",
-        super::page::named(party, member),
-        said(&standing, now)
+    let said = messages.party.row_named(
+        super::page::named(&messages.party, party, member),
+        said(messages, &standing, now),
     );
     let entry = Rect::from_min_max(Pos2::new(at.x, top), Pos2::new(at.x + WIDTH, foot));
     ui.interact(entry, id, Sense::hover())
@@ -198,16 +222,6 @@ fn health_over_the_world(ui: &Ui, at: Pos2, health: f32) -> Rect {
     let full = Rect::from_min_size(rect.min, Vec2::new(rect.width() * health, rect.height()));
     painter.rect_filled(full, BAR_HEIGHT / 2.0, ink::VERMILION);
     rect
-}
-
-/// The seat `member` holds on the mount the player's character rides, where they ride together.
-fn shared_seat(world: &mut World, member: &PartyMemberRow) -> Option<SeatIndex> {
-    let mine = session::my_character(world)?.get::<Riding>()?.driver;
-    let character = character_of(world, member.client?)?;
-    world
-        .get::<Riding>(character)
-        .filter(|riding| riding.driver == mine)
-        .map(|riding| riding.seat)
 }
 
 const BAR_WIDTH: f32 = 120.0;

@@ -10,11 +10,16 @@ use engine::core::content::{
     Content, ContentFile, ContentScope, fields_file, locate, with_content,
 };
 use engine::core::math::Pos;
+use engine::core::script::Expr;
+use engine::core::script::RunnerKind;
+use engine::core::script::ScriptDef;
+use engine::core::script::ScriptQuery;
 use engine::core::script::VariableType;
 use engine::core::script::{Assignment, Target, ValueType};
+use engine::systems::actor::query::Subject;
+use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef, AreaModule};
 use engine::systems::registry;
-use engine::systems::script::{Condition, Place, RiftQuery, RunnerKind, ScriptDef};
 use serde_json::{Map, Value, json};
 
 use crate::project::{Project, ProjectFiles};
@@ -791,17 +796,17 @@ impl<'a> Nearby<'a> {
     fn assignment(&self) -> Option<Value> {
         let (target, ty) = self.kept?.first()?;
         let to = match ty {
-            ValueType::Boolean => Condition::Bool(false),
-            ValueType::Integer => Condition::Int(0),
-            ValueType::Number => Condition::Num(0.0),
-            ValueType::Text => Condition::Text(String::new()),
-            ValueType::Actor => Condition::Query(RiftQuery::Subject),
+            ValueType::Boolean => Expr::Bool(false),
+            ValueType::Integer => Expr::Int(0),
+            ValueType::Number => Expr::Num(0.0),
+            ValueType::Text => Expr::Text(String::new()),
+            ValueType::Actor => Expr::Query(ScriptQuery::new(Subject {})),
             ValueType::Actors | ValueType::GlobalPlayer | ValueType::Point | ValueType::Area => {
                 match &target {
-                    Target::Local(name) => Condition::Local {
+                    Target::Local(name) => Expr::Local {
                         local: name.clone(),
                     },
-                    Target::State(name) => Condition::State {
+                    Target::State(name) => Expr::State {
                         state: name.clone(),
                     },
                 }
@@ -820,7 +825,7 @@ impl<'a> Nearby<'a> {
         self.nearest(index.paths_of(ScriptDef::TABLE).filter(|path| {
             Some(fields_file(path)) != from
                 && content.by_path::<ScriptDef>(path).is_some_and(|id| {
-                    matches!(scripts.row(id).runs_on, RunnerKind::Any)
+                    matches!(scripts.row(id).runs_on, RunnerKind::ANY)
                         || scripts.row(id).runs_on == kind
                 })
         }))

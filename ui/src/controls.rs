@@ -11,12 +11,17 @@ use egui::{
 
 use crate::face::{Face, TextRole};
 use crate::glyph::{self, Mark};
+use crate::keys::{CapFace, KeyCap};
 use crate::{drag, ink, paint, sheet};
 
 /// Every control stands this tall, so an icon-only button lines up with the text buttons beside it.
 pub const CONTROL_HEIGHT: f32 = 26.0;
+/// How far a row's content stands from its edges.
+pub const ROW_MARGIN: Margin = Margin::symmetric(8, 5);
 pub(crate) const BUTTON_PADDING: Vec2 = Vec2::new(12.0, 4.0);
 pub const RADIUS: f32 = 4.0;
+/// The colour of what holds the keyboard's focus.
+pub const FOCUS: Color32 = ink::GOLD;
 pub const SLOT: f32 = 38.0;
 pub const SLOT_ICON: f32 = 32.0;
 const PILL_HEIGHT: f32 = 20.0;
@@ -25,6 +30,11 @@ const BEAD: f32 = 6.0;
 
 pub fn button(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
     button_look(ui, text.into(), Marked::Not, Look::Outline)
+}
+
+/// A button that may be pressed only while `enabled`.
+pub fn button_if(ui: &mut Ui, enabled: bool, text: impl Into<WidgetText>) -> Response {
+    ui.add_enabled_ui(enabled, |ui| button(ui, text)).inner
 }
 
 pub fn primary(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
@@ -120,7 +130,8 @@ pub fn form(ui: &mut Ui, id_salt: impl egui::AsIdSalt, add: impl FnOnce(&mut Ui)
         .show(ui, add);
 }
 
-pub fn toggle(ui: &mut Ui, name: &str, on: &mut bool) -> Response {
+/// A checkbox reading `name` beside it, either of them switching it.
+pub fn toggle(ui: &mut Ui, name: impl Into<WidgetText>, on: &mut bool) -> Response {
     let label = ui.add(egui::Label::new(name).sense(Sense::click()));
     let tick = ui
         .add(egui::Checkbox::without_text(on))
@@ -133,50 +144,238 @@ pub fn toggle(ui: &mut Ui, name: &str, on: &mut bool) -> Response {
     row
 }
 
+/// A checkbox with no words beside it.
+pub fn tick(ui: &mut Ui, on: &mut bool) -> Response {
+    ui.add(egui::Checkbox::without_text(on))
+}
+
+/// A checkbox with no words beside it that shows, by a dash, that what it stands for is only
+/// partly on.
+pub fn tick_mixed(ui: &mut Ui, on: &mut bool, mixed: bool) -> Response {
+    ui.add(egui::Checkbox::without_text(on).indeterminate(mixed))
+}
+
+/// A checkbox with `name` after it, as a choice in a list or a menu reads.
+pub fn check(ui: &mut Ui, on: &mut bool, name: impl Into<WidgetText>) -> Response {
+    ui.checkbox(on, name)
+}
+
 /// As wide as the longest label a form holds, so the fields of every form on a page line up.
 pub const FORM_LABELS: f32 = 196.0;
 pub const FORM_SPACING: Vec2 = Vec2::new(16.0, 8.0);
 
-pub fn combo(id_salt: impl egui::AsIdSalt) -> egui::ComboBox {
-    egui::ComboBox::from_id_salt(id_salt)
-        .popup_style(egui::style::StyleModifier::from(
-            crate::popup_style as fn(&mut egui::Style),
-        ))
-        .icon(|ui, rect, visuals, _open| {
-            Mark::CaretDown.paint(ui.painter(), rect, visuals.fg_stroke.color);
-        })
+/// A dropdown whose list is whatever its `show_ui` closure draws. Its button is the one every
+/// dropdown has: [`CONTROL_HEIGHT`] tall, whatever it shows, so dropdowns side by side line up.
+pub fn combo(id_salt: impl egui::AsIdSalt) -> Combo {
+    Combo {
+        id: egui::Id::new(id_salt),
+        text: WidgetText::default(),
+        width: None,
+        truncate: false,
+    }
 }
 
-/// A combo of `width` showing `selected`, whose rows `rows` draws for the filter typed above them,
-/// and returns whether one was picked, which closes it.
-pub fn filtered_combo(
-    ui: &mut Ui,
-    id: impl std::hash::Hash + std::fmt::Debug + Copy,
-    selected: impl Into<WidgetText>,
-    width: f32,
-    hint: &str,
-    rows: impl FnOnce(&mut Ui, &str) -> bool,
-) {
-    let filter_id = ui.make_persistent_id((&id, "filter"));
-    combo(id)
-        .selected_text(selected)
-        .width(width)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show_ui(ui, |ui| {
-            let mut filter: String = ui
-                .data_mut(|data| data.get_temp(filter_id))
-                .unwrap_or_default();
-            ui.add(
-                egui::TextEdit::singleline(&mut filter)
-                    .hint_text(hint)
-                    .desired_width(width - 20.0),
-            )
-            .request_focus();
-            ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
-            if rows(ui, &filter) {
-                ui.close();
-            }
+pub struct Combo {
+    id: egui::Id,
+    text: WidgetText,
+    width: Option<f32>,
+    truncate: bool,
+}
+
+impl Combo {
+    /// What the button shows.
+    pub fn selected_text(mut self, text: impl Into<WidgetText>) -> Combo {
+        self.text = text.into();
+        self
+    }
+
+    /// The button's least width; it grows to hold its text.
+    pub fn width(mut self, width: f32) -> Combo {
+        self.width = Some(width);
+        self
+    }
+
+    /// Keeps the button `width` wide, cutting its text short where it doesn't fit.
+    pub fn truncate(mut self) -> Combo {
+        self.truncate = true;
+        self
+    }
+
+    /// Draws the button, and under it, while it is open, the list `list` draws.
+    pub fn show_ui<R>(
+        self,
+        ui: &mut Ui,
+        list: impl FnOnce(&mut Ui) -> R,
+    ) -> InnerResponse<Option<R>> {
+        let id = ui.make_persistent_id(self.id);
+        let popup = id.with("popup");
+        let open = egui::Popup::is_id_open(ui.ctx(), popup);
+        let padding = ui.spacing().button_padding;
+        let caret = ui.spacing().icon_spacing + ui.spacing().icon_width;
+        let least = self.width.unwrap_or(ui.spacing().combo_width);
+        let wrap = if self.truncate {
+            egui::TextWrapMode::Truncate
+        } else {
+            egui::TextWrapMode::Extend
+        };
+        let room = if self.truncate {
+            least - 2.0 * padding.x - caret
+        } else {
+            f32::INFINITY
+        };
+        let text = self.text.clone();
+        let galley = text.into_galley(ui, Some(wrap), room, egui::TextStyle::Button);
+        let width = if self.truncate {
+            least
+        } else {
+            (galley.size().x + 2.0 * padding.x + caret).max(least)
+        };
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, CONTROL_HEIGHT), Sense::click());
+        response.widget_info(|| {
+            let mut info = WidgetInfo::new(WidgetType::ComboBox);
+            info.enabled = ui.is_enabled();
+            info.current_text_value = Some(self.text.text().to_owned());
+            info
         });
+        if ui.is_rect_visible(rect) {
+            let visuals = if open {
+                ui.visuals().widgets.open
+            } else {
+                *ui.style().interact(&response)
+            };
+            let shown = paint_combo_button(ui, rect, &visuals, false);
+            let at = Align2::LEFT_CENTER.align_size_within_rect(galley.size(), shown);
+            ui.painter()
+                .with_clip_rect(inside_stroke(rect, &visuals))
+                .galley(at.min, galley, visuals.text_color());
+        }
+        let list = egui::Popup::menu(&response)
+            .id(popup)
+            .width(rect.width())
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+            .style(egui::style::StyleModifier::from(
+                crate::popup_style as fn(&mut egui::Style),
+            ))
+            .show(|ui| {
+                ui.set_min_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .max_height(ui.spacing().combo_height)
+                    .show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        list(ui)
+                    })
+                    .inner
+            })
+            .map(|shown| shown.inner);
+        InnerResponse {
+            inner: list,
+            response,
+        }
+    }
+}
+
+/// The choices of a [`drawn_combo`]: each shows as more than words, and runs of them may stand
+/// under a heading in the list it opens.
+pub trait DrawnChoices {
+    fn count(&self) -> usize;
+    /// The choice at `place` in words, for a screen reader.
+    fn name(&self, place: usize) -> String;
+    /// The heading over the run of choices that starts at `place`, where one starts there.
+    fn heading(&self, _place: usize) -> Option<String> {
+        None
+    }
+    /// How wide the widest choice is drawn in `part`.
+    fn widest(&self, ui: &Ui, part: ComboPart) -> f32;
+    fn draw(&self, ui: &mut Ui, place: usize, part: ComboPart);
+}
+
+/// Where a [`DrawnChoices`] draws a choice: on the combo's button, or as a row of its list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComboPart {
+    Button,
+    List,
+}
+
+/// What a drawn combo answers: its button, and the place of the choice picked.
+pub struct DrawnCombo {
+    pub response: Response,
+    pub picked: Option<usize>,
+}
+
+/// What a [`search_combo`] says in words: what its field invites before a choice is made or as it
+/// is typed in, and what its list says when nothing it holds matches what was typed.
+#[derive(Clone, Copy, Debug)]
+pub struct SearchWords<'a> {
+    pub hint: &'a str,
+    pub none_found: &'a str,
+}
+
+/// Choices that show as their names alone.
+pub struct NamedChoices<'a>(pub &'a [String]);
+
+impl DrawnChoices for NamedChoices<'_> {
+    fn count(&self) -> usize {
+        self.0.len()
+    }
+
+    fn name(&self, place: usize) -> String {
+        self.0.get(place).cloned().unwrap_or_default()
+    }
+
+    fn widest(&self, ui: &Ui, _part: ComboPart) -> f32 {
+        self.0
+            .iter()
+            .map(|name| {
+                ui.painter()
+                    .layout_no_wrap(
+                        name.clone(),
+                        egui::TextStyle::Body.resolve(ui.style()),
+                        ink::INK,
+                    )
+                    .size()
+                    .x
+            })
+            .fold(0.0, f32::max)
+    }
+
+    fn draw(&self, ui: &mut Ui, place: usize, _part: ComboPart) {
+        if let Some(name) = self.0.get(place) {
+            ui.add(
+                egui::Label::new(name.as_str())
+                    .truncate()
+                    .show_tooltip_when_elided(false),
+            );
+        }
+    }
+}
+
+/// A combo over `choices`, as wide as the widest of them on its button, whose list is as wide as
+/// its widest row so no choice wraps.
+pub fn drawn_combo(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    choices: &dyn DrawnChoices,
+    selected: usize,
+) -> DrawnCombo {
+    let width = combo_width(ui, choices);
+    shown_combo(ui, id_salt, choices, Some(selected), None, width)
+}
+
+/// A combo box over `choices`: a select whose list can be scrolled through and picked from, or
+/// narrowed by typing, as it takes what is typed the moment it opens. The arrow keys move along
+/// what is listed and Enter picks it. `width` wide, or as wide as its widest choice without one;
+/// `selected` is shown on it, or its hint while nothing is.
+pub fn search_combo(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    choices: &dyn DrawnChoices,
+    selected: Option<usize>,
+    words: SearchWords,
+    width: Option<f32>,
+) -> DrawnCombo {
+    let width = width.unwrap_or_else(|| combo_width(ui, choices));
+    shown_combo(ui, id_salt, choices, selected, Some(words), width)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -224,7 +423,7 @@ pub fn pill_with<R>(
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 3.0;
-                    ui.style_mut().override_font_id = Some(Face::BookBold.id(12.0));
+                    ui.style_mut().override_font_id = Some(TextRole::Pill.font_id());
                     ui.visuals_mut().override_text_color = Some(color);
                     add(ui)
                 })
@@ -276,15 +475,16 @@ pub fn notice(ui: &mut Ui, text: &str) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-pub fn key_hint(ui: &mut Ui, keys: &str) -> Response {
-    let galley = key_galley(ui, keys, ink::INK3);
-    let (rect, response) = ui.allocate_exact_size(key_cap_size(&galley), Sense::hover());
-    paint_key_cap(ui.painter(), rect, galley, ink::INK3);
-    response
+pub fn key_hint(ui: &mut Ui, cap: &KeyCap) -> Response {
+    let laid = LaidCap::new(ui, cap, ink::INK3);
+    let (rect, response) = ui.allocate_exact_size(laid.size(), Sense::hover());
+    laid.paint(ui.painter(), rect, ink::INK3);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &cap.name));
+    response.on_hover_text(&cap.name)
 }
 
 /// `text` after the `keys` that do it.
-pub fn key_hint_text(ui: &mut Ui, keys: &str, text: &str) {
+pub fn key_hint_text(ui: &mut Ui, keys: &KeyCap, text: &str) {
     ui.horizontal(|ui| {
         key_hint(ui, keys);
         ui.label(TextRole::Body.rich(text).color(ink::INK2));
@@ -293,7 +493,7 @@ pub fn key_hint_text(ui: &mut Ui, keys: &str, text: &str) {
 
 #[derive(Clone, Copy)]
 pub struct KeyHint<'a> {
-    pub keys: &'a str,
+    pub keys: &'a KeyCap,
     pub does: &'a str,
 }
 
@@ -339,7 +539,7 @@ fn key_hint_small(ui: &mut Ui, hint: KeyHint) {
 }
 
 fn hint_width(ui: &Ui, hint: &KeyHint) -> f32 {
-    let cap = key_cap_size(&key_galley(ui, hint.keys, ink::INK3)).x;
+    let cap = LaidCap::new(ui, hint.keys, ink::INK3).size().x;
     let does = ui
         .painter()
         .layout_no_wrap(hint.does.to_owned(), TextRole::Small.font_id(), ink::INK2)
@@ -349,13 +549,13 @@ fn hint_width(ui: &Ui, hint: &KeyHint) -> f32 {
 }
 
 /// A button reading `label`, the `keys` that press it too on a cap beside it.
-pub fn keyed(ui: &mut Ui, label: &str, keys: Option<&str>, enabled: bool) -> Response {
+pub fn keyed(ui: &mut Ui, label: &str, keys: Option<&KeyCap>, enabled: bool) -> Response {
     let ink = if enabled { ink::INK } else { ink::INK3 };
     let text = ui
         .painter()
         .layout_no_wrap(label.to_owned(), Face::BookMedium.id(14.0), ink);
-    let cap = keys.map(|keys| key_galley(ui, keys, if enabled { ink::INK2 } else { ink::INK3 }));
-    let cap_size = cap.as_ref().map(key_cap_size);
+    let cap = keys.map(|keys| LaidCap::new(ui, keys, if enabled { ink::INK2 } else { ink::INK3 }));
+    let cap_size = cap.as_ref().map(LaidCap::size);
     let width =
         text.size().x + cap_size.map_or(0.0, |size| size.x + KEYED_GAP) + 2.0 * BUTTON_PADDING.x;
     let sense = if enabled {
@@ -391,7 +591,7 @@ pub fn keyed(ui: &mut Ui, label: &str, keys: Option<&str>, enabled: bool) -> Res
             rect.center().y - size.y / 2.0,
         );
         let color = if enabled { ink::INK2 } else { ink::INK3 };
-        paint_key_cap(painter, Rect::from_min_size(at, size), cap, color);
+        cap.paint(painter, Rect::from_min_size(at, size), color);
     }
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -524,7 +724,7 @@ pub fn row<R>(ui: &mut Ui, look: RowLook, add: impl FnOnce(&mut Ui) -> R) -> Inn
             ui.visuals_mut().override_text_color = Some(ink::INK3);
         }
         egui::Frame::new()
-            .inner_margin(Margin::symmetric(8, 5))
+            .inner_margin(ROW_MARGIN)
             .show(ui, add)
             .inner
     });
@@ -646,12 +846,13 @@ pub fn slot_lozenge(painter: &Painter, rect: Rect) {
     ));
 }
 
+/// Marks what holds the keyboard's focus along its own edge, so focus never needs room beside it.
 pub fn focus_ring(painter: &Painter, rect: Rect, corner_radius: impl Into<CornerRadius>) {
     painter.rect_stroke(
-        rect.expand(2.0),
+        rect,
         corner_radius,
-        Stroke::new(2.0, ink::GOLD),
-        StrokeKind::Outside,
+        Stroke::new(2.0, FOCUS),
+        StrokeKind::Inside,
     );
 }
 
@@ -849,10 +1050,6 @@ fn perimeter(rect: Rect, steps: usize) -> Vec<Pos2> {
 
 const KEYED_GAP: f32 = 8.0;
 
-pub(crate) fn key_galley(ui: &Ui, keys: &str, color: Color32) -> Arc<egui::Galley> {
-    ui.painter().layout_job(TextRole::KeyHint.job(keys, color))
-}
-
 fn stepped_slider(ui: &mut Ui, value: &mut f32, range: RangeInclusive<f32>, step: f32) -> Response {
     let width = ui.spacing().slider_width;
     let (rect, mut response) =
@@ -914,21 +1111,369 @@ fn rounded_to(value: f32, step: f32) -> f32 {
     (value * scale).round() / scale
 }
 
-pub(crate) fn key_cap_size(galley: &Arc<egui::Galley>) -> Vec2 {
-    galley.size() + Vec2::new(5.0, 1.0) * 2.0 + Vec2::splat(2.0)
+/// A key cap laid out to paint: a cap for each modifier held, joined by "+", then its face.
+pub(crate) struct LaidCap {
+    parts: Vec<CapPart>,
 }
 
-pub(crate) fn paint_key_cap(
-    painter: &Painter,
+enum CapPart {
+    Cap(Arc<egui::Galley>),
+    Join(Arc<egui::Galley>),
+}
+
+impl LaidCap {
+    pub(crate) fn new(ui: &Ui, cap: &KeyCap, color: Color32) -> LaidCap {
+        let painter = ui.painter();
+        let mut parts = Vec::new();
+        for face in cap.faces() {
+            if !parts.is_empty() {
+                let join = painter.layout_job(TextRole::KeyHint.job("+", color));
+                parts.push(CapPart::Join(join));
+            }
+            parts.push(CapPart::Cap(painter.layout_job(face_job(&face, color))));
+        }
+        LaidCap { parts }
+    }
+
+    pub(crate) fn size(&self) -> Vec2 {
+        let sizes = self.parts.iter().map(CapPart::size);
+        let gaps = CAP_JOIN_GAP * self.parts.len().saturating_sub(1) as f32;
+        sizes.fold(Vec2::new(gaps, 0.0), |sum, size| {
+            Vec2::new(sum.x + size.x, sum.y.max(size.y))
+        })
+    }
+
+    pub(crate) fn paint(self, painter: &Painter, rect: Rect, color: Color32) {
+        let mut left = rect.min.x;
+        for part in self.parts {
+            let size = part.size();
+            let at = Rect::from_min_size(Pos2::new(left, rect.center().y - size.y / 2.0), size);
+            match part {
+                CapPart::Cap(galley) => {
+                    painter.rect_stroke(
+                        at,
+                        3.0,
+                        Stroke::new(1.0, ink::ink_wash(0.5)),
+                        StrokeKind::Inside,
+                    );
+                    painter.galley(at.center() - galley.size() / 2.0, galley, color);
+                }
+                CapPart::Join(galley) => {
+                    painter.galley(at.min, galley, color);
+                }
+            }
+            left += size.x + CAP_JOIN_GAP;
+        }
+    }
+}
+
+impl CapPart {
+    fn size(&self) -> Vec2 {
+        match self {
+            CapPart::Cap(galley) => galley.size() + Vec2::new(5.0, 1.0) * 2.0 + Vec2::splat(2.0),
+            CapPart::Join(galley) => galley.size(),
+        }
+    }
+}
+
+const CAP_JOIN_GAP: f32 = 3.0;
+
+fn face_job(face: &CapFace, color: Color32) -> egui::text::LayoutJob {
+    let letters = TextRole::KeyHint.format(color);
+    let mut job = egui::text::LayoutJob::default();
+    for run in face.runs() {
+        let glyph = run.scale != 1.0;
+        let format = egui::TextFormat {
+            font_id: egui::FontId::new(letters.font_id.size * run.scale, run.family),
+            valign: Align::Center,
+            line_height: if glyph { None } else { letters.line_height },
+            extra_letter_spacing: if glyph {
+                0.0
+            } else {
+                letters.extra_letter_spacing
+            },
+            ..letters.clone()
+        };
+        job.append(&run.text, 0.0, format);
+    }
+    job
+}
+
+fn combo_width(ui: &Ui, choices: &dyn DrawnChoices) -> f32 {
+    let padding = ui.spacing().button_padding;
+    let caret = ui.spacing().icon_spacing + ui.spacing().icon_width;
+    choices.widest(ui, ComboPart::Button) + 2.0 * padding.x + caret
+}
+
+/// Paints a combo's button frame and caret at `rect`, and answers the room left for what it shows.
+fn paint_combo_button(
+    ui: &Ui,
     rect: Rect,
-    galley: Arc<egui::Galley>,
-    color: Color32,
-) {
-    painter.rect_stroke(
+    visuals: &egui::style::WidgetVisuals,
+    typing: bool,
+) -> Rect {
+    let (fill, stroke) = if typing {
+        (crate::theme::INPUT, Stroke::new(1.0, FOCUS))
+    } else {
+        (visuals.weak_bg_fill, visuals.bg_stroke)
+    };
+    ui.painter().rect(
         rect,
-        3.0,
-        Stroke::new(1.0, ink::ink_wash(0.5)),
+        visuals.corner_radius,
+        fill,
+        stroke,
         StrokeKind::Inside,
     );
-    painter.galley(rect.center() - galley.size() / 2.0, galley, color);
+    let inner = combo_content(rect, ui.spacing().button_padding);
+    let caret =
+        Align2::RIGHT_CENTER.align_size_within_rect(Vec2::splat(ui.spacing().icon_width), inner);
+    Mark::CaretDown.paint(ui.painter(), caret, visuals.fg_stroke.color);
+    Rect::from_min_max(
+        inner.min,
+        Pos2::new(caret.min.x - ui.spacing().icon_spacing, inner.max.y),
+    )
+}
+
+/// The room a combo's button or list row leaves for what it draws: all of the control's fixed
+/// height but a hairline, so what is drawn taller than a line of text stays inside the control
+/// and centred in it.
+fn combo_content(rect: Rect, padding: Vec2) -> Rect {
+    rect.shrink2(Vec2::new(padding.x, 1.0))
+}
+
+/// What a combo box keeps between frames while its list is open: what was typed, and the row
+/// lit for the keys to pick.
+#[derive(Clone, Default)]
+struct ComboState {
+    open: bool,
+    typed: String,
+    lit: Option<usize>,
+}
+
+fn shown_combo(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    choices: &dyn DrawnChoices,
+    selected: Option<usize>,
+    search: Option<SearchWords>,
+    width: f32,
+) -> DrawnCombo {
+    let padding = ui.spacing().button_padding;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, CONTROL_HEIGHT), Sense::click());
+    let id = ui.make_persistent_id(id_salt);
+    let mut state: ComboState = ui.data(|data| data.get_temp(id)).unwrap_or_default();
+    let keyed_open = response.has_focus()
+        && ui.input(|input| input.key_pressed(Key::Enter) || input.key_pressed(Key::ArrowDown));
+    if (response.clicked() || keyed_open) && !state.open {
+        state = ComboState {
+            open: true,
+            typed: String::new(),
+            lit: selected,
+        };
+    } else if response.clicked() {
+        state.open = false;
+    }
+    response.widget_info(|| {
+        let mut info = WidgetInfo::new(WidgetType::ComboBox);
+        info.enabled = ui.is_enabled();
+        info.current_text_value = selected.map(|place| choices.name(place));
+        info
+    });
+    let listed = shown_places(choices, &state.typed);
+    let mut picked = None;
+    let mut keyed = false;
+    if state.open {
+        let moved = ui.input_mut(|input| {
+            let down = input.consume_key(egui::Modifiers::NONE, Key::ArrowDown);
+            let up = input.consume_key(egui::Modifiers::NONE, Key::ArrowUp);
+            let enter = input.consume_key(egui::Modifiers::NONE, Key::Enter);
+            let escape = input.consume_key(egui::Modifiers::NONE, Key::Escape);
+            (down, up, enter, escape)
+        });
+        let (down, up, enter, escape) = moved;
+        let at = state
+            .lit
+            .and_then(|lit| listed.iter().position(|&place| place == lit));
+        if down || up {
+            keyed = true;
+            let next = match (at, down) {
+                (None, _) => 0,
+                (Some(at), true) => (at + 1).min(listed.len().saturating_sub(1)),
+                (Some(at), false) => at.saturating_sub(1),
+            };
+            state.lit = listed.get(next).copied();
+        } else if at.is_none() {
+            state.lit = listed.first().copied();
+        }
+        if enter {
+            picked = state.lit.filter(|lit| listed.contains(lit));
+        }
+        if escape {
+            state.open = false;
+            response.request_focus();
+        }
+    }
+    let typing = state.open && search.is_some();
+    if ui.is_rect_visible(rect) {
+        let visuals = if state.open {
+            ui.visuals().widgets.open
+        } else {
+            *ui.style().interact(&response)
+        };
+        let shown = paint_combo_button(ui, rect, &visuals, typing);
+        let room = UiBuilder::new()
+            .max_rect(shown)
+            .layout(Layout::left_to_right(Align::Center));
+        let mut room = ui.new_child(room);
+        room.shrink_clip_rect(inside_stroke(rect, &visuals));
+        match (typing, search, selected) {
+            (true, Some(words), _) => {
+                let invite =
+                    selected.map_or_else(|| words.hint.to_owned(), |place| choices.name(place));
+                let typed = room.add(
+                    egui::TextEdit::singleline(&mut state.typed)
+                        .id(id.with("typed"))
+                        .frame(egui::Frame::NONE)
+                        .margin(Margin::ZERO)
+                        .hint_text(crate::theme::muted(&invite))
+                        .desired_width(f32::INFINITY),
+                );
+                typed.request_focus();
+            }
+            (_, _, Some(place)) => choices.draw(&mut room, place, ComboPart::Button),
+            (_, Some(words), None) => {
+                room.label(crate::theme::muted(words.hint));
+            }
+            (_, None, None) => {}
+        }
+    }
+    if state.open && picked.is_none() {
+        let row_width = choices.widest(ui, ComboPart::List) + 2.0 * padding.x;
+        let list_width = row_width.max(width - ui.spacing().menu_margin.sum().x)
+            + ui.spacing().scroll.allocated_width();
+        let shown = egui::Popup::menu(&response)
+            .id(id.with("list"))
+            .open(true)
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+            .width(list_width + ui.spacing().menu_margin.sum().x)
+            .style(egui::style::StyleModifier::from(
+                crate::popup_style as fn(&mut egui::Style),
+            ))
+            .show(|ui| {
+                ui.set_min_width(list_width);
+                egui::ScrollArea::vertical()
+                    .max_height(ui.spacing().combo_height)
+                    .show(ui, |ui| {
+                        list_rows(
+                            ui, choices, &listed, selected, &mut state, keyed, row_width, search,
+                        )
+                    })
+                    .inner
+            });
+        if let Some(shown) = shown {
+            picked = shown.inner;
+            let pressed_outside = ui.input(|input| {
+                input.pointer.any_pressed()
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|at| !shown.response.rect.contains(at) && !rect.contains(at))
+            });
+            if pressed_outside {
+                state.open = false;
+            }
+        }
+    }
+    if picked.is_some() {
+        state.open = false;
+        response.request_focus();
+    }
+    if !state.open {
+        state.typed.clear();
+    }
+    ui.data_mut(|data| data.insert_temp(id, state));
+    DrawnCombo { response, picked }
+}
+
+/// The places of the choices whose names hold what was typed, ignoring case: every one while
+/// nothing is typed.
+fn shown_places(choices: &dyn DrawnChoices, typed: &str) -> Vec<usize> {
+    let typed = typed.trim().to_lowercase();
+    (0..choices.count())
+        .filter(|&place| typed.is_empty() || choices.name(place).to_lowercase().contains(&typed))
+        .collect()
+}
+
+/// The rows of a combo box's list: the choices `listed`, each run under its heading, the row lit
+/// as the pointer or the keys last left it. Answers the place clicked.
+#[allow(clippy::too_many_arguments)]
+fn list_rows(
+    ui: &mut Ui,
+    choices: &dyn DrawnChoices,
+    listed: &[usize],
+    selected: Option<usize>,
+    state: &mut ComboState,
+    keyed: bool,
+    row_width: f32,
+    search: Option<SearchWords>,
+) -> Option<usize> {
+    let padding = ui.spacing().button_padding;
+    let row_width = ui.available_width().max(row_width);
+    let mut picked = None;
+    if listed.is_empty()
+        && let Some(words) = search
+    {
+        ui.add_sized(
+            Vec2::new(row_width, CONTROL_HEIGHT),
+            egui::Label::new(crate::theme::muted(words.none_found)),
+        );
+    }
+    let mut heading: Option<String> = None;
+    let mut next = 0;
+    for &place in listed {
+        while next <= place {
+            if let Some(starts) = choices.heading(next) {
+                heading = Some(starts);
+            }
+            next += 1;
+        }
+        if let Some(heading) = heading.take() {
+            sheet::list_heading(ui, &heading);
+        }
+        let (row, chosen) =
+            ui.allocate_exact_size(Vec2::new(row_width, CONTROL_HEIGHT), Sense::click());
+        chosen.widget_info(|| {
+            WidgetInfo::selected(
+                WidgetType::SelectableLabel,
+                true,
+                Some(place) == selected,
+                choices.name(place),
+            )
+        });
+        if chosen.hovered() && ui.input(|input| input.pointer.delta() != Vec2::ZERO) {
+            state.lit = Some(place);
+        }
+        let lit = state.lit == Some(place);
+        if lit && keyed {
+            chosen.scroll_to_me(None);
+        }
+        ui.painter()
+            .add(row_marks(row, lit, Some(place) == selected));
+        let room = UiBuilder::new()
+            .max_rect(combo_content(row, padding))
+            .layout(Layout::left_to_right(Align::Center));
+        let mut room = ui.new_child(room);
+        room.shrink_clip_rect(row);
+        choices.draw(&mut room, place, ComboPart::List);
+        if chosen.clicked() {
+            picked = Some(place);
+        }
+    }
+    picked
+}
+
+/// The part of a combo's button within its border, which what the button shows is kept to so
+/// it never draws over the border.
+fn inside_stroke(rect: Rect, visuals: &egui::style::WidgetVisuals) -> Rect {
+    rect.shrink(visuals.bg_stroke.width.max(1.0))
 }

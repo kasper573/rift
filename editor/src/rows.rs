@@ -13,13 +13,15 @@ use engine::core::content::{
     ContentFile, FolderReader, MODULES, ModuleRule, NOTE_EXTENSION, PartSpec, fields_file, name_of,
     parent_of, table_of, valid_name,
 };
-use engine::core::script::RunnerKindDef;
+use engine::core::script::ListedScriptModule;
+use engine::core::script::Node;
+use engine::core::script::ScriptDef;
+use engine::core::script::ScriptId;
+use engine::core::script::ScriptModule;
+use engine::core::script::{RunnerKind, Vocabulary};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::scene::SCENE_FILE;
 use engine::systems::registry;
-use engine::systems::script::{
-    ListedScriptModule, Node, RunnerKind, ScriptDef, ScriptId, ScriptModule,
-};
 use serde_json::Value;
 use ui::egui::Ui;
 
@@ -185,9 +187,9 @@ pub(crate) fn new_file_into(
 /// its kind, as one step: what adding a script module takes when no script runs on its kind yet.
 pub fn new_script_module(editor: &mut Editor, table: &str, key: &str) -> Result<String, String> {
     let project = editor.project.as_ref().ok_or("no folder is open")?;
-    let runs_on: RunnerKind = table
-        .parse()
-        .map_err(|_| format!("a {table} runs no scripts"))?;
+    let runs_on = Vocabulary::get()
+        .runner_named(table)
+        .ok_or_else(|| format!("a {table} runs no scripts"))?;
     let file = fields_file(key);
     let row = project
         .files

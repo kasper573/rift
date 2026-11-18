@@ -1,25 +1,27 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Fixture;
 use engine::core::math::{Offset, Pos};
+use engine::core::script::DialogueCamera;
+use engine::core::script::EventKind;
+use engine::core::script::Instances;
 use engine::core::script::Value as Recalled;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters, Radians};
 use engine::systems::actor::render::RenderActor;
 use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
-use engine::systems::dialogue::camera::DialogueCamera;
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
+use engine::systems::interact::Interacted;
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, moving, position};
 use engine::systems::player::commands_locked;
 use engine::systems::player::session::MyCharacter;
 use engine::systems::region;
-use engine::systems::script::{self, EventKind, RiftInstances};
 use engine::systems::stat::{self, Immortal, StatKind};
 use engine::systems::{combat, npc};
 use serde_json::{Value, json};
-use testkit::{BODY, Game, Map, Sim, lines};
+use testkit::{BODY, Game, Map, Sim};
 
 #[test]
 fn a_conversation_reaches_the_client_as_the_world_holds_it() {
@@ -81,7 +83,7 @@ fn whoever_else_says_a_line_turns_to_the_player_while_it_shows() {
         conn,
         ConversationRequest::Pick {
             step: opened.step,
-            choice: choice(&opened, "Buy a round for the room."),
+            choice: choice(&sim, &opened, "Buy a round for the room."),
         },
     );
     sim.run(0.5);
@@ -109,7 +111,7 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
 
     let opened = sim.talk(1, "keeper");
 
-    assert_eq!(lines(&opened), vec!["Welcome in.".to_owned()]);
+    assert_eq!(sim.lines(&opened), vec!["Welcome in.".to_owned()]);
     assert_eq!(opened.with, Some(keeper));
     // A step under way when the greeting opens still ends on its tile, and the stance settles
     // the tick after.
@@ -185,7 +187,7 @@ fn a_pick_answers_its_step_once() {
     let opened = sim.talk(1, "keeper");
     let round = ConversationRequest::Pick {
         step: opened.step,
-        choice: choice(&opened, "Buy a round for the room."),
+        choice: choice(&sim, &opened, "Buy a round for the room."),
     };
 
     let conn = sim.conn(1);
@@ -196,7 +198,7 @@ fn a_pick_answers_its_step_once() {
     assert_eq!(sim.count(player, "gold"), 20);
     let now = sim.conversation(1).expect("still talking");
     assert_eq!(
-        lines(&now),
+        sim.lines(&now),
         vec!["Cheers!".to_owned(), "Hear, hear!".to_owned()]
     );
     assert_eq!(favour(&sim, player), Recalled::Int(1));
@@ -211,7 +213,7 @@ fn a_choice_that_costs_too_much_changes_nothing() {
     let mut sim = inn();
     let player = sim.join(1);
     let opened = sim.talk(1, "keeper");
-    let index = choice(&opened, "Buy a round for the room.");
+    let index = choice(&sim, &opened, "Buy a round for the room.");
     assert!(!opened.choices[index as usize].locked);
 
     let conn = sim.conn(1);
@@ -225,9 +227,9 @@ fn a_choice_that_costs_too_much_changes_nothing() {
     sim.tick();
 
     let now = sim.conversation(1).expect("still talking");
-    assert_eq!(lines(&now), vec!["Welcome in.".to_owned()]);
+    assert_eq!(sim.lines(&now), vec!["Welcome in.".to_owned()]);
     assert_eq!(now.refused.map(|refused| refused.choice), Some(index));
-    assert_eq!(sim.errors(1), vec!["Needs 10 more Gold".to_owned()]);
+    assert_eq!(sim.errors(1), vec!["Needs 10 Gold more".to_owned()]);
     assert_eq!(favour(&sim, player), Recalled::Int(0));
 }
 
@@ -289,10 +291,11 @@ fn a_conversation_an_npc_starts_replaces_the_one_in_progress() {
     sim.talk(1, "keeper");
 
     let crier = sim.npc("crier");
-    let owner = script::owner_of(&sim.world, crier).expect("the crier runs scripts");
-    sim.world.resource_mut::<RiftInstances>().raise(
+    let owner =
+        engine::systems::area::script::owner_of(&sim.world, crier).expect("the crier runs scripts");
+    sim.world.resource_mut::<Instances>().raise(
         owner,
-        EventKind::Interacted,
+        EventKind::of::<Interacted>(),
         Some(player),
         Vec::new(),
         |_| true,
@@ -302,7 +305,10 @@ fn a_conversation_an_npc_starts_replaces_the_one_in_progress() {
     let opened = sim.conversation(1).expect("talking");
     assert_eq!(opened.with, Some(crier));
     assert_ne!(opened.with, Some(keeper));
-    assert_eq!(lines(&opened), vec!["The crier tips his hat.".to_owned()]);
+    assert_eq!(
+        sim.lines(&opened),
+        vec!["The crier tips his hat.".to_owned()]
+    );
 }
 
 #[test]
@@ -310,7 +316,10 @@ fn news_called_out_waits_until_you_are_free() {
     let mut sim = inn();
     let player = sim.join(1);
     let opened = sim.talk(1, "crier");
-    assert_eq!(lines(&opened), vec!["The crier tips his hat.".to_owned()]);
+    assert_eq!(
+        sim.lines(&opened),
+        vec!["The crier tips his hat.".to_owned()]
+    );
 
     sim.run(1.0);
     assert_eq!(sim.conversation(1).map(|now| now.step), Some(opened.step));
@@ -322,7 +331,7 @@ fn news_called_out_waits_until_you_are_free() {
             .is_some_and(|now| now.step != opened.step)
     }));
     let news = sim.conversation(1).expect("the crier's news");
-    assert_eq!(lines(&news), vec!["Hear ye!".to_owned()]);
+    assert_eq!(sim.lines(&news), vec!["Hear ye!".to_owned()]);
 
     sim.send(conn, ConversationRequest::Leave { step: news.step });
     sim.run(2.0);
@@ -422,9 +431,9 @@ fn inn() -> Sim {
         ))
         .add(movement::file_by_chunk)
         .plan((
-            script::query::ListRoster::default(),
+            engine::systems::roster::ListRoster::default(),
             npc::ApproachWatchers::default(),
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
@@ -435,7 +444,7 @@ fn inn() -> Sim {
             actor::SettleActions::default(),
             attention::MarkAttention::default(),
         ));
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);
     sim
 }
@@ -531,10 +540,10 @@ fn favour(sim: &Sim, player: Entity) -> Recalled {
     memory::get(&sim.world, player, favour)
 }
 
-fn choice(conversation: &Conversation, label: &str) -> u32 {
+fn choice(sim: &Sim, conversation: &Conversation, label: &str) -> u32 {
     conversation
         .choices
         .iter()
-        .position(|choice| choice.label.plain_words() == label)
+        .position(|choice| choice.label.plain_words(sim.content()) == label)
         .expect("the choice") as u32
 }

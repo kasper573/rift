@@ -14,7 +14,7 @@ use engine::systems::actor::skeleton::{
 };
 use engine::systems::item::{ItemDef, ItemId, Wear};
 use ui::egui::{self, Ui};
-use ui::{chip, controls, form, panel, theme, words};
+use ui::{chip, controls, face, form, panel, theme, words};
 
 use super::preview;
 use super::rigging::Rigging;
@@ -93,6 +93,7 @@ fn lists(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
                     edit,
                     |skeleton| &mut skeleton.builds,
                     BuildName::new,
+                    |_| {},
                 );
             }
             ui.add_space(10.0);
@@ -121,6 +122,7 @@ fn lists(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
                     edit,
                     |skeleton| &mut skeleton.regions,
                     BodyRegion::new,
+                    |_| {},
                 );
             }
             ui.add_space(10.0);
@@ -132,6 +134,13 @@ fn lists(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
                 notes: vec![String::new(); def.slots.len()],
             };
             if let Some(edit) = list(ui, key, slots) {
+                let renamed = match &edit {
+                    Edited::Renamed(index, to) => def
+                        .slots
+                        .get(*index)
+                        .map(|from| (from.clone(), EquipmentSlot::new(to.clone()))),
+                    _ => None,
+                };
                 apply(
                     editor,
                     key,
@@ -139,8 +148,18 @@ fn lists(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
                     edit,
                     |skeleton| &mut skeleton.slots,
                     EquipmentSlot::new,
+                    |skeleton| {
+                        if let Some((from, to)) = renamed
+                            && let Some(label) = skeleton.slot_labels.remove(&from)
+                        {
+                            skeleton.slot_labels.insert(to, label);
+                        }
+                        let slots = skeleton.slots.clone();
+                        skeleton.slot_labels.retain(|slot, _| slots.contains(slot));
+                    },
                 );
             }
+            slot_labels(editor, ui, key, def);
             if let Some(content) = &content {
                 wearing(editor, ui, key, content, def);
             }
@@ -180,12 +199,12 @@ fn list(ui: &mut Ui, key: &str, names: Names) -> Option<Edited> {
                 .desired_width(140.0),
         );
         let name = fresh.trim().to_owned();
-        if ui
-            .add_enabled(
-                !name.is_empty() && !names.names.contains(&name),
-                egui::Button::new("+ add"),
-            )
-            .clicked()
+        if controls::button_if(
+            ui,
+            !name.is_empty() && !names.names.contains(&name),
+            "+ add",
+        )
+        .clicked()
         {
             edited = Some(Edited::Added(name));
             fresh.clear();
@@ -196,7 +215,8 @@ fn list(ui: &mut Ui, key: &str, names: Names) -> Option<Edited> {
     edited
 }
 
-/// Writes `edit` into the list `field` reads of the skeleton, each name made as `name` makes it.
+/// Writes `edit` into the list `field` reads of the skeleton, each name made as `name` makes it,
+/// and then tidies what follows the list as `then` does.
 fn apply<N: Clone>(
     editor: &mut Editor,
     key: &str,
@@ -204,6 +224,7 @@ fn apply<N: Clone>(
     edit: Edited,
     field: impl FnOnce(&mut SkeletonDef) -> &mut Vec<N>,
     name: impl Fn(String) -> N,
+    then: impl FnOnce(&mut SkeletonDef),
 ) {
     super::edits::change(editor, key, &format!("Change the {what}"), |skeleton| {
         let list = field(skeleton);
@@ -215,6 +236,7 @@ fn apply<N: Clone>(
             }
             Edited::Added(new) => list.push(name(new)),
         }
+        then(skeleton);
         Ok(())
     });
 }
@@ -268,6 +290,38 @@ fn wearing(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, def: 
     editor.views.skeleton.views.view_mut(key).preview.wearing = dressed;
 }
 
+/// What players call each slot, each written over the slot's own name.
+fn slot_labels(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
+    if def.slots.is_empty() {
+        return;
+    }
+    let mut labels = def.slot_labels.clone();
+    for slot in &def.slots {
+        ui.horizontal(|ui| {
+            ui.label(face::mono(slot.as_str()));
+            let mut label = labels.get(slot).cloned().unwrap_or_default();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut label)
+                    .hint_text(slot.as_str())
+                    .desired_width(140.0),
+            );
+            if response.lost_focus() {
+                match label.trim() {
+                    "" => labels.remove(slot),
+                    label => labels.insert(slot.clone(), label.to_owned()),
+                };
+            }
+        });
+    }
+    form::hint(ui, "What players call each slot; its name when left empty.");
+    if labels != def.slot_labels {
+        super::edits::change(editor, key, "Change the slot labels", |skeleton| {
+            skeleton.slot_labels = labels;
+            Ok(())
+        });
+    }
+}
+
 fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     form::section_count(ui, "Tints · in the order they paint", def.tints.len());
     let mut tints = def.tints.clone();
@@ -308,12 +362,12 @@ fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
                 .desired_width(140.0),
         );
         let name = fresh.trim().to_owned();
-        if ui
-            .add_enabled(
-                !name.is_empty() && !tints.iter().any(|tint| tint.name.0 == name),
-                egui::Button::new("+ add"),
-            )
-            .clicked()
+        if controls::button_if(
+            ui,
+            !name.is_empty() && !tints.iter().any(|tint| tint.name.0 == name),
+            "+ add",
+        )
+        .clicked()
         {
             tints.push(SkeletonTint {
                 name: TintName::new(name),

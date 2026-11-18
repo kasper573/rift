@@ -80,6 +80,7 @@ impl Plugin for WorldScenePlugin {
             );
             app.insert_resource(progress);
         }
+        app.add_plugins(MaterialPlugin::<cover::CoverMaterial>::default());
         app.add_plugins((
             MaterialPlugin::<material::WorldMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),

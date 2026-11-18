@@ -2,15 +2,19 @@ use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
 use bevy_terminal::{TerminalLine, TerminalSaid};
 use engine::core::content::Content;
-use engine::core::math::{Offset, Pos, Rgb};
+use engine::core::math::{Offset, Pos};
+use engine::core::text::LineText;
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
+use engine::systems::area::vfx;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::chat::{ChatChannel, ChatSpeaker};
 use engine::systems::combat::{self, Attitude};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::history::{History, HistoryTopic, RecordTally};
 use engine::systems::interact::{self, InteractRequest};
+use engine::systems::item::ItemDef;
+use engine::systems::item::inline::InlineItem;
 use engine::systems::item::rarity::RARITY_ICON_SIZE;
 use engine::systems::movement::{self, position};
 use engine::systems::notification::{self, Notification, NotificationKind, NotificationSent};
@@ -19,8 +23,7 @@ use engine::systems::player::{AreaDrawn, commands_locked};
 use engine::systems::quest::{self, QuestDef};
 use engine::systems::region;
 use engine::systems::status::{self, StatusEffectDef};
-use engine::systems::text::{LineText, NameMark, SpanText};
-use engine::systems::{actor, belongings, chat, class, script, stat, vfx};
+use engine::systems::{actor, belongings, chat, class, stat};
 use serde_json::json;
 use testkit::{Game, Map, Sim, path};
 
@@ -192,9 +195,11 @@ fn completing_a_quest_and_reaching_a_level_are_milestones() {
         .told(1)
         .into_iter()
         .filter_map(|notification| match notification.kind {
-            NotificationKind::Milestone { label, topic, .. } => {
-                Some((label.into_owned(), notification.text.plain_words(), topic))
-            }
+            NotificationKind::Milestone { label, topic, .. } => Some((
+                label.into_owned(),
+                notification.text.plain_words(sim.content()),
+                topic,
+            )),
             _ => None,
         })
         .collect();
@@ -328,7 +333,7 @@ fn healing_a_level_and_a_status_each_pop_with_their_own_look_unless_the_status_k
 }
 
 #[test]
-fn an_item_gained_is_told_by_its_name_in_the_colour_of_its_rarity_and_kept_so_in_history() {
+fn an_item_gained_reaches_the_client_as_its_inline_item_and_is_kept_so_in_history() {
     let mut sim = island(&game());
     let player = sim.join(1);
     sim.run(0.5);
@@ -338,16 +343,8 @@ fn an_item_gained_is_told_by_its_name_in_the_colour_of_its_rarity_and_kept_so_in
     sim.give(player, "ring", 1);
     sim.run(0.5);
 
-    let named = |name: &str, color: [u8; 3]| {
-        LineText(vec![SpanText::Named {
-            name: name.to_owned(),
-            mark: NameMark {
-                icon: None,
-                color: Rgb(color),
-            },
-        }])
-    };
-    let ring = named("ring", [90, 60, 200]);
+    let named = |sim: &Sim, key: &str| LineText::from(InlineItem::of(sim.id::<ItemDef>(key)));
+    let (ring, tusk) = (named(&sim, "ring"), named(&sim, "tusk"));
     let gained: Vec<(LineText, Option<RecordTally>)> = sim
         .told(1)
         .into_iter()
@@ -357,7 +354,12 @@ fn an_item_gained_is_told_by_its_name_in_the_colour_of_its_rarity_and_kept_so_in
         })
         .collect();
     assert!(gained.contains(&(ring.clone(), Some(RecordTally::Change(1)))));
-    assert!(gained.contains(&(named("tusk", [128, 128, 128]), Some(RecordTally::Change(2)))));
+    assert!(gained.contains(&(tusk, Some(RecordTally::Change(2)))));
+    for (text, _) in &gained {
+        let wire = postcard::to_allocvec(text).expect("a told line serializes");
+        let received: LineText = postcard::from_bytes(&wire).expect("a told line deserializes");
+        assert_eq!(&received, text);
+    }
     let history = sim.world.get::<History>(player).expect("a history");
     assert!(history.records().any(|record| record.entry.text == ring));
 }
@@ -588,10 +590,10 @@ fn area(game: &Content, key: &str) -> Sim {
             status::aspect::TickAspects::default(),
         ))
         .plan((
-            script::query::ListRoster::default(),
+            engine::systems::roster::ListRoster::default(),
             area::object::TrackUnderfoot::default(),
             npc::ApproachWatchers::default(),
-            script::RunFlows::default(),
+            engine::core::script::run::FlowRunner::default(),
             movement::AdvanceWalks::default(),
         ))
         .add((
@@ -605,7 +607,7 @@ fn area(game: &Content, key: &str) -> Sim {
         .plan(actor::SettleActions::default())
         .add(belongings::notify_changes);
     chat::route_lines(&mut sim.world);
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }
 
@@ -638,9 +640,11 @@ fn pops(sim: &mut Sim, client: u32) -> Vec<(Option<Entity>, String, Option<VfxSh
     sim.notified(client)
         .into_iter()
         .filter_map(|sent| match sent.notification.kind {
-            NotificationKind::Pop { shader, .. } => {
-                Some((sent.actor, sent.notification.text.plain_words(), shader))
-            }
+            NotificationKind::Pop { shader, .. } => Some((
+                sent.actor,
+                sent.notification.text.plain_words(sim.content()),
+                shader,
+            )),
             _ => None,
         })
         .collect()
@@ -657,7 +661,7 @@ fn recorded(sim: &Sim, player: Entity) -> Vec<(HistoryTopic, Option<String>, Str
                     (
                         entry.topic,
                         entry.by.clone(),
-                        entry.text.plain_words(),
+                        entry.text.plain_words(sim.content()),
                         entry.repeats,
                     )
                 })

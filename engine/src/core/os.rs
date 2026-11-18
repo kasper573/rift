@@ -7,11 +7,14 @@ use std::time::Duration;
 use bevy::prelude::*;
 
 use crate::core::content::store::ContentStore;
+use crate::core::update::OtherBuildAnswer;
 
 #[derive(Resource)]
 pub struct StartParams {
     pub sign_in: SignIn,
     pub game_server_url: String,
+    /// What the client does when its server runs another build.
+    pub other_build: OtherBuildAnswer,
 }
 
 #[derive(Clone)]
@@ -95,6 +98,39 @@ impl Http {
                 .read_to_vec()
                 .map_err(|error| FetchFailure::Transport(error.to_string()))
         })
+    }
+
+    /// Fetches `url` on this thread, however long the body takes to come, telling `progress` the
+    /// bytes come so far and, when the server says, how many there are.
+    pub fn download(
+        &self,
+        url: &str,
+        progress: &dyn Fn(u64, Option<u64>),
+    ) -> Result<Vec<u8>, FetchFailure> {
+        let transport = |error: &dyn std::fmt::Display| FetchFailure::Transport(error.to_string());
+        let mut response = self
+            .0
+            .get(url)
+            .config()
+            .timeout_global(None)
+            .timeout_recv_response(Some(Duration::from_secs(30)))
+            .build()
+            .call()
+            .map_err(|error| transport(&error))?;
+        refused(&mut response)?;
+        let total = response.body().content_length();
+        let mut body = response.body_mut().with_config().limit(u64::MAX).reader();
+        let mut bytes = Vec::new();
+        let mut chunk = vec![0; 64 * 1024];
+        loop {
+            let read =
+                std::io::Read::read(&mut body, &mut chunk).map_err(|error| transport(&error))?;
+            if read == 0 {
+                return Ok(bytes);
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            progress(bytes.len() as u64, total);
+        }
     }
 
     pub fn post(

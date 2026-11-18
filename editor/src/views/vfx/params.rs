@@ -96,7 +96,7 @@ pub(crate) fn param_control(ui: &mut Ui, spec: &ParamSpec, value: &mut ParamValu
     match spec.kind {
         ParamKind::Bool => {
             let mut flag = matches!(value, ParamValue::Bool(true));
-            if ui.checkbox(&mut flag, "").changed() {
+            if controls::tick(ui, &mut flag).changed() {
                 *value = ParamValue::Bool(flag);
                 return true;
             }
@@ -280,7 +280,7 @@ fn params(ui: &mut Ui, cx: &mut FormCx, params: &mut Vec<ShaderParam>, path: &st
                     }
                 }
                 ParamValue::Bool(flag) => {
-                    if ui.checkbox(flag, "").changed() {
+                    if controls::tick(ui, flag).changed() {
                         changed |= FormChange::at(&default_path);
                     }
                 }
@@ -301,7 +301,7 @@ fn params(ui: &mut Ui, cx: &mut FormCx, params: &mut Vec<ShaderParam>, path: &st
         changed = FormChange::at(path);
     }
     forms::error_line(ui, cx, path);
-    if ui.button("+ param").clicked() {
+    if controls::button(ui, "+ param").clicked() {
         let name = (1..)
             .map(|n| format!("param_{n}"))
             .find(|name| params.iter().all(|param| param.name != *name))

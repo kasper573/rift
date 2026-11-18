@@ -1,7 +1,12 @@
+mod line;
 mod paint;
+mod span;
 
-pub use paint::{Hand, TextLook, measure, show};
+pub use line::{LineText, SpanText, TextFx, TextInk};
+pub use paint::{Hand, ShownLine, TextLook, measure, show, show_linked};
+pub use span::{Equatable, PluggedSpan, SpanDef, SpanKinds};
 
+use std::any::TypeId;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -12,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 use ui::egui::Color32;
 use ui::ink::Prose;
+use ui::keys::KeyCap;
 
 use crate::core::content::SchemaMark;
 use crate::core::units::{Radians, RadiansPerSec};
@@ -25,23 +31,62 @@ pub struct StyledLine {
 pub enum TextPiece {
     Span(StyledSpan),
     Pause(Duration),
-    Key(KeyCap),
+    Key(TextKey),
     /// A picture of the game's set in the line as tall as its letters, named by its file.
     Image(Cow<'static, str>),
+    /// Opens a run of the line that stands for `key`, up to the next `LinkEnd`: drawing the line
+    /// tells where the run landed, so whoever draws it can let the run be pointed at and clicked.
+    /// The run is read out as `name`, which says all it stands for where its letters show only
+    /// part of it, as an icon does.
+    LinkStart {
+        key: LinkKey,
+        name: String,
+    },
+    LinkEnd,
+    /// Room this many points wide before the next letter, which whoever draws the line paints
+    /// into.
+    Room(f32),
+    /// Opens the run of the line that types out, up to the next `TypingEnd`: the rest of the line
+    /// is out from the start. A line with no such run types out whole.
+    TypingStart,
+    TypingEnd,
 }
 
-/// A key drawn as a cap: an input named by its current binding, or a key named outright.
+/// What a run of a line stands for: which `Owner` type made the link and which of its things it
+/// is, so each system answers its own links and no other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LinkKey {
+    owner: TypeId,
+    id: u64,
+}
+
+impl LinkKey {
+    pub fn new<Owner: 'static>(id: u64) -> LinkKey {
+        LinkKey {
+            owner: TypeId::of::<Owner>(),
+            id,
+        }
+    }
+
+    /// Which of `Owner`'s things the link is, none for another owner's link.
+    pub fn id_in<Owner: 'static>(self) -> Option<u64> {
+        (self.owner == TypeId::of::<Owner>()).then_some(self.id)
+    }
+}
+
+/// A key drawn as a cap in a line: an input as it is bound now, or a cap given outright.
 #[derive(Clone, Debug, PartialEq)]
-pub enum KeyCap {
+pub enum TextKey {
     Input(InputRef),
-    Named(Cow<'static, str>),
+    Cap(KeyCap),
 }
 
-impl KeyCap {
-    pub fn name<'a>(&'a self, keys: &'a KeyNames) -> &'a str {
+impl TextKey {
+    /// The cap to draw, none for an input that isn't bound.
+    pub fn cap<'a>(&'a self, keys: &'a KeyNames) -> Option<&'a KeyCap> {
         match self {
-            KeyCap::Input(input) => keys.name(*input),
-            KeyCap::Named(name) => name,
+            TextKey::Input(input) => keys.0.get(input),
+            TextKey::Cap(cap) => Some(cap),
         }
     }
 }
@@ -53,6 +98,8 @@ pub struct StyledSpan {
     pub voice: Option<TextVoice>,
     pub motion: Option<TextMotion>,
     pub slow: bool,
+    /// Set in the heavy weight of the book face.
+    pub bold: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +109,9 @@ pub enum SpanInk {
     /// A colour of the game's own, which shows only where the ground is dark, lifted there until
     /// it reads. On paper, where most colours would not, the text keeps its ink.
     Lit(Color32),
+    /// A colour of the game's own on either ground, darkened on paper and lifted on dusk until it
+    /// reads.
+    Legible(Color32),
 }
 
 #[derive(
@@ -106,14 +156,9 @@ pub enum TextMotion {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct InputRef(pub u16);
 
+/// The cap every bound input is drawn as.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct KeyNames(pub HashMap<InputRef, String>);
-
-impl KeyNames {
-    pub fn name(&self, input: InputRef) -> &str {
-        self.0.get(&input).map_or("", String::as_str)
-    }
-}
+pub struct KeyNames(pub HashMap<InputRef, KeyCap>);
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
 #[schemars(transform = SchemaMark::Unit.with("characters/s"))]
@@ -240,15 +285,32 @@ impl StyledLine {
         StyledLine::new(vec![TextPiece::text(text)])
     }
 
+    /// The line as it is read out: its letters, each key by its name and each link by its own.
     pub fn plain(&self, keys: &KeyNames) -> String {
-        self.pieces
-            .iter()
-            .filter_map(|piece| match piece {
-                TextPiece::Span(span) => Some(span.text.as_ref()),
-                TextPiece::Pause(_) | TextPiece::Image(_) => None,
-                TextPiece::Key(cap) => Some(cap.name(keys)),
-            })
-            .collect()
+        let mut in_link = false;
+        let mut plain = String::new();
+        for piece in &self.pieces {
+            match piece {
+                TextPiece::LinkStart { name, .. } => {
+                    in_link = true;
+                    plain.push_str(name);
+                }
+                TextPiece::LinkEnd => in_link = false,
+                _ if in_link => {}
+                TextPiece::Span(span) => plain.push_str(&span.text),
+                TextPiece::Key(key) => {
+                    if let Some(cap) = key.cap(keys) {
+                        plain.push_str(&cap.name);
+                    }
+                }
+                TextPiece::Pause(_)
+                | TextPiece::Image(_)
+                | TextPiece::TypingStart
+                | TextPiece::TypingEnd
+                | TextPiece::Room(_) => {}
+            }
+        }
+        plain
     }
 }
 
@@ -257,8 +319,8 @@ impl TextPiece {
         TextPiece::Span(StyledSpan::plain(text))
     }
 
-    pub fn key(name: impl Into<Cow<'static, str>>) -> TextPiece {
-        TextPiece::Key(KeyCap::Named(name.into()))
+    pub fn key(cap: KeyCap) -> TextPiece {
+        TextPiece::Key(TextKey::Cap(cap))
     }
 }
 
@@ -270,6 +332,7 @@ impl StyledSpan {
             voice: None,
             motion: None,
             slow: false,
+            bold: false,
         }
     }
 
@@ -288,6 +351,11 @@ impl StyledSpan {
         self
     }
 
+    pub fn legible(mut self, color: Color32) -> StyledSpan {
+        self.ink = Some(SpanInk::Legible(color));
+        self
+    }
+
     pub fn voice(mut self, voice: TextVoice) -> StyledSpan {
         self.voice = Some(voice);
         self
@@ -295,6 +363,11 @@ impl StyledSpan {
 
     pub fn motion(mut self, motion: TextMotion) -> StyledSpan {
         self.motion = Some(motion);
+        self
+    }
+
+    pub fn bold(mut self) -> StyledSpan {
+        self.bold = true;
         self
     }
 
@@ -318,6 +391,11 @@ pub fn reveal_times(pieces: &[TextPiece], pace: TypingPace) -> Vec<Duration> {
     for piece in pieces {
         match piece {
             TextPiece::Pause(pause) => clock += *pause,
+            TextPiece::LinkStart { .. }
+            | TextPiece::LinkEnd
+            | TextPiece::TypingStart
+            | TextPiece::TypingEnd
+            | TextPiece::Room(_) => {}
             TextPiece::Span(span) => {
                 let slowness = if span.slow { pace.slow_by } else { 1.0 };
                 for _ in span.text.chars() {

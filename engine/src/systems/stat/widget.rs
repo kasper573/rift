@@ -5,7 +5,8 @@ use ui::{face, ink};
 use crate::core::content::Content;
 use crate::systems::actor::Name;
 use crate::systems::player::session;
-use crate::systems::{class, stat};
+use crate::systems::stat::StatMessages;
+use crate::systems::{class, messages, stat};
 
 const ROW_PADDING: f32 = 2.0;
 
@@ -44,28 +45,27 @@ fn stat_rows(world: &World) -> Vec<(String, String)> {
         .get::<Name>()
         .map(|name| name.name.clone())
         .unwrap_or_default();
+    let words = &messages::of(content).stat;
     [
-        ("Name".to_owned(), name),
-        ("Class".to_owned(), class),
-        ("Level".to_owned(), class::level(world, entity).to_string()),
+        (words.name().to_owned(), name),
+        (words.class().to_owned(), class),
+        (
+            words.level().to_owned(),
+            words.figure(class::level(world, entity)),
+        ),
     ]
     .into_iter()
     .chain(
         stats
             .listed()
-            .map(|stat| (stat.label().to_owned(), shown(stat))),
+            .map(|stat| (stat.kind.named(words).to_owned(), shown(words, stat))),
     )
     .collect()
 }
 
-fn shown(stat: stat::Stat) -> String {
-    let value = if (stat.value - stat.value.round()).abs() < 0.05 {
-        format!("{:.0}", stat.value)
-    } else {
-        format!("{:.1}", stat.value)
-    };
+fn shown(words: &StatMessages, stat: stat::Stat) -> String {
     match stat.kind.unit() {
-        Some(unit) => format!("{value} {unit}"),
-        None => value,
+        Some(unit) => words.figure_with_unit(unit, stat.value),
+        None => words.figure(stat.value),
     }
 }

@@ -20,6 +20,20 @@ pub const WAX: Color32 = Color32::from_rgb(0xA8, 0x26, 0x1F);
 pub const VERMILION: Color32 = Color32::from_rgb(0xC2, 0x1A, 0x14);
 pub const SPRING: Color32 = Color32::from_rgb(0x7E, 0xE8, 0x8F);
 
+/// What a conversation is set in over the world, each outlined in black: its line and the choices
+/// in plain white, and what stands out from them in colour, its speaker's name, the choice the
+/// player is on and a choice not open to them.
+pub const DIALOGUE_LINE: Color32 = Color32::from_rgb(0xF2, 0xEE, 0xE6);
+pub const DIALOGUE_NAME: Color32 = Color32::from_rgb(0xD9, 0xB7, 0x7E);
+pub const DIALOGUE_CHOICE: Color32 = Color32::from_rgb(0xE6, 0xE0, 0xD4);
+pub const DIALOGUE_CHOICE_LIT: Color32 = Color32::from_rgb(0xF0, 0xC4, 0x5C);
+pub const DIALOGUE_CHOICE_LOCKED: Color32 = Color32::from_rgb(0x98, 0x92, 0x88);
+/// What the bottom of the screen is darkened with under a conversation: solid black this opaque at
+/// the screen's edge.
+pub const DIALOGUE_BACKING: Color32 = Color32::from_black_alpha(191);
+/// How far up the screen that backing reaches before it is clear, as a share of its height.
+pub const DIALOGUE_BACKING_REACH: f32 = 0.4;
+
 pub const VEIL: Color32 = Color32::from_rgb(0x12, 0x12, 0x12);
 
 const PLACE: Color32 = AZURE;
@@ -91,6 +105,25 @@ pub fn legible(color: Color32, ground: Color32) -> Color32 {
         .map(|lift| on(color, Color32::WHITE, f32::from(lift) / f32::from(LIFTS)))
         .find(|lifted| contrast(*lifted, ground) >= READABLE)
         .unwrap_or(Color32::WHITE)
+}
+
+/// `color` as text over the light `ground`: itself where it stands clear of it, else mixed toward
+/// ink until it does.
+pub fn inked(color: Color32, ground: Color32) -> Color32 {
+    (0..=LIFTS)
+        .map(|lift| on(color, INK, f32::from(lift) / f32::from(LIFTS)))
+        .find(|darkened| contrast(*darkened, ground) >= READABLE)
+        .unwrap_or(INK)
+}
+
+impl Ground {
+    /// `color` as text that reads on this ground: darkened on paper, lifted on dusk.
+    pub fn legible(self, color: Color32) -> Color32 {
+        match self {
+            Ground::Paper => inked(color, CREAM),
+            Ground::Dusk => legible(color, VEIL),
+        }
+    }
 }
 
 /// How far two colours stand apart, from 1 for the same to 21 for black on white.

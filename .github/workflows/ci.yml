@@ -69,11 +69,24 @@ jobs:
       - name: Test
         run: just test
 
+  # A build is named by the release it would be, its commit's day and hash, so a server reports the
+  # release a client finds its archive in.
+  tag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: tag
+        run: echo "tag=$(TZ=UTC git log -1 --date=format-local:%Y.%m.%d --format=%cd)-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
   # Every push builds every platform's binaries, so a change that breaks a platform fails on its
   # branch; main's runs hand them on to the release. Linux builds on the oldest supported runner, as
   # a binary needs at least the glibc it was linked against, and it alone builds what only runs on
   # Linux: the web-server and game-server-profiling.
   binaries:
+    needs: [tag]
     strategy:
       fail-fast: false
       matrix:
@@ -95,8 +108,10 @@ jobs:
           recipes: dist archives smoke
       - name: Build the binaries
         shell: bash
+        env:
+          RIFT_BUILD: ${{ needs.tag.outputs.tag }}
         run: |
-          just dist target/dist profiling
+          RIFT_RELEASE_KEY="$(tail -n 1 release.pub)" just dist target/dist profiling
           just archives "${{ matrix.platform }}" target/dist target/archives
       - name: Smoke-test the website, the game server and the game client
         if: ${{ matrix.platform == 'linux-x86_64' }}
@@ -113,7 +128,7 @@ jobs:
   # Releases are never replaced. Older ones are thinned out as the README's retention schedule promises,
   # and only once a newer release is out.
   release:
-    needs: [lint, test, binaries]
+    needs: [tag, lint, test, binaries]
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -128,12 +143,25 @@ jobs:
           pattern: archives-*
           path: archives
           merge-multiple: true
-      - name: Publish the release
+      # A client installs only an archive signed by the release key it was built with.
+      - name: Sign the archives
+        env:
+          RIFT_RELEASE_SECRET_KEY: ${{ secrets.RIFT_RELEASE_SECRET_KEY }}
         run: |
-          tag="$(date -u +%Y.%m.%d)-${GITHUB_SHA::8}"
+          sudo apt-get install -y minisign
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$RIFT_RELEASE_SECRET_KEY" > "$key"
+          for archive in archives/*; do
+            minisign -S -s "$key" -m "$archive" < /dev/null
+          done
+      - name: Publish the release
+        env:
+          tag: ${{ needs.tag.outputs.tag }}
+        run: |
           gh release create "$tag" archives/* --target "$GITHUB_SHA" \
             --title "rift $tag" \
-            --notes "Every binary of rift, built from $GITHUB_SHA: an archive per binary and platform. Extract any of them into one folder to use them together."
+            --notes "Every binary of rift, built from $GITHUB_SHA: an archive per binary and platform, each with its minisign signature. Extract any of them into one folder to use them together."
       - name: Prune old releases
         shell: bash
         run: |

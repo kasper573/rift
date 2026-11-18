@@ -15,12 +15,12 @@ use ui::words;
 
 use engine::core::audio::playback::SfxDef;
 use engine::core::content::serial::TypeTag;
-use engine::core::content::{ContentFile, MODULES, fields_file, name_of, parent_of};
+use engine::core::content::{Content, ContentFile, MODULES, fields_file, name_of, parent_of};
+use engine::core::script::Scripts;
 use engine::field;
 use engine::systems::input::map::{BoundAction, InputDef};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::registry;
-use engine::systems::script::RiftScripts;
 use serde_json::Value;
 use ui::egui::{Color32, Sense, Ui, Vec2};
 
@@ -174,6 +174,7 @@ pub struct SpreadsheetRow {
     pub value: Arc<Value>,
     pub modules: Arc<Vec<Value>>,
     pub unread: Option<String>,
+    pub content: Option<Content>,
 }
 
 impl SpreadsheetRow {
@@ -211,7 +212,9 @@ impl SpreadsheetColumn {
             ColumnSource::Folder => Some(parent_of(&row.key).to_owned()),
             ColumnSource::Entry => Some(row.key.clone()),
             _ => match self.cell {
-                CellKind::Bindings => self.get(row).map(bindings::names),
+                CellKind::Bindings => self
+                    .get(row)
+                    .map(|value| bindings::names(value, row.content.as_ref())),
                 _ => self.get(row).map(cell_text),
             },
         }
@@ -469,6 +472,7 @@ fn rows_of(editor: &Editor, table: &str) -> Vec<SpreadsheetRow> {
                 value: Arc::new(entry.clone()),
                 modules: Arc::new(Vec::new()),
                 unread: None,
+                content: project.content.clone(),
             })
             .collect();
     }
@@ -493,6 +497,7 @@ fn rows_of(editor: &Editor, table: &str) -> Vec<SpreadsheetRow> {
                 value,
                 modules: Arc::new(modules),
                 unread,
+                content: project.content.clone(),
                 file: key.clone(),
                 pointer: String::new(),
                 key,
@@ -537,10 +542,10 @@ fn can_be_fought(editor: &Editor) -> BTreeSet<String> {
     else {
         return BTreeSet::new();
     };
-    if !content.has_built::<RiftScripts>() {
+    if !content.has_built::<Scripts>() {
         return BTreeSet::new();
     }
-    let scripts = content.built::<RiftScripts>();
+    let scripts = content.built::<Scripts>();
     content
         .ids::<NpcDef>()
         .filter(|&id| npc::can_be_fought(scripts, id))
@@ -768,7 +773,7 @@ fn toolbar(
             offered.extend(module_tags.iter().cloned().map(SheetFilter::Has));
             offered.extend(module_tags.iter().cloned().map(SheetFilter::Lacks));
             for filter in offered {
-                if ui.button(filter.label()).clicked() {
+                if menu::entry(ui, filter.label()).clicked() {
                     filters.push(filter);
                     changed = true;
                     ui.close();
@@ -795,7 +800,7 @@ fn toolbar(
                             } else {
                                 format!("{} · {}", column.title, column.sub)
                             };
-                            if ui.checkbox(&mut on, label).changed() {
+                            if controls::check(ui, &mut on, label).changed() {
                                 if on {
                                     view.columns.push(column.id.clone())
                                 } else {
@@ -1834,7 +1839,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
         form::kv_text(ui, "modules", modules.join(" · "));
     }
     ui.add_space(6.0);
-    if row.pointer.is_empty() && ui.button("→ Open as a form").clicked() {
+    if row.pointer.is_empty() && controls::button(ui, "→ Open as a form").clicked() {
         editor.select(RowSelection::row(&table, &key));
         editor.open_tab(EditorTab::Row {
             table: table.clone(),
@@ -1963,7 +1968,7 @@ fn comparison_picker(ui: &mut Ui, columns: &[SpreadsheetColumn]) -> Option<Sheet
                 }
             });
         input::NumberField::new(&mut value).width(64.0).show(ui);
-        if ui.button("add").clicked() {
+        if controls::button(ui, "add").clicked() {
             added = Some(SheetFilter::Compare {
                 column: numeric[column].id.clone(),
                 test,

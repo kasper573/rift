@@ -18,7 +18,7 @@ use engine::systems::resource::{
 };
 use engine::systems::spawner::Spawned;
 use engine::systems::stat::{self, StatKind, Stats};
-use engine::systems::{actor, region, script};
+use engine::systems::{actor, region};
 use serde_json::{Value, json};
 use testkit::{APEX, BODY, Game, HEIGHTS, Map, Sim, path, rig_clips};
 
@@ -240,7 +240,7 @@ fn a_resource_takes_what_it_spends_with_every_extraction_and_is_worked_from_as_f
     sim.run(1.0);
     assert_eq!(
         (sim.errors(1), position(&sim.world, miner)),
-        (vec!["Needs 1 more powder".to_owned()], Some(start)),
+        (vec!["Needs 1 powder more".to_owned()], Some(start)),
         "what it spends is asked for before a step is taken, as its tool is"
     );
     sim.forget_notified();
@@ -285,7 +285,7 @@ fn a_resource_takes_what_it_spends_with_every_extraction_and_is_worked_from_as_f
             sim.world.get::<Working>(miner).is_some(),
             sim.errors(1),
         ),
-        (0, 4, Some(3), false, vec!["Needs 1 more powder".to_owned()]),
+        (0, 4, Some(3), false, vec!["Needs 1 powder more".to_owned()]),
         "the extraction that spent the last of it is the last, and the worker is told what is missing"
     );
 
@@ -308,7 +308,7 @@ fn a_resource_takes_what_it_spends_with_every_extraction_and_is_worked_from_as_f
             left(&sim, vein),
             sim.errors(1),
         ),
-        (1, 0, Some(4), vec!["Needs 1 more powder".to_owned()]),
+        (1, 0, Some(4), vec!["Needs 1 powder more".to_owned()]),
         "an extraction that drops nothing spends all the same"
     );
 }
@@ -318,8 +318,10 @@ fn a_spawner_on_water_keeps_its_resources_afloat_where_water_stands() {
     let shoals = |more: Value| {
         let mut spawner = json!({
             "type": "spawner",
-            "spawns": [{ "type": "resource", "resource": path("resource", "vein") }],
-            "count": 8,
+            "populations": [{
+                "spawns": [{ "type": "resource", "resource": path("resource", "vein") }],
+                "max_spawned_at_once": 8,
+            }],
             "on": "water",
         });
         spawner
@@ -368,7 +370,7 @@ fn a_spawner_on_water_keeps_its_resources_afloat_where_water_stands() {
         ["no water to spawn on"]
     );
     let mut walkers = shoals(json!({}));
-    walkers["spawns"] = json!([{ "type": "npc", "npc": path("npc", "wolf") }]);
+    walkers["populations"][0]["spawns"] = json!([{ "type": "npc", "npc": path("npc", "wolf") }]);
     let wolves = lake(game(far), walkers)
         .npc("wolf", 20.0, json!([]))
         .vfx("damage_taken")
@@ -397,7 +399,7 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
         .add((resource::gathering, resource::work))
         .plan(stat::SettleVitals::default())
         .plan(actor::SettleActions::default());
-    script::spawn_stateless(&mut sim.world);
+    engine::systems::spawn_scripts(&mut sim.world);
     let area = sim.id::<AreaDef>("meadow");
     let def = sim.id::<ResourceDef>("vein");
     let at = Pos::<Meters>::new(2.0, 5.0) + Offset::new(AWAY, 0.0);

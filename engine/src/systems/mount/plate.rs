@@ -1,6 +1,6 @@
 //! The mount plate: a piece of the HUD shown while the player rides, naming the mount, with the
-//! way off it and, for a driver, a way to set down each passenger aboard. It is as small as what
-//! it holds, and rests in the bottom right corner of the screen however large that makes it.
+//! way off it. It is as small as what it holds, and rests in the bottom right corner of the
+//! screen.
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
@@ -9,11 +9,13 @@ use ui::egui::{self, Align2, Margin, Pos2, Rect, Ui, Vec2};
 use ui::{controls, dialog, face, sheet};
 
 use super::seat::MountRequest;
-use super::{MountId, MountKind, Riding, SeatIndex, Travels};
+use super::{MountId, MountKind, Riding, Travels};
 use crate::core::content::Content;
-use crate::systems::actor::Name;
+use crate::core::text::LineText;
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::input::map::{self, InputAction, InputMap};
+use crate::systems::input::scope;
+use crate::systems::messages;
 use crate::systems::notification;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -32,10 +34,6 @@ pub struct MountPlateWidget;
 pub struct ShownMount {
     pub mount: MountId,
     pub kind: MountKind,
-    /// The seat the player's character holds, the driver's first.
-    pub seat: SeatIndex,
-    /// Who sits in each seat by name, the driver's first: none in a seat that is free.
-    pub seats: Vec<Option<String>>,
     /// Why they cannot step off where they are, in the game's words.
     pub step_off_shut: Option<String>,
 }
@@ -44,20 +42,10 @@ pub fn shown(world: &mut World) -> Option<ShownMount> {
     let me = session::me(world)?;
     let riding = riding(world)?;
     let def = riding.mount.get(world.resource::<Content>());
-    let (kind, seats) = (MountKind::from(def.travels), def.seats.len());
-    let mut sat = vec![None; seats.max(1)];
-    sat[0] = Some(named(world, riding.driver));
-    for (seat, rider) in passengers(world, riding.driver) {
-        if let Some(held) = sat.get_mut(usize::from(seat.0)) {
-            *held = Some(rider);
-        }
-    }
     Some(ShownMount {
         mount: riding.mount,
-        kind,
-        seat: riding.seat,
-        seats: sat,
-        step_off_shut: shut(world, me),
+        kind: MountKind::from(def.travels),
+        step_off_shut: shut(world, me).map(|why| why.plain_words(world.resource::<Content>())),
     })
 }
 
@@ -78,44 +66,28 @@ impl HudWidget for MountPlateWidget {
         let me = session::me(world)?;
         let riding = riding(world)?;
         let content = world.resource::<Content>().clone();
-        let def = riding.mount.get(&content);
-        let (title, aboard) = if riding.drives() {
-            (def.name.clone(), passengers(world, me))
-        } else {
-            let driver = named(world, riding.driver);
-            (format!("{driver}'s {}", def.name), Vec::new())
-        };
+        let words = &messages::of(&content).mount;
+        let title = riding.mount.get(&content).name.clone();
         let shut = shut(world, me);
-        let key = world.resource::<InputMap>().name(InputAction::StepOff);
-        let mut asked = None;
+        let key = (shut.is_none() && scope::reads(world, InputAction::StepOff))
+            .then(|| world.resource::<InputMap>().cap(InputAction::StepOff))
+            .flatten();
+        let mut leaves = false;
         sheet::note(ui, Margin::same(dialog::PADDING), |ui| {
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new(face::bold(title.as_str())).extend());
-                let leave = controls::keyed(ui, "Step off", key.as_deref(), shut.is_none());
+                let leave = controls::keyed(ui, words.step_off(), key.as_ref(), shut.is_none());
                 let leave = match &shut {
-                    Some(why) => leave.on_hover_text(why.as_str()),
+                    Some(why) => leave.on_hover_text(
+                        why.words(&content, &world.resource::<InputMap>().key_names()),
+                    ),
                     None => leave,
                 };
-                if leave.clicked() {
-                    asked = Some(Asked::StepOff);
-                }
+                leaves = leave.clicked();
             });
-            if !aboard.is_empty() {
-                ui.horizontal(|ui| {
-                    for (seat, rider) in &aboard {
-                        if controls::button(ui, format!("Set down {rider}")).clicked() {
-                            asked = Some(Asked::SetDown(*seat));
-                        }
-                    }
-                });
-            }
         });
-        match asked {
-            Some(Asked::StepOff) => step_off(world),
-            Some(Asked::SetDown(seat)) => {
-                world.write_message(MountRequest::SetDown { seat });
-            }
-            None => {}
+        if leaves {
+            step_off(world);
         }
         None
     }
@@ -139,11 +111,6 @@ pub fn step_off(world: &mut World) {
     }
 }
 
-enum Asked {
-    StepOff,
-    SetDown(SeatIndex),
-}
-
 fn keys(world: &mut World) {
     if riding(world).is_some() && map::just_pressed(world, InputAction::StepOff) {
         step_off(world);
@@ -165,24 +132,9 @@ fn afloat(world: &World, rider: Entity) -> bool {
 
 /// Why `rider` cannot step off where they are, in the game's words: nothing afloat, where the
 /// ground is theirs to pick.
-fn shut(world: &World, rider: Entity) -> Option<String> {
+fn shut(world: &World, rider: Entity) -> Option<LineText> {
     if afloat(world, rider) {
         return None;
     }
     super::landing(world, rider, None).err()
-}
-
-/// Everyone `driver` carries by name, each with the seat they hold, in the order of the seats.
-fn passengers(world: &mut World, driver: Entity) -> Vec<(SeatIndex, String)> {
-    super::passengers(world, driver)
-        .into_iter()
-        .map(|(rider, seat)| (seat, named(world, rider)))
-        .collect()
-}
-
-fn named(world: &World, character: Entity) -> String {
-    world
-        .get::<Name>(character)
-        .map(|name| name.name.clone())
-        .unwrap_or_default()
 }

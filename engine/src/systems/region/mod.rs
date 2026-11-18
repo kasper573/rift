@@ -1,7 +1,7 @@
-//! The ground near players is all a world holds of its area: the tiles of ground within reach of
-//! a player are loaded and their meshes laid as the player comes near, and what the area's scene
+//! The ground near characters is all a world holds of its area: the tiles of ground within reach of
+//! a character are loaded and their meshes laid as the character comes near, and what the area's scene
 //! places on a tile comes to life the first time the tile is reached. A land costs only what its
-//! players have come to, however much of it there is.
+//! characters have come to, however much of it there is.
 
 use std::collections::{BTreeSet, HashSet};
 use std::thread::JoinHandle;
@@ -17,11 +17,11 @@ use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::area::GroundHold;
 use crate::systems::sleep::Sleep;
-use crate::systems::{WorldArea, area, script, sleep, spawner};
+use crate::systems::{WorldArea, area, sleep, spawner};
 
 mod client;
 
-/// How far around a player the ground is held, which tiles this world has brought to life, the
+/// How far around a character the ground is held, which tiles this world has brought to life, the
 /// ground it holds and the hold under way, which has the ground held meanwhile.
 #[derive(Resource)]
 pub struct Region {
@@ -29,7 +29,7 @@ pub struct Region {
     reached: HashSet<TileAt>,
     held: Option<GroundHold>,
     holding: Option<JoinHandle<GroundHold>>,
-    /// The chunks players stood in when the ground around them was last asked for.
+    /// The chunks characters stood in when the ground around them was last asked for.
     stood: Vec<Chunk>,
 }
 
@@ -45,12 +45,12 @@ impl Region {
     }
 }
 
-/// Holds the ground within reach of every player, and lets go of the rest, on a thread of its own
+/// Holds the ground within reach of every character, and lets go of the rest, on a thread of its own
 /// so the tick goes on while tiles load and their meshes are laid, and brings to life what stands
 /// on tiles reached for the first time once they are held. Players walk far slower than ground is
 /// held, and the ground is held as far past them as anything awake stands, so they never reach its
 /// edge, and nothing awake stands on ground let go. Runs after the sleep settles, and asks for
-/// ground only when a player stands in a new chunk.
+/// ground only when a character stands in a new chunk.
 pub fn settle(world: &mut World) {
     let finished = world
         .resource::<Region>()
@@ -91,7 +91,7 @@ pub fn settle(world: &mut World) {
     }));
 }
 
-/// Whether the ground within reach of the world's players is held, with no hold under way.
+/// Whether the ground within reach of the world's characters is held, with no hold under way.
 pub fn settled(world: &World) -> bool {
     world.resource::<Region>().holding.is_none()
 }
@@ -156,14 +156,14 @@ fn come_to_life(world: &mut World, held: BTreeSet<TileAt>) {
             .collect()
     };
     for tile in fresh {
-        script::spawn_placed(world, tile);
+        area::script::spawn_placed(world, tile);
         area::object::spawn_in(world, tile);
         spawner::fill(world, tile);
     }
 }
 
-/// How far around a player ground is held: as far as anything awake stands, the chunks awake
-/// reaching past a player by as far as a client sees and anything there reaches, rounded up to
+/// How far around a character ground is held: as far as anything awake stands, the chunks awake
+/// reaching past a character by as far as a client sees and anything there reaches, rounded up to
 /// whole chunks.
 fn held_reach(awake: Meters) -> Meters {
     Meters(awake.0 + CHUNK_SIDE.0 * 2.0)

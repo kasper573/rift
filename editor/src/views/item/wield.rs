@@ -193,7 +193,7 @@ fn fields(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, grip: 
             "From {}'s paired table.",
             shown_path(stance_path)
         )));
-        if ui.small_button("Edit it there").clicked() {
+        if controls::button(ui, "Edit it there").clicked() {
             editor.open_row(StanceDef::TABLE, stance_path);
         }
     });

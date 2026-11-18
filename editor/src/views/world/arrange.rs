@@ -1,5 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use ui::controls;
 use ui::dialog;
 use ui::egui;
 use ui::sheet;
@@ -159,7 +160,8 @@ pub fn dialog(
             .size(13.0),
         );
         ui.add_space(8.0);
-        answer = dialog::answer_row(ui, &format!("Arrange {moved} cards"));
+        answer = dialog::AnswerRow::new(&format!("Arrange {moved} cards"), crate::modal::CANCEL)
+            .show(ui);
     });
     editor.status.left = vec!["World · arrange preview".to_owned()];
     match answer {
@@ -205,7 +207,7 @@ fn arranged(map: &OpenWorldMap, options: &ArrangeOptions) -> WorldMapDef {
 
 fn toggle_row(ui: &mut Ui, on: &mut bool, label: &str, note: &str) {
     ui.horizontal(|ui| {
-        ui.checkbox(on, "");
+        controls::tick(ui, on);
         ui.label(RichText::new(label).size(13.0));
         if !note.is_empty() {
             ui.label(theme::faint(format!("· {note}")).size(12.0));

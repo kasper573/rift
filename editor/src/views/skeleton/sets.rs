@@ -19,6 +19,7 @@ use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::face;
 use ui::input::NumberField;
+use ui::menu;
 use ui::{chip, controls, form, panel, theme, words};
 
 use super::preview::{self, PreviewPlays};
@@ -476,8 +477,7 @@ fn toolbar(
                 }
             }
             if build.is_some_and(|build| !is_first(def, Some(build)))
-                && ui
-                    .button("Fill from file names…")
+                && controls::button(ui, "Fill from file names…")
                     .on_hover_text(format!(
                         "fills this build's empty cells from {}'s, its clips' paths rewritten",
                         def.builds[0]
@@ -492,7 +492,7 @@ fn toolbar(
         ui.add_enabled_ui(!missing.is_empty(), |ui| {
             ui.menu_button("+ Add stance column", |ui| {
                 for (path, name) in &missing {
-                    if ui.button(name).on_hover_text(path).clicked() {
+                    if menu::entry(ui, name).on_hover_text(path).clicked() {
                         column = Some(path.clone());
                         ui.close();
                     }
@@ -507,10 +507,7 @@ fn toolbar(
                 .desired_width(140.0),
         );
         let name = sets.new_move.trim().to_owned();
-        if ui
-            .add_enabled(!name.is_empty(), egui::Button::new("+ Add move row"))
-            .clicked()
-        {
+        if controls::button_if(ui, !name.is_empty(), "+ Add move row").clicked() {
             added = Some(SetRow::Move(MoveName::new(name)));
             sets.new_move.clear();
         }
@@ -521,10 +518,7 @@ fn toolbar(
                 .desired_width(140.0),
         );
         let name = sets.new_gesture.trim().to_owned();
-        if ui
-            .add_enabled(!name.is_empty(), egui::Button::new("+ Add gesture row"))
-            .clicked()
-        {
+        if controls::button_if(ui, !name.is_empty(), "+ Add gesture row").clicked() {
             added = Some(SetRow::Gesture(GestureName::new(name)));
             sets.new_gesture.clear();
         }
@@ -587,7 +581,7 @@ fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, r
             if let Some(index) = removed {
                 replace.remove(index);
             }
-            if ui.button("+ another").clicked() {
+            if controls::button(ui, "+ another").clicked() {
                 replace.push((String::new(), String::new()));
             }
             let found = fills(def, rigging, &build, &replace);
@@ -595,10 +589,7 @@ fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, r
                 RichText::new(format!("fills {}", words::counted(found.len(), "cell")))
                     .color(theme::OK),
             );
-            if ui
-                .add_enabled(!found.is_empty(), egui::Button::new("Fill"))
-                .clicked()
-            {
+            if controls::button_if(ui, !found.is_empty(), "Fill").clicked() {
                 filled = true;
             }
         });
@@ -707,7 +698,7 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
             title.push_str(&format!(" · {build}"));
         }
         ui.label(RichText::new(title).strong());
-        if ui.button("close").clicked() {
+        if controls::button(ui, "close").clicked() {
             editor.views.skeleton.views.view_mut(key).sets.open = None;
         }
     });
@@ -722,9 +713,11 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
                     .map(|(cell, _)| cell),
             )
         };
-        if ui
-            .button(RichText::new(format!("— fall back: plays {below}")).italics())
-            .clicked()
+        if controls::button(
+            ui,
+            RichText::new(format!("— fall back: plays {below}")).italics(),
+        )
+        .clicked()
         {
             chosen = Some(None);
         }
@@ -778,9 +771,17 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
             if looping {
                 ui.horizontal(|ui| {
                     ui.label(theme::muted("each playing through"));
-                    ui.add(egui::DragValue::new(&mut played.min).range(1..=played.max));
+                    let most = played.max;
+                    NumberField::new(&mut played.min)
+                        .range(1..=most)
+                        .width(PLAYS_WIDTH)
+                        .show(ui);
                     ui.label(theme::muted("to"));
-                    ui.add(egui::DragValue::new(&mut played.max).range(played.min..=99));
+                    let least = played.min;
+                    NumberField::new(&mut played.max)
+                        .range(least..=99)
+                        .width(PLAYS_WIDTH)
+                        .show(ui);
                     ui.label(theme::muted("times a turn"));
                 });
             }
@@ -1177,3 +1178,5 @@ fn column_name(content: &Content, column: Option<StanceId>) -> String {
 fn stance_id(editor: &Editor, path: &str) -> Option<StanceId> {
     editor.reader()?.id_of::<StanceDef>(path)
 }
+
+const PLAYS_WIDTH: f32 = 44.0;

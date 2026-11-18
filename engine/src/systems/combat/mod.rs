@@ -1,19 +1,22 @@
+pub mod credit;
 pub mod effects;
+pub mod query;
 pub mod render;
 
+use crate::core::script::Vocabulary;
 use bevy_app::App;
 use bevy_ecs::entity::{EntityMapper, MapEntities};
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum::{IntoStaticStr, VariantArray};
 
-use crate::core::content::{Content, serial};
+use crate::core::content::{Content, Fixture, Loading, serial};
 use crate::core::math::Pos;
 use crate::core::render::Pointed;
 use crate::core::time;
 use crate::core::units::{Meters, Seconds};
-use crate::core::vfx::VfxSite;
-use crate::systems::GameSettings;
+use crate::core::vfx::{SiteKind, VfxDef, VfxSite, check_fixtures_played};
 use crate::systems::actor::{self, Actor};
 use crate::systems::area;
 use crate::systems::mount::RiderAct;
@@ -21,10 +24,26 @@ use crate::systems::npc::Pack;
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
 use crate::systems::reach;
-use crate::systems::skill::{self, BasicAttack, CastAim, Targeting};
+use crate::systems::skill::{self, BasicAttack, CastAim, CastWay, Targeting};
 use crate::systems::stat::{self, Stats, Vital};
-use crate::systems::vfx::{self, VfxFixture};
 use crate::systems::visibility;
+use crate::systems::{GameSettings, messages};
+
+/// The vfx every game provides, played on an actor where it is defeated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
+pub enum DefeatVfx {
+    Defeated,
+}
+
+impl Fixture for DefeatVfx {
+    type Row = VfxDef;
+    const FOLDER: Option<&'static str> = Some("vfx");
+}
+
+pub fn check_vfx(loading: &mut Loading) {
+    check_fixtures_played::<DefeatVfx>(loading, &[SiteKind::Actor]);
+}
 
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
@@ -148,7 +167,7 @@ pub struct Dead {
     pub at: Seconds,
 }
 
-/// How much health and mana every player regains, and how often.
+/// How much health and mana every character regains, and how often.
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 pub struct VitalRegen {
     pub every: Seconds,
@@ -197,8 +216,19 @@ pub fn request(world: &mut World) {
             let skill = world
                 .get::<BasicAttack>(player)
                 .and_then(|slot| slot.0)
-                .ok_or("Nothing to attack with")?;
-            skill::cast(world, player, skill, CastAim::Actor(request.target), true)
+                .ok_or_else(|| {
+                    messages::of(world.resource::<Content>())
+                        .skill
+                        .nothing_to_attack_with()
+                        .to_owned()
+                })?;
+            skill::cast(
+                world,
+                player,
+                skill,
+                CastAim::Actor(request.target),
+                CastWay::Repeated,
+            )
         },
     );
 }
@@ -209,12 +239,35 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
     }
     let time = time::uptime(world);
     if let Some(attacker) = attacker {
+        for fighter in [attacker, target] {
+            world.entity_mut(fighter).insert(Fought { at: time });
+        }
         add_attacker(world, target, attacker);
         crate::systems::item::reserve(world, target, attacker, time);
         crate::systems::npc::attacked(world, target, attacker);
-        crate::systems::dialogue::interrupt(world, target, "you're under attack");
+        let reason = messages::of(world.resource::<Content>())
+            .skill
+            .under_attack()
+            .to_owned();
+        crate::systems::dialogue::interrupt(world, target, &reason);
     }
     stat::apply_damage(world, target, damage);
+}
+
+/// When an actor last struck someone or was struck by someone.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Fought {
+    pub at: Seconds,
+}
+
+/// Whether `actor` is in combat: they struck someone or were struck by someone within the time
+/// the game's claims last.
+pub fn in_combat(world: &World, actor: Entity) -> bool {
+    let lasts = world.resource::<GameSettings>().claims_last;
+    let now = time::uptime(world);
+    world
+        .get::<Fought>(actor)
+        .is_some_and(|fought| now - fought.at < lasts)
 }
 
 /// The actors still standing whose stats just changed: an entity falls only as its stats change.
@@ -235,7 +288,7 @@ pub fn defeats(world: &mut World, standing: &mut Standing) {
             .entity_mut(entity)
             .remove::<Attackers>()
             .insert(Dead { at: time });
-        vfx::fixture::play(world, VfxFixture::Defeated, VfxSite::Actor(entity));
+        area::vfx::play_fixture(world, DefeatVfx::Defeated, VfxSite::Actor(entity));
         world.write_message(Died { entity });
     }
 }
@@ -258,4 +311,9 @@ fn add_attacker(world: &mut World, target: Entity, by: Entity) {
             world.entity_mut(target).insert(Attackers { ids: vec![by] });
         }
     }
+}
+
+pub fn scripting(vocabulary: &mut Vocabulary) {
+    query::scripting(vocabulary);
+    effects::scripting(vocabulary);
 }

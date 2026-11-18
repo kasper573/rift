@@ -1,9 +1,7 @@
-use engine::core::script::{Expr, ExprKind, ValueType};
+use engine::core::script::{Expr, ExprKind, ScriptQuery, ValueType};
 use engine::systems::GameSettings;
-use engine::systems::script::condition::ConditionNames;
-use engine::systems::script::{
-    Condition, RiftQuery, RiftQueryKind, SkyCondition, condition as script_condition,
-};
+use engine::systems::area::sky::During;
+use engine::systems::area::sky::SkyCondition;
 use serde_json::Value;
 use strum::VariantArray;
 use ui::chip;
@@ -18,8 +16,11 @@ use ui::theme;
 
 use crate::day;
 use crate::forms::{self, FormChange, FormCx};
+use crate::project::Project;
 use crate::schema::{self, SchemaVariant};
+use engine::core::script::Vocabulary;
 use ui::input::InputField;
+use ui::menu;
 
 #[derive(Clone, Copy, PartialEq, Eq, VariantArray)]
 enum QueryGroup {
@@ -35,56 +36,21 @@ enum QueryGroup {
 }
 
 impl QueryGroup {
-    fn of(kind: RiftQueryKind) -> QueryGroup {
-        match kind {
-            RiftQueryKind::Level
-            | RiftQueryKind::IsClass
-            | RiftQueryKind::Stat
-            | RiftQueryKind::HasStatus
-            | RiftQueryKind::StatusCount
-            | RiftQueryKind::StatusPower
-            | RiftQueryKind::SkillRank
-            | RiftQueryKind::SkillStat
-            | RiftQueryKind::SpentSkillPoints
-            | RiftQueryKind::MastersRecipe
-            | RiftQueryKind::InParty
-            | RiftQueryKind::Riding
-            | RiftQueryKind::InInstance
-            | RiftQueryKind::InstanceHolds => QueryGroup::Character,
-            RiftQueryKind::Holding
-            | RiftQueryKind::FreeSlots
-            | RiftQueryKind::Offered
-            | RiftQueryKind::Equipped => QueryGroup::Gear,
-            RiftQueryKind::OnQuest
-            | RiftQueryKind::QuestDone
-            | RiftQueryKind::QuestCooling
-            | RiftQueryKind::TaskDone
-            | RiftQueryKind::QuestResetsIn => QueryGroup::Quests,
-            RiftQueryKind::Memory | RiftQueryKind::SetWithin => QueryGroup::Memories,
-            RiftQueryKind::Inside | RiftQueryKind::InArea | RiftQueryKind::KnowsArea => {
-                QueryGroup::Places
+    fn of(query: &str) -> QueryGroup {
+        match query {
+            "level" | "is_class" | "stat" | "has_status" | "status_count" | "status_power"
+            | "skill_rank" | "skill_stat" | "spent_skill_points" | "masters_recipe"
+            | "in_party" | "riding" | "in_combat" | "in_instance" => QueryGroup::Character,
+            "holding" | "free_slots" | "offered" | "equipped" => QueryGroup::Gear,
+            "on_quest" | "quest_done" | "quest_cooling" | "task_done" | "quest_resets_in" => {
+                QueryGroup::Quests
             }
-            RiftQueryKind::Nearest
-            | RiftQueryKind::Count
-            | RiftQueryKind::Distance
-            | RiftQueryKind::Health
-            | RiftQueryKind::Present
-            | RiftQueryKind::IsNpc
-            | RiftQueryKind::Walking
-            | RiftQueryKind::Hostile
-            | RiftQueryKind::Subject
-            | RiftQueryKind::Owner
-            | RiftQueryKind::Target => QueryGroup::Actors,
-            RiftQueryKind::GroundItems => QueryGroup::Ground,
-            RiftQueryKind::SkillTargets | RiftQueryKind::SkillArea | RiftQueryKind::AimedPoint => {
-                QueryGroup::Skill
-            }
-            RiftQueryKind::Hour
-            | RiftQueryKind::During
-            | RiftQueryKind::TimeShare
-            | RiftQueryKind::Rain
-            | RiftQueryKind::Wind
-            | RiftQueryKind::Clouds => QueryGroup::Sky,
+            "memory" | "set_within" => QueryGroup::Memories,
+            "inside" | "in_area" | "knows_area" => QueryGroup::Places,
+            "ground_items" => QueryGroup::Ground,
+            "skill_targets" | "skill_area" | "aimed_point" => QueryGroup::Skill,
+            "hour" | "during" | "time_share" | "rain" | "wind" | "clouds" => QueryGroup::Sky,
+            _ => QueryGroup::Actors,
         }
     }
 
@@ -145,13 +111,23 @@ fn sign(kind: ExprKind) -> Option<&'static str> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BlockKind {
     Expr(ExprKind),
-    Query(RiftQueryKind),
+    Query(QueryKind),
+}
+
+/// A kind of query: the name it is written with, and what it yields when its kind alone says.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct QueryKind {
+    name: &'static str,
+    yields: Option<ValueType>,
 }
 
 impl BlockKind {
-    fn of(condition: &Condition) -> BlockKind {
+    fn of(condition: &Expr) -> BlockKind {
         match condition {
-            Expr::Query(query) => BlockKind::Query(query.into()),
+            Expr::Query(query) => BlockKind::Query(QueryKind {
+                name: query.name(),
+                yields: query.static_type(),
+            }),
             other => BlockKind::Expr(other.kind()),
         }
     }
@@ -160,7 +136,7 @@ impl BlockKind {
     /// where it is kept.
     fn yields(self) -> Option<ValueType> {
         let kind = match self {
-            BlockKind::Query(query) => return query.value_type(),
+            BlockKind::Query(query) => return query.yields,
             BlockKind::Expr(kind) => kind,
         };
         match kind {
@@ -196,7 +172,7 @@ impl BlockKind {
             BlockKind::Expr(ExprKind::All) => "all of".to_owned(),
             BlockKind::Expr(ExprKind::Any) => "any of".to_owned(),
             BlockKind::Expr(kind) => kind.name().replace('_', " "),
-            BlockKind::Query(query) => <&str>::from(query).replace('_', " "),
+            BlockKind::Query(query) => query.name.replace('_', " "),
         }
     }
 
@@ -221,7 +197,7 @@ fn type_word(yields: Option<ValueType>) -> &'static str {
 
 /// A condition as blocks to click together: each block a chip that swaps it for another, holding
 /// the blocks it is made of.
-pub fn edit(ui: &mut Ui, cx: &mut FormCx, condition: &mut Condition, path: &str) -> FormChange {
+pub fn edit(ui: &mut Ui, cx: &mut FormCx, condition: &mut Expr, path: &str) -> FormChange {
     let palette = Palette::new();
     let mut changed = FormChange::default();
     ui.vertical(|ui| {
@@ -264,9 +240,9 @@ pub fn fresh_sky(cx: &FormCx) -> SkyCondition {
         .and_then(|settings| settings.daylight.as_ref())
         .and_then(|cycle| cycle.times.first());
     SkyCondition::from(match first {
-        Some(time) => Expr::Query(RiftQuery::During {
+        Some(time) => Expr::Query(ScriptQuery::new(During {
             time: time.name.clone(),
-        }),
+        })),
         None => Expr::Bool(true),
     })
 }
@@ -283,25 +259,24 @@ impl Palette {
     }
 
     /// The queries `offered` lets a block be.
-    fn of(offered: impl Fn(RiftQueryKind) -> bool) -> Palette {
-        let root = schema::of_type::<Condition>();
+    fn of(offered: impl Fn(&str) -> bool) -> Palette {
+        let root = schema::of_type::<Expr>();
         Palette {
             root,
             queries: schema::tagged_variants(root, root)
                 .into_iter()
-                .filter(|variant| variant.tag.parse::<RiftQueryKind>().is_ok_and(&offered))
+                .filter(|variant| offered(&variant.tag))
                 .collect(),
         }
     }
 
-    fn query(&self, query: RiftQueryKind) -> Option<&SchemaVariant<'static>> {
-        let tag: &str = query.into();
-        self.queries.iter().find(|variant| variant.tag == tag)
+    fn query(&self, name: &str) -> Option<&SchemaVariant<'static>> {
+        self.queries.iter().find(|variant| variant.tag == name)
     }
 
-    /// A query of `kind` as the schema starts one, its references among the files nearby.
-    fn fresh(&self, cx: &FormCx, query: RiftQueryKind) -> Option<Condition> {
-        let template = schema::variant_template(self.root, self.query(query)?, cx.nearby());
+    /// A query called `name` as the schema starts one, its references among the files nearby.
+    fn fresh(&self, cx: &FormCx, name: &str) -> Option<Expr> {
+        let template = schema::variant_template(self.root, self.query(name)?, cx.nearby());
         cx.project.reader().from_json(&template).ok()
     }
 }
@@ -316,15 +291,14 @@ fn block(
     ui: &mut Ui,
     cx: &mut FormCx,
     palette: &Palette,
-    condition: &mut Condition,
+    condition: &mut Expr,
     path: &str,
     slot: Slot,
 ) -> FormChange {
     let mut changed = FormChange::default();
-    let picked =
-        |ui: &mut Ui, cx: &mut FormCx, response: &egui::Response, condition: &mut Condition| {
-            picker_popup(ui, cx, response, palette, slot, condition, path)
-        };
+    let picked = |ui: &mut Ui, cx: &mut FormCx, response: &egui::Response, condition: &mut Expr| {
+        picker_popup(ui, cx, response, palette, slot, condition, path)
+    };
     match condition {
         Expr::Bool(flag) => {
             let text = if *flag { "true" } else { "false" };
@@ -440,8 +414,7 @@ fn block(
                 .show(|ui| {
                     for &op in ExprKind::VARIANTS {
                         let Some(sign) = sign(op) else { continue };
-                        if ui
-                            .button(format!("{sign}  {}", schema::title(op.name())))
+                        if menu::entry(ui, format!("{sign}  {}", schema::title(op.name())))
                             .clicked()
                         {
                             swapped = Some(op);
@@ -464,12 +437,12 @@ fn block(
     changed
 }
 
-fn taken(operand: &mut Box<Condition>) -> Box<Condition> {
+fn taken(operand: &mut Box<Expr>) -> Box<Expr> {
     std::mem::replace(operand, Box::new(Expr::Bool(false)))
 }
 
 /// A number typed in place: whole numbers stay whole.
-fn number(ui: &mut Ui, cx: &mut FormCx, condition: &mut Condition, path: &str) -> FormChange {
+fn number(ui: &mut Ui, cx: &mut FormCx, condition: &mut Expr, path: &str) -> FormChange {
     let current = match condition {
         Expr::Int(number) => number.to_string(),
         Expr::Num(number) => number.to_string(),
@@ -503,7 +476,7 @@ fn list_block(
     ui: &mut Ui,
     cx: &mut FormCx,
     palette: &Palette,
-    condition: &mut Condition,
+    condition: &mut Expr,
     path: &str,
     slot: Slot,
 ) -> FormChange {
@@ -521,7 +494,7 @@ fn list_block(
         return changed;
     };
     let mut remove = None;
-    let mut added: Option<Condition> = None;
+    let mut added: Option<Expr> = None;
     ui.horizontal_top(|ui| {
         ui.add_space(6.0);
         let guide_x = ui.cursor().min.x;
@@ -551,17 +524,8 @@ fn list_block(
                             row.response.rect.right() + 8.0,
                             row.response.rect.center().y,
                         );
-                        let hit = egui::Rect::from_center_size(at, egui::vec2(14.0, 14.0));
-                        let cross = ui.interact(
-                            hit,
-                            ui.id().with(path).with(("remove", index)),
-                            egui::Sense::click(),
-                        );
-                        Mark::Cross.paint(
-                            ui.painter(),
-                            egui::Rect::from_center_size(at, egui::vec2(9.0, 9.0)),
-                            theme::FAINT,
-                        );
+                        let hit = egui::Rect::from_center_size(at, egui::vec2(16.0, 16.0));
+                        let cross = ui.put(hit, |ui: &mut Ui| controls::remove(ui, "Remove"));
                         if cross.clicked() {
                             remove = Some(index);
                         }
@@ -604,19 +568,22 @@ fn query_block(
     ui: &mut Ui,
     cx: &mut FormCx,
     palette: &Palette,
-    condition: &mut Condition,
+    condition: &mut Expr,
     path: &str,
     slot: Slot,
 ) -> FormChange {
     let Expr::Query(query) = condition else {
         return FormChange::default();
     };
-    let kind = RiftQueryKind::from(&*query);
+    let kind = QueryKind {
+        name: query.name(),
+        yields: query.static_type(),
+    };
     let response = tag_chip(ui, BlockKind::Query(kind));
     if let Some(picked) = picker_popup(ui, cx, &response, palette, slot, condition, path) {
         return picked;
     }
-    let (Expr::Query(query), Some(variant)) = (&mut *condition, palette.query(kind)) else {
+    let (Expr::Query(query), Some(variant)) = (&mut *condition, palette.query(kind.name)) else {
         return FormChange::default();
     };
     forms::inline_fields_of(
@@ -626,7 +593,7 @@ fn query_block(
         variant.schema,
         query,
         path,
-        &mut |ui, cx, nested: &mut Condition, nested_path| {
+        &mut |ui, cx, nested: &mut Expr, nested_path| {
             block(ui, cx, palette, nested, nested_path, Slot::Any)
         },
     )
@@ -638,7 +605,7 @@ fn picker_popup(
     response: &egui::Response,
     palette: &Palette,
     slot: Slot,
-    condition: &mut Condition,
+    condition: &mut Expr,
     path: &str,
 ) -> Option<FormChange> {
     let id = ui.id().with(path).with("picker");
@@ -656,22 +623,27 @@ fn picker_popup(
     changed
 }
 
-fn picker_body(ui: &mut Ui, cx: &mut FormCx, palette: &Palette, slot: Slot) -> Option<Condition> {
-    let mut picked: Option<Condition> = None;
+fn picker_body(ui: &mut Ui, cx: &mut FormCx, palette: &Palette, slot: Slot) -> Option<Expr> {
+    let mut picked: Option<Expr> = None;
     let zero = || Box::new(Expr::Int(0));
     ui.set_width(300.0);
     egui::ScrollArea::vertical()
         .max_height(420.0)
         .show(ui, |ui| {
             for &group in QueryGroup::VARIANTS {
-                let members: Vec<RiftQueryKind> = RiftQueryKind::VARIANTS
-                    .iter()
-                    .copied()
-                    .filter(|query| {
-                        QueryGroup::of(*query) == group
-                            && BlockKind::Query(*query).fits(slot)
-                            && palette.query(*query).is_some()
+                let members: Vec<QueryKind> = Vocabulary::get()
+                    .query_names()
+                    .filter(|name| QueryGroup::of(name) == group)
+                    .filter_map(|name| {
+                        let Expr::Query(query) = palette.fresh(cx, name)? else {
+                            return None;
+                        };
+                        Some(QueryKind {
+                            name,
+                            yields: query.static_type(),
+                        })
                     })
+                    .filter(|query| BlockKind::Query(*query).fits(slot))
                     .collect();
                 if members.is_empty() {
                     continue;
@@ -679,7 +651,7 @@ fn picker_body(ui: &mut Ui, cx: &mut FormCx, palette: &Palette, slot: Slot) -> O
                 sheet::section(ui, group.title());
                 for query in members {
                     if entry(ui, query) {
-                        picked = palette.fresh(cx, query);
+                        picked = palette.fresh(cx, query.name);
                     }
                 }
             }
@@ -742,7 +714,7 @@ fn picker_body(ui: &mut Ui, cx: &mut FormCx, palette: &Palette, slot: Slot) -> O
             ui.add_space(6.0);
             ui.separator();
             ui.horizontal_wrapped(|ui| {
-                let joins: [(ExprKind, fn() -> Condition); 3] = [
+                let joins: [(ExprKind, fn() -> Expr); 3] = [
                     (ExprKind::All, || Expr::All { of: Vec::new() }),
                     (ExprKind::Any, || Expr::Any { of: Vec::new() }),
                     (ExprKind::Not, || Expr::Not {
@@ -797,7 +769,7 @@ fn tag_chip(ui: &mut Ui, block: BlockKind) -> egui::Response {
     response
 }
 
-fn entry(ui: &mut Ui, query: RiftQueryKind) -> bool {
+fn entry(ui: &mut Ui, query: QueryKind) -> bool {
     let block = BlockKind::Query(query);
     let response = ui
         .horizontal(|ui| {
@@ -815,13 +787,13 @@ fn entry(ui: &mut Ui, query: RiftQueryKind) -> bool {
 }
 
 /// A condition at a glance, as a writer reads it among the blocks of a node.
-pub fn summary(names: &impl ConditionNames, condition: &Condition) -> String {
-    fn go(names: &impl ConditionNames, condition: &Condition, out: &mut String, depth: usize) {
+pub fn summary(names: &Project, condition: &Expr) -> String {
+    fn go(names: &Project, condition: &Expr, out: &mut String, depth: usize) {
         if depth > 4 {
             out.push('…');
             return;
         }
-        let joined = |list: &[Condition], word: &str, out: &mut String| {
+        let joined = |list: &[Expr], word: &str, out: &mut String| {
             out.push('(');
             for (index, item) in list.iter().enumerate() {
                 if index > 0 {
@@ -852,7 +824,7 @@ pub fn summary(names: &impl ConditionNames, condition: &Condition) -> String {
             Expr::Num(number) => out.push_str(&number.to_string()),
             Expr::Text(text) => out.push_str(&format!("{text:?}")),
             Expr::Query(_) => {
-                out.push_str(&script_condition::describe(names, condition).to_string());
+                out.push_str(&names.describe(condition));
             }
             binary => {
                 let shown = sign(binary.kind()).unwrap_or("?");

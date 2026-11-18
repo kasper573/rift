@@ -25,7 +25,7 @@ const PREVIEW_VIDEO: &str = "a moving picture";
 async fn a_visitor_signs_in_as_their_account_and_signs_out() {
     for account_page in [Some(ACCOUNT_PAGE), None] {
         let provider = start_provider().await;
-        let site = site(&provider, account_page).await;
+        let site = site(&provider, account_page, NO_RELEASES).await;
         let mut visitor = Visitor::default();
 
         let landing = visitor.get(&site, "/").await;
@@ -68,38 +68,83 @@ async fn a_visitor_signs_in_as_their_account_and_signs_out() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_downloads_offer_the_game_client_of_the_release_with_a_rift_env_for_the_site() {
+async fn a_download_is_the_releases_game_client_in_a_folder_with_everything_it_needs_to_play_here()
+{
     let provider = start_provider().await;
-    let site = site(&provider, None).await;
+    let releases = start_releases().await;
+    let site = site(&provider, None, &releases).await;
     let mut visitor = Visitor::default();
 
     let downloads = visitor.get(&site, "/downloads").await;
-    for archive in [
-        "game-client-linux-x86_64.tar.gz",
-        "game-client-windows-x86_64.zip",
-        "game-client-macos-arm64.tar.gz",
-    ] {
-        let link = format!("https://releases.test/download/{RELEASE}/{archive}");
+    for platform in ["linux-x86_64", "windows-x86_64", "macos-arm64"] {
+        let link = format!("href=\"/download/{platform}\"");
         assert!(downloads.body.contains(&link), "{link}");
     }
-    assert!(!downloads.body.contains("editor"));
+    for unsaid in ["rift.env", "RIFT_", "editor"] {
+        assert!(!downloads.body.contains(unsaid), "the page says {unsaid}");
+    }
 
-    let env = visitor.get(&site, "/rift.env").await;
-    for line in [
-        "RIFT_CLIENT_GAME_SERVER_URL=https://game-server.site.test",
-        "RIFT_CLIENT_AUTH=oidc",
-        &format!(
+    let rift_env = [
+        "RIFT_CLIENT_GAME_SERVER_URL=https://game-server.site.test".to_owned(),
+        "RIFT_CLIENT_AUTH=oidc".to_owned(),
+        format!("RIFT_CLIENT_RELEASES_URL={releases}"),
+        format!(
             "RIFT_AUTH_AUTHORIZATION_URI={}",
             provider.endpoints.authorize
         ),
-        "RIFT_AUTH_SIGN_UP_URI=https://provider.test/sign-up",
-        "RIFT_AUTH_TOKEN_URI=https://provider.test/token",
+        "RIFT_AUTH_SIGN_UP_URI=https://provider.test/sign-up".to_owned(),
+        "RIFT_AUTH_TOKEN_URI=https://provider.test/token".to_owned(),
+    ];
+    for (platform, file, client) in [
+        (
+            "linux-x86_64",
+            "Lantern-Isle-linux-x86_64.tar.gz",
+            "game-client",
+        ),
+        (
+            "windows-x86_64",
+            "Lantern-Isle-windows-x86_64.zip",
+            "game-client.exe",
+        ),
     ] {
-        assert!(
-            env.body.lines().any(|held| held == line),
-            "{line}:\n{}",
-            env.body
+        let download = visitor.get(&site, &format!("/download/{platform}")).await;
+        assert_eq!(
+            download.disposition.as_deref(),
+            Some(format!("attachment; filename=\"{file}\"").as_str()),
+            "{platform}"
         );
+        let held = extracted(file, &download.bytes);
+        assert_eq!(
+            held.keys().collect::<Vec<_>>(),
+            [
+                &format!("Lantern-Isle/{client}"),
+                &"Lantern-Isle/rift.env".to_owned()
+            ],
+            "{platform}: one folder, named after the game"
+        );
+        assert_eq!(
+            held[&format!("Lantern-Isle/{client}")],
+            release_client(platform),
+            "{platform}: the release's own game client"
+        );
+        if file.ends_with(".tar.gz") {
+            assert_eq!(
+                mode_of(&download.bytes, &format!("Lantern-Isle/{client}")),
+                0o755,
+                "{platform}: the game client starts as extracted"
+            );
+        }
+        let env = String::from_utf8(held["Lantern-Isle/rift.env"].clone()).expect("text");
+        for line in &rift_env {
+            assert!(env.lines().any(|held| held == line), "{line}:\n{env}");
+        }
+    }
+
+    for (path, status) in [
+        ("/download/amiga-68k", StatusCode::NOT_FOUND),
+        ("/download/macos-arm64", StatusCode::BAD_GATEWAY),
+    ] {
+        assert_eq!(visitor.get(&site, path).await.status, status, "{path}");
     }
 }
 
@@ -107,7 +152,7 @@ async fn the_downloads_offer_the_game_client_of_the_release_with_a_rift_env_for_
 async fn the_landing_page_plays_the_preview_video_the_site_is_given() {
     std::fs::write(preview_video(), PREVIEW_VIDEO).expect("a preview video");
     let provider = start_provider().await;
-    let site = site(&provider, None).await;
+    let site = site(&provider, None, NO_RELEASES).await;
     let mut visitor = Visitor::default();
 
     let landing = visitor.get(&site, "/").await;
@@ -132,7 +177,9 @@ struct Visitor {
 struct Page {
     status: StatusCode,
     location: Option<String>,
+    disposition: Option<String>,
     body: String,
+    bytes: Vec<u8>,
 }
 
 impl Page {
@@ -168,17 +215,23 @@ impl Visitor {
             }
         }
         let status = response.status();
-        let location = response
-            .headers()
-            .get(header::LOCATION)
-            .map(|location| location.to_str().expect("a location").to_owned());
+        let header_text = |name| {
+            response
+                .headers()
+                .get(name)
+                .map(|value: &header::HeaderValue| value.to_str().expect("text").to_owned())
+        };
+        let location = header_text(header::LOCATION);
+        let disposition = header_text(header::CONTENT_DISPOSITION);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("a body");
         Page {
             status,
             location,
-            body: String::from_utf8(body.to_vec()).expect("a text body"),
+            disposition,
+            body: String::from_utf8_lossy(&body).into_owned(),
+            bytes: body.to_vec(),
         }
     }
 }
@@ -199,7 +252,7 @@ async fn start_provider() -> OAuthTestServer {
     .await
 }
 
-async fn site(provider: &OAuthTestServer, account_page: Option<&str>) -> Router {
+async fn site(provider: &OAuthTestServer, account_page: Option<&str>, releases: &str) -> Router {
     let registration = Registration {
         scope: "openid profile",
         redirect_uris: vec![format!("{SITE}/auth-callback")],
@@ -214,7 +267,7 @@ async fn site(provider: &OAuthTestServer, account_page: Option<&str>) -> Router 
             redirect_uri: RedirectUrl::new(format!("{SITE}/auth-callback")).expect("a url"),
             game_server_url: "https://game-server.site.test".to_owned(),
             game_server_internal_url: "http://game-server:9998".to_owned(),
-            downloads_url: "https://releases.test/download".to_owned(),
+            downloads_url: releases.to_owned(),
             release: RELEASE.to_owned(),
             preview_video: preview_video(),
         },
@@ -238,4 +291,97 @@ async fn site(provider: &OAuthTestServer, account_page: Option<&str>) -> Router 
         },
     })
     .await
+}
+
+const NO_RELEASES: &str = "http://127.0.0.1:9/download";
+
+/// Where the release's archives are published, holding the game client of Linux and Windows.
+async fn start_releases() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let address = listener.local_addr().expect("a bound port");
+    let mut releases = Router::new();
+    for (platform, archive) in [
+        (
+            "linux-x86_64",
+            tar_gz("game-client", &release_client("linux-x86_64")),
+        ),
+        (
+            "windows-x86_64",
+            zipped("game-client.exe", &release_client("windows-x86_64")),
+        ),
+    ] {
+        let suffix = if platform.starts_with("windows") {
+            "zip"
+        } else {
+            "tar.gz"
+        };
+        let route = format!("/download/{RELEASE}/game-client-{platform}.{suffix}");
+        releases = releases.route(&route, axum::routing::get(move || async move { archive }));
+    }
+    tokio::spawn(async move { axum::serve(listener, releases).await });
+    format!("http://{address}/download")
+}
+
+fn release_client(platform: &str) -> Vec<u8> {
+    format!("the game client for {platform}").into_bytes()
+}
+
+fn tar_gz(name: &str, bytes: &[u8]) -> Vec<u8> {
+    let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let mut archive = tar::Builder::new(gz);
+    let mut header = tar::Header::new_gnu();
+    header.set_size(bytes.len() as u64);
+    header.set_mode(0o755);
+    archive
+        .append_data(&mut header, name, bytes)
+        .expect("a tar entry");
+    archive
+        .into_inner()
+        .and_then(|gz| gz.finish())
+        .expect("a tar.gz")
+}
+
+fn zipped(name: &str, bytes: &[u8]) -> Vec<u8> {
+    let mut archive = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    archive
+        .start_file(name, zip::write::SimpleFileOptions::default())
+        .expect("a zip entry");
+    std::io::Write::write_all(&mut archive, bytes).expect("written");
+    archive.finish().expect("a zip").into_inner()
+}
+
+/// Every file `archive` holds, by its path in it.
+fn extracted(file: &str, archive: &[u8]) -> BTreeMap<String, Vec<u8>> {
+    let mut held = BTreeMap::new();
+    if file.ends_with(".zip") {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive)).expect("a zip");
+        for index in 0..zip.len() {
+            let mut entry = zip.by_index(index).expect("an entry");
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).expect("read");
+            held.insert(entry.name().expect("a name").into_owned(), bytes);
+        }
+    } else {
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
+        for entry in tar.entries().expect("a tar") {
+            let mut entry = entry.expect("an entry");
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut entry, &mut bytes).expect("read");
+            let path = entry.path().expect("a path").display().to_string();
+            held.insert(path, bytes);
+        }
+    }
+    held
+}
+
+fn mode_of(archive: &[u8], path: &str) -> u32 {
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
+    tar.entries()
+        .expect("a tar")
+        .map(|entry| entry.expect("an entry"))
+        .find(|entry| entry.path().is_ok_and(|held| held.to_str() == Some(path)))
+        .and_then(|entry| entry.header().mode().ok())
+        .expect("the file")
 }
