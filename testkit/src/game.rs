@@ -251,7 +251,6 @@ impl Game {
                 "character": path("character", "hero"),
                 "sight": 24.0,
                 "map_reaches": [16.0, 32.0, 64.0],
-                "chase_pace": 2.0,
                 "corpses_linger": 5.0,
                 "claims_last": 60.0,
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },

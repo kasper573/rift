@@ -144,7 +144,7 @@ fn a_fighter_chasing_a_target_walking_away_strikes_it_again_and_again_before_the
     for direction in [(-1.0, 0.0), (0.0, 1.0), (-1.0, -1.0)] {
         let mut arena = Arena::new();
         let player = arena.player();
-        let fighter = arena.fighter(arena.at(-direction.0 * 2.0, -direction.1 * 2.0));
+        let fighter = arena.sprinter(arena.at(-direction.0 * 2.0, -direction.1 * 2.0));
         let away = arena.at(direction.0 * 10.0, direction.1 * 10.0);
 
         arena.attack(fighter, player);
@@ -518,16 +518,21 @@ impl Arena {
     }
 
     fn fighter(&mut self, at: Pos<Meters>) -> Entity {
-        self.brute(at, FIGHTERS)
+        self.brute(at, FIGHTERS, "brute")
+    }
+
+    /// A fighter fast enough to catch up with anyone on foot.
+    fn sprinter(&mut self, at: Pos<Meters>) -> Entity {
+        self.brute(at, FIGHTERS, "sprinter")
     }
 
     fn victim(&mut self, at: Pos<Meters>) -> Entity {
-        self.brute(at, VICTIMS)
+        self.brute(at, VICTIMS, "brute")
     }
 
-    fn brute(&mut self, at: Pos<Meters>, pack: u32) -> Entity {
+    fn brute(&mut self, at: Pos<Meters>, pack: u32, kind: &str) -> Entity {
         let area = self.area;
-        let def = self.sim.id::<NpcDef>("brute");
+        let def = self.sim.id::<NpcDef>(kind);
         let pack = self.sim.pack(pack);
         let brute = npc::spawn(self.world(), def, at, area, Some(pack));
         self.world().entity_mut(brute).insert(Attitude::Hostile);
@@ -623,6 +628,11 @@ fn field(wanderers: bool) -> Sim {
         .npc("brute", 100_000.0, json!([]))
         .edit("npc", "brute", |brute| {
             brute["basic_attack"] = json!(path("skill", "strike"))
+        })
+        .npc("sprinter", 100_000.0, json!([]))
+        .edit("npc", "sprinter", |sprinter| {
+            sprinter["basic_attack"] = json!(path("skill", "strike"));
+            sprinter["stats"]["movement_speed"] = json!(8.0);
         })
         .npc("post", 100_000.0, json!([]))
         .edit("npc", "post", |post| {

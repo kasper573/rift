@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::controls;
-use ui::egui::{self, Align, Color32, Layout, Response, Ui, Vec2};
+use ui::egui::{self, Align, Color32, Layout, Pos2, Rect, Response, Ui, Vec2};
 use ui::face::TextRole;
 use ui::input::InputField;
 use ui::sheet::{self, Tab, TabSize};
@@ -21,7 +21,7 @@ use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
-use crate::systems::hud::{self, Centred, WindowKey};
+use crate::systems::hud::{self, Seat, Sizing, WindowKey};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::card;
 use crate::systems::item::grid::scrolled;
@@ -57,14 +57,24 @@ pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
     };
     let content = world.resource::<Content>().clone();
     let words = messages::of(&content);
-    let window = Centred {
+    let screen = gui.content_rect();
+    let size = sheet::titled_size(Vec2::new(WIDTH + 2.0 * sheet::PANE_PAD.x, BODY_HEIGHT));
+    let seat = Seat {
         key: WindowKey::Market,
         of: Placed::Market,
-        body: Vec2::new(WIDTH, BODY_HEIGHT),
-        top: 80.0,
+        start: Rect::from_min_size(
+            Pos2::new(screen.center().x - size.x / 2.0, screen.top() + TOP),
+            size,
+        ),
+        sizing: Sizing::Resizable {
+            min: sheet::titled_size(Vec2::new(
+                SMALLEST_WIDTH + 2.0 * sheet::PANE_PAD.x,
+                SMALLEST_BODY_HEIGHT,
+            )),
+        },
     };
     let title = |_: &MarketView| words.market.title().to_owned();
-    let drawn = hud::centred(world, gui, window, open, title, |ui, world, shown| {
+    let drawn = hud::viewed(world, gui, seat, open, title, |ui, world, shown| {
         let pad = sheet::PANE_PAD;
         let mine = my_listings(world);
         let tabs = [
@@ -84,8 +94,9 @@ pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
             bottom: pad.y as i8,
         };
         egui::Frame::NONE.inner_margin(padding).show(ui, |ui| {
-            ui.allocate_ui(Vec2::new(WIDTH, PAGE_HEIGHT), |ui| {
-                ui.set_min_height(PAGE_HEIGHT);
+            let page = ui.available_size();
+            ui.allocate_ui(page, |ui| {
+                ui.set_min_height(page.y);
                 match tab {
                     MarketTab::Browse => browse(ui, world, shown, now),
                     MarketTab::List => new_listing(ui, world, &settings),
@@ -226,7 +237,9 @@ pub fn shown(world: &World) -> Option<ShownMarket> {
 }
 
 const WIDTH: f32 = 860.0;
-const PAGE_HEIGHT: f32 = 430.0;
+const TOP: f32 = 80.0;
+const SMALLEST_WIDTH: f32 = 620.0;
+const SMALLEST_BODY_HEIGHT: f32 = 400.0;
 const BODY_HEIGHT: f32 = 510.0;
 const ITEM_WIDTH: f32 = 220.0;
 /// The gap between a listing's two lines.

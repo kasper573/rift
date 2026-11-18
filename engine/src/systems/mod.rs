@@ -169,7 +169,6 @@ pub fn plug_ins(world: &mut World) {
     chat::source(world, party::chat_channel());
     stat::source(world, status::boost::modifiers);
     stat::source(world, class::level_stats);
-    stat::source(world, skill::casting::chase);
     attention::badge_source(world, dialogue::talking);
     attention::mark_source(world, interact::marks);
     attention::mark_source(world, shop::marks);
@@ -261,8 +260,6 @@ pub struct GameSettings {
     pub sight: Meters,
     /// How far a player's map of the ground around them reaches, at each step they may choose.
     pub map_reaches: area_map::MapReaches,
-    /// How many times their pace an actor runs while reaching for a cast.
-    pub chase_pace: f32,
     /// Without it, water slows no one who wades through it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wading: Option<movement::Wading>,
@@ -962,7 +959,6 @@ fn check_settings(loading: &mut Loading) {
     }
     check.at_least("/sight", settings.sight.0, 0.0, "meters");
     settings.map_reaches.check("/map_reaches", &mut check);
-    check.at_least("/chase_pace", settings.chase_pace, 1.0, "times");
     if let Some(wading) = &settings.wading {
         wading.check("/wading", &mut check);
     }

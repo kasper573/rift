@@ -23,7 +23,6 @@ use crate::core::text::LineText;
 use crate::core::tick::{Cached, Planner};
 use crate::core::time::WallClock;
 use crate::core::units::{MeterPos, Meters};
-use crate::systems::GameSettings;
 use crate::systems::actor::{self, playing};
 use crate::systems::aim::{self as effects};
 use crate::systems::combat::{self, Relation};
@@ -383,15 +382,6 @@ fn apply(world: &mut World, caster: Entity, intent: ReachIntent, step: CastStep)
                 reach::drop_intent(world, caster);
             }
         }
-    }
-}
-
-/// Everyone reaching for a cast gives chase, at the game's chase pace.
-pub fn chase(world: &World, entity: Entity, into: &mut dyn FnMut(stat::Stat)) {
-    if reach::chasing(world, entity) {
-        let base = stat::base(world, entity, stat::StatKind::MovementSpeed);
-        let pace = world.resource::<GameSettings>().chase_pace;
-        into(stat::StatKind::MovementSpeed.of(base * (pace - 1.0)));
     }
 }
 
