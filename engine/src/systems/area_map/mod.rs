@@ -872,7 +872,9 @@ fn round_button(
     enabled: bool,
 ) -> RoundButton {
     let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * BUTTON));
-    let response = ui.interact(spot, ui.id().with(key), Sense::click());
+    let response = ui
+        .interact(spot, ui.id().with(key), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, said));
     let (fill, ink) = match (enabled, response.hovered()) {
         (false, _) => (ink::HONEY2, ink::INK3),

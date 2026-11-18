@@ -812,14 +812,14 @@ fn buy_back(world: &mut World, player: Entity, index: u32) {
     }
 }
 
-fn held(inventory: &Inventory, price: &[ItemStack]) -> Vec<u32> {
+pub(super) fn held(inventory: &Inventory, price: &[ItemStack]) -> Vec<u32> {
     price
         .iter()
         .map(|stack| inventory.count(stack.item))
         .collect()
 }
 
-fn exchange_refusal(
+pub(super) fn exchange_refusal(
     content: &Content,
     inventory: &Inventory,
     price: &[ItemStack],

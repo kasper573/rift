@@ -15,7 +15,9 @@ use formatjs_icu_messageformat_parser::{ArgumentKind, message_arguments};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::{Content, ContentFile, Fixture, LoadStep, Loading, Nearby, RowCheck};
+use crate::core::content::{
+    Content, ContentFile, ContentFolder, Fixture, FolderReader, LoadStep, Loading, Nearby, RowCheck,
+};
 use crate::core::text::{LineText, SpanText};
 use crate::systems::input::map::InputAction;
 
@@ -44,6 +46,17 @@ pub fn content(registry: &mut crate::core::content::ContentRegistry) {
 /// The catalog of the game `content` is.
 pub fn of(content: &Content) -> &Messages {
     content.built::<Messages>()
+}
+
+/// The catalog of the game `folder` holds, in its locale, read without the rest of the game: what
+/// a client says while the game is still on its way.
+pub fn read_alone(folder: Arc<dyn ContentFolder>) -> Option<Messages> {
+    let reader = FolderReader::new(crate::systems::registry(), folder);
+    let mut messages = reader
+        .read::<Messages>(&MessagesFixture::Game.path())
+        .ok()?;
+    messages.sections_localize();
+    Some(messages)
 }
 
 /// A locale, such as `en-US`: the language and region whose rules the catalog's plurals and

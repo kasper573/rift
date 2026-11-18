@@ -14,7 +14,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::asset::AssetKind;
-use super::load::{ContentFolder, ContentRegistry, FileHash, FileHashes, FolderEntry, entries_in};
+use super::load::{
+    ContentFolder, ContentRegistry, FileHash, FileHashes, FolderEntry, MemoryFolder, entries_in,
+};
 use super::store::ContentStore;
 use super::table::Content;
 use crate::core::math::Rng;
@@ -189,15 +191,28 @@ pub enum SyncPhase {
 }
 
 #[derive(Clone, Default)]
-pub struct SyncStatus(Arc<Mutex<SyncProgress>>);
+pub struct SyncStatus {
+    progress: Arc<Mutex<SyncProgress>>,
+    rows: Arc<Mutex<Option<Arc<MemoryFolder>>>>,
+}
 
 impl SyncStatus {
     pub fn latest(&self) -> SyncProgress {
-        self.0.lock().expect("sync status lock").clone()
+        self.progress.lock().expect("sync status lock").clone()
     }
 
     pub fn update(&self, change: impl FnOnce(&mut SyncProgress)) {
-        change(&mut self.0.lock().expect("sync status lock"));
+        change(&mut self.progress.lock().expect("sync status lock"));
+    }
+
+    /// The content's rows, every file of it but its media, as soon as they have arrived: enough
+    /// to read what needs no media while the media still downloads.
+    pub fn rows(&self) -> Option<Arc<MemoryFolder>> {
+        self.rows.lock().expect("sync status lock").clone()
+    }
+
+    fn rows_arrived(&self, rows: Arc<MemoryFolder>) {
+        *self.rows.lock().expect("sync status lock") = Some(rows);
     }
 }
 
@@ -466,15 +481,22 @@ impl Run<'_> {
             return Err(Attempt::OtherBuild(manifest.build));
         }
         let stored: HashSet<String> = self.store.list().into_iter().collect();
-        let index = self.obtain(&manifest.index.hash, &stored).await?;
+        let (index, bundle) = future::try_zip(
+            self.obtain(&manifest.index.hash, &stored),
+            self.obtain(&manifest.rows.hash, &stored),
+        )
+        .await?;
         let index: FileIndex = serde_json::from_slice(&index)
             .map_err(|error| Attempt::Failed(format!("the file index did not parse: {error}")))?;
-        let bundle = self.obtain(&manifest.rows.hash, &stored).await?;
         let rows: Vec<(String, Arc<[u8]>)> = unpack_rows(&bundle)
             .map_err(|error| Attempt::Failed(format!("the rows bundle did not unpack: {error}")))?
             .into_iter()
             .map(|(path, bytes)| (path, Arc::from(bytes)))
             .collect();
+        self.status.rows_arrived(Arc::new(MemoryFolder {
+            name: format!("the rows of {}", manifest.name),
+            files: rows.iter().cloned().collect(),
+        }));
 
         let (kept, mut missing): (Vec<IndexedFile>, Vec<IndexedFile>) = index
             .files

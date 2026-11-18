@@ -24,7 +24,7 @@ use crate::core::time;
 use crate::core::units::Seconds;
 use crate::core::update::{self, OtherBuildAnswer, ReleaseSource, UpdateFailure, UpdateStep};
 use crate::systems::launch::ClientConfig;
-use crate::systems::messages::Messages;
+use crate::systems::messages::{self, Messages};
 use crate::systems::{install_content, load_content};
 use futures_util::future::BoxFuture;
 
@@ -36,7 +36,9 @@ impl Plugin for LoadingPlugin {
             .add_systems(OnEnter(ClientScreen::Loading), begin)
             .add_systems(
                 Update,
-                (poll, show).chain().run_if(in_state(ClientScreen::Loading)),
+                (poll, read_words_early, show)
+                    .chain()
+                    .run_if(in_state(ClientScreen::Loading)),
             )
             .add_systems(
                 EguiPrimaryContextPass,
@@ -124,6 +126,17 @@ impl Cause {
 struct Shown {
     progress: SyncProgress,
     card: Option<CardModel>,
+    early: EarlyWords,
+}
+
+/// The game's words before its content has loaded, read from its rows as soon as the sync has
+/// them, so the card speaks while the media still downloads.
+#[derive(Default)]
+enum EarlyWords {
+    #[default]
+    Awaited,
+    Read(Box<Messages>),
+    Unreadable,
 }
 
 #[derive(Clone, PartialEq)]
@@ -348,6 +361,26 @@ fn updated(
     stop(world, failure);
 }
 
+fn read_words_early(world: &mut World) {
+    let shown = world.resource::<Shown>();
+    let loaded = world
+        .get_resource::<Content>()
+        .is_some_and(|content| content.try_built::<Messages>().is_some());
+    if loaded || !matches!(shown.early, EarlyWords::Awaited) {
+        return;
+    }
+    let Some(rows) = world
+        .get_resource::<Syncing>()
+        .and_then(|syncing| syncing.status.rows())
+    else {
+        return;
+    };
+    world.resource_mut::<Shown>().early = match messages::read_alone(rows) {
+        Some(read) => EarlyWords::Read(Box::new(read)),
+        None => EarlyWords::Unreadable,
+    };
+}
+
 fn show(world: &mut World) {
     if let Some(syncing) = world.get_resource::<Syncing>() {
         let latest = syncing.status.latest();
@@ -372,13 +405,10 @@ fn show(world: &mut World) {
         (None, None) => None,
     };
     let content = world.get_resource::<Content>().cloned();
-    let messages = content
-        .as_ref()
-        .and_then(|content| content.try_built::<Messages>());
     let model = {
         let shown = world.resource::<Shown>();
         card_model(
-            messages,
+            words(content.as_ref(), shown),
             &shown.progress,
             failure.as_ref(),
             update.as_ref(),
@@ -410,7 +440,8 @@ fn card_model(
     veiled: bool,
     signed_in: bool,
 ) -> CardModel {
-    let (actions, done) = card_actions(failure, update);
+    let (actions, update_done) = card_actions(failure, update);
+    let done = update_done.or_else(|| failure.is_none().then(|| sync_share(progress)).flatten());
     let Some(messages) = messages else {
         return CardModel {
             title: progress.name.clone().unwrap_or_default(),
@@ -536,9 +567,7 @@ fn loading_card(world: &mut World) {
     let backdrop = (!model.veiled).then_some(ink::VEIL);
     let notes: Vec<String> = model.notes.iter().chain(&model.retry_in).cloned().collect();
     let content = world.get_resource::<Content>().cloned();
-    let messages = content
-        .as_ref()
-        .and_then(|content| content.try_built::<Messages>());
+    let messages = words(content.as_ref(), world.resource::<Shown>());
     let labels: Vec<RichText> = model
         .actions
         .iter()
@@ -609,6 +638,26 @@ impl CardAction {
             }
         }
     }
+}
+
+/// The game's words: the loaded content's, or before it has loaded, those read early.
+fn words<'a>(content: Option<&'a Content>, shown: &'a Shown) -> Option<&'a Messages> {
+    content
+        .and_then(|content| content.try_built::<Messages>())
+        .or(match &shown.early {
+            EarlyWords::Read(messages) => Some(messages),
+            EarlyWords::Awaited | EarlyWords::Unreadable => None,
+        })
+}
+
+/// How much of the content the sync has read or downloaded, while it reads or downloads some.
+fn sync_share(progress: &SyncProgress) -> Option<f32> {
+    let tally = match progress.phase {
+        SyncPhase::Reading => progress.read,
+        SyncPhase::Downloading { .. } => progress.fetched,
+        SyncPhase::Checking | SyncPhase::Done | SyncPhase::Building => return None,
+    };
+    (tally.bytes_total > 0).then(|| tally.bytes as f32 / tally.bytes_total as f32)
 }
 
 fn megabytes_of(messages: &ScreenMessages, done: u64, total: u64) -> String {

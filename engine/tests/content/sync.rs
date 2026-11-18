@@ -13,6 +13,7 @@ use engine::core::content::version;
 use engine::core::os::FetchFailure;
 use engine::core::time::Backoff;
 use engine::core::units::Seconds;
+use engine::systems::messages::{self, Messages};
 use futures_util::future::BoxFuture;
 use serde_json::json;
 use testkit::{Game, Map, wav};
@@ -259,6 +260,39 @@ fn another_build_is_refused_before_anything_downloads() {
     assert!(store.hashes().is_empty());
 }
 
+/// The rows arrive ahead of the media, so a first visit already has the game's words to tell how
+/// the media's download goes.
+#[test]
+fn a_first_visit_reads_the_games_words_before_its_media_downloads() {
+    let server = FakeServer::new(served(sounding()));
+    let status = SyncStatus::default();
+    let heard: Arc<Mutex<Option<Messages>>> = Arc::default();
+    *server.before_media.lock().unwrap() = Some(Box::new({
+        let status = status.clone();
+        let heard = heard.clone();
+        move || {
+            let rows = status.rows().expect("the rows arrived before the media");
+            *heard.lock().unwrap() = messages::read_alone(rows);
+        }
+    }));
+
+    block_on(sync(
+        server.clone(),
+        &TestStore::default(),
+        version::build(),
+        quickly(),
+        status,
+    ))
+    .expect("it syncs");
+
+    let content = sounding().load();
+    assert_eq!(
+        heard.lock().unwrap().as_ref(),
+        Some(messages::of(&content)),
+        "the words read early are the game's"
+    );
+}
+
 /// A streamed part, as the tiles of an area's ground are, is left out of the sync and fetched as it
 /// is first read, then kept in the store like the rest: the visit after keeps it without a fetch.
 #[test]
@@ -366,6 +400,7 @@ struct FakeServer {
     requests: Mutex<Vec<String>>,
     corrupt_once: Mutex<HashSet<String>>,
     deploy_on_404: Mutex<Option<(String, ServedContent)>>,
+    before_media: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl FakeServer {
@@ -375,6 +410,7 @@ impl FakeServer {
             requests: Mutex::new(Vec::new()),
             corrupt_once: Mutex::new(HashSet::new()),
             deploy_on_404: Mutex::new(None),
+            before_media: Mutex::new(None),
         })
     }
 
@@ -405,6 +441,13 @@ impl FakeServer {
 impl ContentSource for FakeServer {
     fn get(&self, path: &str) -> BoxFuture<'static, Result<Vec<u8>, FetchFailure>> {
         self.requests.lock().unwrap().push(path.to_owned());
+        let media = path.strip_prefix(FILES).is_some_and(|hash| {
+            let manifest = &self.served.lock().unwrap().manifest;
+            hash != manifest.index.hash && hash != manifest.rows.hash
+        });
+        if media && let Some(before) = self.before_media.lock().unwrap().take() {
+            before();
+        }
         let result = if path == MANIFEST {
             Ok(serde_json::to_vec(&self.served.lock().unwrap().manifest).expect("a manifest"))
         } else if let Some(hash) = path.strip_prefix(FILES) {

@@ -8,7 +8,8 @@ use ui::sheet::{self, Tab, TabSize};
 use ui::{card, ink};
 
 use super::{
-    SaleQuote, SaleVerdict, ShopId, ShopRequest, ShopView, WareRefusal, WareView, paid_for,
+    SaleQuote, SaleVerdict, ShopId, ShopRequest, ShopView, WareRefusal, WareView, exchange_refusal,
+    held, paid_for,
 };
 use bevy_egui::EguiPrimaryContextPass;
 
@@ -264,7 +265,8 @@ fn wares_pages(ui: &mut Ui, world: &mut World, shelf: &Shelf, pages: Rect) {
         size: Vec2::new(card::WIDTH, pages.height()),
         foot: controls::CONTROL_HEIGHT,
     };
-    let wares = shelf.wares(&content);
+    let bag = Inventory::of(world, session::me(world));
+    let wares = shelf.wares(&content, &bag);
     let ware = shelf.ware.min(wares.len().saturating_sub(1));
     ui.scope_builder(column(left), |ui| {
         wares_column(ui, world, shelf, &wares, ware);
@@ -628,7 +630,9 @@ fn purse_line(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
 }
 
 impl Shelf {
-    fn wares(&self, content: &Content) -> Vec<Ware> {
+    /// The wares, what the player can afford and has room for judged by the bag they carry now,
+    /// which the shop's view of it can lag behind.
+    fn wares(&self, content: &Content, bag: &Inventory) -> Vec<Ware> {
         let messages = messages::of(content);
         match self.tab {
             ShopTab::Buy => (0..)
@@ -638,10 +642,20 @@ impl Shelf {
                     item: ware.item,
                     count: ware.count,
                     price: ware.price.to_vec(),
-                    held: view.held.clone(),
+                    held: held(bag, &ware.price),
                     stock: stock_note(view, messages),
                     restocks_in: view.restocks_in.map(|time| messages.time.rough(time)),
-                    refusal: view.refusal.clone(),
+                    refusal: match &view.refusal {
+                        Some(refusal @ (WareRefusal::SoldOut | WareRefusal::Unavailable(_))) => {
+                            Some(refusal.clone())
+                        }
+                        _ => exchange_refusal(
+                            content,
+                            bag,
+                            &ware.price,
+                            &[ItemStack::new(ware.item, ware.count)],
+                        ),
+                    },
                     times: view.times.clone(),
                     verb: messages.shop.buy().to_owned(),
                     request: ShopRequest::Buy { ware: index },
@@ -653,10 +667,15 @@ impl Shelf {
                     item: buyback.sale.item,
                     count: buyback.sale.count,
                     price: buyback.sale.paid.clone(),
-                    held: buyback.held.clone(),
+                    held: held(bag, &buyback.sale.paid),
                     stock: None,
                     restocks_in: None,
-                    refusal: buyback.refusal.clone(),
+                    refusal: exchange_refusal(
+                        content,
+                        bag,
+                        &buyback.sale.paid,
+                        &[ItemStack::new(buyback.sale.item, buyback.sale.count)],
+                    ),
                     times: Vec::new(),
                     verb: messages.shop.buy_back().to_owned(),
                     request: ShopRequest::Buyback { sale: index },
