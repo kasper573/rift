@@ -135,6 +135,7 @@ fn worn_gear_boosts_only_while_it_is_worn() {
         conn,
         UnequipRequest {
             slot: EquipmentPlace::Hand(HandIndex::MAIN),
+            into: None,
         },
     );
     sim.run(0.5);

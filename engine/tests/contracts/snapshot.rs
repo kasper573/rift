@@ -22,10 +22,10 @@ use engine::systems::item::{Inventory, ItemDef, ItemStack};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::Position;
 use engine::systems::player::snapshot::{
-    AtInitialSpawn, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, JoinOrigin, MemoryValue,
-    QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCommandCooldown, SnapshotCooldown,
-    SnapshotInstanceCooldown, SnapshotMemory, SnapshotQuest, SnapshotRecord, SnapshotShop,
-    SnapshotSkill, SnapshotSlot, SnapshotStatus,
+    AtInitialSpawn, BagEntry, CharacterSnapshot, CharacterStart, HeardLine, JoinAs, JoinOrigin,
+    MemoryValue, QuestState, RunningStatus, ShopStock, SnapshotBeat, SnapshotCommandCooldown,
+    SnapshotCooldown, SnapshotInstanceCooldown, SnapshotMemory, SnapshotQuest, SnapshotRecord,
+    SnapshotShop, SnapshotSkill, SnapshotSlot, SnapshotStatus,
 };
 use engine::systems::player::{CharacterState, SpawnPoint, SpawnPolicy, SpawnRules, Xp};
 use engine::systems::quest::{QuestDef, QuestLog, QuestResult};
@@ -94,8 +94,12 @@ fn a_character_joined_from_a_row_is_that_character() {
         Some(&BasicAttack(Some(id(&content, "punch"))))
     );
     assert_eq!(
-        world.get::<Inventory>(player).map(|bag| bag.slots.clone()),
-        Some(snapshot.bag.to_vec())
+        world.get::<Inventory>(player).map(|bag| bag
+            .stacks()
+            .map(|(slot, stack)| BagEntry::of(slot as u32, stack))
+            .collect::<Vec<_>>()),
+        Some(snapshot.bag.to_vec()),
+        "every stack in the slot it was saved in"
     );
     assert_eq!(
         world.get::<Equipment>(player),
@@ -606,8 +610,8 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         basic_attack: Some(id(content, "punch")),
         stats: Stats(BTreeMap::from([(StatKind::Damage, 9.0)])),
         bag: vec![
-            ItemStack::new(id(content, "tusk"), 5),
-            ItemStack::new(id(content, "gold"), 20),
+            BagEntry::of(0, ItemStack::new(id(content, "tusk"), 5)),
+            BagEntry::of(3, ItemStack::new(id(content, "gold"), 20)),
         ]
         .into(),
         equipped: vec![id(content, "shield")].into(),

@@ -940,7 +940,7 @@ fn bag_card(
     let held: Vec<ItemStack> = run
         .world()
         .get::<Inventory>(subject)
-        .map(|bag| bag.slots.clone())
+        .map(|bag| bag.stacks().map(|(_, stack)| stack).collect())
         .unwrap_or_default();
     let mut shown: Vec<String> = reaches
         .iter()
@@ -984,7 +984,7 @@ fn bag_card(
                     .show(ui)
                     && let Some(mut bag) = run.world_mut().get_mut::<Inventory>(subject)
                 {
-                    bag.set_count(id, picked);
+                    bag.set_count(content, id, picked);
                 }
             });
         }

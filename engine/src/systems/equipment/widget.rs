@@ -201,6 +201,7 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
     if map::clicked(world, InputAction::UseItem, &response) {
         world.write_message(UnequipRequest {
             slot: place.slot.clone(),
+            into: None,
         });
     } else if map::clicked(world, InputAction::InspectItem, &response) {
         card::open(world, item, Some(response.rect));

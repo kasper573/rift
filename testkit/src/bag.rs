@@ -1,9 +1,20 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
+use engine::core::content::SavedList;
 use engine::systems::equipment;
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
+use engine::systems::player::snapshot::BagEntry;
 
 use crate::Sim;
+
+/// A saved bag holding `stacks`, laid from its first slot on.
+pub fn saved_bag(stacks: &[ItemStack]) -> SavedList<BagEntry> {
+    stacks
+        .iter()
+        .zip(0..)
+        .map(|(&stack, slot)| BagEntry::of(slot, stack))
+        .collect()
+}
 
 impl Sim {
     /// Puts `count` of the item under `key` in `who`'s bag, the way a trade or a reward does.
@@ -54,9 +65,7 @@ impl Sim {
         self.world
             .get::<Inventory>(who)
             .expect("a bag")
-            .slots
-            .iter()
-            .position(|stack| stack.item == item)
+            .slot_of(item)
             .expect("in the bag") as u32
     }
 }

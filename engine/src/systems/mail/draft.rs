@@ -13,14 +13,16 @@ use super::{LetterAnswered, SendLetter};
 use crate::core::content::Content;
 use crate::systems::GameSettings;
 use crate::systems::interface::InterfaceSound;
+use crate::systems::item::bag_view::{BagView, bag_view};
 use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, TrayWindow, tray_window};
 use crate::systems::item::tray::ItemTray;
-use crate::systems::item::widget::{InventoryPane, inventory_pane, slot_note_source};
+use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{self, ItemStack};
 use crate::systems::mail::MailMessages;
 use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
+use crate::systems::settings::Placed;
 use crate::systems::society::tab::{self, CharacterAction};
 use crate::systems::society::{AccountNumber, SocietyMember, SocietyView};
 
@@ -144,13 +146,16 @@ pub(super) fn show(ui: &mut Ui, world: &mut World, view: &SocietyView) {
     sheet::scroll_pane(ui, letter_at, area, |ui| {
         letter(ui, world, &messages.mail, view, &rules);
     });
-    let area = egui::ScrollArea::vertical().id_salt("bag to attach from");
-    sheet::scroll_pane(ui, bag_at, area, |ui| {
-        let pane = InventoryPane {
-            width: ui.available_width(),
-            heading: Some(messages.interface.inventory()),
+    let bag = egui::UiBuilder::new()
+        .max_rect(bag_at.inner)
+        .layout(egui::Layout::top_down(egui::Align::Min));
+    ui.scope_builder(bag, |ui| {
+        let view = BagView {
+            heading: messages.interface.inventory(),
+            counts: true,
+            placement: Placed::Menu,
         };
-        inventory_pane(ui, world, pane);
+        bag_view(ui, world, view);
     });
     ui.allocate_rect(room, Sense::hover());
 }

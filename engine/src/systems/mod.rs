@@ -726,6 +726,7 @@ pub fn client_app(profile: Profile, http: Http, params: StartParams) -> App {
             trade::window::plugin,
             market::window::plugin,
             actor::options::plugin,
+            item::bag_view::BagViewPlugin,
         ));
     app
 }
@@ -857,6 +858,7 @@ pub fn tables() -> ContentRegistry {
         .bundle::<SfxDef>()
         .file::<CardStyleDef>()
         .file::<attention::AttentionDef>()
+        .named::<attention::AttentionDef>()
         .file::<input::map::InputDef>()
         .file::<interface::CursorDef>()
         .file::<interface::InterfaceIconDef>()
@@ -936,6 +938,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, item::check_pictures)
         .hook(LoadStep::Across, item::check_looks)
         .hook(LoadStep::Across, item::rarity::check_all)
+        .hook(LoadStep::Across, attention::check_icons)
         .hook(LoadStep::Across, stat::check_vfx)
         .hook(LoadStep::Across, combat::check_vfx)
         .hook(LoadStep::Across, status::check_vfx)

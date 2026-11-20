@@ -4,10 +4,13 @@ use bevy_ecs::prelude::*;
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use strum::VariantArray;
 
 use crate::core::chunk::{CHUNK_SIDE, ChunkIndex};
-use crate::core::content::ImageRef;
-use crate::core::content::{ContentFile, ContentId, Fixture, Nearby};
+use crate::core::content::media::ImageSizes;
+use crate::core::content::{
+    Content, ContentFile, ContentId, Fixture, ImageRef, Loading, NamedContent, Nearby, RowCheck,
+};
 use crate::core::par;
 use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters};
@@ -27,8 +30,15 @@ pub fn register(app: &mut App) {
 
 pub type AttentionId = ContentId<AttentionDef>;
 
+/// The pixels of every mark's icon: enough to stay sharp at the largest plate on a 4K screen.
+/// Marks are drawn from mipmaps, so they shrink cleanly too.
+pub const MARK_ICON_SIZE: (u32, u32) = (128, 128);
+
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AttentionDef {
+    /// What the mark tells, as a player hovering it reads: "Quest to give", "Innkeeper".
+    pub name: String,
     pub icon: ImageRef,
 }
 
@@ -37,8 +47,35 @@ impl ContentFile for AttentionDef {
 
     fn fresh(near: &Nearby) -> Result<AttentionDef, String> {
         Ok(AttentionDef {
-            icon: near.image()?,
+            name: near.name(),
+            icon: near.image_sized(MARK_ICON_SIZE)?,
         })
+    }
+}
+
+impl NamedContent for AttentionDef {
+    fn shown_name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Every mark's icon is the size marks are drawn from.
+pub fn check_icons(loading: &mut Loading) {
+    let content = loading.content();
+    let sizes = content.built::<ImageSizes>();
+    for (id, mark) in loading.rows::<AttentionDef>(&content) {
+        let mut check = RowCheck::default();
+        if let Some(&size) = sizes.0.get(mark.icon.as_str())
+            && size != MARK_ICON_SIZE
+        {
+            check.error(
+                "/icon",
+                "wrong size",
+                format!("{} × {} pixels", size.0, size.1),
+                format!("{} × {} pixels", MARK_ICON_SIZE.0, MARK_ICON_SIZE.1),
+            );
+        }
+        loading.row_errors(id, check);
     }
 }
 
@@ -90,15 +127,25 @@ impl Attention {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct StatusBadges(pub Vec<AttentionId>);
 
+/// Every mark `actor` wears for `viewer`, most pressing first: the badges of its status, or else
+/// the quest marks in `AttentionMark`'s order, then the marks of what the actor offers in the
+/// order their sources gave them.
 pub fn plate_marks(world: &World, viewer: Option<Entity>, actor: Entity) -> Vec<AttentionId> {
     if let Some(badges) = world.get::<StatusBadges>(actor) {
         return badges.0.clone();
     }
-    viewer
+    let content = world.resource::<Content>();
+    let mut marks: Vec<AttentionId> = viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
-        .and_then(|attention| attention.of(actor).first().cloned())
-        .into_iter()
-        .collect()
+        .map(|attention| attention.of(actor).to_vec())
+        .unwrap_or_default();
+    marks.sort_by_key(|&mark| {
+        AttentionMark::VARIANTS
+            .iter()
+            .position(|fixture| fixture.id(content) == mark)
+            .unwrap_or(AttentionMark::VARIANTS.len())
+    });
+    marks
 }
 
 pub type MarkSource = fn(&World, Entity, &[Entity], &mut dyn FnMut(Entity, AttentionId));

@@ -21,11 +21,12 @@ use crate::systems::dialogue::windows::{self, Opens};
 use crate::systems::hud::WindowKey;
 use crate::systems::input::map::InputMap;
 use crate::systems::interface::InterfaceSound;
+use crate::systems::item::bag_view::{BagView, bag_view};
 use crate::systems::item::grid::scrolled;
 use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, TrayWindow, tray_window};
 use crate::systems::item::tray::ItemTray;
 pub use crate::systems::item::tray::Placed;
-use crate::systems::item::widget::{InventoryPane, inventory_pane, slot_note_source};
+use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{self, ItemStack};
 use crate::systems::messages;
 use crate::systems::player::session;
@@ -173,13 +174,12 @@ pub fn inventory(ui: &mut Ui, world: &mut World, locked: bool) {
     let content = world.resource::<Content>().clone();
     let messages = &messages::of(&content).prompt;
     lockable(ui, locked, |ui| {
-        scrolled(ui, "prompt inventory", |ui| {
-            let pane = InventoryPane {
-                width: ui.available_width(),
-                heading: Some(messages.your_inventory()),
-            };
-            inventory_pane(ui, world, pane);
-        });
+        let view = BagView {
+            heading: messages.your_inventory(),
+            counts: true,
+            placement: settings::Placed::Prompt,
+        };
+        bag_view(ui, world, view);
     });
 }
 

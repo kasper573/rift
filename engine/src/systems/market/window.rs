@@ -23,12 +23,12 @@ use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Seat, Sizing, WindowKey};
 use crate::systems::input::map::{self, InputAction};
+use crate::systems::item::bag_view::{BagView, bag_view};
 use crate::systems::item::card;
 use crate::systems::item::grid::scrolled;
 use crate::systems::item::inline::{self, InlineItem};
 use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, TrayWindow, tray_window};
 use crate::systems::item::tray::ItemTray;
-use crate::systems::item::widget::{InventoryPane, inventory_pane};
 use crate::systems::item::{self, Inventory, ItemDef, ItemId, ItemStack};
 use crate::systems::mention::{self, Mention};
 use crate::systems::messages;
@@ -704,14 +704,12 @@ fn new_listing(ui: &mut Ui, world: &mut World, settings: &MarketSettings) {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(BAG_WIDTH);
-            sheet::section(ui, words.interface.inventory());
-            scrolled(ui, "listing bag", |ui| {
-                let pane = InventoryPane {
-                    width: ui.available_width(),
-                    heading: None,
-                };
-                inventory_pane(ui, world, pane);
-            });
+            let view = BagView {
+                heading: words.interface.inventory(),
+                counts: false,
+                placement: Placed::Market,
+            };
+            bag_view(ui, world, view);
         });
         ui.add_space(sheet::GUTTER);
         ui.vertical(|ui| {

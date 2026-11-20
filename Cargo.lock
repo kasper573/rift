@@ -3798,6 +3798,7 @@ dependencies = [
  "glam 0.32.1",
  "gltf",
  "i_overlay",
+ "icu_collator",
  "icu_locale_core",
  "image",
  "jsonc-parser",

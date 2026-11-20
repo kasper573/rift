@@ -5,13 +5,15 @@ use ui::float::Hinted;
 use ui::theme;
 
 use bevy::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use ui::egui::Ui;
 use ui::{controls, sheet};
 
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
-use crate::core::content::Content;
+use crate::core::content::{Content, Fixture};
+use crate::core::gui::{self, GuiImage};
 use crate::core::math::{Pos, Size};
 use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
@@ -22,7 +24,9 @@ use crate::core::render::video::{
 use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{CharactersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
+use crate::systems::actor::plate;
 use crate::systems::area_map::MapReachStep;
+use crate::systems::attention::AttentionMark;
 use crate::systems::chat::ChatEmbedKind;
 use crate::systems::hud;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
@@ -85,9 +89,11 @@ pub(crate) struct Placement {
 }
 
 /// A window the player places and the game keeps where they left it.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Placed {
+pub enum Placed {
     Menu,
     Chat,
     Trade,
@@ -159,6 +165,13 @@ impl MenuTab for SettingsMenuTab {
             society: session::my_character(world)
                 .and_then(|me| me.get::<SocietyView>())
                 .cloned(),
+            marks: [
+                AttentionMark::QuestOffered,
+                AttentionMark::News,
+                AttentionMark::Talking,
+            ]
+            .map(|mark| gui::image(world, &mark.get(&content).icon))
+            .to_vec(),
         };
         let ([], pane) = sheet::columns(ui, ui.available_rect_before_wrap(), []);
         let mut chosen = None;
@@ -181,6 +194,8 @@ struct GameSide<'a> {
     tabs: Vec<MenuTabName>,
     /// How the player's account stands in society, once the server has said.
     society: Option<SocietyView>,
+    /// The marks the sample plate wears.
+    marks: Vec<Option<GuiImage>>,
 }
 
 /// The game's rarities by name, the lowest rank first.
@@ -331,6 +346,12 @@ fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: &GameSide
             text_speed_slider(ui, settings, typing, words, label.id);
             ui.end_row();
         }
+        let label = ui.label(words.nameplate_size());
+        nameplate_slider(ui, settings, words, label.id);
+        ui.end_row();
+        ui.label("");
+        nameplate_sample(ui, settings, game);
+        ui.end_row();
         let label = ui.label(words.area_transition());
         let current = settings.screen_transition();
         if let Some(transition) = picker(
@@ -685,6 +706,36 @@ fn tracker_backing_slider(
     });
 }
 
+fn nameplate_slider(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    words: &SettingsMessages,
+    label: egui::Id,
+) {
+    let mut size = settings.nameplate_size().0;
+    ui.horizontal(|ui| {
+        let (_, least, most) = NAMEPLATE_SIZES;
+        if controls::slider(ui, &mut size, least.0..=most.0)
+            .labelled_by(label)
+            .hinted(words.nameplate_size_hint())
+            .changed()
+        {
+            settings.ui.nameplate_size = Some(Percent((size / 5.0).round() * 5.0));
+        }
+        slider_says(ui, words.percent_of(settings.nameplate_size().0));
+    });
+}
+
+/// A townsperson's plate at the size picked, with a quest to give and two more marks after its
+/// name, drawn as the game draws plates.
+fn nameplate_sample(ui: &mut Ui, settings: &Mut<UserSettings>, game: &GameSide) {
+    let scale = settings.nameplate_size().0 / 100.0;
+    let label = plate::PlateLabel::npc(game.messages.settings.nameplate_sample(), false);
+    let tallest = plate::size_of(ui.ctx(), &label, &game.marks, NAMEPLATE_SIZES.2.0 / 100.0);
+    let (rect, _) = ui.allocate_exact_size(tallest, egui::Sense::hover());
+    plate::draw_marked(ui, rect.center_bottom(), &label, &game.marks, scale);
+}
+
 fn chat_text_slider(
     ui: &mut Ui,
     settings: &mut Mut<UserSettings>,
@@ -996,6 +1047,13 @@ impl UserSettings {
         self.ui.chat.background.unwrap_or(CHAT_BACKGROUND)
     }
 
+    /// How large plates are drawn, beside the size the game draws them.
+    pub(crate) fn nameplate_size(&self) -> Percent {
+        let (normal, least, most) = NAMEPLATE_SIZES;
+        let size = self.ui.nameplate_size.unwrap_or(normal);
+        Percent(size.0.clamp(least.0, most.0))
+    }
+
     pub(crate) fn chat_text_size(&self) -> WindowPx {
         let size = self.ui.chat.text_size.unwrap_or(CHAT_TEXT_SIZES.0);
         WindowPx(size.0.clamp(CHAT_TEXT_SIZES.1.0, CHAT_TEXT_SIZES.2.0))
@@ -1062,6 +1120,9 @@ struct UiSettings {
     minimap: MinimapSettings,
     #[serde(default)]
     tracker_backing: Percent,
+    /// None keeps plates at the size the game draws them.
+    #[serde(default)]
+    nameplate_size: Option<Percent>,
     /// Whether cards lie flat rather than turn toward the pointer.
     #[serde(default)]
     flat_cards: bool,
@@ -1078,6 +1139,7 @@ impl Default for UiSettings {
             chat: ChatSettings::default(),
             minimap: MinimapSettings::default(),
             tracker_backing: Percent::default(),
+            nameplate_size: None,
             flat_cards: false,
         }
     }
@@ -1113,6 +1175,9 @@ struct ChatSettings {
 }
 
 const CHAT_BACKGROUND: Percent = Percent(0.0);
+/// How large plates are drawn: as the game draws them, and the least and most a player picks.
+const NAMEPLATE_SIZES: (Percent, Percent, Percent) =
+    (Percent(100.0), Percent(75.0), Percent(150.0));
 const CHAT_TEXT_SIZES: (WindowPx, WindowPx, WindowPx) =
     (WindowPx(15.0), WindowPx(12.0), WindowPx(22.0));
 
@@ -1369,6 +1434,12 @@ messages! {
         chat_background,
         /// The label of the settings row for how large chat's text is.
         chat_text_size,
+        /// The label of the settings row for how large the plates over heads are drawn.
+        nameplate_size,
+        /// What the tooltip of the settings row for how large plates are drawn says.
+        nameplate_size_hint,
+        /// The name on the sample plate the settings draw at the size picked.
+        nameplate_sample,
         /// The label of the settings row for showing what chat lines embed.
         embedded_chat,
         /// What the tooltip of the settings row for showing what chat lines embed says.

@@ -246,7 +246,7 @@ impl<W: TrayWindow> TransferWindow for Tray<W> {
         let Some(bag) = my_bag(world) else {
             return false;
         };
-        let Some(&held) = bag.slots.get(slot as usize) else {
+        let Some(held) = bag.at(slot as usize) else {
             return false;
         };
         if !W::takes(world, held) {

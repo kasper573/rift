@@ -6,8 +6,10 @@ use crate::core::content::Content;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
-use crate::systems::item::widget::{CarriedInputs, InventoryPane, inventory_pane};
+use crate::systems::item::bag_view::{BagView, bag_view};
+use crate::systems::item::widget::CarriedInputs;
 use crate::systems::player::session;
+use crate::systems::settings::Placed;
 use crate::systems::stat;
 use crate::systems::{equipment, messages};
 
@@ -64,12 +66,16 @@ impl MenuTab for CharacterMenuTab {
             sheet::section(ui, words.player.equipment());
             equipment::widget::pane(ui, world);
         });
-        column(ui, "carried", carried, |ui| {
-            let pane = InventoryPane {
-                width: ui.available_width(),
-                heading: Some(words.interface.inventory()),
+        let bag = egui::UiBuilder::new()
+            .max_rect(carried.inner)
+            .layout(egui::Layout::top_down(egui::Align::Min));
+        ui.scope_builder(bag, |ui| {
+            let view = BagView {
+                heading: words.interface.inventory(),
+                counts: true,
+                placement: Placed::Menu,
             };
-            inventory_pane(ui, world, pane);
+            bag_view(ui, world, view);
         });
     }
 }

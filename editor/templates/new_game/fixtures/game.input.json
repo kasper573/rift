@@ -237,6 +237,24 @@
         }
       ]
     },
+    "recall_earlier": {
+      "label": "Bring back an earlier chat line",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "ArrowUp"
+        }
+      ]
+    },
+    "recall_later": {
+      "label": "Bring back a later chat line",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "ArrowDown"
+        }
+      ]
+    },
     "take_default": {
       "label": "Give a question its default answer",
       "bindings": [

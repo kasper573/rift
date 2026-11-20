@@ -118,7 +118,7 @@ pub fn show<I: ImageSource + ?Sized>(
     let mut shown = Card::new(CardKind::Quest, &band, &def.title);
     shown.dress = CardStyleDef::of(content, def.card_style).dress(images, None);
     shown.picture = icon;
-    shown.action = action;
+    shown.actions = action.into_iter().collect();
     shown.close = look
         .closable
         .then_some(messages::of(content).interface.close());
@@ -296,7 +296,7 @@ fn show_offer(ui: &mut Ui, world: &mut World, quest: QuestId, moment: QuestMomen
         };
         answer_drawn(world, shown);
     });
-    chat::offered(world, &shown, ChatEmbed::Quest(quest));
+    chat::offered(world, shown.actions.first(), ChatEmbed::Quest(quest));
     let staged = StagedCard {
         key: ui.id().with("quest offer card"),
         runs: motion::lifted(ui.ctx(), painted, since),
@@ -348,7 +348,7 @@ fn draw_card(world: &mut World) {
                 let shown = terms(ui, world, &content, &parties, quest, reader, plate);
                 answer_drawn(world, shown);
             });
-            chat::offered(world, &shown, ChatEmbed::Quest(quest));
+            chat::offered(world, shown.actions.first(), ChatEmbed::Quest(quest));
             shown
         },
     );

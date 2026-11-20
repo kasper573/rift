@@ -144,19 +144,44 @@ fn refit_gear(content: &Content, character: &mut CharacterSnapshot) -> Vec<GameC
         return Vec::new();
     }
     *character.equipped = kept;
-    character
-        .bag
-        .extend(off.into_iter().map(|item| ItemStack::new(item, 1)));
+    for item in off {
+        character.carry(ItemStack::new(item, 1));
+    }
     Vec::new()
 }
 
-/// Stacks past what a bag now holds are kept aside as they were saved.
+/// Stacks in a slot the bag no longer has, or one another stack is in, move to its empty slots;
+/// those it has no room for are kept aside as they were saved.
 fn refit_bag(content: &Content, character: &mut CharacterSnapshot) -> Vec<GameChange> {
     let slots = content.built::<GameSettings>().slots.bag;
-    if character.bag.len() <= slots as usize {
+    let mut taken = vec![false; slots as usize];
+    let mut kept = Vec::new();
+    let mut misplaced = Vec::new();
+    for entry in character.bag.drain(..) {
+        match taken.get_mut(entry.slot as usize) {
+            Some(slot) if !*slot => {
+                *slot = true;
+                kept.push(entry);
+            }
+            _ => misplaced.push(entry),
+        }
+    }
+    let mut over = Vec::new();
+    for mut entry in misplaced {
+        match taken.iter().position(|slot| !slot) {
+            Some(free) => {
+                taken[free] = true;
+                entry.slot = free as u32;
+                kept.push(entry);
+            }
+            None => over.push(entry),
+        }
+    }
+    kept.sort_by_key(|entry| entry.slot);
+    *character.bag = kept;
+    if over.is_empty() {
         return Vec::new();
     }
-    let over = character.bag.split_off(slots as usize);
     let stacks = over.len() as u32;
     let scope = ContentScope::of(content);
     for stack in over {

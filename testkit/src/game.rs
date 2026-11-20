@@ -604,8 +604,9 @@ impl Game {
     /// An attention mark of a plain icon.
     pub fn mark(self, name: &str) -> Game {
         let icon = format!("icons/marks/{name}.png");
-        self.row("attention", name, json!({ "icon": icon }))
-            .asset(&icon, png(1, 1))
+        let (width, height) = engine::systems::attention::MARK_ICON_SIZE;
+        self.row("attention", name, json!({ "name": name, "icon": icon }))
+            .asset(&icon, png(width, height))
     }
 
     /// A visual effect shader that draws nothing, of no parameters, on a billboard.

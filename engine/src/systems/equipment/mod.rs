@@ -36,9 +36,12 @@ pub struct Equipment {
     pub slots: BTreeMap<EquipmentPlace, ItemId>,
 }
 
+/// Takes off what is worn in `slot`, into the bag's slot `into` when one is named, as
+/// `unequip_slot` puts it there.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UnequipRequest {
     pub slot: EquipmentPlace,
+    pub into: Option<u32>,
 }
 
 /// Puts on the item in the bag's slot `slot`: a held one in `hand` when one is named, whichever
@@ -118,7 +121,7 @@ pub fn equip(
     let messages = messages::of(&content);
     let item = world
         .get::<Inventory>(player)
-        .and_then(|inventory| inventory.slots.get(inv_slot).map(|slot| slot.item))
+        .and_then(|inventory| inventory.at(inv_slot).map(|stack| stack.item))
         .ok_or_else(|| LineText::from(messages.item.nothing_there()))?;
     let ItemKind::Equipment { wear, requires, .. } = &item.get(&content).kind else {
         return Err(messages
@@ -284,17 +287,38 @@ pub fn check_put_on(
     }
 }
 
-/// Takes off what is worn in `slot`, from every hand it takes, back into the bag.
+/// Takes off what is worn in `slot`, from every hand it takes, back into the bag. Named a slot
+/// of the bag `into`, it lands there when that slot is empty, and swaps with what the slot
+/// holds when that is worn in `slot`; otherwise it goes where new items go.
 pub fn unequip_slot(
     world: &mut World,
     player: Entity,
     slot: EquipmentPlace,
+    into: Option<usize>,
 ) -> Result<(), LineText> {
     let content = world.resource::<Content>().clone();
     let messages = messages::of(&content);
     let item = in_slot(world, player, &slot)
         .ok_or_else(|| LineText::from(messages.equipment.nothing_worn()))?;
-    item::effects::exchange(world, player, &[], &[ItemStack::new(item, 1)])?;
+    let bag = Inventory::of(world, player);
+    let there = into.and_then(|into| bag.slots.get(into).map(|held| (into, *held)));
+    match there {
+        Some((into, Some(held))) if worn_at(&content, held.item, &slot) => {
+            let hand = match slot {
+                EquipmentPlace::Hand(hand) => Some(hand),
+                EquipmentPlace::Slot(_) | EquipmentPlace::Tool => None,
+            };
+            equip(world, player, into, hand)?;
+            return land_in(world, player, &content, &bag, item, into);
+        }
+        Some((into, None)) => {
+            let mut bag = world
+                .get_mut::<Inventory>(player)
+                .expect("the bag read a moment ago is still there");
+            bag.slots[into] = Some(ItemStack::new(item, 1));
+        }
+        _ => item::effects::exchange(world, player, &[], &[ItemStack::new(item, 1)])?,
+    }
     if let Some(equipment) = world.get::<Equipment>(player) {
         let mut slots = equipment.slots.clone();
         slots.retain(|worn, there| {
@@ -322,7 +346,43 @@ pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(
                 .equipment
                 .not_worn(Mention::Item(item).line(content))
         })?;
-    unequip_slot(world, player, slot)
+    unequip_slot(world, player, slot, None)
+}
+
+/// Whether `item` is put on in `place` when it is equipped.
+fn worn_at(content: &Content, item: ItemId, place: &EquipmentPlace) -> bool {
+    match (item.get(content).wear(), place) {
+        (Some(Wear::Worn { slot, .. }), EquipmentPlace::Slot(at)) => slot == at,
+        (Some(Wear::Tool { .. }), EquipmentPlace::Tool) => true,
+        (Some(Wear::Held { .. }), EquipmentPlace::Hand(_)) => true,
+        _ => false,
+    }
+}
+
+/// Moves `item`, which has just come back into the bag that was `before`, to its slot `into`
+/// when that slot is empty now.
+fn land_in(
+    world: &mut World,
+    player: Entity,
+    content: &Content,
+    before: &Inventory,
+    item: ItemId,
+    into: usize,
+) -> Result<(), LineText> {
+    let Some(mut bag) = world.get_mut::<Inventory>(player) else {
+        return Ok(());
+    };
+    let landed = bag
+        .slots
+        .iter()
+        .zip(&before.slots)
+        .position(|(now, was)| now.is_some_and(|now| now.item == item) && now != was);
+    match landed {
+        Some(from) if bag.at(into).is_none() => bag
+            .move_stack(content, from, into, item)
+            .map_err(|changed| changed.line(content)),
+        _ => Ok(()),
+    }
 }
 
 /// Keeps what a character's body shows equal to its equipped hands, from the moment it is spawned
@@ -387,7 +447,12 @@ pub fn equip_requested(world: &mut World) {
 
 pub fn unequip(world: &mut World) {
     player_requests::<UnequipRequest>(world, RequestNeeds::Command, |world, player, request| {
-        unequip_slot(world, player, request.slot)
+        unequip_slot(
+            world,
+            player,
+            request.slot,
+            request.into.map(|into| into as usize),
+        )
     });
 }
 

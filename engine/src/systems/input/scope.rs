@@ -38,7 +38,9 @@ impl InputAction {
             | InputAction::PageBack
             | InputAction::PageForward
             | InputAction::NextChatTab
-            | InputAction::PreviousChatTab => &[Typing],
+            | InputAction::PreviousChatTab
+            | InputAction::RecallEarlier
+            | InputAction::RecallLater => &[Typing],
             InputAction::TakeDefault => &[Modal],
             InputAction::Advance
             | InputAction::PickChoice

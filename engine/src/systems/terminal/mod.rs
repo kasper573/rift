@@ -1,5 +1,6 @@
 pub mod chat;
 pub mod draft;
+pub mod history;
 
 use std::collections::{HashMap, VecDeque};
 
@@ -34,6 +35,7 @@ impl Plugin for TerminalPlugin {
                     .chain(),
             )
             .add_systems(Update, chat::keys.run_if(in_state(ClientScreen::Area)))
+            .add_systems(OnExit(ClientScreen::Area), chat::forget)
             .add_systems(
                 EguiPrimaryContextPass,
                 chat::draw
@@ -159,6 +161,15 @@ messages! {
         hint_next_tab,
         /// The hint, beside its key, that stops typing a line.
         hint_cancel,
+        /// The hint, beside its key, that brings back the line sent before the one in the field.
+        recall_earlier,
+        /// The hint, beside its key, that brings back the line sent after the one in the field.
+        recall_later,
+        /// Where among the lines sent the field is, line `{at}` back of `{of}`.
+        recalled(at: Number, of: Number),
+        /// The hint, beside its key, that gives back the line the player was typing in place of
+        /// one brought back.
+        back_to_draft,
         /// The hint, beside its key, that starts typing in chat.
         hint_to_chat,
         /// What chat says where no key starts typing in it.

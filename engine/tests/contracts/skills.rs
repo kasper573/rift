@@ -89,6 +89,7 @@ fn a_slot_takes_only_what_you_have_and_keeps_it_when_it_goes() {
         &mut sim,
         UnequipRequest {
             slot: EquipmentPlace::Hand(HandIndex::MAIN),
+            into: None,
         },
     );
     assert_eq!(
@@ -166,6 +167,7 @@ fn a_weapon_put_in_the_basic_attack_slot_is_worn_and_lends_its_attack() {
         &mut sim,
         UnequipRequest {
             slot: EquipmentPlace::Hand(HandIndex::MAIN),
+            into: None,
         },
     );
     assert_eq!(basic_attack(&sim, player), None);

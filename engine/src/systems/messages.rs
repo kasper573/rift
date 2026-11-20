@@ -85,6 +85,16 @@ impl TryFrom<String> for Locale {
     }
 }
 
+impl Locale {
+    /// What orders words as readers of the locale expect a list sorted by name to read.
+    pub fn collator(&self) -> icu_collator::CollatorBorrowed<'static> {
+        let locale = icu_locale_core::Locale::try_from_str(&self.0)
+            .expect("a locale is read only from a tag that parses");
+        icu_collator::Collator::try_new((&locale).into(), Default::default())
+            .expect("the collation data built in covers every locale")
+    }
+}
+
 impl From<Locale> for String {
     fn from(locale: Locale) -> String {
         locale.0.to_string()

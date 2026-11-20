@@ -13,6 +13,7 @@ use engine::systems::chat::{ChatChannel, ChatEmbed, ChatEmbedKind, ChatLocation,
 use engine::systems::input::map::InputMap;
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::terminal::draft::ChatDraft;
+use engine::systems::terminal::history::{InField, SentLines};
 use engine::systems::{chat, command, movement, region};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
@@ -659,6 +660,100 @@ fn a_thing_set_in_a_line_being_typed_is_held_whole_and_sent_as_a_mark_in_its_pla
     assert_eq!(
         draft.sent(&content),
         ("now selling  cheap".to_owned(), Vec::new())
+    );
+}
+
+#[test]
+fn the_recall_keys_step_through_the_lines_sent_and_give_back_the_one_being_typed() {
+    let content = game().load();
+    let potion =
+        ChatEmbed::of(&content, ChatEmbedKind::Item, "potion.item.json").expect("the potion");
+    let line = |text: &str| {
+        let mut draft = ChatDraft::default();
+        draft.write(text.to_owned());
+        draft
+    };
+    let mut selling = line("selling ");
+    selling.add(potion, "Potion");
+    let mut sent = SentLines::default();
+    let typing = InField {
+        draft: line("meet at the do"),
+        caret: 6,
+    };
+    assert_eq!(
+        sent.earlier(&typing),
+        None,
+        "nothing to bring back before a line is sent"
+    );
+
+    for draft in [
+        line("hello"),
+        selling.clone(),
+        line(" "),
+        selling.clone(),
+        line("/who"),
+    ] {
+        sent.keep(draft, 3);
+    }
+    let shown = sent.earlier(&typing).expect("the newest line");
+    assert_eq!(
+        (shown.draft.text(), shown.caret),
+        ("/who", 4),
+        "the caret at its end"
+    );
+    assert_eq!(
+        sent.place(),
+        Some((1, 3)),
+        "a blank line and a line sent twice are kept once"
+    );
+    let shown = sent.earlier(&shown).expect("an earlier line");
+    assert_eq!(
+        shown.draft, selling,
+        "a line comes back holding what it held"
+    );
+    assert_eq!(
+        sent.earlier(&shown).map(|shown| shown.draft),
+        Some(line("hello"))
+    );
+    assert!(!sent.has_earlier());
+    assert_eq!(
+        sent.earlier(&shown),
+        None,
+        "the oldest line is as far back as it goes"
+    );
+
+    assert_eq!(sent.later().map(|shown| shown.draft), Some(selling.clone()));
+    assert_eq!(sent.later().map(|shown| shown.draft), Some(line("/who")));
+    assert_eq!(
+        sent.later(),
+        Some(typing.clone()),
+        "past the newest line, the line being typed comes back as it was, caret and all"
+    );
+    assert_eq!(sent.later(), None);
+
+    sent.earlier(&typing);
+    assert_eq!(
+        sent.give_back(),
+        Some(typing.clone()),
+        "a dismiss gives it back at once"
+    );
+    assert!(!sent.browsing());
+
+    sent.earlier(&typing);
+    sent.keep(line("/who is near"), 3);
+    assert_eq!(
+        sent.place(),
+        None,
+        "sending a line brought back and edited ends the browsing"
+    );
+    let back: Vec<String> =
+        std::iter::successors(sent.earlier(&typing), |shown| sent.earlier(shown))
+            .map(|shown| shown.draft.text().to_owned())
+            .collect();
+    assert_eq!(
+        back,
+        ["/who is near", "/who", "selling Potion"],
+        "an edit is kept as a line of its own, the line it came from as it was, and the oldest go"
     );
 }
 

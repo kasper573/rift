@@ -1,3 +1,4 @@
+pub mod bag_view;
 pub mod card;
 pub mod deliver;
 pub mod effects;
@@ -179,6 +180,52 @@ messages! {
         not_in_bag[item: Line],
         /// What a player is told using an empty slot of the bag.
         nothing_there,
+        /// What a player is told whose stack changed in their bag before it could be moved.
+        stack_changed,
+        /// The heading over the bag `{heading}` with how full it is: `{taken}` of its `{slots}` slots taken.
+        heading_room(heading: Text, slots: Number, taken: Number),
+        /// The heading over the bag `{heading}` while it is narrowed: `{shown}` of its `{of}` stacks shown.
+        heading_shown(heading: Text, shown: Number, of: Number),
+        /// What the field that narrows the bag says while nothing is typed in it.
+        search_bag,
+        /// What clears what narrows the bag.
+        clear,
+        /// The entry of the bag's type picker that shows every type.
+        all_types,
+        /// An entry of the bag's type picker: the type `{category}` and how many stacks of it the bag holds, `{count}`.
+        category_count(category: Text, count: Number),
+        /// What the button that sorts the bag is called.
+        sort,
+        /// What the button that sorts the bag is called while a sort is on its way.
+        sorting,
+        /// What the menu of sorts says every sort does.
+        sort_says,
+        /// The sort that groups the bag by type.
+        sort_by_kind,
+        /// The sort that puts the rarest first.
+        sort_by_rarity,
+        /// The sort by name.
+        sort_by_name,
+        /// What the bag says when nothing in it matches the words `{words}`.
+        nothing_matches(words: Text),
+        /// What the bag says when nothing of the type `{category}` in it matches the words `{words}`.
+        nothing_matches_of_type(words: Text, category: Text),
+        /// What the bag says when it holds nothing of the type `{category}`.
+        nothing_of_type(category: Text),
+        /// What carrying a stack over a narrowed bag says.
+        clear_to_arrange,
+        /// What letting a carried stack go over an empty slot of the bag does.
+        move_here,
+        /// What letting a carried stack go over a slot holding `{item}` does.
+        swap_with(item: Text),
+        /// What letting a carried stack go over a stack of its item does: `{count}` of it join.
+        join_some(count: Number),
+        /// What letting a carried stack go over a full stack of its item does.
+        swap,
+        /// What the item card's action that lifts the stack it came from, to move it in the bag, is called.
+        lift,
+        /// What a lifted stack says over the bag: where it goes.
+        place_lifted,
         /// What a player or a script is told moving items for someone who has no bag.
         no_bag,
         /// What a script is told moving no items.
@@ -219,7 +266,8 @@ pub fn register(app: &mut App) {
         .add_client_message::<UseItemRequest>()
         .add_client_message::<DropItemRequest>()
         .add_client_message::<SplitStackRequest>()
-        .add_client_message::<JoinStacksRequest>()
+        .add_client_message::<MoveStackRequest>()
+        .add_client_message::<SortBagRequest>()
         .add_mapped_client_message::<PickupRequest>()
         .add_server_message::<ItemShown>()
         .add_mapped_server_message::<ItemConsumed>()
@@ -233,8 +281,9 @@ pub fn my_bag(world: &World) -> Option<&Inventory> {
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Inventory {
-    pub slots: Vec<ItemStack>,
-    pub max: u32,
+    /// One entry for each slot of the bag, in the order the bag shows them. `None` is an empty
+    /// slot, kept where it is so the stacks around it keep their places.
+    pub slots: Vec<Option<ItemStack>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -296,6 +345,14 @@ impl JsonSchema for ItemStack {
 impl ItemStack {
     pub const fn new(item: ItemId, count: u32) -> ItemStack {
         ItemStack { item, count }
+    }
+
+    /// The stack laid in slots as full as a stack of its item holds, the full ones first.
+    pub fn in_full_stacks(self, content: &Content) -> impl Iterator<Item = ItemStack> + use<> {
+        let max = self.item.get(content).stack_max().max(1);
+        let rest = self.count % max;
+        std::iter::repeat_n(ItemStack::new(self.item, max), (self.count / max) as usize)
+            .chain((rest > 0).then_some(ItemStack::new(self.item, rest)))
     }
 
     /// The stack in plain words, as `named` says it.
@@ -371,9 +428,13 @@ impl ExchangeRefusal {
 impl Inventory {
     /// The bag of one who carries none: it holds nothing.
     pub fn empty() -> Inventory {
+        Inventory { slots: Vec::new() }
+    }
+
+    /// A bag of `size` slots, every one of them empty.
+    pub fn sized(size: u32) -> Inventory {
         Inventory {
-            slots: Vec::new(),
-            max: 0,
+            slots: vec![None; size as usize],
         }
     }
 
@@ -386,17 +447,34 @@ impl Inventory {
             .unwrap_or_else(Inventory::empty)
     }
 
-    pub fn count(&self, item: ItemId) -> u32 {
+    /// How many slots the bag has, empty or not.
+    pub fn size(&self) -> u32 {
+        self.slots.len() as u32
+    }
+
+    /// The stack in slot `slot`, when it holds one.
+    pub fn at(&self, slot: usize) -> Option<ItemStack> {
+        self.slots.get(slot).copied().flatten()
+    }
+
+    /// Every stack the bag holds, with the slot it is in, in the bag's order.
+    pub fn stacks(&self) -> impl Iterator<Item = (usize, ItemStack)> + '_ {
         self.slots
             .iter()
-            .filter(|slot| slot.item == item)
-            .fold(0, |total, slot| total.saturating_add(slot.count))
+            .enumerate()
+            .filter_map(|(slot, stack)| stack.map(|stack| (slot, stack)))
+    }
+
+    pub fn count(&self, item: ItemId) -> u32 {
+        self.stacks()
+            .filter(|(_, stack)| stack.item == item)
+            .fold(0, |total, (_, stack)| total.saturating_add(stack.count))
     }
 
     /// How many of the stack in slot `slot` `stacks` take up, each item's count taken out of
     /// its slots in the bag's order.
     pub fn taken_from(&self, slot: u32, stacks: &[ItemStack]) -> u32 {
-        let Some(held) = self.slots.get(slot as usize) else {
+        let Some(held) = self.at(slot as usize) else {
             return 0;
         };
         let mut left: u32 = stacks
@@ -404,7 +482,7 @@ impl Inventory {
             .filter(|stack| stack.item == held.item)
             .map(|stack| stack.count)
             .sum();
-        for (index, stack) in self.slots.iter().enumerate() {
+        for (index, stack) in self.stacks() {
             if stack.item != held.item {
                 continue;
             }
@@ -418,44 +496,49 @@ impl Inventory {
     }
 
     pub fn slot_of(&self, item: ItemId) -> Option<usize> {
-        self.slots.iter().position(|stack| stack.item == item)
+        self.stacks()
+            .find(|(_, stack)| stack.item == item)
+            .map(|(slot, _)| slot)
     }
 
     pub fn taken_slots(&self) -> u32 {
-        self.slots.len() as u32
+        self.stacks().count() as u32
     }
 
     pub fn free_slots(&self) -> u32 {
-        self.max.saturating_sub(self.taken_slots())
+        self.size() - self.taken_slots()
     }
 
     pub fn is_full(&self) -> bool {
         self.free_slots() == 0
     }
 
-    /// Splits `count` off the stack in `slot` into a stack of its own, right after it. A split
-    /// that would leave either stack empty changes nothing; one the bag has no slot for is
-    /// refused.
+    /// Splits `count` off the stack in `slot` into a stack of its own, in the first empty slot
+    /// after it, or from the bag's start when none after it is. A split that would leave either
+    /// stack empty changes nothing; one the bag has no slot for is refused.
     pub fn split(&mut self, slot: usize, count: u32) -> Result<(), ExchangeRefusal> {
-        let whole = match self.slots.get(slot) {
-            Some(stack) if (1..stack.count).contains(&count) => *stack,
+        let whole = match self.at(slot) {
+            Some(stack) if (1..stack.count).contains(&count) => stack,
             _ => return Ok(()),
         };
-        if self.is_full() {
+        let size = self.slots.len();
+        let Some(into) = (1..size)
+            .map(|step| (slot + step) % size)
+            .find(|&at| self.slots[at].is_none())
+        else {
             return Err(ExchangeRefusal::NoRoom { slots: 1 });
-        }
-        self.slots[slot].count = whole.count - count;
-        self.slots
-            .insert(slot + 1, ItemStack::new(whole.item, count));
+        };
+        self.slots[slot] = Some(ItemStack::new(whole.item, whole.count - count));
+        self.slots[into] = Some(ItemStack::new(whole.item, count));
         Ok(())
     }
 
-    /// Takes each of `taken` out of the slot it names. Unless every slot holds what is taken
-    /// from it, nothing is taken.
+    /// Takes each of `taken` out of the slot it names, leaving a slot it empties empty. Unless
+    /// every slot holds what is taken from it, nothing is taken.
     pub fn take_out(&mut self, taken: &[SlotStack]) -> bool {
         let mut slots = self.slots.clone();
         for SlotStack { slot, stack } in taken {
-            match slots.get_mut(*slot as usize) {
+            match slots.get_mut(*slot as usize).and_then(Option::as_mut) {
                 Some(held)
                     if held.item == stack.item && (1..=held.count).contains(&stack.count) =>
                 {
@@ -464,36 +547,74 @@ impl Inventory {
                 _ => return false,
             }
         }
-        slots.retain(|slot| slot.count > 0);
         self.slots = slots;
+        self.clear_spent();
         true
     }
 
-    /// Joins the stack in `from` onto the stack of the same item in `onto`, as far as a stack
-    /// of that item holds: what does not fit stays where it was.
-    pub fn join(&mut self, content: &Content, from: usize, onto: usize) {
-        let (Some(&moved), Some(&kept)) = (self.slots.get(from), self.slots.get(onto)) else {
-            return;
+    /// Moves the stack in `from` to the slot `to`, as a drop in the bag does: an empty slot takes
+    /// it, a stack of the same item takes as much as it has room for (what doesn't fit stays in
+    /// `from`, and the two swap when it has no room at all), and any other stack swaps places
+    /// with it. Refused when `from` no longer holds `item`, the item the player moved.
+    pub fn move_stack(
+        &mut self,
+        content: &Content,
+        from: usize,
+        to: usize,
+        item: ItemId,
+    ) -> Result<(), StackChanged> {
+        let Some(moved) = self.at(from).filter(|stack| stack.item == item) else {
+            return Err(StackChanged);
         };
-        if from == onto || moved.item != kept.item {
-            return;
+        if from == to || to >= self.slots.len() {
+            return Ok(());
         }
-        let room = moved
-            .item
-            .get(content)
-            .stack_max()
-            .saturating_sub(kept.count);
+        let room = match self.at(to) {
+            Some(kept) if kept.item == item => {
+                item.get(content).stack_max().saturating_sub(kept.count)
+            }
+            _ => 0,
+        };
+        if room == 0 {
+            self.slots.swap(from, to);
+            return Ok(());
+        }
         let joined = moved.count.min(room);
-        self.slots[onto].count += joined;
-        self.slots[from].count -= joined;
-        self.slots.retain(|slot| slot.count > 0);
+        let kept = self.at(to).map_or(0, |kept| kept.count);
+        self.slots[to] = Some(ItemStack::new(item, kept + joined));
+        self.slots[from] =
+            (moved.count > joined).then(|| ItemStack::new(item, moved.count - joined));
+        Ok(())
     }
 
-    pub fn set_count(&mut self, item: ItemId, count: u32) {
-        self.slots.retain(|slot| slot.item != item);
-        if count > 0 {
-            self.slots.push(ItemStack { item, count });
+    /// Sorts the whole bag once by `by`: each item's stacks joined as far as a stack of it holds,
+    /// then laid from the first slot on with no gaps between them.
+    pub fn sort(&mut self, content: &Content, by: BagSort) {
+        let held: Vec<ItemStack> = self.stacks().map(|(_, stack)| stack).collect();
+        let mut stacks: Vec<ItemStack> = merged(&held)
+            .into_iter()
+            .flat_map(|whole| whole.in_full_stacks(content))
+            .collect();
+        let names = messages::of(content).locale.collator();
+        stacks.sort_by(|a, b| by.order(content, &names, *a, *b));
+        let size = self.slots.len();
+        self.slots = stacks
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::repeat(None))
+            .take(size)
+            .collect();
+    }
+
+    /// Holds `count` of `item`, however many it held before, laid as new items are, as far as
+    /// the bag has room.
+    pub fn set_count(&mut self, content: &Content, item: ItemId, count: u32) {
+        for slot in &mut self.slots {
+            if slot.is_some_and(|stack| stack.item == item) {
+                *slot = None;
+            }
         }
+        self.add(content, item, count);
     }
 
     pub fn exchange(
@@ -513,19 +634,19 @@ impl Inventory {
             }
             next.remove(take);
         }
-        let mut unbounded = next.clone();
-        unbounded.max = u32::MAX;
-        for give in gives {
-            unbounded.add(content, give.item, give.count);
+        let left: Vec<ItemStack> = gives
+            .iter()
+            .map(|give| ItemStack::new(give.item, next.add(content, give.item, give.count)))
+            .filter(|left| left.count > 0)
+            .collect();
+        let slots: u32 = merged(&left)
+            .into_iter()
+            .map(|left| left.in_full_stacks(content).count() as u32)
+            .sum();
+        if slots > 0 {
+            return Err(ExchangeRefusal::NoRoom { slots });
         }
-        let needed = unbounded.slots.len() as u32;
-        if needed > next.max {
-            return Err(ExchangeRefusal::NoRoom {
-                slots: needed - next.max,
-            });
-        }
-        *self = unbounded;
-        self.max = next.max;
+        *self = next;
         Ok(())
     }
 
@@ -548,36 +669,114 @@ impl Inventory {
         }
     }
 
-    fn add(&mut self, content: &Content, item: ItemId, mut count: u32) {
+    /// Puts `count` of `item` in the bag: onto its stacks first, as far as they have room, then
+    /// into the empty slots from the first on. How many found no room.
+    fn add(&mut self, content: &Content, item: ItemId, mut count: u32) -> u32 {
         let stack_max = item.get(content).stack_max();
-        for slot in self.slots.iter_mut().filter(|slot| slot.item == item) {
+        for stack in self.slots.iter_mut().flatten() {
             if count == 0 {
                 break;
             }
-            let take = stack_max.saturating_sub(slot.count).min(count);
-            slot.count += take;
+            if stack.item != item {
+                continue;
+            }
+            let take = stack_max.saturating_sub(stack.count).min(count);
+            stack.count += take;
             count -= take;
         }
-        while count > 0 && (self.slots.len() as u32) < self.max {
+        for slot in self.slots.iter_mut().filter(|slot| slot.is_none()) {
+            if count == 0 {
+                break;
+            }
             let take = stack_max.min(count);
-            self.slots.push(ItemStack::new(item, take));
+            *slot = Some(ItemStack::new(item, take));
             count -= take;
         }
+        count
     }
 
+    /// Takes as many of `stack` as the bag holds, from its last stacks back.
     fn remove(&mut self, stack: ItemStack) {
         let mut left = stack.count;
-        for slot in self
+        for held in self
             .slots
             .iter_mut()
             .rev()
-            .filter(|slot| slot.item == stack.item)
+            .flatten()
+            .filter(|held| held.item == stack.item)
         {
-            let take = slot.count.min(left);
-            slot.count -= take;
+            let take = held.count.min(left);
+            held.count -= take;
             left -= take;
         }
-        self.slots.retain(|slot| slot.count > 0);
+        self.clear_spent();
+    }
+
+    fn clear_spent(&mut self) {
+        for slot in &mut self.slots {
+            if slot.is_some_and(|stack| stack.count == 0) {
+                *slot = None;
+            }
+        }
+    }
+}
+
+/// Why a stack wasn't moved: the slot it was moved from no longer held it, the bag having
+/// changed since the player saw it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StackChanged;
+
+impl StackChanged {
+    pub fn line(self, content: &Content) -> LineText {
+        messages::of(content).item.stack_changed().into()
+    }
+}
+
+/// An order a whole bag is sorted in, each breaking its ties on the next thing it names, then
+/// on the larger stack first.
+#[derive(
+    JsonSchema,
+    Serialize,
+    Deserialize,
+    IntoStaticStr,
+    VariantArray,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BagSort {
+    /// Category, then rarity from rarest, then name.
+    Kind,
+    /// Rarity from rarest, then category, then name.
+    Rarity,
+    /// Name, as the game's locale orders words.
+    Name,
+}
+
+impl BagSort {
+    fn order(
+        self,
+        content: &Content,
+        names: &icu_collator::CollatorBorrowed<'static>,
+        a: ItemStack,
+        b: ItemStack,
+    ) -> std::cmp::Ordering {
+        let (one, other) = (a.item.get(content), b.item.get(content));
+        let category = || one.category().cmp(&other.category());
+        let rarity = || {
+            let rank = |def: &ItemDef| def.rarity.get(content).rank;
+            rank(other).cmp(&rank(one))
+        };
+        let name = || names.compare(&one.name, &other.name);
+        let by = match self {
+            BagSort::Kind => category().then_with(rarity).then_with(name),
+            BagSort::Rarity => rarity().then_with(category).then_with(name),
+            BagSort::Name => name(),
+        };
+        by.then(a.item.cmp(&b.item)).then(b.count.cmp(&a.count))
     }
 }
 
@@ -672,19 +871,27 @@ pub struct SlotStack {
     pub stack: ItemStack,
 }
 
-/// Splits `count` off the stack in the bag's slot `slot`, into a stack of its own beside it.
+/// Splits `count` off the stack in the bag's slot `slot`, into a stack of its own in the next
+/// empty slot.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SplitStackRequest {
     pub slot: u32,
     pub count: u32,
 }
 
-/// Joins the stack in the bag's slot `from` onto the stack of the same item in `onto`, as far
-/// as a stack of that item holds.
+/// Moves the stack in the bag's slot `from` to its slot `to`, as `Inventory::move_stack` does.
+/// `item` is what the player saw in `from`: the move is refused when it holds something else.
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct JoinStacksRequest {
+pub struct MoveStackRequest {
     pub from: u32,
-    pub onto: u32,
+    pub to: u32,
+    pub item: ItemId,
+}
+
+/// Sorts the whole bag once, in the order `by`.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SortBagRequest {
+    pub by: BagSort,
 }
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
@@ -932,6 +1139,8 @@ pub struct StackLimit {
     Debug,
     PartialEq,
     Eq,
+    PartialOrd,
+    Ord,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ItemCategory {
@@ -1292,7 +1501,7 @@ pub fn use_item(world: &mut World) {
         let content = world.resource::<Content>().clone();
         let leaves = world
             .get::<Inventory>(player)
-            .and_then(|bag| bag.slots.get(slot))
+            .and_then(|bag| bag.at(slot))
             .and_then(|stack| skill::cast_by(&content, stack.item))
             .is_some_and(|skill| mount::left_by(world, player, skill));
         if !leaves {
@@ -1323,7 +1532,7 @@ fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), LineTex
     let content = world.resource::<Content>().clone();
     let item = world
         .get::<Inventory>(actor)
-        .and_then(|inventory| inventory.slots.get(slot).map(|slot| slot.item))
+        .and_then(|inventory| inventory.at(slot).map(|stack| stack.item))
         .ok_or_else(|| LineText::from(messages::of(&content).item.nothing_there()))?;
     match item.get(&content).kind {
         ItemKind::Equipment { .. } => equipment::equip(world, actor, slot, None),
@@ -1356,23 +1565,22 @@ pub fn drop_item(world: &mut World) {
         let removed = match world.get_mut::<Inventory>(player) {
             Some(mut inventory)
                 if inventory
-                    .slots
-                    .get(slot)
+                    .at(slot)
                     .is_some_and(|stack| !stack.bound(&content)) =>
             {
-                Some(inventory.slots.remove(slot))
+                inventory.slots[slot].take()
             }
             _ => None,
         };
-        if let Some(slot) = removed {
-            scatter_drop(world, player, &[(slot.item, slot.count)], None, None);
+        if let Some(stack) = removed {
+            scatter_drop(world, player, &[(stack.item, stack.count)], None, None);
         }
         Ok(())
     });
 }
 
-/// Splits and joins the stacks of their bag as each player asks. A bag is its character's to
-/// arrange whatever else they are doing, so nothing holds these back.
+/// Splits, moves and sorts the stacks of their bag as each player asks. A bag is its
+/// character's to arrange whatever else they are doing, so nothing holds these back.
 pub fn arrange_stacks(world: &mut World) {
     let content = world.resource::<Content>().clone();
     player_requests::<SplitStackRequest>(world, RequestNeeds::Nothing, |world, player, request| {
@@ -1383,9 +1591,22 @@ pub fn arrange_stacks(world: &mut World) {
             None => Ok(()),
         }
     });
-    player_requests::<JoinStacksRequest>(world, RequestNeeds::Nothing, |world, player, request| {
+    player_requests::<MoveStackRequest>(world, RequestNeeds::Nothing, |world, player, request| {
+        match world.get_mut::<Inventory>(player) {
+            Some(mut inventory) => inventory
+                .move_stack(
+                    &content,
+                    request.from as usize,
+                    request.to as usize,
+                    request.item,
+                )
+                .map_err(|changed| changed.line(&content)),
+            None => Ok(()),
+        }
+    });
+    player_requests::<SortBagRequest>(world, RequestNeeds::Nothing, |world, player, request| {
         if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
-            inventory.join(&content, request.from as usize, request.onto as usize);
+            inventory.sort(&content, request.by);
         }
         Ok(())
     });

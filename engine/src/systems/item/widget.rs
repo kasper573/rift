@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use ui::drag;
 use ui::egui;
 use ui::egui::{Color32, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
-use ui::{controls, ink, sheet};
+use ui::{controls, ink};
 
 use crate::core::content::Content;
 use crate::core::content::ImageRef;
@@ -13,18 +13,17 @@ use crate::core::text::StyledLine;
 use crate::systems::equipment::UnequipRequest;
 use crate::systems::hud::{self, AmountQuestion, Carried};
 use crate::systems::input::map::{self, InputAction, InputMap};
-use crate::systems::item::grid::item_grid;
 use crate::systems::item::inline::{self, InlineItem};
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::transfer;
 use crate::systems::item::{
-    DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, JoinStacksRequest,
-    SplitStackRequest, card, my_bag,
+    DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, SplitStackRequest,
+    card, my_bag,
 };
 use crate::systems::item::{ItemKind, ItemMessages};
 use crate::systems::mention::Mention;
 use crate::systems::messages::{self, Messages};
-use crate::systems::player::session;
+use crate::systems::settings::Placed;
 use crate::systems::skill::bar;
 
 pub(crate) const SLOT: f32 = controls::SLOT;
@@ -99,50 +98,20 @@ impl CarriedInputs {
         let map = world.resource::<InputMap>();
         let takeovers = takeovers(world);
         let free = |action| !shadowed(map, &takeovers, action);
-        let carried = || inventory.slots.iter().map(|stack| stack.item.get(content));
+        let carried = || inventory.stacks().map(|(_, stack)| stack.item.get(content));
         CarriedInputs {
             uses: free(InputAction::UseItem)
                 && carried().any(|def| !matches!(def.kind, ItemKind::Resource)),
-            carries: !inventory.slots.is_empty(),
+            carries: inventory.taken_slots() > 0,
             drops: free(InputAction::DropItem) && carried().any(|def| !def.bound()),
-            inspects: free(InputAction::InspectItem) && !inventory.slots.is_empty(),
+            inspects: free(InputAction::InspectItem) && inventory.taken_slots() > 0,
         }
-    }
-}
-
-pub struct InventoryPane<'a> {
-    pub width: f32,
-    /// A window that says how full the inventory is elsewhere leaves the heading out.
-    pub heading: Option<&'a str>,
-}
-
-pub fn inventory_pane(ui: &mut Ui, world: &mut World, pane: InventoryPane) {
-    let cells = inventory_cells(world);
-    let shown = ui.allocate_ui_with_layout(
-        Vec2::new(pane.width, 0.0),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            ui.set_width(pane.width);
-            if let Some(heading) = pane.heading {
-                let bag = Inventory::of(world, session::me(world));
-                let room = messages::of(world.resource::<Content>())
-                    .item
-                    .room(bag.max, bag.taken_slots());
-                sheet::section(ui, &format!("{heading} · {room}"));
-            }
-            item_grid(ui, cells.len() as u32, |ui, place| {
-                bag_slot(ui, world, &cells[place as usize]);
-            });
-        },
-    );
-    if let Some(carried) = drag::dropped::<Carried>(&shown.response) {
-        dropped_on_bag(world, carried);
     }
 }
 
 /// What is left of the stack in the bag's slot `slot`, of what the windows open hold of it.
 pub(crate) fn bag_slot_left(world: &World, slot: u32) -> Option<ItemStack> {
-    let stack = *my_bag(world)?.slots.get(slot as usize)?;
+    let stack = my_bag(world)?.at(slot as usize)?;
     let aside: u32 = slot_asides(world)
         .iter()
         .map(|source| source(world, slot, stack))
@@ -475,9 +444,17 @@ struct SlotAsides(Vec<SlotAsideSource>);
 #[derive(Resource, Default)]
 struct SlotActions(Vec<SlotAction>);
 
-struct CellData {
-    slot: u32,
+/// A slot of the player's bag as the bag view draws it.
+pub(super) struct BagCell {
+    pub slot: u32,
     filled: Option<Filled>,
+}
+
+impl BagCell {
+    /// The stack the slot holds, if it holds one.
+    pub fn stack(&self) -> Option<ItemStack> {
+        self.filled.as_ref().map(|filled| filled.stack)
+    }
 }
 
 struct Filled {
@@ -501,10 +478,17 @@ const BUILT_IN: [InputAction; 4] = [
     InputAction::InspectItem,
 ];
 
-fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
+/// Draws the bag's slot `cell` and answers the inputs on it, `faded` while a stack moved out of it
+/// settles. What is carried onto it is the bag view's to answer.
+pub(super) fn bag_slot(
+    ui: &mut Ui,
+    world: &mut World,
+    cell: &BagCell,
+    faded: bool,
+    placement: Placed,
+) -> Response {
     let Some(filled) = &cell.filled else {
-        empty_slot(ui, world);
-        return;
+        return empty_slot(ui, world);
     };
     let content = world.resource::<Content>().clone();
     let def = filled.stack.item.get(&content);
@@ -524,7 +508,7 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
         .collect();
     let tile = ItemTile {
         wanted,
-        faded: refused || carried || left == 0,
+        faded: refused || carried || faded || left == 0,
         notes,
         clicks: TileClicks::View {
             sense: Sense::click_and_drag(),
@@ -556,23 +540,15 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
         .into_iter()
         .filter(|action| map::clicked(world, *action, &response))
         .collect();
-    if !matched.is_empty() {
+    let placing = drag::carried::<Carried>(ui.ctx()).is_some();
+    if !matched.is_empty() && !placing {
         let held = ItemStack::new(filled.stack.item, left);
-        act(world, cell.slot, held, &matched, response.rect);
+        act(world, cell.slot, held, &matched, response.rect, placement);
     }
     if map::drag_started(world, InputAction::CarryItem, &response) {
         drag::carry(ui.ctx(), Carried::BagSlot(cell.slot));
     }
-    match drag::dropped::<Carried>(&response) {
-        Some(Carried::BagSlot(from)) if from != cell.slot => {
-            world.write_message(JoinStacksRequest {
-                from,
-                onto: cell.slot,
-            });
-        }
-        Some(carried) => dropped_on_bag(world, carried),
-        None => {}
-    }
+    response
 }
 
 /// Asks how many of `stack` to split off, and hands `split` the answer.
@@ -605,10 +581,11 @@ fn ask_split(
     );
 }
 
-fn inventory_cells(world: &World) -> Vec<CellData> {
+/// Every slot of the player's bag, in its order, with what each holds and what can be done to it.
+pub(super) fn bag_cells(world: &World) -> Vec<BagCell> {
     let content = world.resource::<Content>();
     let inventory = my_bag(world);
-    let max = inventory.map_or(0, |inventory| inventory.max);
+    let max = inventory.map_or(0, Inventory::size);
     let verdicts = world
         .get_resource::<SlotVerdicts>()
         .map(|verdicts| verdicts.0.as_slice())
@@ -620,11 +597,11 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
     let messages = &messages::of(content).item;
     let chat = card::chat_hint(world, messages);
     (0..max)
-        .map(|slot| CellData {
+        .map(|slot| BagCell {
             slot,
             filled: inventory
-                .and_then(|inventory| inventory.slots.get(slot as usize))
-                .map(|&stack| {
+                .and_then(|inventory| inventory.at(slot as usize))
+                .map(|stack| {
                     let def = stack.item.get(content);
                     let aside: u32 = asides.iter().map(|source| source(world, slot, stack)).sum();
                     let verdict = verdicts.iter().find_map(|source| source(world, stack));
@@ -657,10 +634,10 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
 
 /// Takes back into the bag what was carried onto it from elsewhere: what is worn, and what was
 /// moved into a window.
-fn dropped_on_bag(world: &mut World, carried: Carried) {
+pub(super) fn dropped_on_bag(world: &mut World, carried: Carried) {
     match carried {
         Carried::Worn(slot) => {
-            world.write_message(UnequipRequest { slot });
+            world.write_message(UnequipRequest { slot, into: None });
         }
         carried => transfer::dropped_on_bag(world, &carried),
     }
@@ -680,7 +657,14 @@ fn bound_note(def: &ItemDef, messages: &ItemMessages) -> Option<String> {
 
 /// Does what the inputs `matched` ask of the bag's slot `slot`, where `held` is what is left
 /// in it of what is set aside elsewhere: nothing but a look at the item, when that is none.
-fn act(world: &mut World, slot: u32, held: ItemStack, matched: &[InputAction], at: Rect) {
+fn act(
+    world: &mut World,
+    slot: u32,
+    held: ItemStack,
+    matched: &[InputAction],
+    at: Rect,
+    placement: Placed,
+) {
     if let Some(open) = transfer::open(world)
         && let Some(&action) = matched.iter().find(|action| TRANSFERS.contains(action))
         && transfer::from_bag(world, open, slot, held, action)
@@ -695,7 +679,9 @@ fn act(world: &mut World, slot: u32, held: ItemStack, matched: &[InputAction], a
         return;
     }
     match BUILT_IN.into_iter().find(|action| matched.contains(action)) {
-        Some(InputAction::InspectItem) => card::open(world, held.item, Some(at)),
+        Some(InputAction::InspectItem) => {
+            card::open_from_bag(world, held.item, slot, placement, at)
+        }
         Some(_) if held.count == 0 => {}
         Some(InputAction::DropItem) => {
             world.write_message(DropItemRequest { slot });

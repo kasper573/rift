@@ -1,3 +1,4 @@
 {
-  "icon": "blank.png"
+  "name": "Repeatable quest to hand in",
+  "icon": "fixtures/attention/repeatable_ready.png"
 }

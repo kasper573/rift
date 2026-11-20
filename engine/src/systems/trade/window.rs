@@ -14,12 +14,12 @@ use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Centred, WindowKey};
+use crate::systems::item::bag_view::{BagView, bag_view};
 use crate::systems::item::grid::{scrolled, slots_span};
 use crate::systems::item::transfer::{
     self, ItemTransfer, TransferPane, TransferWindow, transfer_window,
 };
 use crate::systems::item::tray;
-use crate::systems::item::widget::{InventoryPane, inventory_pane};
 use crate::systems::item::{self, ItemId, ItemStack};
 use crate::systems::messages::{self, Messages};
 use crate::systems::player::session;
@@ -137,14 +137,12 @@ fn body(
     let panes = Rect::from_min_max(room.min, Pos2::new(room.max.x, bar.min.y));
     let ([bag_at, mine_at], theirs_at) = sheet::spaced_columns(panes, [pane(), pane()]);
     ui.scope_builder(column(bag_at), |ui| {
-        sheet::section(ui, words.interface.inventory());
-        scrolled(ui, "trade bag", |ui| {
-            let pane = InventoryPane {
-                width: ui.available_width(),
-                heading: None,
-            };
-            inventory_pane(ui, world, pane);
-        });
+        let view = BagView {
+            heading: words.interface.inventory(),
+            counts: false,
+            placement: Placed::Trade,
+        };
+        bag_view(ui, world, view);
     });
     ui.scope_builder(column(mine_at), |ui| {
         sheet::section(ui, words.trade.you_give());
@@ -279,8 +277,7 @@ impl TransferWindow for TradeGives {
 
     /// Gives `count` of the bag's slot `slot`.
     fn put(world: &mut World, slot: u32, count: u32) -> bool {
-        let Some(held) = item::my_bag(world).and_then(|bag| bag.slots.get(slot as usize).copied())
-        else {
+        let Some(held) = item::my_bag(world).and_then(|bag| bag.at(slot as usize)) else {
             return false;
         };
         if held.bound(world.resource::<Content>()) {

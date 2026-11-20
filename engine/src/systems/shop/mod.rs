@@ -946,7 +946,7 @@ fn sale_quotes(
     inventory: &Inventory,
 ) -> Vec<SaleQuote> {
     let mut items: Vec<ItemId> = Vec::new();
-    for stack in &inventory.slots {
+    for (_, stack) in inventory.stacks() {
         if !items.contains(&stack.item) {
             items.push(stack.item);
         }

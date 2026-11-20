@@ -2,6 +2,7 @@ mod ground;
 pub mod minimap;
 pub mod tab;
 
+use std::collections::HashMap;
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
@@ -12,7 +13,7 @@ use ui::egui::epaint::{Mesh, Vertex};
 use ui::egui::{self, Align2, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use ui::face::{Face, TextRole};
 use ui::glyph::{self, Mark};
-use ui::{dusk, float, ink};
+use ui::{dusk, float, ink, motion};
 
 use crate::core::content::{Content, ImageRef, RowCheck};
 use crate::core::gui::{self, GuiImage};
@@ -45,6 +46,7 @@ impl Plugin for AreaMapPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ground::MapGround>()
             .init_resource::<tab::MapTabLook>()
+            .init_resource::<MarksShown>()
             .add_systems(
                 Update,
                 (tab::rest, picture_the_ground)
@@ -158,6 +160,8 @@ pub enum MapMarkKind {
 #[derive(Clone, Debug)]
 pub struct MapMark {
     pub kind: MapMarkKind,
+    /// Who the mark stands for, for a mark of someone.
+    pub who: Option<Entity>,
     pub name: String,
     /// The thing the mark's name is, for a mark that is named after one the interface mentions.
     pub mention: Option<Mention>,
@@ -211,6 +215,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
             };
             let mark = MapMark {
                 kind,
+                who: Some(entity),
                 name,
                 mention: None,
                 at,
@@ -234,6 +239,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
         .filter(|object| object.to.area != area)
         .map(|object| MapMark {
             kind: MapMarkKind::WayOut,
+            who: None,
             name: object.to.area.get(&content).name.clone(),
             mention: Some(Mention::Area(object.to.area)),
             at: object.shape.center(),
@@ -262,6 +268,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
             let rarity = def.rarity.get(&content);
             rarity.dropped.on_minimap.then(|| MapMark {
                 kind: MapMarkKind::Loot,
+                who: None,
                 name: def.name.clone(),
                 mention: Some(Mention::Item(dropped.item)),
                 at: at.pos,
@@ -448,6 +455,9 @@ fn pinned(ui: &mut Ui, view: &MapView, pin: &MapPin) {
         head + Vec2::new(-PIN_HEAD * 0.8, PIN_HEAD * 0.5),
         head + Vec2::new(PIN_HEAD * 0.8, PIN_HEAD * 0.5),
     ];
+    ui.painter()
+        .add(Shape::closed_line(shank.clone(), halo(1.0)));
+    ui.painter().circle_stroke(head, PIN_HEAD, halo(1.0));
     ui.painter().add(Shape::convex_polygon(shank, PIN, edge));
     ui.painter().circle(head, PIN_HEAD, PIN, edge);
     ui.painter().circle_filled(head, PIN_HEAD * 0.35, EDGE);
@@ -482,6 +492,17 @@ const DIAMOND: f32 = 5.5;
 const DOOR: Vec2 = Vec2::new(9.0, 10.0);
 const ATTENTION: f32 = 14.0;
 const HOVER_REACH: f32 = 9.0;
+/// How wide the dark edge under each mark is.
+const HALO_WIDTH: f32 = 2.0;
+const HALO: Color32 = Color32::from_black_alpha(166);
+/// How wide the sign is that says a townsperson wears more marks.
+const MORE: f32 = 8.0;
+/// How far from a townsperson's spot the ring lays their marks.
+const RING: f32 = 22.0;
+const MOST_IN_RING: usize = 4;
+const RING_OPEN_SECS: f32 = 0.2;
+const RING_CLOSE_SECS: f32 = 0.14;
+const NAME_FROM_POINTER: Vec2 = Vec2::new(12.0, 14.0);
 const PIN_HEAD: f32 = 6.0;
 const PIN_TALL: f32 = 15.0;
 
@@ -669,25 +690,27 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
         for &(index, mark, at) in on_disc.iter().filter(|(_, mark, _)| mark.kind == kind) {
             let fill = |color: Color32| color.gamma_multiply(mark.opacity);
             let edge = Stroke::new(1.5, fill(EDGE));
+            let halo = halo(mark.opacity);
             let said = match kind {
                 MapMarkKind::WayOut => {
+                    ui.painter().add(Shape::closed_line(door(at), halo));
                     ui.painter()
                         .add(Shape::convex_polygon(door(at), fill(ink::LIGHT), edge));
                     view.messages().way_out(view.key(), &mark.name)
                 }
                 MapMarkKind::Townsperson => {
+                    ui.painter().circle_stroke(at, PERSON, halo);
                     ui.painter().circle(at, PERSON, fill(TOWNSPERSON), edge);
-                    view.messages().named_on(view.key(), &mark.name)
+                    match mark.attention.len() {
+                        0 | 1 => view.messages().named_on(view.key(), &mark.name),
+                        _ => view.messages().more_marks(view.key(), &mark.name),
+                    }
                 }
                 MapMarkKind::Loot => {
                     if let Some(icon) = mark.icon.as_ref().and_then(|icon| gui::image(world, icon))
                     {
-                        ui.painter().image(
-                            icon.texture,
-                            egui::Rect::from_center_size(at, Vec2::splat(LOOT)),
-                            egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                            fill(Color32::WHITE),
-                        );
+                        let rect = egui::Rect::from_center_size(at, Vec2::splat(LOOT));
+                        haloed(ui.painter(), &icon, rect, fill(Color32::WHITE));
                     }
                     view.messages().named_on(view.key(), &mark.name)
                 }
@@ -700,9 +723,11 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                     } else {
                         CHARACTER
                     };
+                    ui.painter().add(Shape::closed_line(diamond.clone(), halo));
                     ui.painter()
                         .add(Shape::convex_polygon(diamond, fill(color), edge));
                     if kind == MapMarkKind::PartyMember {
+                        ui.painter().circle_stroke(at, DIAMOND * 1.5, halo);
                         ui.painter().circle_stroke(at, DIAMOND * 1.5, edge);
                     }
                     if kind == MapMarkKind::PartyMember {
@@ -735,21 +760,43 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
             }
         }
     }
+    let mut shown = Vec::new();
+    let mut ring = None;
     for &(_, mark, at) in &on_disc {
-        let icons: Vec<GuiImage> = mark
-            .attention
-            .iter()
-            .filter_map(|attention| gui::image(world, &attention.get(&content).icon))
-            .collect();
-        for (place, icon) in icons.iter().enumerate() {
-            let over = at + Vec2::new(place as f32 * ATTENTION, -PERSON - ATTENTION / 2.0);
-            let tint = Color32::WHITE.gamma_multiply(mark.opacity);
-            ui.put(
-                egui::Rect::from_center_size(over, Vec2::splat(ATTENTION)),
-                icon.widget(Vec2::splat(ATTENTION)).tint(tint),
+        let Some(&first) = mark.attention.first() else {
+            continue;
+        };
+        let over = at + Vec2::new(0.0, -PERSON - ATTENTION / 2.0);
+        let tint = Color32::WHITE.gamma_multiply(mark.opacity);
+        if let Some(icon) = gui::image(world, &first.get(&content).icon) {
+            let rect = egui::Rect::from_center_size(over, Vec2::splat(ATTENTION));
+            haloed(ui.painter(), &icon, rect, tint);
+        }
+        let more = mark.attention.len() > 1;
+        if more {
+            plus(
+                ui.painter(),
+                at + Vec2::new(PERSON, -PERSON) * 0.9,
+                mark.opacity,
             );
         }
+        if let Some(who) = mark.who {
+            shown.push(ShownMark {
+                who,
+                at,
+                marks: mark.attention.clone(),
+            });
+            if more && ring.is_none() {
+                ring = ringed(ui, world, who, &mark.attention, at, pointer);
+            }
+        }
     }
+    let mut kept = world.resource_mut::<MarksShown>();
+    kept.marks.insert(view.key(), shown);
+    match ring {
+        Some(ring) => kept.rings.insert(view.key(), ring),
+        None => kept.rings.remove(view.key()),
+    };
     under.reverse();
     if let Some(topmost) = topmost {
         float::tooltip(&topmost, |ui| {
@@ -759,6 +806,123 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
             }
         });
     }
+}
+
+/// The marks of townsfolk each map shows this frame, and the ring open on each, for a driver of
+/// the client.
+#[derive(Resource, Default)]
+pub struct MarksShown {
+    pub marks: HashMap<&'static str, Vec<ShownMark>>,
+    pub rings: HashMap<&'static str, ShownRing>,
+}
+
+/// A townsperson's mark as a map shows it: where on screen, and the marks they wear, most
+/// pressing first.
+#[derive(Clone, Debug)]
+pub struct ShownMark {
+    pub who: Entity,
+    pub at: Pos2,
+    pub marks: Vec<AttentionId>,
+}
+
+/// The marks of a townsperson laid round their spot as the pointer rests on it, and how far open.
+#[derive(Clone, Debug)]
+pub struct ShownRing {
+    pub who: Entity,
+    pub marks: Vec<AttentionId>,
+    pub open: f32,
+}
+
+/// The ring of `marks` round the townsperson `who` at `at`: it opens while the pointer rests on
+/// them, stays while the pointer is on its marks, and folds back once the pointer leaves. Drawn
+/// above the map and upright on screen, the first mark at the top.
+fn ringed(
+    ui: &Ui,
+    world: &mut World,
+    who: Entity,
+    marks: &[AttentionId],
+    at: Pos2,
+    pointer: Option<Pos2>,
+) -> Option<ShownRing> {
+    let gui = ui.ctx().clone();
+    let id = ui.id().with(("ring", who));
+    let near = |reach: f32| pointer.is_some_and(|pointer| pointer.distance(at) <= reach);
+    let was = gui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    let open = near(HOVER_REACH) || (was && near(RING + ATTENTION));
+    gui.data_mut(|data| data.insert_temp(id, open));
+    let secs = if open {
+        RING_OPEN_SECS
+    } else {
+        RING_CLOSE_SECS
+    };
+    let t = gui.animate_bool_with_time_and_easing(id, open, secs, motion::ease_out);
+    if t <= 0.0 {
+        return None;
+    }
+    let content = world.resource::<Content>().clone();
+    let painter = gui.layer_painter(egui::LayerId::new(egui::Order::Tooltip, id));
+    painter.circle_filled(
+        at,
+        (RING + ATTENTION / 2.0 + 3.0) * t,
+        HALO.gamma_multiply(0.6 * t),
+    );
+    let marks: Vec<AttentionId> = marks.iter().take(MOST_IN_RING).copied().collect();
+    let mut named = None;
+    for (place, &mark) in marks.iter().enumerate() {
+        let angle = -TAU / 4.0 + TAU * place as f32 / marks.len() as f32;
+        let spot = at + Vec2::angled(angle) * RING * t;
+        if let Some(icon) = gui::image(world, &mark.get(&content).icon) {
+            let rect = egui::Rect::from_center_size(spot, Vec2::splat(ATTENTION));
+            haloed(&painter, &icon, rect, Color32::WHITE.gamma_multiply(t));
+        }
+        if pointer.is_some_and(|pointer| pointer.distance(spot) <= ATTENTION / 2.0) {
+            named = Some(mark);
+        }
+    }
+    if let Some(mark) = named.filter(|_| t >= 1.0) {
+        let name = mark.get(&content).name.clone();
+        float::at_pointer(
+            &gui,
+            id.with("named"),
+            egui::Order::Tooltip,
+            NAME_FROM_POINTER,
+            |ui| {
+                dusk::label(
+                    ui,
+                    &name,
+                    TextRole::Name.font_id(),
+                    Color32::WHITE,
+                    dusk::TEXT_SHADOW,
+                    TSTransform::IDENTITY,
+                )
+            },
+        );
+    }
+    Some(ShownRing {
+        who,
+        marks,
+        open: t,
+    })
+}
+
+/// The dark edge under every mark's shape, so it reads on grass, sand, water and roofs alike.
+fn halo(opacity: f32) -> Stroke {
+    Stroke::new(1.5 + 2.0 * HALO_WIDTH, HALO.gamma_multiply(opacity))
+}
+
+/// `icon` in `rect` over a dark edge of its own shape.
+fn haloed(painter: &egui::Painter, icon: &GuiImage, rect: egui::Rect, tint: Color32) {
+    let whole = egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    let shadow = HALO.gamma_multiply(tint.a() as f32 / 255.0);
+    painter.image(icon.texture, rect.expand(HALO_WIDTH), whole, shadow);
+    painter.image(icon.texture, rect, whole, tint);
+}
+
+/// The sign on a townsperson's mark that they wear more marks than it shows.
+fn plus(painter: &egui::Painter, at: Pos2, opacity: f32) {
+    painter.circle(at, MORE / 2.0, HALO.gamma_multiply(opacity), Stroke::NONE);
+    let spot = egui::Rect::from_center_size(at, Vec2::splat(MORE * 0.7));
+    Mark::Plus.paint(painter, spot, Color32::WHITE.gamma_multiply(opacity));
 }
 
 fn door(at: Pos2) -> Vec<Pos2> {
@@ -938,6 +1102,9 @@ messages! {
         party_member_mark(name: Text),
         /// What a townsperson or dropped item is announced as, `{view}` being `minimap` or `map` and `{name}` its name.
         named_on(view: Text, name: Text),
+        /// What a townsperson who wears more marks than their map mark shows is announced as,
+        /// `{view}` being `minimap` or `map` and `{name}` their name.
+        more_marks(view: Text, name: Text),
         /// What the north bead on the map is announced as.
         face_north,
         /// The tooltip of the north bead on the map.

@@ -98,9 +98,9 @@ pub fn crowd() -> Game {
         let carried: Vec<_> = (0..3)
             .map(|nth| {
                 let good = GOODS[(fighter * 3 + nth) % GOODS.len()];
-                json!({ "item": path("item", &file_name(good)), "count": 50 })
+                json!({ "slot": nth, "item": path("item", &file_name(good)), "count": 50 })
             })
-            .chain([json!({ "item": path("item", "gold"), "count": 5000 })])
+            .chain([json!({ "slot": 3, "item": path("item", "gold"), "count": 5000 })])
             .collect();
         game = game.row(
             "test_character",

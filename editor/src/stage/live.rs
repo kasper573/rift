@@ -354,7 +354,7 @@ fn skill_setup(
         carry(&mut snapshot, content, item);
     }
     for stack in &def.cost {
-        snapshot.bag.push(ItemStack::new(stack.item, stack.count));
+        snapshot.carry(ItemStack::new(stack.item, stack.count));
     }
     let area = area::load(content, spawn.area);
     let free = |at: Pos<Meters>| area.mesh_near(at).nearest(at).unwrap_or(at);
@@ -513,7 +513,7 @@ fn required_items(def: &SkillDef) -> Vec<ItemId> {
 fn carry(snapshot: &mut CharacterSnapshot, content: &Content, item: ItemId) {
     match item.get(content).kind {
         ItemKind::Equipment { .. } => snapshot.equipped.push(item),
-        ItemKind::Usable { .. } | ItemKind::Resource => snapshot.bag.push(ItemStack::new(item, 1)),
+        ItemKind::Usable { .. } | ItemKind::Resource => snapshot.carry(ItemStack::new(item, 1)),
     }
 }
 

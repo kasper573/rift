@@ -22,14 +22,13 @@ use crate::systems::dialogue::windows::{self, Opens};
 use crate::systems::hud::{self, WindowKey, day_clock};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceSound;
+use crate::systems::item::bag_view::{BagView, bag_view};
 use crate::systems::item::card::CardLook;
 use crate::systems::item::grid::scrolled;
 use crate::systems::item::inline::{self, InlineItem, InlineLook};
 use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, TrayWindow, tray_window};
 use crate::systems::item::tray::ItemTray;
-use crate::systems::item::widget::{
-    InventoryPane, ItemTile, SlotVerdict, TileClicks, inventory_pane, item_tile,
-};
+use crate::systems::item::widget::{ItemTile, SlotVerdict, TileClicks, item_tile};
 use crate::systems::item::{self, Inventory, ItemId, ItemStack, SlotStack};
 use crate::systems::messages::{self, Messages};
 use crate::systems::player::session;
@@ -294,14 +293,12 @@ fn sale_pages(ui: &mut Ui, world: &mut World, shelf: &Shelf, pages: Rect) {
 
 fn bag_pane(ui: &mut Ui, world: &mut World) {
     let content = world.resource::<Content>().clone();
-    sheet::section(ui, messages::of(&content).interface.inventory());
-    scrolled(ui, "bag", |ui| {
-        let pane = InventoryPane {
-            width: ui.available_width(),
-            heading: None,
-        };
-        inventory_pane(ui, world, pane);
-    });
+    let view = BagView {
+        heading: messages::of(&content).interface.inventory(),
+        counts: false,
+        placement: Placed::Shop,
+    };
+    bag_view(ui, world, view);
 }
 
 fn sale_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
@@ -311,7 +308,7 @@ fn sale_pane(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
     scrolled(ui, "sale", |ui| {
         let pane = TransferPane {
             placed: shelf.tray.placed(),
-            slots: item::my_bag(world).map_or(0, |bag| bag.max),
+            slots: item::my_bag(world).map_or(0, Inventory::size),
             named: to_sell,
             transfer: Some(ItemTransfer::of_tray::<SaleTray>()),
         };
@@ -622,9 +619,12 @@ fn purse_line(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
     }
     let words = &messages::of(&content).shop;
     let (text, color) = if bag.is_full() {
-        (words.bag_room_full(bag.max, bag.taken_slots()), ink::RUBRIC)
+        (
+            words.bag_room_full(bag.size(), bag.taken_slots()),
+            ink::RUBRIC,
+        )
     } else {
-        (words.bag_room(bag.max, bag.taken_slots()), ink::INK2)
+        (words.bag_room(bag.size(), bag.taken_slots()), ink::INK2)
     };
     sheet::label(ui, TextRole::Small, &text, color);
 }
@@ -769,7 +769,7 @@ impl TrayWindow for SaleTray {
     }
 
     fn slots(world: &World) -> usize {
-        item::my_bag(world).map_or(0, |bag| bag.max as usize)
+        item::my_bag(world).map_or(0, |bag| bag.size() as usize)
     }
 
     fn takes(world: &World, held: ItemStack) -> bool {

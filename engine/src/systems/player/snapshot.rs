@@ -67,7 +67,7 @@ pub struct CharacterSnapshot {
     pub stats: Stats,
     #[schemars(transform = SchemaMark::Usage.with("from the bag"))]
     #[serde(default, skip_serializing_if = "SavedList::is_empty")]
-    pub bag: SavedList<ItemStack>,
+    pub bag: SavedList<BagEntry>,
     /// Put on in order, each where equipping puts it.
     #[serde(default, skip_serializing_if = "SavedList::is_empty")]
     pub equipped: SavedList<ItemId>,
@@ -407,6 +407,61 @@ impl SavedCharacter {
     }
 }
 
+/// A stack of the bag as it is saved: the slot it is in, and what it holds.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct BagEntry {
+    pub slot: u32,
+    pub item: ItemId,
+    #[schemars(transform = SchemaMark::Count.with(true))]
+    #[schemars(extend("default" = serial::one()))]
+    #[serde(default = "serial::one", skip_serializing_if = "serial::is_one")]
+    pub count: u32,
+}
+
+impl BagEntry {
+    pub fn of(slot: u32, stack: ItemStack) -> BagEntry {
+        BagEntry {
+            slot,
+            item: stack.item,
+            count: stack.count,
+        }
+    }
+
+    pub fn stack(self) -> ItemStack {
+        ItemStack::new(self.item, self.count)
+    }
+}
+
+impl CharacterSnapshot {
+    /// Puts `stack` in the bag's first slot no other stack is in.
+    pub fn carry(&mut self, stack: ItemStack) {
+        let slot = (0..)
+            .find(|slot| self.bag.iter().all(|entry| entry.slot != *slot))
+            .expect("a bag leaves some slot number free");
+        self.bag.push(BagEntry::of(slot, stack));
+    }
+}
+
+/// A bag of `size` slots holding `entries`, each in its slot. One whose slot is past the bag or
+/// already taken goes to the first empty slot, as long as there is one.
+fn bag_of(size: u32, entries: &[BagEntry]) -> Inventory {
+    let mut bag = Inventory::sized(size);
+    let mut misplaced = Vec::new();
+    for entry in entries {
+        match bag.slots.get_mut(entry.slot as usize) {
+            Some(slot) if slot.is_none() => *slot = Some(entry.stack()),
+            _ => misplaced.push(entry.stack()),
+        }
+    }
+    for stack in misplaced {
+        if let Some(slot) = bag.slots.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(stack);
+        }
+    }
+    bag
+}
+
 /// Something a player comes back to that is not as they left it, because the game changed.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum GameChange {
@@ -465,12 +520,12 @@ impl KeptAside {
             if !aside.missing.is_empty() {
                 return true;
             }
-            let (stack, _) = with_content(scope.clone(), || {
-                serde_json::from_value::<ItemStack>(aside.entry.clone())
+            let (entry, _) = with_content(scope.clone(), || {
+                serde_json::from_value::<BagEntry>(aside.entry.clone())
             });
-            match stack {
-                Ok(stack) => {
-                    over.push(stack);
+            match entry {
+                Ok(entry) => {
+                    over.push(entry.stack());
                     false
                 }
                 Err(_) => true,
@@ -619,10 +674,7 @@ pub fn materialize(
         ),
         discovered,
         stats,
-        inventory: Inventory {
-            slots: snapshot.bag.to_vec(),
-            max: content.built::<GameSettings>().slots.bag,
-        },
+        inventory: bag_of(content.built::<GameSettings>().slots.bag, &snapshot.bag),
         xp: Xp {
             amount: snapshot.xp,
         },
@@ -786,7 +838,11 @@ impl CharacterSnapshot {
                 .collect(),
             basic_attack: state.basic_attack.0,
             stats: stat::snapshot(world, player),
-            bag: state.inventory.slots.iter().copied().collect(),
+            bag: state
+                .inventory
+                .stacks()
+                .map(|(slot, stack)| BagEntry::of(slot as u32, stack))
+                .collect(),
             equipped: equipped.into(),
             known_areas: state.discovered.areas().collect(),
             quests: active.chain(finished).collect(),
@@ -1081,17 +1137,30 @@ fn check_bag(
     snapshot: &CharacterSnapshot,
     check: &mut RowCheck,
 ) {
-    if let Some(slots) = settings.map(|settings| settings.slots.bag)
-        && snapshot.bag.len() > slots as usize
-    {
-        check.error(
-            "/bag",
-            "bag too full",
-            format!("{} slots", snapshot.bag.len()),
-            format!("at most {slots} slots"),
-        );
-    }
-    for (index, stack) in snapshot.bag.iter().enumerate() {
+    let slots = settings.map(|settings| settings.slots.bag);
+    for (index, entry) in snapshot.bag.iter().enumerate() {
+        if let Some(slots) = slots
+            && entry.slot >= slots
+        {
+            check.error(
+                format!("/bag/{index}/slot"),
+                "slot past the bag",
+                entry.slot,
+                format!("a slot below the bag's {slots}"),
+            );
+        }
+        if snapshot.bag[..index]
+            .iter()
+            .any(|earlier| earlier.slot == entry.slot)
+        {
+            check.error(
+                format!("/bag/{index}/slot"),
+                "slot taken twice",
+                entry.slot,
+                "a slot no other stack of the bag is in",
+            );
+        }
+        let stack = entry.stack();
         let item = stack.item.get(content);
         let max = item.stack_max();
         if stack.count == 0 {

@@ -210,7 +210,8 @@ pub struct Card<'a> {
     pub picture: Option<TextureId>,
     /// The cross that closes the card, by the name a screen reader says, where it has one.
     pub close: Option<&'a str>,
-    pub action: Option<CardAction<'a>>,
+    /// What a reader can do with what the card shows, in the band's order from its far end in.
+    pub actions: Vec<CardAction<'a>>,
     pub depth: Depth,
     pub dress: CardDress<'a>,
 }
@@ -299,7 +300,8 @@ pub struct CardResponse {
     pub frame: Rect,
     pub band: Response,
     pub close: Option<Response>,
-    pub action: Option<Response>,
+    /// The buttons of the card's actions, in the order they were given.
+    pub actions: Vec<Response>,
 }
 
 impl<'a> Card<'a> {
@@ -311,7 +313,7 @@ impl<'a> Card<'a> {
             name,
             picture: None,
             close: None,
-            action: None,
+            actions: Vec::new(),
             depth: Depth::Front,
             dress: CardDress::PLAIN,
         }
@@ -376,25 +378,34 @@ impl<'a> Card<'a> {
             let id = inner.id();
             crate::panel::close_button(&mut inner, id, rect, said)
         });
-        let action = self.action.map(|action| {
-            let right = band_rect.right() - self.cross_room() - ACTION_GAP;
-            let rect = Rect::from_center_size(
-                Pos2::new(right - ACTION / 2.0, band_rect.center().y),
-                Vec2::splat(ACTION),
-            );
-            let response = inner.interact(rect, inner.id().with("action"), Sense::click());
-            response.widget_info(|| {
-                WidgetInfo::labeled(WidgetType::Button, inner.is_enabled(), action.label)
-            });
-            let ink = if response.hovered() {
-                painter.rect_filled(rect, 3.0, ink::ink_wash(0.1));
-                ink::INK
-            } else {
-                ink::ink_wash(ACTION_AT_REST)
-            };
-            action.mark.paint(&painter, rect.shrink(2.0), ink);
-            response.on_hover_cursor(egui::CursorIcon::PointingHand)
-        });
+        let actions: Vec<Response> = self
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(place, action)| {
+                let right = band_rect.right()
+                    - self.cross_room()
+                    - ACTION_GAP
+                    - place as f32 * (ACTION + ACTION_GAP);
+                let rect = Rect::from_center_size(
+                    Pos2::new(right - ACTION / 2.0, band_rect.center().y),
+                    Vec2::splat(ACTION),
+                );
+                let response =
+                    inner.interact(rect, inner.id().with(("action", place)), Sense::click());
+                response.widget_info(|| {
+                    WidgetInfo::labeled(WidgetType::Button, inner.is_enabled(), action.label)
+                });
+                let ink = if response.hovered() {
+                    painter.rect_filled(rect, 3.0, ink::ink_wash(0.1));
+                    ink::INK
+                } else {
+                    ink::ink_wash(ACTION_AT_REST)
+                };
+                action.mark.paint(&painter, rect.shrink(2.0), ink);
+                response.on_hover_cursor(egui::CursorIcon::PointingHand)
+            })
+            .collect();
         let written = Rect::from_min_max(Pos2::new(frame.min.x, inner.cursor().min.y), frame.max);
         painter.extend(self.paper(written));
         let rule = SectionRule {
@@ -433,7 +444,7 @@ impl<'a> Card<'a> {
             frame,
             band,
             close,
-            action,
+            actions,
         }
     }
 
@@ -448,8 +459,8 @@ impl<'a> Card<'a> {
 
     /// How much of the far end of the band its buttons take.
     fn buttons_room(&self) -> f32 {
-        let action = self.action.map_or(0.0, |_| ACTION + ACTION_GAP);
-        self.cross_room() + action
+        let actions = self.actions.len() as f32 * (ACTION + ACTION_GAP);
+        self.cross_room() + actions
     }
 
     /// How wide and tall the crest over the top edge is, when the card has one.

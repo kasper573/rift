@@ -84,6 +84,7 @@ fn attempt_each(sim: &mut Sim) {
         conn,
         UnequipRequest {
             slot: EquipmentPlace::Slot(EquipmentSlot::new("head")),
+            into: None,
         },
     );
     sim.tick();

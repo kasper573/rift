@@ -60,6 +60,7 @@ impl Plugin for HudPlugin {
             .init_resource::<WindowsDrawn>()
             .init_resource::<Confirming>()
             .init_resource::<Lifting>()
+            .init_resource::<DropHint>()
             .add_systems(
                 EguiPrimaryContextPass,
                 (
@@ -542,8 +543,19 @@ fn draw_confirm(world: &mut World) {
     }
 }
 
-/// The icon of what is carried, under the pointer.
+/// What letting go of what is carried does where the pointer is, said beside it: what the widget
+/// under the pointer set this frame.
+#[derive(Resource, Default)]
+struct DropHint(Option<String>);
+
+/// Says beside what is carried what letting go of it here does, for this frame.
+pub(crate) fn drop_hint(world: &mut World, hint: String) {
+    world.resource_mut::<DropHint>().0 = Some(hint);
+}
+
+/// The icon of what is carried, under the pointer, and what letting go of it there does.
 fn draw_carried(world: &mut World) {
+    let hint = world.resource_mut::<DropHint>().0.take();
     let Some(gui) = gui::context(world) else {
         return;
     };
@@ -554,8 +566,7 @@ fn draw_carried(world: &mut World) {
     let carried = match carried {
         Carried::Skill(skill) => CarriedThing::Skill(skill),
         Carried::BagSlot(slot) => {
-            let Some(stack) = item::my_bag(world)
-                .and_then(|inventory| inventory.slots.get(slot as usize).copied())
+            let Some(stack) = item::my_bag(world).and_then(|inventory| inventory.at(slot as usize))
             else {
                 return;
             };
@@ -605,6 +616,21 @@ fn draw_carried(world: &mut World) {
             }
             if let Some(pip) = pip {
                 controls::slot_pip(ui.painter(), response.rect, pip.texture, Color32::WHITE);
+            }
+            if let Some(hint) = &hint {
+                let galley = ui.painter().layout_no_wrap(
+                    hint.clone(),
+                    TextRole::Small.font_id(),
+                    Color32::WHITE,
+                );
+                let at = response.rect.right_center() + Vec2::new(6.0, -galley.size().y / 2.0);
+                ui::dusk::lettering(
+                    ui.painter(),
+                    at,
+                    galley,
+                    ui::dusk::EDGED,
+                    egui::emath::TSTransform::IDENTITY,
+                );
             }
         },
     );

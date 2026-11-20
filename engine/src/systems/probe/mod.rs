@@ -85,7 +85,8 @@ use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayN
 use crate::systems::area_instance::entrance::ShownInstanceEntrance;
 use crate::systems::area_instance::gather::ShownInstanceCall;
 use crate::systems::area_instance::{self, plate::ShownAreaInstance};
-use crate::systems::attention::{Attention, AttentionId, StatusBadges};
+use crate::systems::area_map;
+use crate::systems::attention::{self, Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::crafting::{self, RecipeId};
 use crate::systems::dialogue::stage;
@@ -99,8 +100,11 @@ use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
 use crate::systems::input::scope::InputScope;
 use crate::systems::interface::CursorId;
+use crate::systems::item::bag_view;
 use crate::systems::item::rarity::ItemRarityId;
-use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack, Reservation};
+use crate::systems::item::{
+    self, DroppedItem, Inventory, ItemCategory, ItemId, ItemStack, Reservation,
+};
 use crate::systems::mail::{self, page::ShownLetters};
 use crate::systems::messages;
 use crate::systems::mount::{self, plate::ShownMount};
@@ -114,6 +118,7 @@ use crate::systems::quest::{self, Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
 use crate::systems::save::{self, notice::ShownSaving};
+use crate::systems::settings::Placed;
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, aim::SpotAim, bar::SlotReport};
 use crate::systems::social_request::{self, card::ShownRequestCard};
@@ -372,6 +377,14 @@ pub struct ProbeSnapshot {
     pub party: ShownParty,
     /// The tabs of chat, which is shown and how much waits on each.
     pub chat: ShownChat,
+    /// The townsfolk the minimap and the map mark this frame, with the marks they wear.
+    pub map_marks: Vec<ProbeMapMark>,
+    /// The rings of marks open round a townsperson on the minimap or the map.
+    pub map_rings: Vec<ProbeMapRing>,
+    /// The bag as each window that shows it shows it.
+    pub bag_views: Vec<ProbeBagView>,
+    /// What is carried over a bag, while something is.
+    pub bag_carried: Option<ProbeBagCarried>,
     /// The mount the player's character rides, the seat they hold and who sits where.
     pub mount: Option<ShownMount>,
     /// The instance the player's character is inside, as the plate shows it.
@@ -397,7 +410,8 @@ pub struct ProbeSnapshot {
     pub item_card: Option<ProbeItemCard>,
     pub skill_card: Option<ProbeSkillCard>,
     pub quest_card: Option<ProbeQuestCard>,
-    pub bag: Vec<ProbeStack>,
+    /// Every slot of the bag in its order, `None` for an empty one.
+    pub bag: Vec<Option<ProbeStack>>,
     pub quests: ProbeQuests,
     pub bar_slots: Vec<SlotReport>,
     pub statuses: Vec<ProbeStatus>,
@@ -574,6 +588,9 @@ pub struct ProbeBody {
     pub locked: bool,
     pub marks: Vec<AttentionId>,
     pub badges: Vec<AttentionId>,
+    /// The marks its plate shows, most pressing first: the first drawn large over its name, the
+    /// rest as pips after it.
+    pub plate_marks: Vec<AttentionId>,
     pub skeleton: SkeletonId,
     /// The stance its hands or a script put it in.
     pub stance: Option<StanceId>,
@@ -853,6 +870,50 @@ pub struct ProbeWare {
     pub count: u32,
     pub left: Option<u32>,
     pub refusal: Option<String>,
+}
+
+/// A townsperson's mark on a map: which map, where on screen, and the marks they wear, most
+/// pressing first. The map draws the first, with a sign when there are more.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeMapMark {
+    /// `minimap` or `map`.
+    pub view: String,
+    #[schemars(with = "u64")]
+    pub actor: Entity,
+    #[schemars(with = "PosSchema")]
+    pub at: Pos<WindowPx>,
+    pub marks: Vec<AttentionId>,
+}
+
+/// The marks of a townsperson laid round their spot on a map, and how far the ring is open,
+/// from 0 to 1.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeMapRing {
+    /// `minimap` or `map`.
+    pub view: String,
+    #[schemars(with = "u64")]
+    pub actor: Entity,
+    pub marks: Vec<AttentionId>,
+    pub open: f32,
+}
+
+/// One window's bag: the words and the type of item it is narrowed to, and the slots it shows,
+/// in the order shown. A bag nothing narrows shows every slot, empty or not.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeBagView {
+    pub placement: Placed,
+    pub words: String,
+    pub category: Option<ItemCategory>,
+    pub shown: Vec<u32>,
+}
+
+/// Something carried over a bag: the slot it was taken from when it is a stack of the bag, the
+/// slot under the pointer, and what letting go there does, as the hint says it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeBagCarried {
+    pub from: Option<u32>,
+    pub over: Option<u32>,
+    pub does: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
@@ -1296,6 +1357,10 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         mail: mail::page::shown(world),
         party: party::page::shown(world),
         chat: terminal::chat::shown(world),
+        map_marks: map_marks(world),
+        map_rings: map_rings(world),
+        bag_views: bag_views(world),
+        bag_carried: bag_carried(world),
         mount: mount::plate::shown(world),
         instance: area_instance::plate::shown(world),
         instance_entrance: area_instance::entrance::shown(world),
@@ -1425,9 +1490,11 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 inventory
                     .slots
                     .iter()
-                    .map(|stack| ProbeStack {
-                        item: stack.item,
-                        count: stack.count,
+                    .map(|slot| {
+                        slot.map(|stack| ProbeStack {
+                            item: stack.item,
+                            count: stack.count,
+                        })
                     })
                     .collect()
             })
@@ -1746,6 +1813,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         .and_then(|viewer| world.get::<Attention>(viewer))
         .map(|attention| attention.of(entity).to_vec())
         .unwrap_or_default();
+    let plate_marks = attention::plate_marks(world, viewer, entity);
     let locked = commands_locked(world, entity);
     let entity = world.get_entity(entity).ok()?;
     let npc = entity.get::<Npc>().map(|npc| npc.def);
@@ -1840,6 +1908,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         friendly: entity.get::<Attitude>() == Some(&Attitude::Friendly),
         locked,
         marks,
+        plate_marks,
         badges: entity
             .get::<StatusBadges>()
             .map(|badges| badges.0.clone())
@@ -2324,6 +2393,72 @@ fn vfx_seen(world: &mut World) -> Vec<ProbeVfx> {
             over: now.zip(seen.over()).is_some_and(|(now, over)| over <= now),
         })
         .collect()
+}
+
+fn map_marks(world: &World) -> Vec<ProbeMapMark> {
+    let Some(shown) = world.get_resource::<area_map::MarksShown>() else {
+        return Vec::new();
+    };
+    let mut marks: Vec<ProbeMapMark> = shown
+        .marks
+        .iter()
+        .flat_map(|(view, marks)| {
+            marks.iter().map(|mark| ProbeMapMark {
+                view: (*view).to_owned(),
+                actor: mark.who,
+                at: Pos::new(mark.at.x, mark.at.y),
+                marks: mark.marks.clone(),
+            })
+        })
+        .collect();
+    marks.sort_by(|a, b| a.view.cmp(&b.view));
+    marks
+}
+
+fn map_rings(world: &World) -> Vec<ProbeMapRing> {
+    let Some(shown) = world.get_resource::<area_map::MarksShown>() else {
+        return Vec::new();
+    };
+    let mut rings: Vec<ProbeMapRing> = shown
+        .rings
+        .iter()
+        .map(|(view, ring)| ProbeMapRing {
+            view: (*view).to_owned(),
+            actor: ring.who,
+            marks: ring.marks.clone(),
+            open: ring.open,
+        })
+        .collect();
+    rings.sort_by(|a, b| a.view.cmp(&b.view));
+    rings
+}
+
+fn bag_views(world: &World) -> Vec<ProbeBagView> {
+    let Some(shown) = world.get_resource::<bag_view::BagsShown>() else {
+        return Vec::new();
+    };
+    shown
+        .views
+        .iter()
+        .map(|(&placement, bag)| ProbeBagView {
+            placement,
+            words: bag.filter.words.clone(),
+            category: bag.filter.category,
+            shown: bag.slots.clone(),
+        })
+        .collect()
+}
+
+fn bag_carried(world: &World) -> Option<ProbeBagCarried> {
+    let carried = world
+        .get_resource::<bag_view::BagsShown>()?
+        .carried
+        .clone()?;
+    Some(ProbeBagCarried {
+        from: carried.from,
+        over: carried.over,
+        does: carried.does,
+    })
 }
 
 fn probe_stack(stack: &ItemStack) -> ProbeStack {

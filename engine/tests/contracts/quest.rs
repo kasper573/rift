@@ -825,9 +825,12 @@ fn slay(sim: &mut Sim, player: Entity, key: &str) {
 }
 
 fn fill_bag(sim: &mut Sim, player: Entity) {
-    let used = sim.world.get::<Inventory>(player).expect("a bag");
-    let (used, max) = (used.slots.len(), used.max as usize);
-    for _ in used..max {
+    let free = sim
+        .world
+        .get::<Inventory>(player)
+        .expect("a bag")
+        .free_slots();
+    for _ in 0..free {
         sim.give(player, "pebble", 1);
     }
 }

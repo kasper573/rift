@@ -374,7 +374,7 @@ impl Host {
             .world
             .get::<Inventory>(character)
             .expect("a bag");
-        let free = bag.max - bag.slots.len() as u32;
+        let free = bag.free_slots();
         for _ in 0..free {
             self.server.village.give(character, "stone", 1);
         }

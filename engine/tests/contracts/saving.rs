@@ -31,7 +31,7 @@ use engine::systems::stat::{self, StatKind};
 use engine::systems::worlds::{self, AboveWorlds};
 use engine::systems::{GameSettings, combat};
 use serde_json::json;
-use testkit::{Game, Map, Sim};
+use testkit::{Game, Map, Sim, saved_bag};
 
 use crate::saves::{Saves, checkpoint, confer};
 
@@ -224,7 +224,7 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
                 node: NodeKey("guard".to_owned()),
                 rank: Rank::FIRST,
             }],
-            bag: vec![token, plank(50), plank(50), plank(8)].into(),
+            bag: saved_bag(&[token, plank(50), plank(50), plank(8)]),
             quests: vec![SnapshotQuest {
                 progress: vec![0],
                 ..SnapshotQuest::of(id::<QuestDef>(&before, "errand"), QuestState::Active)
@@ -326,11 +326,17 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
         .map(|line| format!("{} {}", line.what, line.became))
         .collect();
     assert_eq!(recorded, written, "and it is in her history afterwards");
-    let bag = &woods.world.get::<Inventory>(back).expect("a bag").slots;
+    let bag: Vec<ItemStack> = woods
+        .world
+        .get::<Inventory>(back)
+        .expect("a bag")
+        .stacks()
+        .map(|(_, stack)| stack)
+        .collect();
     let planks = id::<ItemDef>(&changed, "plank");
     assert_eq!(
         bag,
-        &vec![ItemStack::new(planks, 50), ItemStack::new(planks, 50)]
+        [ItemStack::new(planks, 50), ItemStack::new(planks, 50)]
     );
     assert!(skill::known(&woods.world, back).is_empty());
 
@@ -345,7 +351,13 @@ fn a_character_comes_back_whole_to_a_game_that_changed_and_is_told_once_what_bec
 
     let restored = load::load(&before, &saved).expect("she loads under the game as it was");
     assert_eq!(restored.changes, []);
-    let mut carried = restored.saved.character.bag.to_vec();
+    let mut carried: Vec<ItemStack> = restored
+        .saved
+        .character
+        .bag
+        .iter()
+        .map(|entry| entry.stack())
+        .collect();
     carried.sort_by_key(|stack| stack.count);
     assert_eq!(
         carried,

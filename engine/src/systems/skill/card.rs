@@ -186,7 +186,7 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
     shown.tally = Some(&tally);
     shown.picture = icon;
     shown.close = look.closable.then_some(all.interface.close());
-    shown.action = Some(chat::card_action(&all.terminal));
+    shown.actions = vec![chat::card_action(&all.terminal)];
     shown.depth = look.depth;
     let response = shown.show(ui, |ui, plate| {
         if plate.name_cut {
@@ -243,7 +243,11 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
             item_card::detail_line(ui, world, Some(met), &line);
         }
     });
-    chat::offered(world, &response, ChatEmbed::Skill(card.skill));
+    chat::offered(
+        world,
+        response.actions.first(),
+        ChatEmbed::Skill(card.skill),
+    );
     response
 }
 

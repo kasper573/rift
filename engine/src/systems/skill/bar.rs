@@ -480,7 +480,7 @@ fn shut(world: &World, me: Entity, entry: HotbarEntry) -> Option<LineText> {
 
 fn bag_item(world: &World, slot: u32) -> Option<ItemId> {
     item::my_bag(world)
-        .and_then(|inventory| inventory.slots.get(slot as usize))
+        .and_then(|inventory| inventory.at(slot as usize))
         .map(|stack| stack.item)
 }
 
@@ -1087,7 +1087,7 @@ fn use_item(world: &mut World, item: ItemId) -> bool {
         Some(slot) => use_bag_slot(world, slot as u32),
         None => match equipment::place_of(world, me, item) {
             Some(slot) => {
-                world.write_message(UnequipRequest { slot });
+                world.write_message(UnequipRequest { slot, into: None });
                 true
             }
             None => {

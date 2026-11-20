@@ -43,7 +43,7 @@ impl ItemTray {
     /// placed yet: on the stack of it already there, else in the next empty slot of the `slots`
     /// the tray has. Whether anything was placed.
     pub fn place(&mut self, bag: &Inventory, slot: u32, count: u32, slots: usize) -> bool {
-        let Some(&stack) = bag.slots.get(slot as usize) else {
+        let Some(stack) = bag.at(slot as usize) else {
             return false;
         };
         let free = bag.count(stack.item).saturating_sub(self.count(stack.item));
@@ -95,21 +95,17 @@ impl ItemTray {
             return 0;
         }
         let later: u32 = bag
-            .slots
-            .iter()
-            .skip(slot as usize + 1)
-            .filter(|other| other.item == stack.item)
-            .map(|other| other.count)
+            .stacks()
+            .filter(|(at, other)| *at > slot as usize && other.item == stack.item)
+            .map(|(_, other)| other.count)
             .sum();
         placed.saturating_sub(later).min(stack.count)
     }
 
     /// What is placed, taken from `bag` slot by slot, the last of an item's stacks first.
     pub fn from_slots(&self, bag: &Inventory) -> Vec<SlotStack> {
-        bag.slots
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, &stack)| {
+        bag.stacks()
+            .filter_map(|(slot, stack)| {
                 let slot = slot as u32;
                 let count = self.aside(bag, slot, stack);
                 (count > 0).then(|| SlotStack {

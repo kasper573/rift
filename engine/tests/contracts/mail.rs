@@ -340,7 +340,7 @@ fn what_a_bag_has_no_room_for_as_its_character_comes_back_is_sent_by_the_game() 
         account: AccountId("Wren".to_owned()),
         saved_at: UnixMillis(1_000_000_000),
         character: CharacterSnapshot {
-            bag: vec![lure(6), plank(50), rod(1)].into(),
+            bag: testkit::saved_bag(&[lure(6), plank(50), rod(1)]),
             ..CharacterSnapshot::of_def(&before, "Wren", player::def(&before))
         },
         told: Vec::new(),
@@ -497,7 +497,14 @@ fn carry(server: &mut Server, client: u32, stacks: &[ItemStack]) {
     let sim = server.village_or_forest(client);
     let character = sim.player(client);
     let mut bag = sim.world.get_mut::<Inventory>(character).expect("a bag");
-    bag.slots = stacks.to_vec();
+    let size = bag.slots.len();
+    bag.slots = stacks
+        .iter()
+        .copied()
+        .map(Some)
+        .chain(std::iter::repeat(None))
+        .take(size)
+        .collect();
 }
 
 fn bag(server: &Server, client: u32) -> Vec<ItemStack> {
@@ -509,7 +516,13 @@ fn bag(server: &Server, client: u32) -> Vec<ItemStack> {
                 .resource::<player::Players>()
                 .0
                 .get(&player::ClientId(client))?;
-            Some(sim.world.get::<Inventory>(character)?.slots.clone())
+            Some(
+                sim.world
+                    .get::<Inventory>(character)?
+                    .stacks()
+                    .map(|(_, stack)| stack)
+                    .collect(),
+            )
         })
         .expect("a character with a bag")
 }

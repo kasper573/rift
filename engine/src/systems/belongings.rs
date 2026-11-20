@@ -38,7 +38,11 @@ pub fn of(world: &World, player: Entity) -> Belongings {
     let carried = world
         .get::<Inventory>(player)
         .into_iter()
-        .flat_map(|inventory| inventory.slots.iter().map(|slot| (slot.item, slot.count)));
+        .flat_map(|inventory| {
+            inventory
+                .stacks()
+                .map(|(_, stack)| (stack.item, stack.count))
+        });
     for (item, count) in carried.chain(worn.iter().map(|&item| (item, 1))) {
         *items.entry(item).or_default() += count;
     }

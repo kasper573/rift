@@ -69,6 +69,10 @@ pub enum InputAction {
     /// Shows the next of chat's tabs, round to the first from the last.
     NextChatTab,
     PreviousChatTab,
+    /// Brings back the line sent before the one in the chat field.
+    RecallEarlier,
+    /// Brings back the line sent after the one in the chat field, or what was being typed.
+    RecallLater,
     TakeDefault,
     Respawn,
     TurnLeft,
@@ -197,6 +201,8 @@ impl InputAction {
             | InputAction::PageForward
             | InputAction::NextChatTab
             | InputAction::PreviousChatTab
+            | InputAction::RecallEarlier
+            | InputAction::RecallLater
             | InputAction::TakeDefault => &[ActionReading::Shortcut],
             InputAction::ZoomIn | InputAction::ZoomOut => {
                 &[ActionReading::Press, ActionReading::Wheel]

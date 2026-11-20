@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bevy_ecs::prelude::*;
 use engine::systems::actor::skeleton::EquipmentSlot;
 use engine::systems::equipment::{self, EquipRequest, Equipment, EquipmentPlace, UnequipRequest};
-use engine::systems::item::{self, ItemDef, ItemId};
+use engine::systems::item::{self, Inventory, ItemDef, ItemId};
 use engine::systems::stat::{self, StatKind, Stats, Vital};
 use engine::systems::status;
 use serde_json::json;
@@ -45,7 +45,13 @@ fn the_dead_cannot_take_off_what_they_wear() {
     set_vitals(&mut sim, player, 0.0, 30.0);
 
     let conn = sim.conn(1);
-    sim.send(conn, UnequipRequest { slot: head() });
+    sim.send(
+        conn,
+        UnequipRequest {
+            slot: head(),
+            into: None,
+        },
+    );
     sim.tick();
 
     assert_eq!(worn(&sim, player, head()), Some(rock));
@@ -92,6 +98,53 @@ fn an_item_the_body_cannot_wear_stays_in_the_bag_unused() {
     }
 }
 
+#[test]
+fn gear_taken_off_onto_a_slot_of_the_bag_lands_there() {
+    let (mut sim, player) = wardrobe();
+    for name in ["rock", "hat", "potion"] {
+        sim.give(player, name, 1);
+    }
+    let [rock, hat, potion] = ["rock", "hat", "potion"].map(|name| sim.id::<ItemDef>(name));
+    let conn = sim.conn(1);
+    let take_off = |sim: &mut Sim, into| {
+        sim.send(conn, UnequipRequest { slot: head(), into });
+        sim.tick();
+    };
+    let laid = |sim: &Sim| -> Vec<(usize, ItemId)> {
+        sim.world
+            .get::<Inventory>(player)
+            .expect("a bag")
+            .stacks()
+            .map(|(slot, stack)| (slot, stack.item))
+            .collect()
+    };
+
+    equipment::equip_from_bag(&mut sim.world, player, rock).expect("the rock is worn");
+    take_off(&mut sim, Some(5));
+    assert_eq!(
+        laid(&sim),
+        [(1, hat), (2, potion), (5, rock)],
+        "an empty slot takes the gear"
+    );
+
+    equipment::equip_from_bag(&mut sim.world, player, rock).expect("the rock is worn again");
+    take_off(&mut sim, Some(1));
+    assert_eq!(worn(&sim, player, head()), Some(hat));
+    assert_eq!(
+        laid(&sim),
+        [(1, rock), (2, potion)],
+        "gear dropped on something worn in its place swaps with it"
+    );
+
+    take_off(&mut sim, Some(2));
+    assert_eq!(worn(&sim, player, head()), None);
+    assert_eq!(
+        laid(&sim),
+        [(0, hat), (1, rock), (2, potion)],
+        "gear dropped on anything else goes where new items go"
+    );
+}
+
 fn wardrobe() -> (Sim, Entity) {
     let content = Game::new()
         .area("room", &Map::open(5, 5), json!([]))
@@ -104,6 +157,10 @@ fn wardrobe() -> (Sim, Entity) {
                 "kind": { "type": "equipment", "wear": "worn", "slot": "head" },
                 "modules": [{ "type": "script", "script": "rock_lower.script.json" }],
             }),
+        )
+        .item(
+            "hat",
+            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
         )
         .item(
             "boots",

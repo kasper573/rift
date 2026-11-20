@@ -177,7 +177,7 @@ fn a_two_hander_takes_both_hands_returning_what_they_held_or_is_refused_whole() 
         sim.give(player, "greatsword", 1);
         if full {
             let mut bag = sim.world.get_mut::<Inventory>(player).expect("a bag");
-            bag.max = bag.slots.len() as u32;
+            bag.slots.retain(Option::is_some);
         }
         let before = (hands(&sim, player), bag(&sim, player));
         let greatsword = sim.id::<ItemDef>("greatsword");
@@ -343,6 +343,7 @@ fn a_players_body_shows_its_equipped_hands_and_never_its_head() {
         &mut sim.world,
         player,
         EquipmentPlace::Hand(HandIndex::MAIN),
+        None,
     )
     .expect("the sword comes off");
     assert_eq!(shown(&sim, player), BTreeMap::new());
@@ -576,9 +577,8 @@ fn bag(sim: &Sim, player: Entity) -> Vec<(ItemId, u32)> {
     sim.world
         .get::<Inventory>(player)
         .expect("a bag")
-        .slots
-        .iter()
-        .map(|stack| (stack.item, stack.count))
+        .stacks()
+        .map(|(_, stack)| (stack.item, stack.count))
         .collect()
 }
 

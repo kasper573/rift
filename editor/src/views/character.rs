@@ -25,8 +25,8 @@ use engine::systems::class::{ClassDef, NodeKey, SkillTree};
 use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::memory::MemoryDef;
 use engine::systems::player::snapshot::{
-    AtInitialSpawn, CharacterSnapshot, CharacterStart, MemoryValue, QuestState, SnapshotMemory,
-    SnapshotQuest, SnapshotSkill, SnapshotSlot,
+    AtInitialSpawn, BagEntry, CharacterSnapshot, CharacterStart, MemoryValue, QuestState,
+    SnapshotMemory, SnapshotQuest, SnapshotSkill, SnapshotSlot,
 };
 use engine::systems::quest::{
     Objective, Parties, QuestDef, QuestId, QuestLog, QuestModule, QuestParty, QuestResult,
@@ -503,10 +503,17 @@ fn bag(
                 if controls::remove(ui, "Remove").clicked() {
                     remove = Some(index);
                 }
+                if NumberField::new(&mut stack.slot)
+                    .range(0..=999)
+                    .unit("slot")
+                    .show(ui)
+                {
+                    changed = FormChange::at(&path);
+                }
                 let mut picked = false;
                 ui.scope(|ui| {
                     ui.set_width(200.0);
-                    let item = format!("{path}{}", field!(ItemStack, item));
+                    let item = format!("{path}{}", field!(BagEntry, item));
                     picked = picker::content(ui, cx, &mut stack.item, &item);
                 });
                 let cap = sheet
@@ -532,7 +539,7 @@ fn bag(
         if controls::button(ui, "+ item").clicked()
             && let Some(item) = first_item
         {
-            character.bag.push(ItemStack { item, count: 1 });
+            character.carry(ItemStack::new(item, 1));
             changed = FormChange::at(field!(CharacterSnapshot, bag));
         }
     });
@@ -1427,7 +1434,7 @@ fn apply_moment(
 fn give(character: &mut CharacterSnapshot, item: ContentId<ItemDef>, count: u32) {
     match character.bag.iter_mut().find(|stack| stack.item == item) {
         Some(stack) => stack.count = stack.count.max(count),
-        None => character.bag.push(ItemStack { item, count }),
+        None => character.carry(ItemStack::new(item, count)),
     }
 }
 

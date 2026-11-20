@@ -302,7 +302,7 @@ fn desired(world: &World, actor: Entity) -> Vec<Wanted> {
         );
     }
     if let Some(bag) = world.get::<Inventory>(actor) {
-        for stack in &bag.slots {
+        for (_, stack) in bag.stacks() {
             let carried = held(AspectSource::Item(stack.item));
             if matches!(stack.item.get(content).kind, ItemKind::Resource)
                 && !wanted.contains(&carried)

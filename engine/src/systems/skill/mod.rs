@@ -932,7 +932,7 @@ pub fn known(world: &World, actor: Entity) -> BTreeMap<SkillId, Rank> {
     let carried = world
         .get::<Inventory>(actor)
         .into_iter()
-        .flat_map(|bag| bag.slots.iter().map(|stack| stack.item));
+        .flat_map(|bag| bag.stacks().map(|(_, stack)| stack.item));
     known_from(
         content,
         tree,
@@ -1032,9 +1032,8 @@ pub fn grants_of(content: &Content, item: ItemId) -> &[SkillId] {
 pub fn carried_as_item(world: &World, actor: Entity, skill: SkillId) -> bool {
     let content = world.resource::<Content>();
     world.get::<Inventory>(actor).is_some_and(|bag| {
-        bag.slots
-            .iter()
-            .any(|stack| cast_by(content, stack.item) == Some(skill))
+        bag.stacks()
+            .any(|(_, stack)| cast_by(content, stack.item) == Some(skill))
     })
 }
 

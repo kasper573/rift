@@ -276,6 +276,36 @@ pub fn search(ui: &mut Ui, text: &mut String, hint: &str, key: Option<&KeyCap>) 
     })
 }
 
+/// A search whose box holds a cross that clears what is typed, there while something is. `clear`
+/// is what a screen reader calls the cross.
+pub fn clearable_search(ui: &mut Ui, text: &mut String, hint: &str, clear: &str) -> Response {
+    let mut cleared = false;
+    let response = boxed(ui, None, |ui| {
+        crate::glyph::show(ui, crate::glyph::Mark::Search, 13.0, theme::MUTED);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if !text.is_empty() {
+                let cross = ui
+                    .add(egui::Button::new(crate::glyph::Mark::Cross.text(11.0)).frame(false))
+                    .on_hover_cursor(egui::CursorIcon::PointingHand);
+                cross.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, clear)
+                });
+                cleared = cross.clicked();
+            }
+            ui.add(
+                unframed(TextEdit::singleline(text))
+                    .hint_text(theme::muted(hint))
+                    .desired_width(ui.available_width()),
+            )
+        })
+        .inner
+    });
+    if cleared {
+        text.clear();
+    }
+    response
+}
+
 /// The input box a field sits in, beside its `unit`: an [`InputField`]'s, or one framing a field
 /// of its own (a search, a line of styled text, a value shown where it can't be typed). A line of
 /// it stands as tall as every control, and focus turns its border, never drawing outside it.

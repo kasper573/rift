@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::card::{self, Card, CardResponse, CardTilt, Plate};
+use ui::card::{self, Card, CardAction, CardResponse, CardTilt, Plate};
 use ui::controls::{self, Pill};
 use ui::drag;
 use ui::egui;
@@ -25,6 +25,7 @@ use crate::systems::chat::ChatEmbed;
 use crate::systems::hud::{self, Carried, WindowKey};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::ItemMessages;
+use crate::systems::item::bag_view;
 use crate::systems::item::inline;
 use crate::systems::item::{ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
 use crate::systems::mention::Mention;
@@ -32,6 +33,7 @@ use crate::systems::messages::Direction;
 use crate::systems::player::session;
 use crate::systems::requirement;
 use crate::systems::screen::ClientScreen;
+use crate::systems::settings::Placed;
 use crate::systems::skill::{self, SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status;
@@ -43,6 +45,7 @@ pub struct ItemCardPlugin;
 impl Plugin for ItemCardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<hud::Pinned<ItemId>>()
+            .init_resource::<OpenedFrom>()
             .add_systems(
                 Update,
                 (show_told, hud::raise_pinned::<ItemId>(WindowKey::ItemCard))
@@ -55,7 +58,10 @@ impl Plugin for ItemCardPlugin {
                     .in_set(Band::Hud)
                     .run_if(in_state(ClientScreen::Area)),
             )
-            .add_systems(OnExit(ClientScreen::Area), hud::forget_pinned::<ItemId>);
+            .add_systems(
+                OnExit(ClientScreen::Area),
+                (hud::forget_pinned::<ItemId>, forget_opened_from),
+            );
     }
 }
 
@@ -71,6 +77,14 @@ fn show_told(world: &mut World) {
 
 pub fn open(world: &mut World, item: ItemId, from: Option<Rect>) {
     hud::pin(world, item, from);
+    world.resource_mut::<OpenedFrom>().0 = None;
+}
+
+/// Opens the card of the stack in the bag's slot `slot`, as the bag `placement` shows it: the
+/// card can then lift the stack to move it.
+pub fn open_from_bag(world: &mut World, item: ItemId, slot: u32, placement: Placed, at: Rect) {
+    open(world, item, Some(at));
+    world.resource_mut::<OpenedFrom>().0 = Some(BagPlace { slot, placement });
 }
 
 pub fn close(world: &mut World) -> bool {
@@ -228,6 +242,16 @@ pub fn kind(def: &ItemDef) -> CardKind {
 /// An item's card, the same wherever it shows: a view that has more to say of the item says it
 /// beside the card, never on it.
 pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> CardResponse {
+    show_lifting(ui, world, item, look, None)
+}
+
+fn show_lifting(
+    ui: &mut Ui,
+    world: &mut World,
+    item: ItemId,
+    look: CardLook,
+    lifts: Option<u32>,
+) -> CardResponse {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
     let held = super::my_bag(world).map_or(0, |bag| bag.count(item));
@@ -236,7 +260,13 @@ pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> Car
     let band = def.category().named(&messages.item);
     let mut card = face_of(&content, world, item, look, &band);
     card.tally = tally.as_deref();
-    card.action = Some(chat::card_action(&messages.terminal));
+    card.actions = vec![chat::card_action(&messages.terminal)];
+    if lifts.is_some() {
+        card.actions.push(CardAction {
+            mark: Mark::Move,
+            label: messages.item.lift(),
+        });
+    }
     let shown = card.show(ui, |ui, plate| {
         summary(ui, &content, item, plate);
         let viewer = session::me(world);
@@ -246,7 +276,16 @@ pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> Car
         });
         grants(ui, world, &content, item, plate);
     });
-    chat::offered(world, &shown, ChatEmbed::Item(item));
+    chat::offered(world, shown.actions.first(), ChatEmbed::Item(item));
+    if let Some(slot) = lifts
+        && let Some(lift) = shown.actions.get(1)
+    {
+        hud::tooltip(lift, world, messages.item.lift(), &[], None);
+        if lift.clicked() {
+            close(world);
+            bag_view::lift(world, slot);
+        }
+    }
     shown
 }
 
@@ -444,9 +483,32 @@ fn draw_card(world: &mut World) {
                 depth,
                 ..CardLook::PINNED
             };
-            show(ui, world, *item, look)
+            let lifts = lifts(world, *item);
+            show_lifting(ui, world, *item, look, lifts)
         },
     );
+}
+
+/// The bag slot the pinned card of `item` came from, while its stack can still be lifted from
+/// there: it is in the slot still, and the bag shows every slot.
+fn lifts(world: &World, item: ItemId) -> Option<u32> {
+    let BagPlace { slot, placement } = world.resource::<OpenedFrom>().0?;
+    let held = super::my_bag(world)?.at(slot as usize)?;
+    (held.item == item && !bag_view::is_narrowed(world, placement)).then_some(slot)
+}
+
+/// Where in the bag the pinned card was opened from, when it was.
+#[derive(Resource, Default)]
+struct OpenedFrom(Option<BagPlace>);
+
+#[derive(Clone, Copy)]
+struct BagPlace {
+    slot: u32,
+    placement: Placed,
+}
+
+fn forget_opened_from(mut opened: ResMut<OpenedFrom>) {
+    opened.0 = None;
 }
 
 fn grants(ui: &mut Ui, world: &mut World, content: &Content, item: ItemId, plate: Plate) {

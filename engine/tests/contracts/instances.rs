@@ -1322,8 +1322,9 @@ impl Host {
         sim.world
             .get::<Inventory>(character)
             .expect("a bag")
-            .slots
-            .clone()
+            .stacks()
+            .map(|(_, stack)| stack)
+            .collect()
     }
 
     /// The character of `client` carries `stacks` and nothing else.
@@ -1331,7 +1332,14 @@ impl Host {
         let sim = self.sim(client);
         let character = sim.player(client);
         let mut bag = sim.world.get_mut::<Inventory>(character).expect("a bag");
-        bag.slots = stacks.to_vec();
+        let size = bag.slots.len();
+        bag.slots = stacks
+            .iter()
+            .copied()
+            .map(Some)
+            .chain(std::iter::repeat(None))
+            .take(size)
+            .collect();
     }
 
     fn count(&mut self, client: u32, item: &str) -> u32 {

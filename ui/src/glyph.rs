@@ -114,6 +114,7 @@ pub enum Mark {
     Clock,
     Crown,
     Chat,
+    Sort,
 }
 
 impl Mark {
@@ -168,6 +169,7 @@ impl Mark {
             Mark::Clock => "time of day",
             Mark::Crown => "leader",
             Mark::Chat => "chat",
+            Mark::Sort => "sort",
         }
     }
 }
@@ -232,6 +234,7 @@ impl Mark {
             Mark::Clock => phosphor::CLOCK,
             Mark::Crown => phosphor::CROWN,
             Mark::Chat => phosphor::CHAT_TEXT,
+            Mark::Sort => phosphor::ARROWS_DOWN_UP,
         })
     }
 }

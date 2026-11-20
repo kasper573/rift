@@ -10,7 +10,7 @@ use bevy_terminal::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
-use ui::card::{CardAction, CardResponse};
+use ui::card::CardAction;
 use ui::egui;
 use ui::egui::containers::scroll_area::{DragScroll, ScrollBarVisibility, ScrollSource};
 use ui::egui::text::LayoutJob;
@@ -27,12 +27,14 @@ use ui::{dusk, input};
 
 use super::TerminalMessages;
 use super::draft::ChatDraft;
+use super::history::{InField, SentLines};
 use super::{ChatSpeakers, LoggedLineId, TerminalLog};
 use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band, Tier};
 use crate::core::math::Rgb;
 use crate::core::text::SpanDef;
 use crate::core::text::{self, LinkKey, StyledLine, StyledSpan, TextLook, TextPiece};
+use crate::systems::GameSettings;
 use crate::systems::actor::portrait::ActorPortraits;
 use crate::systems::area_map::{self, MapPin, MapSight};
 use crate::systems::chat::{
@@ -104,6 +106,8 @@ pub(crate) struct ChatView {
     was_typing: bool,
     /// The covered things the player asked to see: which line holds each, and where in it.
     revealed: HashSet<(LoggedLineId, usize)>,
+    /// The lines sent this session, which the recall keys bring back.
+    sent: SentLines,
 }
 
 impl ChatView {
@@ -135,6 +139,7 @@ pub fn add(world: &mut World, embed: ChatEmbed) {
         return;
     }
     let caret = view.draft.add(embed, &name);
+    view.sent.stop();
     if let Some(gui) = gui::context(world) {
         input::caret_to(&gui, field_id(), caret);
     }
@@ -153,10 +158,10 @@ pub fn card_action(words: &TerminalMessages) -> CardAction<'_> {
     }
 }
 
-/// Answers the offer a card `shown` made: names it to a pointer resting on it, and sets
-/// `embed` in chat once it is taken.
-pub fn offered(world: &mut World, shown: &CardResponse, embed: ChatEmbed) {
-    let Some(offer) = &shown.action else {
+/// Answers the offer a card made with the button `offer`: names it to a pointer resting on it,
+/// and sets `embed` in chat once it is taken.
+pub fn offered(world: &mut World, offer: Option<&egui::Response>, embed: ChatEmbed) {
+    let Some(offer) = offer else {
         return;
     };
     let content = world.resource::<Content>().clone();
@@ -181,9 +186,17 @@ pub fn shortcut(
     }
 }
 
-/// Gives the keyboard back from chat: from the search for a thing to the line it is set in
-/// first, then from the line.
+/// Gives the keyboard back from chat: from a line sent earlier to the one being typed first,
+/// then from the search for a thing to the line it is set in, then from the line.
 pub fn hand_back(world: &mut World) -> bool {
+    let typed = world.resource_mut::<ChatView>().sent.give_back();
+    if let Some(typed) = typed {
+        world.resource_mut::<ChatView>().draft = typed.draft;
+        if let Some(gui) = gui::context(world) {
+            input::caret_to(&gui, field_id(), typed.caret);
+        }
+        return true;
+    }
     if world.resource_mut::<ChatView>().seeking.take().is_some() {
         return true;
     }
@@ -240,6 +253,11 @@ pub(super) fn channels(world: &mut World) {
     view.channels = told.0;
 }
 
+/// Lets go of the lines sent, as the player leaves the game.
+pub(super) fn forget(mut view: ResMut<ChatView>) {
+    view.sent = SentLines::default();
+}
+
 /// What chat shows of its channels, for a driver of the client.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
 pub struct ShownChat {
@@ -247,8 +265,18 @@ pub struct ShownChat {
     pub shown: ChatChannel,
     /// A tab for each channel the player is in, in the order chat lists them.
     pub tabs: Vec<ShownChatTab>,
-    /// What is typed and not yet sent, the things it holds by their names.
+    /// What the field holds, the things it holds by their names: what is typed and not yet
+    /// sent, or a line sent earlier that the player brought back.
     pub draft: String,
+    /// Where among the lines sent earlier the field is, as line `at` back of `of`, while the
+    /// player has brought one back.
+    pub recalled: Option<ShownRecall>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
+pub struct ShownRecall {
+    pub at: u32,
+    pub of: u32,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -262,6 +290,7 @@ pub fn shown(world: &World) -> ShownChat {
     let content = world.resource::<Content>();
     ShownChat {
         draft: view.draft.text().to_owned(),
+        recalled: view.sent.place().map(|(at, of)| ShownRecall { at, of }),
         shown: view.shown,
         tabs: view
             .channels
@@ -1110,6 +1139,12 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         // The key that sends a line picks the thing looked for instead, while one is.
         taken = search::keyed(ui, keys, options, &mut view.selected, found.is_some());
     }
+    // Lists take the keys that move in them first, and an input method putting a character
+    // together takes every key.
+    let recalls = focused && options == 0 && found.is_none() && asked.is_none() && !view.composing;
+    if recalls {
+        recall(ui, world.resource::<InputMap>(), view, caret);
+    }
     if typing {
         ui.painter()
             .hline(row.x_range(), row.top(), Stroke::new(1.0, dusk::BORDER));
@@ -1132,6 +1167,10 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
     };
     let faint = TextLook::new(TextRole::Small.size(), hint_ink).on(Ground::Dusk);
     let sends = !view.draft.text().trim().is_empty();
+    let recalled = view
+        .sent
+        .place()
+        .map(|(at, of)| TextPiece::text(format!("{}  ", terminal.recalled(at, of))));
     let only = |hints: &[(InputAction, &str, bool)]| -> Vec<TextPiece> {
         let kept: Vec<(InputAction, &str)> = hints
             .iter()
@@ -1146,15 +1185,30 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
             (InputAction::Dismiss, terminal.hint_back(), true),
         ])
     } else if typing {
-        only(&[
-            (InputAction::SubmitText, terminal.hint_send(), sends),
-            (
-                InputAction::NextChatTab,
-                terminal.hint_next_tab(),
-                view.channels.len() > 1,
-            ),
-            (InputAction::Dismiss, terminal.hint_cancel(), true),
-        ])
+        let browsing = view.sent.browsing();
+        recalled
+            .into_iter()
+            .chain(only(&[
+                (InputAction::SubmitText, terminal.hint_send(), sends),
+                (
+                    InputAction::RecallEarlier,
+                    terminal.recall_earlier(),
+                    recalls && view.sent.has_earlier(),
+                ),
+                (
+                    InputAction::RecallLater,
+                    terminal.recall_later(),
+                    recalls && browsing,
+                ),
+                (
+                    InputAction::NextChatTab,
+                    terminal.hint_next_tab(),
+                    view.channels.len() > 1,
+                ),
+                (InputAction::Dismiss, terminal.back_to_draft(), browsing),
+                (InputAction::Dismiss, terminal.hint_cancel(), !browsing),
+            ]))
+            .collect()
     } else if session::is_dead(world) {
         Vec::new()
     } else if scope::reads(world, InputAction::FocusChat) {
@@ -1210,6 +1264,7 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         .inner;
     if view.draft.text() != before || field.changed() {
         view.selected = 0;
+        view.sent.stop();
     }
     let kinds: Vec<String> = asked
         .iter()
@@ -1342,6 +1397,12 @@ fn field_row(ui: &mut Ui, world: &mut World, view: &mut ChatView, row: Rect, loo
         && !composing;
     if sent {
         let draft = view.draft.take();
+        let kept = world
+            .resource::<Content>()
+            .built::<GameSettings>()
+            .chat
+            .kept_lines;
+        view.sent.keep(draft.clone(), kept);
         if !draft.text().trim().is_empty() {
             let content = world.resource::<Content>();
             // A command is words alone, so what a line holds is sent with it only when said.
@@ -1676,8 +1737,39 @@ fn still_composing(was: bool, events: &[egui::Event]) -> bool {
     })
 }
 
+/// Brings back a line sent earlier, or one later, as the player presses the recall keys.
+fn recall(ui: &mut Ui, keys: &InputMap, view: &mut ChatView, caret: usize) {
+    let pressed = |ui: &mut Ui, action: InputAction| {
+        keys.shortcut(action)
+            .is_some_and(|shortcut| ui.input_mut(|input| input.consume_shortcut(&shortcut)))
+    };
+    let shown = if pressed(ui, InputAction::RecallEarlier) {
+        let typed = InField {
+            draft: view.draft.clone(),
+            caret,
+        };
+        view.sent.earlier(&typed)
+    } else if pressed(ui, InputAction::RecallLater) {
+        view.sent.later()
+    } else {
+        None
+    };
+    if let Some(shown) = shown {
+        view.draft = shown.draft;
+        view.suggested = None;
+        input::caret_to(ui.ctx(), field_id(), shown.caret);
+    }
+}
+
+/// Asks the server what a command being typed could go on with. A line brought back from those
+/// sent earlier asks nothing until it is edited, so the list stays shut and the recall keys keep
+/// stepping through history.
 fn ask(world: &mut World, view: &mut ChatView) {
     let draft = view.draft.text();
+    if view.sent.browsing() {
+        view.suggested = None;
+        return;
+    }
     if !draft.trim_start().starts_with(COMMAND_PREFIX) {
         view.asked = None;
         view.suggested = None;

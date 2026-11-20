@@ -133,9 +133,9 @@ pub fn trade(
     }
     if (turn + TRADE_EVERY / 2).is_multiple_of(TRADE_EVERY) {
         let sold = world.get::<Inventory>(player).and_then(|bag| {
-            bag.slots
-                .iter()
-                .find(|stack| stack.count > 0 && goods.contains(&stack.item))
+            bag.stacks()
+                .map(|(_, stack)| stack)
+                .find(|stack| goods.contains(&stack.item))
                 .map(|stack| ItemStack::new(stack.item, 1))
         });
         if let Some(stack) = sold {
