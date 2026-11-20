@@ -237,6 +237,15 @@ pub(crate) fn empty_slot(ui: &mut Ui, world: &mut World) -> Response {
     response
 }
 
+/// An empty slot of the bag, named with its place so a screen reader tells one from another.
+fn empty_bag_slot(ui: &mut Ui, world: &mut World, at: u32) -> Response {
+    let response = slot(ui, world, ItemSlotLook::EMPTY, Sense::hover());
+    let messages = &messages::of(world.resource::<Content>()).item;
+    let label = messages.slot_named(at + 1, messages.empty_slot());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
+    response
+}
+
 /// An item drawn where the game isn't at hand, as on a card the editor previews, left to answer
 /// the pointer once the game is.
 pub enum DrawnItem {
@@ -488,7 +497,7 @@ pub(super) fn bag_slot(
     placement: Placed,
 ) -> Response {
     let Some(filled) = &cell.filled else {
-        return empty_slot(ui, world);
+        return empty_bag_slot(ui, world, cell.slot);
     };
     let content = world.resource::<Content>().clone();
     let def = filled.stack.item.get(&content);

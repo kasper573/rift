@@ -46,6 +46,7 @@ mod region;
 mod requests;
 mod residency;
 mod safe_zone;
+mod satellite;
 mod saves;
 mod saving;
 mod scenery;

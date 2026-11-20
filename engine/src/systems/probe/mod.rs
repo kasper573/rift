@@ -381,6 +381,8 @@ pub struct ProbeSnapshot {
     pub map_marks: Vec<ProbeMapMark>,
     /// The rings of marks open round a townsperson on the minimap or the map.
     pub map_rings: Vec<ProbeMapRing>,
+    /// How many of the squares of ground the maps show have their satellite picture yet.
+    pub map_tiles: ProbeMapTiles,
     /// The bag as each window that shows it shows it.
     pub bag_views: Vec<ProbeBagView>,
     /// What is carried over a bag, while something is.
@@ -897,6 +899,16 @@ pub struct ProbeMapRing {
     pub open: f32,
 }
 
+/// The squares of ground the maps show as a satellite sees it: how many, how many of them show
+/// their satellite picture, and how many their painted one while that is on its way. A map the
+/// player has painted asks for none.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default)]
+pub struct ProbeMapTiles {
+    pub wanted: u32,
+    pub satellite: u32,
+    pub painted: u32,
+}
+
 /// One window's bag: the words and the type of item it is narrowed to, and the slots it shows,
 /// in the order shown. A bag nothing narrows shows every slot, empty or not.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -1359,6 +1371,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         chat: terminal::chat::shown(world),
         map_marks: map_marks(world),
         map_rings: map_rings(world),
+        map_tiles: map_tiles(world),
         bag_views: bag_views(world),
         bag_carried: bag_carried(world),
         mount: mount::plate::shown(world),
@@ -2431,6 +2444,18 @@ fn map_rings(world: &World) -> Vec<ProbeMapRing> {
         .collect();
     rings.sort_by(|a, b| a.view.cmp(&b.view));
     rings
+}
+
+fn map_tiles(world: &World) -> ProbeMapTiles {
+    let tiles = world
+        .get_resource::<area_map::satellite::SatelliteMap>()
+        .map(|map| map.tiles())
+        .unwrap_or_default();
+    ProbeMapTiles {
+        wanted: tiles.wanted,
+        satellite: tiles.satellite,
+        painted: tiles.wanted - tiles.satellite,
+    }
 }
 
 fn bag_views(world: &World) -> Vec<ProbeBagView> {

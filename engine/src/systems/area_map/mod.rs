@@ -1,5 +1,6 @@
 mod ground;
 pub mod minimap;
+pub mod satellite;
 pub mod tab;
 
 use std::collections::HashMap;
@@ -38,21 +39,24 @@ use crate::systems::npc::Npc;
 use crate::systems::party;
 use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
+use crate::systems::settings::UserSettings;
 use crate::systems::{GameSettings, visibility};
 
 pub struct AreaMapPlugin;
 
 impl Plugin for AreaMapPlugin {
     fn build(&self, app: &mut App) {
+        satellite::init(app);
         app.init_resource::<ground::MapGround>()
             .init_resource::<tab::MapTabLook>()
             .init_resource::<MarksShown>()
             .add_systems(
                 Update,
-                (tab::rest, picture_the_ground)
+                (tab::rest, picture_the_ground, satellite::keep)
                     .chain()
                     .run_if(in_state(ClientScreen::Area)),
-            );
+            )
+            .add_systems(OnExit(ClientScreen::Area), satellite::forget);
     }
 }
 
@@ -138,6 +142,10 @@ impl MapReaches {
 
     fn widest(&self) -> Meters {
         self.at(self.last_step())
+    }
+
+    pub fn closest(&self) -> Meters {
+        self.at(MapReachStep(0))
     }
 }
 
@@ -595,7 +603,43 @@ fn within(shape: &[Pos2], quad: [Pos2; 4]) -> Vec<Pos2> {
     kept
 }
 
-fn ground_under(ui: &Ui, world: &World, view: &MapView) {
+/// How the maps picture the ground: as a satellite sees it, or painted from what the ground is
+/// made of, which draws nothing more than the map.
+#[derive(
+    Serialize, Deserialize, strum::VariantArray, Clone, Copy, Debug, Default, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum MapPicture {
+    #[default]
+    Satellite,
+    Painted,
+}
+
+fn ground_under(ui: &Ui, world: &mut World, view: &MapView) {
+    let satellite = world.resource::<UserSettings>().map_picture() == MapPicture::Satellite;
+    if satellite {
+        let corners: Vec<Pos<Meters>> = view
+            .outline()
+            .into_iter()
+            .map(|point| view.ground(point))
+            .collect();
+        let low = corners
+            .iter()
+            .fold(Pos::new(f32::INFINITY, f32::INFINITY), |low, at| {
+                low.min(*at)
+            });
+        let high = corners.iter().fold(
+            Pos::new(f32::NEG_INFINITY, f32::NEG_INFINITY),
+            |high, at| high.max(*at),
+        );
+        let shown = Rect::from_points([low, high]);
+        let wanted = match view.window {
+            MapWindow::Disc { .. } => satellite::Wanted::Minimap,
+            MapWindow::Sheet { .. } => satellite::Wanted::Map,
+        };
+        let pixels = view.per_meter() * ui.ctx().pixels_per_point();
+        satellite::want(world, view.area, shown, pixels, wanted);
+    }
     let painter = ui.painter();
     let disc = view.outline();
     painter.add(Shape::convex_polygon(disc.clone(), NO_GROUND, Stroke::NONE));
@@ -607,27 +651,63 @@ fn ground_under(ui: &Ui, world: &World, view: &MapView) {
         }
     }
     for picture in world.resource::<ground::MapGround>().pictures(view.area) {
-        let shown = within(&disc, corners(view, picture.rect));
-        if shown.len() < 3 {
-            continue;
-        }
-        let mut mesh = Mesh::with_texture(picture.texture.id());
-        for point in &shown {
-            let at = view.ground(*point);
-            mesh.vertices.push(Vertex {
-                pos: *point,
-                uv: Pos2::new(
-                    (at.x - picture.rect.min_x()) / picture.rect.width(),
-                    (at.y - picture.rect.min_y()) / picture.rect.height(),
-                ),
-                color: Color32::WHITE,
-            });
-        }
-        for corner in 1..shown.len() as u32 - 1 {
-            mesh.add_triangle(0, corner, corner + 1);
-        }
-        painter.add(Shape::mesh(mesh));
+        pictured(
+            painter,
+            view,
+            &disc,
+            picture.texture.id(),
+            picture.rect,
+            Color32::WHITE,
+        );
     }
+    if !satellite {
+        return;
+    }
+    let now = ui.input(|input| input.time);
+    let mut fading = false;
+    for picture in world
+        .resource::<satellite::SatelliteMap>()
+        .pictures(view.area)
+    {
+        let shown = picture.shown(now);
+        fading |= shown < 1.0;
+        let tint = Color32::WHITE.gamma_multiply(shown);
+        pictured(painter, view, &disc, picture.texture, picture.rect, tint);
+    }
+    if fading {
+        ui.ctx().request_repaint();
+    }
+}
+
+/// Draws the picture `texture` of the ground `rect` covers, as far as the view's `disc` shows it.
+fn pictured(
+    painter: &egui::Painter,
+    view: &MapView,
+    disc: &[Pos2],
+    texture: egui::TextureId,
+    rect: Rect<Meters>,
+    tint: Color32,
+) {
+    let shown = within(disc, corners(view, rect));
+    if shown.len() < 3 {
+        return;
+    }
+    let mut mesh = Mesh::with_texture(texture);
+    for point in &shown {
+        let at = view.ground(*point);
+        mesh.vertices.push(Vertex {
+            pos: *point,
+            uv: Pos2::new(
+                (at.x - rect.min_x()) / rect.width(),
+                (at.y - rect.min_y()) / rect.height(),
+            ),
+            color: tint,
+        });
+    }
+    for corner in 1..shown.len() as u32 - 1 {
+        mesh.add_triangle(0, corner, corner + 1);
+    }
+    painter.add(Shape::mesh(mesh));
 }
 
 fn wedge(ui: &Ui, view: &MapView) {

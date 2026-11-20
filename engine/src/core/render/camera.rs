@@ -314,6 +314,19 @@ pub fn picture(grade: PictureGrade) -> impl Bundle {
     )
 }
 
+/// A world picture for a camera whose frames have nothing to do with each other, as one drawing a
+/// map square by square from above: graded and mapped as every world picture is, with none of the
+/// smoothing over frames, light shafts, bloom or shaded creases the player's video preferences add.
+pub fn plain_picture(grade: PictureGrade) -> impl Bundle {
+    (
+        Hdr,
+        Msaa::Off,
+        Tonemapping::AcesFitted,
+        grading(Tone::NEUTRAL, grade),
+        DebandDither::Enabled,
+    )
+}
+
 /// Starts every world picture's temporal smoothing over from the frame being drawn, so that what
 /// the frames before showed, however many the world took to stand, leaves no trace in it. The
 /// smoothing blends a frame in a little at a time, and what is thin on the screen, a blade of
