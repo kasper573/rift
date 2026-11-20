@@ -2,7 +2,8 @@
 //! world's own renderer from straight above, in a daylight of its own, and kept under the profile
 //! until what it was drawn from changes. The squares come in levels as a slippy map's do: each
 //! level up covers twice as far each way in the same pixels. Until a square's picture is there,
-//! the map shows its painted picture, and the satellite picture fades in over it once it is.
+//! the map shows what it holds of another level, or else its painted picture, and the satellite
+//! picture fades in over it once it is.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
@@ -187,13 +188,16 @@ impl SatelliteKey {
 }
 
 /// Which map wants a square, most pressing first: what the minimap shows, then what the Map tab
-/// shows, then the ring just past each, which a walk or a drag shows next.
+/// shows, then the ring just past each, which a walk or a drag shows next. Last come the
+/// pictures of another level kept under squares whose own picture hasn't faded in yet, so a
+/// change of zoom never shows the painted picture through.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Wanted {
     Minimap,
     Map,
     NextToMinimap,
     NextToMap,
+    Underneath,
 }
 
 impl Wanted {
@@ -241,11 +245,16 @@ pub struct SatelliteMap {
 }
 
 impl SatelliteMap {
-    pub(super) fn pictures(&self, area: AreaId) -> impl Iterator<Item = &SatellitePicture> {
-        self.pictures
+    /// The pictures of `area`, coarsest level first, so the finer ones are drawn over them.
+    pub(super) fn pictures(&self, area: AreaId) -> Vec<&SatellitePicture> {
+        let mut pictures: Vec<(&SatelliteTile, &SatellitePicture)> = self
+            .pictures
             .iter()
-            .filter(move |((of, _), _)| *of == area)
-            .map(|(_, picture)| picture)
+            .filter(|((of, _), _)| *of == area)
+            .map(|((_, tile), picture)| (tile, picture))
+            .collect();
+        pictures.sort_by_key(|(tile, _)| std::cmp::Reverse(tile.level));
+        pictures.into_iter().map(|(_, picture)| picture).collect()
     }
 
     pub fn tiles(&self) -> SatelliteTiles {
@@ -276,12 +285,35 @@ pub(super) fn want(
         Wanted::Minimap => Wanted::NextToMinimap,
         _ => Wanted::NextToMap,
     };
+    let now = gui::context(world).map_or(0.0, |gui| gui.input(|input| input.time));
     let mut map = world.resource_mut::<SatelliteMap>();
     for (rect, asked) in [(shown.inflate(side, side), ring), (shown, wanted)] {
         for tile in SatelliteTile::within(level, rect, bounds, density) {
             let rank = map.asked.entry((area, tile)).or_insert(asked);
             *rank = (*rank).min(asked);
         }
+    }
+    let unshown: Vec<Rect<Meters>> = SatelliteTile::within(level, shown, bounds, density)
+        .into_iter()
+        .filter(|tile| {
+            map.pictures
+                .get(&(area, *tile))
+                .is_none_or(|picture| picture.shown(now) < 1.0)
+        })
+        .map(|tile| tile.rect(density))
+        .collect();
+    let underneath: Vec<Place> = map
+        .pictures
+        .iter()
+        .filter(|((of, tile), picture)| {
+            *of == area
+                && tile.level != level
+                && unshown.iter().any(|rect| rect.intersects(&picture.rect))
+        })
+        .map(|(place, _)| *place)
+        .collect();
+    for place in underneath {
+        map.asked.entry(place).or_insert(Wanted::Underneath);
     }
 }
 

@@ -292,8 +292,11 @@ pub fn clearable_search(ui: &mut Ui, text: &mut String, hint: &str, clear: &str)
                 });
                 cleared = cross.clicked();
             }
+            // The cross comes and goes ahead of the field, so the field's id can't be counted
+            // from what was laid out before it, or typing the first letter would unfocus it.
             ui.add(
                 unframed(TextEdit::singleline(text))
+                    .id_salt("search")
                     .hint_text(theme::muted(hint))
                     .desired_width(ui.available_width()),
             )

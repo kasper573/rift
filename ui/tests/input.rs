@@ -246,3 +246,36 @@ fn a_wheel_takes_a_click_on_a_leaf_only_once_it_stands_wholly_open() {
     assert_eq!(click(center, 1.0), None, "the rivet is no leaf");
     assert_eq!(click(second_leaf, 0.0), None, "a folded fan is not there");
 }
+
+#[test]
+fn a_search_keeps_the_keyboard_while_a_word_is_typed_into_it_letter_by_letter() {
+    let ctx = Context::default();
+    ui::apply(&ctx);
+    let mut words = String::new();
+    let mut field = Rect::NOTHING;
+    let mut frame = |events: Vec<Event>, words: &mut String| {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+            events,
+            ..RawInput::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            field = ui::input::clearable_search(ui, words, "Search", "Clear").rect;
+        });
+        output.textures_delta.clear();
+        field
+    };
+    let at = frame(Vec::new(), &mut words).center();
+    let click = |pressed| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    frame(vec![Event::PointerMoved(at), click(true)], &mut words);
+    frame(vec![click(false)], &mut words);
+    for letter in "sword".chars() {
+        frame(vec![Event::Text(letter.to_string())], &mut words);
+    }
+    assert_eq!(words, "sword");
+}

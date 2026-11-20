@@ -867,14 +867,25 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                 marks: mark.attention.clone(),
             });
             if more && ring.is_none() {
-                ring = ringed(ui, world, who, &mark.attention, at, pointer);
+                ring =
+                    ringed(ui, world, who, &mark.attention, at, pointer).map(|shown| (shown, at));
             }
         }
     }
+    // A tooltip stands clear of what it is placed about, so one placed about the open ring
+    // never hides the marks the ring lays out.
+    let topmost = match &ring {
+        Some((shown, at)) => topmost.map(|_| {
+            let reach = 2.0 * ring_reach(shown.open);
+            let disc = egui::Rect::from_center_size(*at, Vec2::splat(reach));
+            ui.interact(disc, ui.id().with(("ring told", shown.who)), Sense::hover())
+        }),
+        None => topmost,
+    };
     let mut kept = world.resource_mut::<MarksShown>();
     kept.marks.insert(view.key(), shown);
     match ring {
-        Some(ring) => kept.rings.insert(view.key(), ring),
+        Some((ring, _)) => kept.rings.insert(view.key(), ring),
         None => kept.rings.remove(view.key()),
     };
     under.reverse();
@@ -941,11 +952,7 @@ fn ringed(
     }
     let content = world.resource::<Content>().clone();
     let painter = gui.layer_painter(egui::LayerId::new(egui::Order::Tooltip, id));
-    painter.circle_filled(
-        at,
-        (RING + ATTENTION / 2.0 + 3.0) * t,
-        HALO.gamma_multiply(0.6 * t),
-    );
+    painter.circle_filled(at, ring_reach(t), HALO.gamma_multiply(0.6 * t));
     let marks: Vec<AttentionId> = marks.iter().take(MOST_IN_RING).copied().collect();
     let mut named = None;
     for (place, &mark) in marks.iter().enumerate() {
@@ -983,6 +990,11 @@ fn ringed(
         marks,
         open: t,
     })
+}
+
+/// How far a ring `open` that far reaches from the townsperson it is laid round.
+fn ring_reach(open: f32) -> f32 {
+    (RING + ATTENTION / 2.0 + 3.0) * open
 }
 
 /// The dark edge under every mark's shape, so it reads on grass, sand, water and roofs alike.
