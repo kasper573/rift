@@ -5,6 +5,7 @@ use engine::systems::item::{
     self, BagSort, ExchangeRefusal, Inventory, ItemCategory, ItemDef, ItemId, ItemStack,
     MoveStackRequest, SortBagRequest, SplitStackRequest,
 };
+use engine::systems::messages;
 use serde_json::json;
 use testkit::{Declared, Game, Map, Sim, path};
 
@@ -454,6 +455,22 @@ fn the_bag_search_shows_the_stacks_every_word_names_of_the_type_picked() {
         [ItemCategory::Equipment, ItemCategory::Material],
         "the type picker offers the types the game's items are of"
     );
+    let played = Game::new()
+        .area("start", &Map::open(4, 4), json!([]))
+        .hero("start", 1.0, 1.0)
+        .load();
+    for (category, name) in [
+        (ItemCategory::Consumable, "Consumable"),
+        (ItemCategory::Equipment, "Equipment"),
+        (ItemCategory::Material, "Material"),
+        (ItemCategory::Currency, "Currency"),
+    ] {
+        assert_eq!(
+            category.named(&messages::of(&played).item),
+            name,
+            "the type picker names each type as the game's messages do"
+        );
+    }
 }
 
 fn goods() -> Game {

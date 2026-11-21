@@ -190,6 +190,8 @@ messages! {
         search_bag,
         /// What clears what narrows the bag.
         clear,
+        /// What the bag's type picker is called.
+        item_type,
         /// The entry of the bag's type picker that shows every type.
         all_types,
         /// An entry of the bag's type picker: the type `{category}` and how many stacks of it the bag holds, `{count}`.
@@ -1143,6 +1145,7 @@ pub struct StackLimit {
     Ord,
 )]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum ItemCategory {
     Consumable,
     Equipment,

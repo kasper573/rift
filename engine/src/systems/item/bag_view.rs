@@ -422,8 +422,10 @@ fn type_picker(
         || words.all_types().to_owned(),
         |category| category.named(words),
     );
-    controls::combo(("bag type", placement))
+    let name = words.item_type();
+    let shown = controls::combo(("bag type", placement))
         .selected_text(picked)
+        .named(name)
         .show_ui(ui, |ui| {
             if ui
                 .selectable_label(filter.category.is_none(), words.all_types())
@@ -450,6 +452,9 @@ fn type_picker(
                 }
             }
         });
+    ui::float::tooltip(&shown.response, |ui| {
+        ui.label(TextRole::Tooltip.rich(name));
+    });
 }
 
 /// The line that stands in for the grid when nothing in the bag is what the player looks for,

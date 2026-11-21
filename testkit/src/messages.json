@@ -212,6 +212,7 @@
     "heading_shown": "{heading} · {shown, number} of {of, number} shown",
     "search_bag": "Search",
     "clear": "Clear",
+    "item_type": "Item type",
     "all_types": "All",
     "category_count": "{category} ({count, number})",
     "sort": "Sort",

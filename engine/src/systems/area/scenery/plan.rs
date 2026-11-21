@@ -71,6 +71,19 @@ impl Eyes {
         }
     }
 
+    /// An eye looking straight down from `over` above the ground, from anywhere within `across`
+    /// of the ground it looks at: as a picture taken straight down sees every point of it, from
+    /// the same height.
+    pub fn straight_down(over: Meters, across: Meters) -> Eyes {
+        Eyes {
+            nearest: Meters(0.0),
+            farthest: across,
+            lowest: over,
+            highest: over,
+            bearings: Bearings::Any,
+        }
+    }
+
     /// An eye standing at `eye` over the ground at `at`, `ground` metres high.
     pub fn standing(eye: Vec3, at: Pos<Meters>, ground: Meters) -> Eyes {
         let across = Meters(Pos::new(eye.x, eye.z).distance_to(at));

@@ -28,10 +28,11 @@ use crate::core::content::{Content, FileHashes, version};
 use crate::core::gui;
 use crate::core::math::{Pos, Rect};
 use crate::core::os::Profile;
-use crate::core::render::camera::{self as world_camera, Lens};
+use crate::core::render::camera::{self as world_camera, CameraRig, Lens};
 use crate::core::render::world::{DRAWN_FRAMES_AFTER, RenderProgress, lights};
 use crate::core::render::{Look, video::VideoPreferences};
 use crate::core::units::{Degrees, MeterSize, Meters};
+use crate::systems::area::render::view_reach;
 use crate::systems::area::scenery::{self, Eyes, Scenery, Sight};
 use crate::systems::area::{self, Area, AreaId};
 
@@ -626,7 +627,16 @@ fn bake(
     }
     if world.resource::<SatelliteMap>().baking.is_none() {
         let Some(place) = next else {
-            if let Some(stand) = world.resource_mut::<SatelliteMap>().stand.take() {
+            // A square joins the queue only once the disk turns out not to hold it, so the
+            // scenery stands until every square asked for has its picture, or each read would
+            // take a whole area down and stand it again.
+            let waiting = {
+                let map = world.resource::<SatelliteMap>();
+                order
+                    .iter()
+                    .any(|(place, _)| !map.pictures.contains_key(place))
+            };
+            if !waiting && let Some(stand) = world.resource_mut::<SatelliteMap>().stand.take() {
                 stand.despawn(world);
             }
             return;
@@ -719,13 +729,22 @@ fn stand_over(
         )),
     ));
     let ground = area.heights.height_at(center);
-    let fov = Degrees((2.0 * (side / 2.0).atan2(over - ground.0)).to_degrees());
+    let above = over - ground.0;
+    let fov = Degrees((2.0 * (side / 2.0).atan2(above)).to_degrees());
+    // Models stand no farther round the square's middle than round the player, and the far
+    // field, which keeps only what is wide enough to show, takes in the rest of the square: a
+    // square as big as the area would otherwise stand every model of the area at once.
+    let square = Meters(side * std::f32::consts::FRAC_1_SQRT_2 + OVERHANG.0);
+    let reach = world.get_resource::<CameraRig>().map_or(square, |rig| {
+        let player = view_reach(rig.framing(), world.resource::<VideoPreferences>());
+        Meters(square.0.min(player.0))
+    });
     let sight = Sight {
         at: center,
-        reach: Meters(side * std::f32::consts::FRAC_1_SQRT_2 + OVERHANG.0),
-        horizon: None,
+        reach,
+        horizon: Some(square),
         lens: Lens::new(SATELLITE_PIXELS as f32, fov),
-        eyes: Eyes::standing(eye, center, ground),
+        eyes: Eyes::straight_down(Meters(above), square),
     };
     let ready = scenery::shaders_ready(world, content, &area);
     let Some(stand) = world

@@ -170,6 +170,7 @@ pub fn combo(id_salt: impl egui::AsIdSalt) -> Combo {
     Combo {
         id: egui::Id::new(id_salt),
         text: WidgetText::default(),
+        name: None,
         width: None,
         truncate: false,
     }
@@ -178,6 +179,7 @@ pub fn combo(id_salt: impl egui::AsIdSalt) -> Combo {
 pub struct Combo {
     id: egui::Id,
     text: WidgetText,
+    name: Option<String>,
     width: Option<f32>,
     truncate: bool,
 }
@@ -186,6 +188,12 @@ impl Combo {
     /// What the button shows.
     pub fn selected_text(mut self, text: impl Into<WidgetText>) -> Combo {
         self.text = text.into();
+        self
+    }
+
+    /// What a screen reader calls the button, where no label beside it names it.
+    pub fn named(mut self, name: impl Into<String>) -> Combo {
+        self.name = Some(name.into());
         self
     }
 
@@ -235,6 +243,7 @@ impl Combo {
         response.widget_info(|| {
             let mut info = WidgetInfo::new(WidgetType::ComboBox);
             info.enabled = ui.is_enabled();
+            info.label = self.name.clone();
             info.current_text_value = Some(self.text.text().to_owned());
             info
         });
