@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use engine::core::os::{Http, Profile, SignIn, StartParams, exit_when_stdin_closes};
 use engine::core::update;
+use engine::systems::client_app;
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, CLIENT_ENV_PREFIX, ClientConfig, LaunchSettings, build_info_line,
 };
-use engine::systems::{client_app, probe};
 
 service::allocator!();
 
@@ -35,10 +35,7 @@ fn main() {
         ),
     };
     let profile = Profile(settings.path(&config.profile_dir));
-    let mut app = client_app(profile, http, params);
-    if let Some(driver) = config.probe {
-        probe::install(&mut app, driver);
-    }
+    let mut app = client_app(profile, http, params, config.probe);
     if config.exit_on_stdin_eof {
         exit_when_stdin_closes(&mut app);
     }

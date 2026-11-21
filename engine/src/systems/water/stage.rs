@@ -1,12 +1,11 @@
 //! The stage a water's shader runs in: the sheet an area lays over its ground wherever one of
 //! its waters lies, drawn after everything solid, over the picture of what lies behind it.
 
-use crate::core::render::world::water::SHORE_REACH;
 use crate::core::vfx::shader::CLOCK_CHECK;
 use crate::core::vfx::stage::{BLANK_VFX, main_defs, with_defs};
 use crate::core::vfx::{ShaderPass, Stage, StageKind, StageSpec, Stages};
 use crate::systems::area::stages::{treading, weather_helpers};
-use crate::systems::water::ripples::RIPPLE_CELL;
+use crate::systems::water::ripples::{RIPPLE_CELL, RIPPLE_SIDE};
 
 /// A shader painting the surface of a body of water.
 pub const WATER: Stage = Stage::registered(&StageSpec {
@@ -59,11 +58,11 @@ fn check_header() -> String {
 
 fn helpers() -> String {
     format!(
-        "{}\n{}\n// How far from the shore `shore` tells a point lies at most, in metres.\nconst SHORE_REACH: f32 = {:?};\n// How far apart the points of the water the ripples are followed at lie, in metres.\nconst RIPPLE_CELL: f32 = {:?};",
+        "{}\n{}\n// How far apart the points of the water the ripples are followed at lie, in metres, and how many of them the field holds each way.\nconst RIPPLE_CELL: f32 = {:?};\nconst RIPPLE_SIDE: f32 = {:?};",
         weather_helpers(),
         treading(WADING),
-        SHORE_REACH.0,
-        RIPPLE_CELL.0
+        RIPPLE_CELL.0,
+        RIPPLE_SIDE as f32
     )
 }
 

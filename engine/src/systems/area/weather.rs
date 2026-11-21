@@ -21,13 +21,11 @@ use crate::systems::area::AreaId;
 use crate::systems::area::heavens::NEAREST_SHELL;
 use crate::systems::area::sky::{self, Sky};
 use crate::systems::launch::{ServerDay, ServerDaylight};
-use crate::systems::water::ripples::RippleSource;
+use crate::systems::water::ripples::{RIPPLE_CELL, RippleSource};
 use crate::systems::{GameSettings, WorldArea};
 
 /// How many shells rain is drawn on round the eye at most, each over the whole picture.
 pub const MAX_RAIN_SHELLS: usize = 6;
-/// The narrowest patch of water a raindrop strikes.
-pub const LEAST_STRUCK: Meters = Meters(0.05);
 
 /// The weather of a spell: its wind, how much cloud covers the sky, how much water the cloud
 /// holds, how hard it rains under the cloud that holds water and how often lightning strikes. What
@@ -914,8 +912,9 @@ impl Rainfall {
             cx.at_least(
                 format!("{pointer}/ripples/scatter"),
                 ripples.scatter.0,
-                LEAST_STRUCK.0,
-                "meters, the width of a patch of water a drop strikes",
+                RIPPLE_CELL.0,
+                "meters, the width of a patch of water a drop strikes, no narrower than the \
+                 ripples are followed at",
             );
         }
         cx.at_least(format!("{pointer}/wets"), self.wets.0, 0.0, "seconds");

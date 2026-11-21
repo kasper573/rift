@@ -1,9 +1,8 @@
 // A sheet over the ground's patches: a point on every point of a patch, lying a hair over the
 // ground wherever the sheet's terrain paints it, or on the water wherever the sheet's water lies,
 // weighted by how many of the four pixels round it name the sheet's terrain, or by how far the
-// sheet's water leads the other waters among them. Where a
-// patch borders a coarser one, its points along that edge lie between the coarser one's, as the
-// ground's do.
+// sheet's water leads the other waters among them. Where a patch borders a coarser one, its
+// points along that edge lie between the coarser one's, as the ground's do.
 import engine::core::render::world::gpu::terrain::{
     ground, edge_ends, lie_at, metres_of, overview_surface, paint_of, patch_point, shore_of,
     surfaces, texels_in, water_of, world_at,
@@ -36,10 +35,12 @@ struct Sheet {
 @group(2) @binding(113) var sky_picture: texture_2d<f32>;
 @group(2) @binding(114) var sky_picture_sampler: sampler;
 
+const TAU: f32 = 6.2831855;
 // How far above the ground a sheet on it lies, so it draws over the ground without fighting it.
 const SHEET_LIFT: f32 = 0.02;
-// The fall level of a surface that doesn't fall, and how many levels lie to each side of it:
-// a level holds the fall's share of the steepest by its square root.
+// The fall level of a surface that doesn't fall, the middle of what a 16 bit texel holds, and
+// how many levels lie to each side of it: a level holds the fall's share of the steepest by its
+// square root.
 const FALL_MIDDLE: f32 = 32768.0;
 const FALL_LEVELS: f32 = 32767.0;
 // By how much of the pixels round a point the water named first leads one that ties with it.
@@ -113,7 +114,7 @@ fn sheet_at(sample: vec2<u32>, stride: u32) -> SheetPoint {
     if point.shore > -ground.shore_back * ASHORE && point.shore < f32(drawn_sheet.open_samples) / f32(ground.samples_per_metre) {
         let last = vec2<i32>(ground.samples) - 1;
         for (var way = 0; way < 8; way++) {
-            let turn = f32(way) * 0.7853982;
+            let turn = f32(way) * TAU / 8.0;
             let off = vec2<i32>(round(vec2<f32>(cos(turn), sin(turn)) * f32(drawn_sheet.open_samples)));
             let there = vec2<u32>(clamp(vec2<i32>(sample) + off, vec2<i32>(0), last));
             point.open = max(point.open, shore_of(texels_in(surfaces, overview_surface, there)));

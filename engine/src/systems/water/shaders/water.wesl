@@ -22,7 +22,7 @@
 // bending of what lies under water, 1 otherwise.
 //
 // As a sheet has them: `depth()` how many metres of water stand over the ground, `shore()` how
-// far the point lies out from the waterline, up to `SHORE_REACH` metres, `open()` how far from
+// far the point lies out from the waterline, as far as the area's surface tells it, `open()` how far from
 // the waterline the water round the point lies at its most, which tells a brook or a pool from
 // the edge of a lake: no farther than `shore()` far out on open water, `fall()` how the
 // surface falls there in metres a metre toward east and south, `position()` where the point lies
@@ -50,18 +50,16 @@ import engine::core::render::world::sky_picture::sky_round;
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
 
-// The water a point belongs to: how deep a white bed still shows through it, the colour of its
-// depths under a white light, and how much light it sends back from within.
+// The water a point belongs to: the colour of its depths under a white light, and how much light
+// it sends back from within.
 struct Water {
-    clarity: f32,
     depths: vec3<f32>,
     murk: f32,
 }
 
+const PI: f32 = 3.1415927;
 // How near the waterline, in metres, a pixel reads its place from it for itself.
 const SHORE_READ: f32 = 1.5;
-// How many lengths of a water's fading leave a twentieth of a thing's contrast.
-const SEEN_LENGTHS: f32 = 3.0;
 // How much faster a bed all silt fades the light through the water over it, a metre, and within
 // how many metres of depth its silt hangs: a third of it is left that far over the bed.
 const SILT_FADING: f32 = 3.0;
@@ -154,8 +152,7 @@ fn bends() -> f32 {
 }
 
 fn water() -> Water {
-    let slowest = min(fades.r, min(fades.g, fades.b));
-    return Water(SEEN_LENGTHS / (2.0 * max(slowest, 1.0e-6)), body, fades.a);
+    return Water(body, fades.a);
 }
 
 fn silt() -> vec4<f32> {
@@ -200,7 +197,7 @@ fn mirror(normal: vec3<f32>, rough: f32) -> vec3<f32> {
     var shown = vec3<f32>(0.0);
     if drawn_sheet.under_sky != 0u {
         // A rough face throws its mirror about four times as wide as it is rough.
-        let across = 4.0 * rough * SKY_PICTURE_SIDE / 3.1415927;
+        let across = 4.0 * rough * SKY_PICTURE_SIDE / PI;
         let size = log2(max(across, 1.0));
         shown = textureSampleLevel(sky_picture, sky_picture_sampler, sky_round(thrown), size).rgb
             * view.exposure;
@@ -236,7 +233,7 @@ fn glint(face: vec3<f32>, rough: f32, toward: vec3<f32>) -> vec3<f32> {
         let half_way = normalize(toward + sunward);
         let aligned = max(dot(face, half_way), 0.0);
         let lobe = aligned * aligned * (spread_squared - 1.0) + 1.0;
-        let gathered = spread_squared / (3.1415927 * lobe * lobe);
+        let gathered = spread_squared / (PI * lobe * lobe);
         let glancing = 1.0 - max(dot(half_way, toward), 0.0);
         let mirrored = MIRRORS_STRAIGHT + (1.0 - MIRRORS_STRAIGHT) * pow(glancing, 5.0);
         var lit = 1.0;

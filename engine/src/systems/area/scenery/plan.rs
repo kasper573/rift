@@ -1,7 +1,7 @@
 //! What the scenery stands for a sight, planned off the frame: the chunks of ground, the lights
-//! and the props playing vfx of their own a view could take in from anywhere its eye may stand, so a
-//! view turning, tilting or zooming within its sight plans nothing anew, and one moving across
-//! the ground plans anew only as it crosses into another cell of it. An eye that may stand any
+//! and the props acting of their own accord a view could take in from anywhere its eye may stand,
+//! so a view turning, tilting or zooming within its sight plans nothing anew, and one moving
+//! across the ground plans anew only as it crosses into another cell of it. An eye that may stand any
 //! way round the ground stands near everything at its distance from it, so a view whose eye keeps
 //! its bearing says so, and is planned for that side alone.
 
@@ -352,11 +352,11 @@ impl Detail {
 const NEAREST_GROUND: Meters = Meters(0.5);
 
 /// What a plan is made from that stays as long as the area stands: the area, its lights and
-/// the props of it that play vfx of their own.
+/// the props of it that act of their own accord.
 pub(super) struct Planner {
     pub area: Arc<Area>,
     pub lights: SpatialIndex,
-    pub playing: SpatialIndex,
+    pub acting: SpatialIndex,
 }
 
 /// What the scenery stands for a sight: where it is seen from, the ground's chunks and the
@@ -366,8 +366,8 @@ pub(super) struct Plan {
     /// The chunks of ground, finest first.
     pub ground: Vec<Node>,
     pub lights: NearPlan,
-    /// Of the area's props that play vfx of their own, by their place among those.
-    pub playing: NearPlan,
+    /// Of the area's props that act of their own accord, by their place among those.
+    pub acting: NearPlan,
 }
 
 /// The things of a kind the plan stands, nearest the view first, and those it keeps that stand
@@ -389,8 +389,8 @@ impl Planner {
         Plan {
             ground,
             lights: plan_near(&self.lights, &seen, |index| self.area.lights[index].at),
-            playing: plan_near(&self.playing, &seen, |index| {
-                self.area.props[self.area.playing[index]].at
+            acting: plan_near(&self.acting, &seen, |index| {
+                self.area.props[self.area.acting[index]].at
             }),
             seen,
         }

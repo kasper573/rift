@@ -115,13 +115,13 @@ pub(super) fn overlay_contours(
         if let Some([from, _]) = contour.segments.first() {
             frame.labels.chip(
                 canvas.to_screen(*from),
-                format!("{} m deep", contour.height.0),
+                format!("{} m deep", contour.level.0),
                 deep,
             );
         }
     }
     for contour in &contours.heights {
-        let major = (contour.height.0 / 5.0).fract().abs() < 0.01;
+        let major = (contour.level.0 / 5.0).fract().abs() < 0.01;
         let color = if major {
             Color32::from_rgba_unmultiplied(255, 255, 255, 150)
         } else {
@@ -139,7 +139,7 @@ pub(super) fn overlay_contours(
         if major && let Some([from, _]) = contour.segments.first() {
             frame.labels.chip(
                 canvas.to_screen(*from),
-                format!("{:+} m", contour.height.0),
+                format!("{:+} m", contour.level.0),
                 Color32::from_gray(200),
             );
         }

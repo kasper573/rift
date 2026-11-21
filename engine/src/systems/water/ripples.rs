@@ -103,7 +103,7 @@ pub struct RippleField {
 
 /// The flesh of a body in water: its limbs, and the level of the water they stand or float in.
 #[derive(Clone, Copy, Debug)]
-pub struct Wading<'a> {
+pub struct LimbsInWater<'a> {
     pub limbs: &'a [TreadingLimb],
     pub level: f32,
 }
@@ -255,17 +255,17 @@ impl RippleField {
     /// newly in the water has no `was`, one that left it no `now`.
     pub fn part(
         &mut self,
-        was: Option<Wading>,
-        now: Option<Wading>,
+        was: Option<LimbsInWater>,
+        now: Option<LimbsInWater>,
         over: Seconds,
         ripples: &Ripples,
     ) {
-        let cuts = |wading: Option<Wading>| -> Vec<(TreadingLimb, f32)> {
+        let cuts = |wading: Option<LimbsInWater>| -> Vec<(TreadingLimb, f32)> {
             wading.map_or_else(Vec::new, |wading| {
                 wading
                     .limbs
                     .iter()
-                    .filter(|limb| limb.cuts(wading.level))
+                    .filter(|limb| cut_by(limb, wading.level))
                     .map(|limb| (*limb, wading.level))
                     .collect()
             })
@@ -274,14 +274,14 @@ impl RippleField {
         let bounds = was
             .iter()
             .chain(&now)
-            .map(|(limb, _)| limb.over())
+            .map(|(limb, _)| ground_under(limb))
             .reduce(|(least, most), (from, to)| (least.min(from), most.max(to)));
         let Some((from, to)) = bounds else {
             return;
         };
         let flesh = |cut: &[(TreadingLimb, f32)], point: Vec2| {
             cut.iter()
-                .map(|(limb, level)| limb.flesh_at(point, *level))
+                .map(|(limb, level)| flesh_at(limb, point, *level))
                 .fold(0.0, f32::max)
         };
         // Flesh fills a cell over the width of its edge, so how much of one it filled tells
@@ -400,35 +400,29 @@ impl RippleField {
     }
 }
 
-impl TreadingLimb {
-    /// Whether a surface at `level` cuts through the limb's flesh, or lies near enough to.
-    fn cuts(&self, level: f32) -> bool {
-        let girth = self.girth.max(self.tail_girth) + EDGE * 0.5;
-        self.from.y.min(self.to.y) - girth < level && level < self.from.y.max(self.to.y) + girth
-    }
+/// Whether a surface at `level` cuts through the flesh of `limb`, or lies near enough to.
+fn cut_by(limb: &TreadingLimb, level: f32) -> bool {
+    let girth = limb.girth.max(limb.tail_girth) + EDGE * 0.5;
+    limb.from.y.min(limb.to.y) - girth < level && level < limb.from.y.max(limb.to.y) + girth
+}
 
-    /// The ground the limb's flesh lies over at most, from its north-west to its south-east.
-    fn over(&self) -> (Vec2, Vec2) {
-        let girth = Vec2::splat(self.girth.max(self.tail_girth) + EDGE * 0.5);
-        let (from, to) = (self.from.xz(), self.to.xz());
-        (from.min(to) - girth, from.max(to) + girth)
-    }
+/// The ground the flesh of `limb` lies over at most, from its north-west to its south-east.
+fn ground_under(limb: &TreadingLimb) -> (Vec2, Vec2) {
+    let girth = Vec2::splat(limb.girth.max(limb.tail_girth) + EDGE * 0.5);
+    let (from, to) = (limb.from.xz(), limb.to.xz());
+    (from.min(to) - girth, from.max(to) + girth)
+}
 
-    /// How much of the surface at `level` is flesh of the limb at the ground point `point`,
-    /// from none to all of it, across the [`EDGE`] round the flesh.
-    fn flesh_at(&self, point: Vec2, level: f32) -> f32 {
-        let at = Vec3::new(point.x, level, point.y);
-        let bone = self.to - self.from;
-        let long = bone.length_squared();
-        let along = if long > 1e-8 {
-            ((at - self.from).dot(bone) / long).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let girth = self.girth + (self.tail_girth - self.girth) * along;
-        let away = at.distance(self.from + bone * along) - girth;
-        (0.5 - away / EDGE).clamp(0.0, 1.0)
-    }
+/// How much of the surface at `level` is flesh of `limb` at the ground point `point`, from none
+/// to all of it, across the [`EDGE`] round the flesh.
+fn flesh_at(limb: &TreadingLimb, point: Vec2, level: f32) -> f32 {
+    let at = Vec3::new(point.x, level, point.y);
+    let bone = limb.to - limb.from;
+    let along =
+        ((at - limb.from).dot(bone) / bone.length_squared().max(f32::EPSILON)).clamp(0.0, 1.0);
+    let girth = limb.girth + (limb.tail_girth - limb.girth) * along;
+    let away = at.distance(limb.from + bone * along) - girth;
+    (0.5 - away / EDGE).clamp(0.0, 1.0)
 }
 
 /// What the ripples are stirred by: the moment, the game's ripples, who treads the water, what
@@ -493,7 +487,8 @@ pub(crate) fn stir(
     }
     let level_at = |point: Vec2| {
         let at = ground_pos(Vec3::new(point.x, 0.0, point.y));
-        (ground.water.depth_at(&ground.heights, at).0 > 0.0).then(|| ground.water.height_at(at).0)
+        let surface = ground.water.surface_over(&ground.heights, at);
+        surface.map(|surface| surface.0)
     };
     for (placed, spot) in &spots {
         if rng.rand_float() * spot.0.every.0 >= passed {
@@ -511,7 +506,7 @@ pub(crate) fn stir(
         .map_or(0.0, |climate| climate.wind.length());
     if let Some(drops) = climate.and_then(|climate| climate.ripples) {
         let side = RIPPLE_SIDE as f32 * RIPPLE_CELL.0;
-        let patches = (side / drops.scatter.0.max(RIPPLE_CELL.0)).powi(2);
+        let patches = (side / drops.scatter.0).powi(2);
         let struck = (patches * passed / drops.every.0 + rng.rand_float()).min(MOST_DROPS);
         for _ in 0..struck as usize {
             let at = field.corner() + Vec2::new(rng.rand_float(), rng.rand_float()) * side;
@@ -541,8 +536,8 @@ pub(crate) struct Waded {
 }
 
 impl Waded {
-    fn wading(&self) -> Option<Wading<'_>> {
-        self.level.map(|level| Wading {
+    fn wading(&self) -> Option<LimbsInWater<'_>> {
+        self.level.map(|level| LimbsInWater {
             limbs: &self.limbs,
             level,
         })

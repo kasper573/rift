@@ -264,6 +264,10 @@ pub fn frames_drawn(world: &World) -> Option<u64> {
 
 pub const DRAWN_FRAMES_AFTER: u64 = 2;
 
+/// How many lengths of fading through fog or water leave a twentieth of a thing's contrast: what
+/// counts as the farthest it is seen, as weather services measure visibility.
+pub const SIGHT_LENGTHS: f32 = 3.0;
+
 /// How many prop instances the camera views drew coarser than their size asked, for want of a
 /// model or an impostor still on its way, in the latest frame the kernel's count came back from.
 pub fn missing_drawn(world: &World) -> u32 {

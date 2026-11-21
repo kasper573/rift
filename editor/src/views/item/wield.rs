@@ -334,7 +334,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
             .and_then(|path| content.by_path::<ModelDef>(path))
             .filter(|_| holds)
             .map(|model| stage::holding(model, stance_id));
-        turntable.stand(editor, ui, vec![standing]);
+        turntable.stand(editor, ui, vec![standing], stage::StageLight::default());
     }
     form::hint(ui, cues::KEYS);
 }

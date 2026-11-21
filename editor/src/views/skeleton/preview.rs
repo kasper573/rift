@@ -240,7 +240,7 @@ pub fn show(
         };
         cast.push(standing);
     }
-    turntable.stand(editor, ui, cast);
+    turntable.stand(editor, ui, cast, stage::StageLight::default());
     Some(Previewed {
         staged,
         playing,

@@ -246,8 +246,10 @@ pub(crate) fn navigate(
 
 /// How long a frame lets a flood spread for.
 const FLOOD_A_FRAME: Duration = Duration::from_millis(6);
-/// Metres of level a notch of the wheel moves a flood by.
-const LEVEL_A_NOTCH: f32 = 0.25;
+/// How far a notch of the wheel moves a flood's level, and how many points the wheel scrolls a
+/// notch.
+const LEVEL_A_NOTCH: Meters = Meters(0.25);
+const POINTS_A_NOTCH: f32 = 50.0;
 
 /// While the Water tool shows a flood, the wheel moves its level in place of the camera, which
 /// the zoom key still gives the wheel to.
@@ -271,7 +273,7 @@ fn level_by_wheel(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &Area
         .level
         .or(view.water.flood.as_ref().map(|flood| flood.level));
     if let Some(from) = from {
-        view.water.level = Some(Meters(from.0 + scrolled / 50.0 * LEVEL_A_NOTCH));
+        view.water.level = Some(Meters(from.0 + scrolled / POINTS_A_NOTCH * LEVEL_A_NOTCH.0));
     }
 }
 

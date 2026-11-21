@@ -169,7 +169,7 @@ fn stand(
         Vec::new(),
         Vec::new(),
     );
-    turntable.stand(editor, ui, vec![standing]);
+    turntable.stand(editor, ui, vec![standing], stage::StageLight::default());
 }
 
 /// What the look lays over a body: each part with the regions it covers and hides, and the colours

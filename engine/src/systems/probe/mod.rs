@@ -18,7 +18,7 @@ pub use game::{
     ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc,
     ProbeProp, ProbeResident, ProbeSkill, ProbeSpawner, ProbeWater, answer,
 };
-pub use hitches::{SystemTimes, timing_layer};
+pub use hitches::{SystemTimes, time_systems, timing_layer};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
@@ -211,9 +211,6 @@ pub struct ProbeFramesPlugin;
 
 impl Plugin for ProbeFramesPlugin {
     fn build(&self, app: &mut App) {
-        if let Some(times) = app.world().get_resource::<SystemTimes>() {
-            times.listen();
-        }
         app.add_plugins(FrameSamplingPlugin)
             .init_resource::<FrameSamples>()
             .init_resource::<FrameMark>()
@@ -556,9 +553,6 @@ pub struct ProbeBody {
     /// own walk.
     #[schemars(with = "PosSchema")]
     pub drawn: Pos<Meters>,
-    /// Where a click takes it rather than whatever stands in front of it.
-    #[schemars(with = "PosSchema")]
-    pub aim: Pos<Meters>,
     pub capsule: Capsule,
     /// The way its body is turned on screen.
     pub facing: Radians,
@@ -656,8 +650,6 @@ pub struct ProbeObject {
     pub title: Option<String>,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
-    #[schemars(with = "PosSchema")]
-    pub aim: Pos<Meters>,
     #[schemars(with = "RectSchema")]
     pub hitbox: Rect<Meters>,
     pub marks: Vec<AttentionId>,
@@ -694,9 +686,6 @@ pub struct ProbeResource {
     pub name: String,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
-    /// Where a click takes it rather than whatever stands in front of it.
-    #[schemars(with = "PosSchema")]
-    pub aim: Pos<Meters>,
     pub capsule: Capsule,
     /// How many extractions it still holds.
     pub left: u32,
@@ -1277,7 +1266,16 @@ fn publish(world: &mut World) {
             ProbeFrameQuestion::Snapshot => snapshots += 1,
             ProbeFrameQuestion::Frames { since } => {
                 let frames = world.resource::<FrameSamples>().since(since);
-                answers.give(&serde_json::to_string(&frames).expect("serializable frames"));
+                let answers = answers.clone();
+                AsyncComputeTaskPool::get()
+                    .spawn(async move {
+                        answers.give(&serde_json::to_string(&frames).expect("serializable frames"));
+                    })
+                    .detach();
+            }
+            ProbeFrameQuestion::Aim { of } => {
+                let aim = aim_at(world, of);
+                answers.give(&serde_json::to_string(&aim).expect("a serializable aim"));
             }
             ProbeFrameQuestion::Picture { path } => {
                 let answers = answers.clone();
@@ -1295,11 +1293,13 @@ fn publish(world: &mut World) {
         }
     }
     if snapshots > 0 {
-        let snapshot = snapshot(world);
+        let (mut snapshot, ground) = snapshot(world);
         let scope = ContentScope::of(world.resource::<Content>());
-        // Writing a snapshot out is long work for a frame, and its answer needs nothing more of it.
+        // Sampling the ground and writing a snapshot out are long work for a frame, and neither
+        // needs anything more of it.
         AsyncComputeTaskPool::get()
             .spawn(async move {
+                snapshot.terrain = ground.map(|ground| ground.sampled());
                 let (json, _) = with_content(scope, || {
                     serde_json::to_string(&snapshot).expect("a serializable snapshot")
                 });
@@ -1311,7 +1311,9 @@ fn publish(world: &mut World) {
     }
 }
 
-fn snapshot(world: &mut World) -> ProbeSnapshot {
+/// What the client shows this frame, but for the ground around the player, which is still to be
+/// sampled where it is due.
+fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
     let content = world.resource::<Content>().clone();
     let me = session::me(world);
     let placed_sale = shop::counter::placed_sale(world);
@@ -1333,7 +1335,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         .is_ok_and(|options| options.visible);
     let sceneries_standing = area::scenery::sceneries_standing(world);
     let on_its_way = render::world::on_its_way(world);
-    ProbeSnapshot {
+    let ground = ground_due(world, me, area);
+    let snapshot = ProbeSnapshot {
         frame: world.resource::<FrameCount>().0,
         input: ProbeInput {
             cursor: window
@@ -1548,7 +1551,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .and_then(|slot| slot.0),
         skills: me.and_then(|me| skills(world, me)),
         me: me.and_then(|me| body(world, me, view.as_ref())),
-        terrain: terrain(world, me, area),
+        terrain: None,
         actors: actors(world, me, area),
         objects: objects(world, area),
         items: items(world, area),
@@ -1578,7 +1581,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .map(|adapter| adapter.name.clone()),
         view,
         area,
-    }
+    };
+    (snapshot, ground)
 }
 
 fn gpu_memory(world: &World) -> Bytes {
@@ -1797,7 +1801,8 @@ fn view(world: &mut World) -> Option<ProbeView> {
 #[derive(Resource, Default, PartialEq)]
 struct TerrainSent(Option<(AreaId, Rect<Meters>, usize)>);
 
-fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Option<ProbeTerrain> {
+/// The ground the probe is due to send, none while what it last sent still holds.
+fn ground_due(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Option<GroundDue> {
     let standing = me.and_then(|me| {
         world
             .get::<RenderPosition>(me)
@@ -1812,7 +1817,7 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
         world.get_resource::<CameraRig>()?.framing(),
         world.get_resource::<VideoPreferences>()?,
     );
-    let area = area::load(world.resource::<Content>(), area_id);
+    let area = area::shared(world.resource::<Content>(), area_id).clone();
     let window = ground_window(at, area.size.bounds(), reach);
     let loaded = area
         .heights
@@ -1828,22 +1833,34 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
         return None;
     }
     *sent = sending;
-    let area = area::load(world.resource::<Content>(), area_id);
-    let size = Size::new(window.size.width.floor(), window.size.height.floor());
-    let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);
-    let samples = || {
-        (0..rows)
-            .flat_map(|row| (0..columns).map(move |column| (column, row)))
-            .map(|(column, row)| window.origin + Offset::new(column as f32, row as f32))
-    };
-    Some(ProbeTerrain {
-        origin: window.origin,
-        size,
-        heights: samples().map(|at| area.heights.height_at(at)).collect(),
-        depths: samples()
-            .map(|at| area.water.depth_at(&area.heights, at))
-            .collect(),
-    })
+    Some(GroundDue { area, window })
+}
+
+/// A window of an area's ground for the probe to send.
+struct GroundDue {
+    area: Arc<area::Area>,
+    window: Rect<Meters>,
+}
+
+impl GroundDue {
+    fn sampled(&self) -> ProbeTerrain {
+        let (area, window) = (&self.area, self.window);
+        let size = Size::new(window.size.width.floor(), window.size.height.floor());
+        let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);
+        let samples = || {
+            (0..rows)
+                .flat_map(|row| (0..columns).map(move |column| (column, row)))
+                .map(|(column, row)| window.origin + Offset::new(column as f32, row as f32))
+        };
+        ProbeTerrain {
+            origin: window.origin,
+            size,
+            heights: samples().map(|at| area.heights.height_at(at)).collect(),
+            depths: samples()
+                .map(|at| area.water.depth_at(&area.heights, at))
+                .collect(),
+        }
+    }
 }
 
 /// The ground around `at` the probe reports: the chunks within the view's reach, within the
@@ -1936,7 +1953,6 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         away: entity.contains::<Away>(),
         at,
         drawn,
-        aim: at,
         capsule,
         facing: entity
             .get::<RenderActor>()
@@ -2005,16 +2021,9 @@ fn actors(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec<Pr
         .map(|(entity, _)| entity)
         .collect();
     let view = view(world);
-    let bodies: Vec<(Entity, ProbeBody)> = others
+    others
         .into_iter()
-        .filter_map(|entity| body(world, entity, view.as_ref()).map(|body| (entity, body)))
-        .collect();
-    bodies
-        .into_iter()
-        .map(|(entity, body)| ProbeBody {
-            aim: aim(world, entity, body.at, body.capsule),
-            ..body
-        })
+        .filter_map(|entity| body(world, entity, view.as_ref()))
         .collect()
 }
 
@@ -2023,35 +2032,22 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
     let attention = viewer
         .and_then(|viewer| world.get::<Attention>(viewer))
         .cloned();
-    let objects: Vec<(Entity, ProbeObject)> = world
+    world
         .query::<(Entity, &AreaObject, &Position, &AreaTag)>()
         .iter(world)
         .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
         .filter(|(_, object, ..)| object.look.is_some())
-        .map(|(entity, object, at, _)| {
-            let hitbox = object.shape.bounds();
-            let seen = ProbeObject {
-                id: entity,
-                name: object.name.clone(),
-                title: object.title.clone(),
-                at: at.pos,
-                aim: hitbox.center(),
-                hitbox,
-                marks: attention
-                    .as_ref()
-                    .map(|attention| attention.of(entity).to_vec())
-                    .unwrap_or_default(),
-                statuses: Vec::new(),
-            };
-            (entity, seen)
-        })
-        .collect();
-    objects
-        .into_iter()
-        .map(|(entity, seen)| ProbeObject {
-            aim: object_aim(world, entity, seen.hitbox),
+        .map(|(entity, object, at, _)| ProbeObject {
+            id: entity,
+            name: object.name.clone(),
+            title: object.title.clone(),
+            at: at.pos,
+            hitbox: object.shape.bounds(),
+            marks: attention
+                .as_ref()
+                .map(|attention| attention.of(entity).to_vec())
+                .unwrap_or_default(),
             statuses: carried(world, entity),
-            ..seen
         })
         .collect()
 }
@@ -2064,11 +2060,27 @@ fn carried(world: &World, thing: Entity) -> Vec<StatusEffectId> {
         .unwrap_or_default()
 }
 
+/// The ground point to point at to take `thing`: an object by its shape, what has a body by its
+/// body, and what has neither where it lies; none for what the client shows no such thing of.
+fn aim_at(world: &mut World, thing: Entity) -> Option<Pos<Meters>> {
+    if let Some(hitbox) = world
+        .get::<AreaObject>(thing)
+        .map(|object| object.shape.bounds())
+    {
+        return Some(object_aim(world, thing, hitbox));
+    }
+    let at = world.get::<Position>(thing)?.pos;
+    Some(match world.get::<Hitbox>(thing).map(|hitbox| hitbox.0) {
+        Some(capsule) => body_aim(world, thing, at, capsule),
+        None => at,
+    })
+}
+
 /// The ground point to point at to take the body: where the ray from the eye through its capsule
 /// lands, at the height nearest its middle where pointing claims the body, else where it stands.
 /// A body is given up on at the first height where pointing takes nothing at all: nothing stands
 /// in its way there, so it is not for taking.
-fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> Pos<Meters> {
+fn body_aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> Pos<Meters> {
     const HEIGHTS: [f32; 7] = [0.5, 0.375, 0.625, 0.25, 0.75, 0.125, 0.875];
     let Some(view) = render::view_of(world) else {
         return at;
@@ -2197,7 +2209,6 @@ fn resources(world: &mut World, area: Option<AreaId>) -> Vec<ProbeResource> {
             resource: def,
             name: def.get(&content).name.clone(),
             at,
-            aim: aim(world, entity, at, capsule),
             capsule,
             left,
             room: def.get(&content).max_occupants,

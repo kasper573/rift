@@ -278,7 +278,7 @@ fn contours_follow_the_whole_metres_of_a_hill() {
         Stroke::begin(&flat, at, StrokeKind::Sculpt(SculptMode::Raise)).expect("a sculpt stroke");
     stroke.apply(&Brush::default(), at, 8.0, Meters(0.0));
     let traced = contours::trace(&stroke.heights);
-    let heights: Vec<f32> = traced.iter().map(|contour| contour.height.0).collect();
+    let heights: Vec<f32> = traced.iter().map(|contour| contour.level.0).collect();
     assert!(
         heights.contains(&1.0),
         "a hill crosses the metre: {heights:?}"

@@ -1,5 +1,6 @@
 use bevy::prelude::*;
-use engine::core::render::world::haze::{HazeBox, HazeSight, SIGHT_LENGTHS};
+use engine::core::render::world::SIGHT_LENGTHS;
+use engine::core::render::world::haze::{HazeBox, HazeSight};
 
 const FOV: f32 = std::f32::consts::FRAC_PI_3;
 const ASPECT: f32 = 16.0 / 9.0;

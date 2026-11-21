@@ -83,6 +83,7 @@ pub const SKY: Stage = Stage::registered(&StageSpec {
         "sun_way",
         "sun_color",
         "moon_way",
+        "moon_size",
         "night",
         "through_air",
         "sky_turned",
@@ -226,8 +227,7 @@ fn cover_passes() -> Vec<ShaderPass> {
     ]
 }
 
-/// A prop's shader bakes its model's impostor as well as drawing it, and writes depth and normals
-/// ahead of the main pass.
+/// A sky's shader draws the sky, and the picture of it the water mirrors.
 fn sky_passes() -> Vec<ShaderPass> {
     vec![
         ShaderPass {
@@ -241,6 +241,8 @@ fn sky_passes() -> Vec<ShaderPass> {
     ]
 }
 
+/// A prop's shader bakes its model's impostor as well as drawing it, and writes depth and normals
+/// ahead of the main pass.
 fn prop_passes() -> Vec<ShaderPass> {
     vec![
         ShaderPass {

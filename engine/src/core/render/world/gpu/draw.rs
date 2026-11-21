@@ -78,7 +78,7 @@ use super::atlas::{
 };
 use super::cull;
 use crate::core::ground::{
-    OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
+    OVERVIEW_STRIDE, PaintMap, PaintNames, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
 };
 use crate::core::render::video::{VideoPreferences, WaterMirrors};
 use crate::core::render::world::RenderProgress;
@@ -327,7 +327,7 @@ impl ExtractComponent<RenderApp> for GroundDraw {
 pub struct SheetPatches {
     over: Arc<[GroundPatch]>,
     lists: Arc<[Vec<u32>]>,
-    tiles: HashMap<TileAt, ([TileVersion; 3], Named, Named)>,
+    tiles: HashMap<TileAt, ([TileVersion; 3], PaintNames, PaintNames)>,
 }
 
 impl Default for SheetPatches {
@@ -337,28 +337,6 @@ impl Default for SheetPatches {
             lists: Arc::new([]),
             tiles: HashMap::default(),
         }
-    }
-}
-
-/// Which of the area's terrains, or of its waters, a stretch of a map names, a bit each.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-struct Named([u64; 4]);
-
-impl Named {
-    fn of(pixels: &[u8]) -> Named {
-        let mut named = Named::default();
-        for &index in pixels {
-            named.0[usize::from(index / 64)] |= 1 << (index % 64);
-        }
-        named
-    }
-
-    fn with(self, other: Named) -> Named {
-        Named(std::array::from_fn(|word| self.0[word] | other.0[word]))
-    }
-
-    fn contains(self, index: u8) -> bool {
-        self.0[usize::from(index / 64)] & (1 << (index % 64)) != 0
     }
 }
 
@@ -397,13 +375,13 @@ fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut Sheet
                         continue;
                     }
                     let lying = if surface.is_blank_at(tile) {
-                        Named::default()
+                        PaintNames::default()
                     } else {
-                        named_in(waters, tile)
+                        waters.names_on(tile)
                     };
                     found
                         .tiles
-                        .insert(tile, (versions, named_in(paint, tile), lying));
+                        .insert(tile, (versions, paint.names_on(tile), lying));
                     changed = true;
                 }
             }
@@ -411,7 +389,7 @@ fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut Sheet
         if !changed {
             continue;
         }
-        let under: Vec<(Named, Named)> = tiles
+        let under: Vec<(PaintNames, PaintNames)> = tiles
             .iter()
             .map(|&(first_column, first_row, past_column, past_row)| {
                 (first_row..past_row)
@@ -420,7 +398,7 @@ fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut Sheet
                     })
                     .filter_map(|tile| found.tiles.get(&tile))
                     .fold(
-                        (Named::default(), Named::default()),
+                        (PaintNames::default(), PaintNames::default()),
                         |(terrains, waters), (_, painted, lying)| {
                             (terrains.with(*painted), waters.with(*lying))
                         },
@@ -465,21 +443,6 @@ fn tiles_under(patch: &GroundPatch, paint: &PaintMap) -> (u32, u32, u32, u32) {
         tile(last.0, columns) + 1,
         tile(last.1, rows) + 1,
     )
-}
-
-/// What `map`, the paint or the water map, names on `tile`, as it is read now.
-fn named_in(map: &PaintMap, tile: TileAt) -> Named {
-    if map.is_loaded(tile) {
-        let (columns, rows) = map.pixels();
-        let first = (tile.column * TILE_PIXELS, tile.row * TILE_PIXELS);
-        let across = TILE_PIXELS.min(columns - first.0);
-        let down = TILE_PIXELS.min(rows - first.1);
-        return Named::of(&map.block((i64::from(first.0), i64::from(first.1)), across, down));
-    }
-    let ((first_column, first_row), columns, rows) = map.overview_span(tile);
-    let columns: Vec<u32> = (first_column..first_column + columns).collect();
-    let rows: Vec<u32> = (first_row..first_row + rows).collect();
-    Named::of(&map.overview_at(&columns, &rows))
 }
 
 /// Lights the ground in the main pass, with the view's lights, shadows, ambient occlusion and fog.

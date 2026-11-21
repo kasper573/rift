@@ -1,6 +1,7 @@
 //! Questions about the game itself are answered at once from the client's content rather than on
 //! a frame, as a driver planning a walk asks hundreds of them in a row.
 
+use bevy::ecs::entity::Entity;
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
 use schemars::JsonSchema;
@@ -45,6 +46,13 @@ pub enum ProbeFrameQuestion {
     /// The frames drawn after frame `since`, as far as they have settled. Answered with
     /// [`super::ProbeFrames`].
     Frames { since: u32 },
+    /// Where to point to take `of`, anyone or anything a snapshot told of by its id, in a frame
+    /// after the question: the ground a click at takes it rather than whatever stands in front
+    /// of it, else where it stands or lies. Answered with a position, or null once it is gone.
+    Aim {
+        #[schemars(with = "u64")]
+        of: Entity,
+    },
 }
 
 /// A question for the probe about the game itself, which `rift ask` answers as well as a client,
@@ -656,7 +664,7 @@ fn water(content: &Content, id: AreaId, at: Pos<Meters>) -> ProbeWater {
         .and(area.water_map.load(tile))
         .expect("a game that loaded reads its ground");
     let depth = area.water.depth_at(&area.heights, at);
-    let wet = depth.0 > 0.0;
+    let surface = area.water.surface_over(&area.heights, at);
     let wading = content.built::<GameSettings>().wading;
     ProbeWater {
         ground: area.heights.height_at(at),
@@ -664,8 +672,8 @@ fn water(content: &Content, id: AreaId, at: Pos<Meters>) -> ProbeWater {
             .waters
             .get(usize::from(area.water_map.at(at)))
             .copied()
-            .filter(|_| wet),
-        surface: wet.then(|| area.water.height_at(at)),
+            .filter(|_| surface.is_some()),
+        surface,
         depth,
         pace: wading.map_or(1.0, |wading| wading.share_at(depth)),
     }

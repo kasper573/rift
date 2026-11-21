@@ -227,7 +227,13 @@ fn drop_strip(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef, size: 
         ui.ctx().request_repaint();
     }
     let camera = view.camera;
-    stage::request(editor, ui, &view_key, rect, camera, picture, Vec::new());
+    let shot = stage::StageShot {
+        camera,
+        picture,
+        cast: Vec::new(),
+        lit: stage::StageLight::default(),
+    };
+    stage::request(editor, ui, &view_key, rect, shot);
 }
 
 fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {

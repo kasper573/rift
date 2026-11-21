@@ -199,7 +199,13 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, scene: Scene) -> Option
         ui.label(theme::warn("vfx don't play on the stage yet"));
     }
     ui.ctx().request_repaint();
-    view_stage::request(editor, ui, &view_key, rect, camera, picture, cast);
+    let shot = view_stage::StageShot {
+        camera,
+        picture,
+        cast,
+        lit: view_stage::StageLight::default(),
+    };
+    view_stage::request(editor, ui, &view_key, rect, shot);
     Some(DrawnStage { canvas, report })
 }
 

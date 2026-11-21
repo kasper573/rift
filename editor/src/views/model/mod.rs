@@ -136,7 +136,7 @@ pub(super) fn stand(
         .map(|(_, model)| stage::standing(model.body(), clip, held, crossed, Vec::new()))
         .into_iter()
         .collect();
-    turntable.stand(editor, ui, cast);
+    turntable.stand(editor, ui, cast, stage::StageLight::default());
 }
 
 pub(super) fn nothing_to_stand(ui: &mut Ui) {

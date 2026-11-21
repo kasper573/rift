@@ -48,5 +48,5 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
         1.0,
         Stroke::new(1.5, module_color(AreaModuleKind::Prop)),
     );
-    turntable.stand(editor, ui, Vec::new());
+    turntable.stand(editor, ui, Vec::new(), stage::StageLight::default());
 }

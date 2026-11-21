@@ -14,10 +14,10 @@ const INTERVAL: f32 = 1.0;
 /// The shallowest depth a line is drawn at; each line after it runs twice as deep.
 const FIRST_DEPTH: f32 = 1.0;
 
-/// A contour: the height it runs at, or the depth under water, and the line segments that make
-/// it.
+/// A contour: the level it runs at, a height of the ground or a depth under water, and the line
+/// segments that make it.
 pub struct Contour {
-    pub height: Meters,
+    pub level: Meters,
     pub segments: Vec<[Pos<Meters>; 2]>,
 }
 
@@ -74,7 +74,7 @@ pub fn trace(heights: &Heightfield) -> Vec<Contour> {
         .map(|step| {
             let level = step as f32 * INTERVAL;
             Contour {
-                height: Meters(level),
+                level: Meters(level),
                 segments: at_level(heights.samples(), level, |column, row| {
                     heights.sample(column, row).0
                 }),
@@ -101,7 +101,7 @@ pub fn trace_depths(heights: &Heightfield, water: &WaterSurface) -> Vec<Contour>
     std::iter::successors(Some(FIRST_DEPTH), |depth| Some(depth * 2.0))
         .take_while(|&level| level <= deepest)
         .map(|level| Contour {
-            height: Meters(level),
+            level: Meters(level),
             segments: at_level((columns, rows), level, depth),
         })
         .filter(|contour| !contour.segments.is_empty())

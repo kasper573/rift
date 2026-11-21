@@ -44,10 +44,10 @@ impl Plugin for SkyPicturePlugin {
             return;
         };
         render_app
-            .add_systems(ExtractSchedule, blur_drawn)
+            .add_systems(ExtractSchedule, size_drawn)
             .add_systems(
                 Core3d,
-                blur_picture
+                make_sizes
                     .after(upscaling)
                     .after(Core3dSystems::PostProcess),
             );
@@ -188,20 +188,21 @@ pub fn follow(world: &mut World, picture: Entity, eye: Entity) {
 }
 
 /// The pictures drawn this frame, whose coarser sizes are made once their cameras have drawn.
-const BLURRED: MipGenerationPhaseId = MipGenerationPhaseId(0x736b_7970);
+const COARSER_SIZES: MipGenerationPhaseId = MipGenerationPhaseId(0x736b_7970);
 
-fn blur_drawn(
+fn size_drawn(
     pictures: Extract<Query<(&SkyPicture, &Camera)>>,
     mut jobs: ResMut<MipGenerationJobs>,
 ) {
     for (picture, camera) in &pictures {
         if camera.is_active {
-            jobs.add(BLURRED, picture.image.id());
+            jobs.add(COARSER_SIZES, picture.image.id());
         }
     }
 }
 
-fn blur_picture(
+fn make_sizes(
+    // Run for the picture's own camera alone, which has drawn it by then.
     _picture: ViewQuery<&SkyPicture>,
     jobs: Res<MipGenerationJobs>,
     cache: Res<PipelineCache>,
@@ -212,5 +213,5 @@ fn blur_picture(
     let Some(pipelines) = pipelines else {
         return;
     };
-    generate_mips_for_phase(BLURRED, &jobs, &cache, &pipelines, &images, &mut ctx);
+    generate_mips_for_phase(COARSER_SIZES, &jobs, &cache, &pipelines, &images, &mut ctx);
 }

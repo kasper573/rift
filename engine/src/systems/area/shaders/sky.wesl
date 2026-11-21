@@ -8,15 +8,16 @@
 // `light_color`: the sun, or by night the full moon, which always stands opposite it, dimmed and
 // reddened by the air it crossed; a light below the horizon shines black); the way to the sun and
 // the light it sheds on the clouds, which it still reaches for a while after the ground is in
-// shade (`sun_way`, `sun_color`); the way to the moon (`moon_way`) and how deep into the night
-// the sky is (`night`, 0 day to 1 when every star is out); how much of each colour of a light
+// shade (`sun_way`, `sun_color`); the way to the moon (`moon_way`), how wide its disc is, in
+// radians (`moon_size`), and how deep into the night the sky is (`night`, 0 day to 1 when every
+// star is out); how much of each colour of a light
 // from beyond the air reaches the eye from a way, none from below the horizon (`through_air`,
 // which a star, a moon or anything else out there is dimmed and reddened by); a way as the
 // turning sky has it at this hour, the sky wheeling with its sun (`sky_turned`, what stars are
 // laid out by so they rise and set); how much of the sky one pixel spans, in radians
 // (`pixel_angle`, so a point of light can be drawn a pixel wide through any lens); whether the
-// stars twinkle (`twinkles`, 1, or 0 for a player who holds them still); the light the sky sheds from a way (`sky_light`,
-// which `sample` gives for the way looked); the clouds drifting over the area at any point of the
+// stars twinkle (`twinkles`, 1, or 0 for a player who holds them still); the light the sky sheds
+// from a way (`sky_light`, which `sample` gives for the way looked); the clouds drifting over the area at any point of the
 // world (`cloud_at`), whose shadows fall on the ground under them, how much water the cloud at a
 // point holds (`cloud_water_at`, 0 none to 1 a storm cloud's) and how hard it rains under it
 // (`rain_under`, 0 none to 1 a cloudburst), the height they lie at (`cloud_base`) and how far the
@@ -96,7 +97,6 @@ fn fragment(in: SkyOutput) -> @location(0) vec4<f32> {
 @vertex
 fn vertex(@location(0) position: vec3<f32>) -> SkyOutput {
     var out: SkyOutput;
-    out.way = position;
     out.position = vec4<f32>(position.xy, 0.0, 1.0);
     return out;
 }

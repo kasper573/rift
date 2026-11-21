@@ -24,7 +24,7 @@ pub mod weather;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
-pub use fog::{FogBank, LaidFog, Shafts};
+pub use fog::{FogBank, FogShafts, LaidFog};
 
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
@@ -147,8 +147,9 @@ const UPRIGHT: Degrees = Degrees(90.0);
 /// Metres a pictured water's shore rises for each metre back from the waterline.
 const SHORE_RISE: f32 = 0.15;
 
-/// The ground's heights, paint and water, a tile of each to a file named by the tile's place, and
-/// an overview of each over the whole ground, which answers for the tiles not loaded.
+/// The ground's heights, its paint, the surface of its water and the map of which of its waters
+/// lies where, a tile of each to a file named by the tile's place, and an overview of each over
+/// the whole ground, which answers for the tiles not loaded.
 pub const HEIGHT: PartSpec = PartSpec::Keyed {
     folder: "height",
     exts: AssetKind::Image.extensions(),
@@ -173,12 +174,12 @@ pub const WATER_OVERVIEW: PartSpec = PartSpec::File {
     name: "water_overview",
     exts: AssetKind::Image.extensions(),
 };
-pub const WATERS: PartSpec = PartSpec::Keyed {
-    folder: "waters",
+pub const WATER_MAP: PartSpec = PartSpec::Keyed {
+    folder: "water_map",
     exts: AssetKind::Image.extensions(),
 };
-pub const WATERS_OVERVIEW: PartSpec = PartSpec::File {
-    name: "waters_overview",
+pub const WATER_MAP_OVERVIEW: PartSpec = PartSpec::File {
+    name: "water_map_overview",
     exts: AssetKind::Image.extensions(),
 };
 /// The share of the downpour each stretch of the area gets, as coarse as its maker likes: where
@@ -306,15 +307,15 @@ impl Bundle for AreaDef {
         HEIGHT,
         PAINT,
         WATER,
-        WATERS,
+        WATER_MAP,
         HEIGHT_OVERVIEW,
         PAINT_OVERVIEW,
         WATER_OVERVIEW,
-        WATERS_OVERVIEW,
+        WATER_MAP_OVERVIEW,
         RAIN,
     ];
     const WRITTEN: &'static [PartSpec] = Self::PARTS;
-    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT, WATER, WATERS];
+    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT, WATER, WATER_MAP];
 
     fn read_parts(&mut self, parts: &mut Parts) {
         scene::read(&mut self.scene, &BTreeMap::new(), parts);
@@ -349,8 +350,8 @@ impl Bundle for AreaDef {
         read_ground(
             parts,
             GroundParts {
-                tiles: WATERS,
-                overview: WATERS_OVERVIEW,
+                tiles: WATER_MAP,
+                overview: WATER_MAP_OVERVIEW,
             },
             &mut self.water_map,
         );
@@ -370,7 +371,7 @@ impl Bundle for AreaDef {
             put(writer, part(WATER, &at.key()), || {
                 self.water.encode_tile(at)
             })?;
-            put(writer, part(WATERS, &at.key()), || {
+            put(writer, part(WATER_MAP, &at.key()), || {
                 self.water_map.encode_tile(at)
             })?;
         }
@@ -383,7 +384,7 @@ impl Bundle for AreaDef {
         put(writer, part(WATER_OVERVIEW, ""), || {
             self.water.encode_overview()
         })?;
-        put(writer, part(WATERS_OVERVIEW, ""), || {
+        put(writer, part(WATER_MAP_OVERVIEW, ""), || {
             self.water_map.encode_overview()
         })?;
         put(writer, part(RAIN, ""), || {
@@ -405,7 +406,7 @@ impl AreaDef {
             (HEIGHT, HEIGHT_OVERVIEW, false),
             (PAINT, PAINT_OVERVIEW, false),
             (WATER, WATER_OVERVIEW, false),
-            (WATERS, WATERS_OVERVIEW, false),
+            (WATER_MAP, WATER_MAP_OVERVIEW, false),
         ];
         for at in self.size.each_tile() {
             let changed = [
@@ -446,30 +447,6 @@ impl AreaDef {
 
     pub fn size(&self) -> Size<Meters> {
         self.size.meters()
-    }
-
-    /// The index the paint names `terrain` by, listing it when it is new.
-    pub fn terrain_index(&mut self, terrain: TerrainId) -> Option<u8> {
-        if let Some(index) = self.terrains.iter().position(|known| *known == terrain) {
-            return u8::try_from(index).ok();
-        }
-        if self.terrains.len() >= MAX_TERRAINS {
-            return None;
-        }
-        self.terrains.push(terrain);
-        u8::try_from(self.terrains.len() - 1).ok()
-    }
-
-    /// The index the water map names `water` by, listing it when it is new.
-    pub fn water_index(&mut self, water: WaterId) -> Option<u8> {
-        if let Some(index) = self.waters.iter().position(|known| *known == water) {
-            return u8::try_from(index).ok();
-        }
-        if self.waters.len() >= MAX_WATERS {
-            return None;
-        }
-        self.waters.push(water);
-        u8::try_from(self.waters.len() - 1).ok()
     }
 
     fn ground(&self) -> Ground {
@@ -1000,9 +977,9 @@ pub struct Area {
     /// the module or brings it.
     pub prop_origins: Vec<String>,
     pub lights: Vec<PointLightDef>,
-    /// The props among `props` that play vfx of their own or send ripples over the water, by
-    /// their place there.
-    pub playing: Vec<usize>,
+    /// The props among `props` that act of their own accord, playing vfx or sending ripples
+    /// over the water, by their place there.
+    pub acting: Vec<usize>,
     underfoot: Vec<walk::Underfoot>,
     /// What a step in each of `waters` sounds like.
     wading: Vec<SfxId>,
@@ -1193,17 +1170,22 @@ pub const PICTURED_BED: Meters = Meters(4.0);
 /// How deep a terrain pictured under a water lies.
 pub const PICTURED_UNDER: Meters = Meters(1.0);
 
-/// How deep a pictured water of `clarity` stands `out` from its shore: nothing at the shore and
-/// twice its clarity where its bed ends, deepening faster the farther out, so the shallows, where
-/// a water's colour turns, take most of the picture.
-pub fn pictured_depth(clarity: Meters, out: Meters) -> Meters {
+/// How many times its clarity deep a pictured water stands where its bed ends: deep enough to
+/// show the colour of its depths.
+pub const PICTURED_CLARITIES: f32 = 2.0;
+
+/// How deep a pictured water of `clarity` stands `out` from its shore: nothing at the shore,
+/// deepening faster the farther out, so the shallows, where a water's colour turns, take most of
+/// the picture.
+fn pictured_depth(clarity: Meters, out: Meters) -> Meters {
     let share = (out.0 / PICTURED_REACH.0).clamp(0.0, 1.0);
-    Meters(2.0 * clarity.0 * share * share)
+    Meters(PICTURED_CLARITIES * clarity.0 * share * share)
 }
 
 /// How far out from its shore a pictured water of `clarity` stands `depth` deep.
 pub fn pictured_out(clarity: Meters, depth: Meters) -> Meters {
-    Meters(PICTURED_REACH.0 * (depth.0 / (2.0 * clarity.0)).clamp(0.0, 1.0).sqrt())
+    let share = depth.0 / (PICTURED_CLARITIES * clarity.0);
+    Meters(PICTURED_REACH.0 * share.clamp(0.0, 1.0).sqrt())
 }
 
 /// The areas that lay `water`.
@@ -1316,7 +1298,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 height: (beds.len() as u32 * PICTURED_BED.0 as u32).max(MIN_SIDE),
             };
             let range = HeightRange {
-                lowest: Meters(-2.0 * def.clarity.0 - 1.0),
+                lowest: Meters(-pictured_depth(def.clarity, PICTURED_REACH).0 - 1.0),
                 highest: Meters(8.0),
             };
             let clarity = def.clarity;
@@ -1718,7 +1700,7 @@ fn build_area(
             .iter()
             .map(|outline| Rect::from_points(outline.iter().copied())),
     );
-    let playing = (0..props.len())
+    let acting = (0..props.len())
         .filter(|&index| {
             let prop = props[index].prop.get(content);
             !prop.effects.is_empty() || prop.ripples.is_some()
@@ -1763,7 +1745,7 @@ fn build_area(
         prop_sources,
         prop_origins,
         lights,
-        playing,
+        acting,
         meshes: walk::Meshes::empty(ground.size.bounds(), walk::draughts(content, modules)),
         modules_by_tile,
         placements_by_tile,

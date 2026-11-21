@@ -17,6 +17,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::Shader;
 
+use crate::core::render::Look;
 use crate::core::render::world::clouds::{self, CLOUD_TILE, CloudLook, SECOND_SHIFT};
 use crate::core::render::world::sky::AIR_WAYS;
 
@@ -61,13 +62,15 @@ pub struct SkyShaderKey {
 /// The sky's lights as the sky header reads them: the unit way toward the light the world is lit
 /// by (the sun, or by night the full moon), how much of it shines (none below the horizon), its
 /// colour as it reaches the ground, the unit way toward the moon, how far into the night the sky
-/// is, 0 day to 1 full night, the unit way toward the sun and its colour as it reaches the
+/// is, 0 day to 1 full night, how wide the moon's disc is, in radians, the unit way toward the
+/// sun and its colour as it reaches the
 /// clouds, how the sky has turned with its sun (what carries a way of the world to the way of
 /// the sky's own it looks along), whether the stars twinkle, 1 or 0, how much air a light from
-/// beyond it crosses along each of the air's ways up from the horizon, and the field of cloud: the height it lies at, the ground a tile of it covers, how far the
-/// wind has carried it, where in its noise cloud begins and how far past that it is thick, and how
-/// its second read is carried, turned and scaled from its first; where in the noise cloud holds
-/// water, and how far the wind carries the rain sideways for every metre it falls.
+/// beyond it crosses along each of the air's ways up from the horizon, and the field of cloud:
+/// the height it lies at, the ground a tile of it covers, how far the wind has carried it, where
+/// in its noise cloud begins and how far past that it is thick, and how its second read is
+/// carried, turned and scaled from its first; where in the noise cloud holds water, and how far
+/// the wind carries the rain sideways for every metre it falls.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct Heavens {
     pub toward: Vec3,
@@ -79,6 +82,7 @@ pub struct Heavens {
     pub sun_color: Vec4,
     pub turned: Mat3,
     pub twinkling: f32,
+    pub moon_size: f32,
     pub air: [Vec4; AIR_WAYS],
     pub cloud_base: f32,
     pub cloud_tile: f32,
@@ -100,7 +104,7 @@ impl Heavens {
         (toward, color, strength): (Vec3, Color, f32),
         (sun, sun_color, sun_strength): (Vec3, Color, f32),
         night: f32,
-        look: &CloudLook,
+        look: &Look,
     ) -> Heavens {
         let shed = |color: Color, strength: f32| {
             let linear = color.to_linear() * strength;
@@ -149,7 +153,8 @@ impl Heavens {
     }
 
     /// A sky of no light under clouds that look as `look` says, covering none of it.
-    pub fn clear(look: &CloudLook) -> Heavens {
+    pub fn clear(look: &Look) -> Heavens {
+        let clouds = &look.clouds;
         Heavens {
             toward: Vec3::Y,
             shining: 0.0,
@@ -160,12 +165,13 @@ impl Heavens {
             sun_color: Vec4::ZERO,
             turned: Mat3::IDENTITY,
             twinkling: 1.0,
+            moon_size: look.sky.moon_size.radians().0,
             air: [Vec4::ZERO; AIR_WAYS],
-            cloud_base: look.height.0,
+            cloud_base: clouds.height.0,
             cloud_tile: CLOUD_TILE.0,
             drift: Vec2::ZERO,
-            cloud_edge: clouds::edge(0.0, look),
-            cloud_softness: look.softness,
+            cloud_edge: clouds::edge(0.0, clouds),
+            cloud_softness: clouds.softness,
             cloud_shift: SECOND_SHIFT,
             cloud_second: clouds::second_read(),
             water_edge: clouds::water_edge(0.0),

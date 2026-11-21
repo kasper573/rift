@@ -135,7 +135,7 @@ pub(super) fn stand(
         skins: vec![skin],
     };
     let standing = stage::standing(body, rig_idle_clip(skeleton), None, Vec::new(), Vec::new());
-    turntable.stand(editor, ui, vec![standing]);
+    turntable.stand(editor, ui, vec![standing], stage::StageLight::default());
 }
 
 /// What the loader makes of the part's meshes: each one's weight and how it draws, and who wears

@@ -623,7 +623,14 @@ pub fn from_client<M: Message>(world: &mut World, conn: Entity, message: M) {
     });
 }
 
-pub fn client_app(profile: Profile, http: Http, params: StartParams) -> App {
+/// The game client's app. With `driver`, its probe answers the driver waiting at that address,
+/// and its systems are timed for it.
+pub fn client_app(
+    profile: Profile,
+    http: Http,
+    params: StartParams,
+    driver: Option<std::net::SocketAddr>,
+) -> App {
     use bevy::prelude::*;
 
     let credentials = match &params.sign_in {
@@ -632,6 +639,9 @@ pub fn client_app(profile: Profile, http: Http, params: StartParams) -> App {
     };
 
     let mut app = App::new();
+    if driver.is_some() {
+        probe::time_systems(&mut app);
+    }
     let files = SyncedAssetReader::default();
     app.insert_resource(files.clone());
     app.insert_resource(Rng::from_entropy());
@@ -733,6 +743,9 @@ pub fn client_app(profile: Profile, http: Http, params: StartParams) -> App {
             actor::options::plugin,
             item::bag_view::BagViewPlugin,
         ));
+    if let Some(driver) = driver {
+        probe::install(&mut app, driver);
+    }
     app
 }
 

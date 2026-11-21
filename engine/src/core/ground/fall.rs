@@ -160,7 +160,7 @@ const FALL_CELL: Meters = Meters(2.0);
 const FALL_EVENED: usize = 6;
 
 /// How much lower a cell must stand than the one beside it to lie on another reach, in metres:
-/// less than any step a level is kept in.
+/// more than rounding leaves between two cells of one reach.
 const SAME_REACH: f32 = 1e-4;
 
 /// What a step straight to the cell beside costs, and one cornerwise.

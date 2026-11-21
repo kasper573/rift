@@ -41,6 +41,7 @@ struct FullscreenVertexOutput {
 @group(0) @binding(3) var sky_picture: texture_2d<f32>;
 @group(0) @binding(4) var sky_sampler: sampler;
 
+const TAU: f32 = 6.2831855;
 // The depth the sky is taken to lie at: far enough that a line of sight to it has left every
 // bank it will ever leave.
 const SKY_DEPTH: f32 = 1.0e-7;
@@ -143,5 +144,5 @@ fn sky_round_about(looking: vec3<f32>) -> vec3<f32> {
 // light.
 fn thrown_on(cosine: f32) -> f32 {
     let bent = 1.0 + ONWARD * ONWARD - 2.0 * ONWARD * cosine;
-    return (1.0 - ONWARD * ONWARD) / (12.566371 * bent * sqrt(bent));
+    return (1.0 - ONWARD * ONWARD) / (2.0 * TAU * bent * sqrt(bent));
 }

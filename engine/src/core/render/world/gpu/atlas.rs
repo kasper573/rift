@@ -382,9 +382,10 @@ const LEVEL_RUNS_ON: usize = 4;
 /// less than a millimetre a metre, still tells which way it runs.
 pub const SURFACE_FALL_MOST: f32 = 2.0;
 
-/// The fall level of a surface that doesn't fall, and how many levels lie to each side of it.
-const FALL_MIDDLE: f32 = 32768.0;
-const FALL_LEVELS: f32 = 32767.0;
+/// How many levels of a surface texel's fall lie to each side of the level that doesn't fall,
+/// the middle of what the texel holds.
+const FALL_LEVELS: f32 = (u16::MAX / 2) as f32;
+const FALL_MIDDLE: f32 = FALL_LEVELS + 1.0;
 
 /// The grids of the ground the atlas holds, shared with the area's.
 #[derive(Clone)]

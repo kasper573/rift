@@ -244,6 +244,11 @@ impl HeightRange {
         (-self.lowest.0 / self.step()).round() as u16
     }
 
+    /// `height` as the range's levels hold it: the nearest of them.
+    pub fn held(self, height: Meters) -> Meters {
+        self.height_of(self.level_of(height))
+    }
+
     fn level_of(self, height: Meters) -> u16 {
         (height.0 / self.step() + self.ground_level() as f32)
             .round()
@@ -286,6 +291,13 @@ impl GroundGrid<WaterLevel> {
     /// How deep the water stands over `ground` at `at`: nothing where the ground is dry.
     pub fn depth_at(&self, ground: &Heightfield, at: Pos<Meters>) -> Meters {
         Meters((self.height_at(at).0 - ground.height_at(at).0).max(0.0))
+    }
+
+    /// How high the water's surface stands at `at` where it stands over `ground`: none where the
+    /// ground is dry.
+    pub fn surface_over(&self, ground: &Heightfield, at: Pos<Meters>) -> Option<Meters> {
+        let surface = self.height_at(at);
+        (surface.0 > ground.height_at(at).0).then_some(surface)
     }
 }
 
@@ -330,6 +342,18 @@ impl<T: Level> GroundGrid<T> {
         Pos::new(
             GROUND_ORIGIN.x + column as f32 * step,
             GROUND_ORIGIN.y + row as f32 * step,
+        )
+    }
+
+    /// The sample nearest `at`, the nearest one past the edge.
+    pub fn sample_near(&self, at: Pos<Meters>) -> (u32, u32) {
+        let first = Self::sample_pos(0, 0);
+        let nearest = |along: f32, samples: u32| {
+            ((along * SAMPLES_PER_METER as f32).round().max(0.0) as u32).min(samples - 1)
+        };
+        (
+            nearest(at.x - first.x, self.grid.columns),
+            nearest(at.y - first.y, self.grid.rows),
         )
     }
 
@@ -481,6 +505,29 @@ impl GroundGrid<u8> {
             .collect()
     }
 
+    /// The indices the tile at `at` names, as it is read now: all the tile holds where it is
+    /// loaded, found once for as long as it holds them, else those the overview holds over it,
+    /// which names nothing the tile doesn't.
+    pub fn names_on(&self, at: TileAt) -> PaintNames {
+        let inside = at.column < self.grid.across && at.row < self.grid.down;
+        let tile = inside
+            .then(|| self.tiles[self.grid.index(at)].tile())
+            .flatten();
+        match (tile, &self.overview) {
+            (Some(tile), _) => *tile.names.get_or_init(|| PaintNames::of(&tile.values)),
+            (None, Some(overview)) if inside => {
+                let ((first_column, first_row), columns, rows) = self.overview_span(at);
+                (first_row..first_row + rows)
+                    .map(|row| {
+                        let first = (row * overview.columns + first_column) as usize;
+                        PaintNames::of(&overview.values[first..first + columns as usize])
+                    })
+                    .fold(PaintNames::default(), PaintNames::with)
+            }
+            _ => PaintNames::of(&[self.blank_value()]),
+        }
+    }
+
     /// The pixel under `at`.
     pub fn pixel_at(&self, at: Pos<Meters>) -> (u32, u32) {
         let column = ((at.x - GROUND_ORIGIN.x) * SAMPLES_PER_METER as f32).floor();
@@ -489,6 +536,32 @@ impl GroundGrid<u8> {
             (column.max(0.0) as u32).min(self.grid.columns.saturating_sub(1)),
             (row.max(0.0) as u32).min(self.grid.rows.saturating_sub(1)),
         )
+    }
+}
+
+/// Which of the indices a paint map can hold a stretch of one names, a bit each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PaintNames([u64; 4]);
+
+impl PaintNames {
+    pub fn with(self, other: PaintNames) -> PaintNames {
+        PaintNames(std::array::from_fn(|word| self.0[word] | other.0[word]))
+    }
+
+    pub fn contains(self, index: u8) -> bool {
+        self.0[usize::from(index / 64)] & (1 << (index % 64)) != 0
+    }
+
+    fn of(pixels: &[u8]) -> PaintNames {
+        let mut held = [false; MAX_TERRAINS];
+        for &index in pixels {
+            held[usize::from(index)] = true;
+        }
+        let mut names = PaintNames::default();
+        for (index, _) in held.iter().enumerate().filter(|(_, held)| **held) {
+            names.0[index / 64] |= 1 << (index % 64);
+        }
+        names
     }
 }
 
@@ -823,6 +896,8 @@ struct Tile<T> {
     rows: u32,
     values: Vec<T>,
     peaks: OnceLock<Peaks<T>>,
+    /// Which indices a tile of paint holds, once sought.
+    names: OnceLock<PaintNames>,
     encoded: Option<Arc<[u8]>>,
     /// Which values these are: no other tile, nor this one once a value changes, has the same.
     revision: u64,
@@ -895,6 +970,7 @@ impl<T: Value> GroundGrid<T> {
                     rows,
                     values,
                     peaks: OnceLock::new(),
+                    names: OnceLock::new(),
                     revision: next_revision(),
                     encoded: None,
                 };
@@ -931,6 +1007,7 @@ impl<T: Value> GroundGrid<T> {
             rows,
             values: T::decode(pixels),
             peaks: OnceLock::new(),
+            names: OnceLock::new(),
             revision: next_revision(),
             encoded: Some(Arc::from(bytes)),
         }));
@@ -1153,6 +1230,7 @@ impl<T: Value> GroundGrid<T> {
             rows,
             values,
             peaks: OnceLock::new(),
+            names: OnceLock::new(),
             revision: next_revision(),
             encoded: None,
         })
@@ -1307,6 +1385,7 @@ impl<T: Value> GroundGrid<T> {
                     rows,
                     values: vec![blank; (columns * rows) as usize],
                     peaks: OnceLock::new(),
+                    names: OnceLock::new(),
                     revision: next_revision(),
                     encoded: None,
                 })
@@ -1314,6 +1393,7 @@ impl<T: Value> GroundGrid<T> {
             let tile = Arc::make_mut(tile);
             tile.encoded = None;
             tile.revision = next_revision();
+            tile.names = OnceLock::new();
             tile.values[local] = value;
             if let Some(peaks) = tile.peaks.get_mut() {
                 let local = local as u32;
@@ -1445,6 +1525,7 @@ impl TileGrid {
             rows,
             values: T::decode(pixels),
             peaks: OnceLock::new(),
+            names: OnceLock::new(),
             revision: next_revision(),
             encoded: Some(Arc::from(bytes)),
         })

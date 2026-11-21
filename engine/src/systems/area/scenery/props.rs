@@ -35,10 +35,10 @@ pub fn extent_of(info: &GltfInfo, scale: f32) -> SiteExtent {
     }
 }
 
-/// Stands, under `root`, what the vfx a placed prop plays of its own accord play on: the prop's
-/// place and size, and each point of its model its vfx name, where the model has it. A prop
-/// that sends ripples over the water sends them from there.
-pub(super) fn stand_playing(
+/// Stands, under `root`, what a placed prop acts through of its own accord: the prop's place
+/// and size and each point of its model its vfx name, where the model has it, for its vfx to
+/// play on, and where it sends ripples over the water, the spot they spread from.
+pub(super) fn stand_acting(
     world: &mut World,
     content: &Content,
     heights: &Heightfield,

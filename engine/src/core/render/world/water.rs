@@ -16,6 +16,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::Shader;
 
+use super::SIGHT_LENGTHS;
 use crate::core::units::Meters;
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
 
@@ -111,10 +112,6 @@ pub struct WaterLook {
     pub murk: f32,
 }
 
-/// How many lengths of a water's fading leave a twentieth of a thing's contrast, which is where
-/// it stops showing: the measure visibility is told by, in water as in air.
-pub const SEEN_LENGTHS: f32 = 3.0;
-
 /// The least a colour of a water's depths counts as, of its strongest: a colour the depths hold
 /// none of still crosses a little water.
 const LEAST_KEPT: f32 = 1.0 / 64.0;
@@ -126,20 +123,15 @@ impl WaterLook {
     /// others are taken faster the less the depths hold of them.
     pub fn fading(&self) -> Vec3 {
         let depths = Vec3::new(self.depths.red, self.depths.green, self.depths.blue);
-        let slowest = SEEN_LENGTHS / (2.0 * self.clarity.0.max(f32::EPSILON));
+        let slowest = SIGHT_LENGTHS / (2.0 * self.clarity.0.max(f32::EPSILON));
         let strongest = depths.max_element().max(f32::EPSILON);
         let kept = (depths / strongest).max(Vec3::splat(LEAST_KEPT));
         Vec3::splat(slowest) / Vec3::new(kept.x.sqrt(), kept.y.sqrt(), kept.z.sqrt())
     }
-
-    /// What is left of a white light after `path` metres of the water, each colour.
-    pub fn left_after(&self, path: Meters) -> Vec3 {
-        (-self.fading() * path.0.max(0.0)).exp()
-    }
 }
 
-/// Each water's fading and murk in the first row, and the colour of its depths with its clarity
-/// in the second: a clear, colourless water where there is none.
+/// Each water's fading and murk in the first row, and the colour of its depths in the second: a
+/// clear, colourless water where there is none.
 pub fn looks_image(waters: &[WaterLook]) -> Image {
     let none = [WaterLook {
         clarity: Meters(f32::MAX),
@@ -151,14 +143,9 @@ pub fn looks_image(waters: &[WaterLook]) -> Image {
         let fading = water.fading();
         [fading.x, fading.y, fading.z, water.murk]
     });
-    let depths = waters.iter().map(|water| {
-        [
-            water.depths.red,
-            water.depths.green,
-            water.depths.blue,
-            water.clarity.0,
-        ]
-    });
+    let depths = waters
+        .iter()
+        .map(|water| [water.depths.red, water.depths.green, water.depths.blue, 1.0]);
     Image::new(
         Extent3d {
             width: waters.len() as u32,

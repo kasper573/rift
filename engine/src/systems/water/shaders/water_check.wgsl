@@ -10,7 +10,6 @@ struct VertexOutput {
 @group(3) @binding(101) var<uniform> params: Params;
 
 struct Water {
-    clarity: f32,
     depths: vec3<f32>,
     murk: f32,
 }
@@ -54,7 +53,7 @@ fn bends() -> f32 {
 }
 
 fn water() -> Water {
-    return Water(6.0, vec3<f32>(0.0, 0.1, 0.2), 0.25);
+    return Water(vec3<f32>(0.0, 0.1, 0.2), 0.25);
 }
 
 fn silt() -> vec4<f32> {

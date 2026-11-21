@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::{ContentProblem, Loading, RowCheck, serial};
 use crate::core::ground::{Heightfield, WaterSurface};
 use crate::core::math::{Pos, Rect, Rgb};
-use crate::core::render::world::haze::{HazeBox, SIGHT_LENGTHS};
+use crate::core::render::world::SIGHT_LENGTHS;
+use crate::core::render::world::haze::HazeBox;
 use crate::core::units::Meters;
 use crate::systems::GameSettings;
 use crate::systems::area::sky::SkyCondition;
@@ -34,7 +35,7 @@ pub struct FogBank {
     /// share of the way.
     pub moist_closer: f32,
     pub rain_closer: f32,
-    pub shafts: Shafts,
+    pub shafts: FogShafts,
     /// The light the fog sheds under a dark sky, which has none to give it. Unused under the
     /// air, whose sky lights the fog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -48,12 +49,12 @@ pub struct FogBank {
 /// in saturated: dry air thin, so the shafts show only where the light breaks through.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Shafts {
+pub struct FogShafts {
     pub dry: f32,
     pub moist: f32,
 }
 
-impl Shafts {
+impl FogShafts {
     /// How thick the shafts' air stands in air as moist as `humidity`.
     pub fn air(&self, humidity: f32) -> f32 {
         self.dry + (self.moist - self.dry) * humidity.clamp(0.0, 1.0)
@@ -78,7 +79,7 @@ impl FogBank {
             edge: Meters(20.0),
             moist_closer: 0.5,
             rain_closer: 0.2,
-            shafts: Shafts {
+            shafts: FogShafts {
                 dry: 0.006,
                 moist: 0.04,
             },
@@ -99,7 +100,7 @@ impl FogBank {
                     low.x + size.width * column as f32 / FLOOR_STEPS as f32,
                     low.y + size.height * row as f32 / FLOOR_STEPS as f32,
                 );
-                ground.height_at(at).0 + water.depth_at(ground, at).0.max(0.0)
+                ground.height_at(at).0 + water.depth_at(ground, at).0
             })
             .fold(f32::INFINITY, f32::min);
         LaidFog {

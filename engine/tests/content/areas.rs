@@ -427,13 +427,13 @@ fn an_areas_heights_paint_waters_and_rain_write_back_as_they_were_read() {
         })
         .part("area", "hill", "height/0_0.png", tile(&hill()))
         .part("area", "hill", "paint/0_0.png", tile_paint(&paint))
-        .part("area", "hill", "waters/0_0.png", tile_paint(&waters))
+        .part("area", "hill", "water_map/0_0.png", tile_paint(&waters))
         .part("area", "hill", "height_overview.png", overview(&hill()))
         .part("area", "hill", "paint_overview.png", overview_paint(&paint))
         .part(
             "area",
             "hill",
-            "waters_overview.png",
+            "water_map_overview.png",
             overview_paint(&waters),
         )
         .part("area", "hill", "rain.png", rain.encode());
@@ -457,11 +457,11 @@ fn an_areas_heights_paint_waters_and_rain_write_back_as_they_were_read() {
         pond_overview
     );
     assert_eq!(
-        std::fs::read(hill_area.join("waters/0_0.png")).expect("the water map"),
+        std::fs::read(hill_area.join("water_map/0_0.png")).expect("the water map"),
         tile_paint(&waters)
     );
     assert_eq!(
-        std::fs::read(hill_area.join("waters_overview.png")).expect("the water map's overview"),
+        std::fs::read(hill_area.join("water_map_overview.png")).expect("the water map's overview"),
         overview_paint(&waters)
     );
     assert_eq!(
@@ -491,7 +491,7 @@ fn an_areas_heights_paint_waters_and_rain_write_back_as_they_were_read() {
     );
     assert!(
         !start.join("water").exists()
-            && !start.join("waters").exists()
+            && !start.join("water_map").exists()
             && !start.join("rain.png").exists(),
         "a dry area keeps no water tiles or water map, and one where rain falls alike no rain map"
     );
@@ -776,11 +776,11 @@ fn a_water_is_drawn_by_a_water_stage_shader_and_an_area_lists_every_water_its_ma
         (
             "the water map names a missing water",
             flooded()
-                .part("area", "hill", "waters/0_0.png", tile_paint(&second))
+                .part("area", "hill", "water_map/0_0.png", tile_paint(&second))
                 .part(
                     "area",
                     "hill",
-                    "waters_overview.png",
+                    "water_map_overview.png",
                     overview_paint(&second),
                 ),
         ),

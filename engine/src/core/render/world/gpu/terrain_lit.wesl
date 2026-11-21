@@ -28,8 +28,7 @@ import engine::core::render::world::shade::{caster_way, lighting};
 @group(3) @binding(105) var canopy: texture_2d_array<f32>;
 @group(3) @binding(106) var canopy_extent: texture_2d_array<f32>;
 @group(3) @binding(107) var canopy_sampler: sampler;
-// For each of the area's waters how fast it fades each colour in the first row, and how deep a
-// white bed shows through it in the second row's a.
+// For each of the area's waters how fast it fades each colour, in the first row.
 @group(3) @binding(108) var waters: texture_2d<f32>;
 
 // The deepest ground under the water's level that may yet lie behind the waterline, where the

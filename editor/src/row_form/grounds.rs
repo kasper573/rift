@@ -6,11 +6,10 @@ use engine::core::content::{ContentFile, NamedContent};
 use engine::core::math::Pos;
 use engine::core::units::{HourOfDay, Meters, Radians};
 use engine::systems::area::{
-    self, AreaDef, PICTURED_BED, PICTURED_REACH, PICTURED_SHORE, PICTURED_UNDER, Pictured,
-    TerrainDef, Weather,
+    self, AreaDef, PICTURED_BED, PICTURED_CLARITIES, PICTURED_REACH, PICTURED_SHORE,
+    PICTURED_UNDER, Pictured, TerrainDef, Weather,
 };
 use engine::systems::water::WaterDef;
-use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::egui::{self, Color32, Ui, Vec2};
 use ui::{chip, form, sheet, theme};
@@ -20,12 +19,10 @@ use crate::forms::FormCx;
 use crate::picker;
 use crate::tabs::file_title;
 use crate::views::area::camera::{LENS, OrbitCamera, PITCH};
-use crate::views::stage::{self as view_stage, StageLight, StageState};
+use crate::views::stage::{self as view_stage, StageLight, StageState, Turntable};
 
 /// The light a ground's preview is drawn under.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, VariantArray, AsRefStr,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum PreviewLight {
     #[default]
@@ -77,24 +74,15 @@ pub(super) fn show_water(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let view_key = format!("preview:{}/{key}", WaterDef::TABLE);
     let across = PICTURED_SHORE.0 + PICTURED_REACH.0;
     let down = (beds.len() as f32 * PICTURED_BED.0).max(engine::core::ground::MIN_SIDE as f32);
-    let mut state = editor
-        .views
-        .preview
-        .stages
-        .remove(&view_key)
-        .unwrap_or_else(|| {
-            StageState::looking(looking_down_on(Pos::new(across / 2.0, down / 2.0), across))
-        });
     let width = ui.available_width();
-    let turntable = view_stage::turntable(
+    let turntable = turntable(
         editor,
         ui,
-        &view_key,
+        view_key,
         Vec2::new(width, (width * 0.7).min(420.0)),
-        &mut state,
+        (Pos::new(across / 2.0, down / 2.0), across),
         Pictured::Water(water),
     );
-    editor.views.preview.stages.insert(view_key, state);
     if let Some(turntable) = turntable {
         let painter = ui.painter_at(turntable.rect);
         let font = egui::FontId::proportional(11.5);
@@ -108,11 +96,12 @@ pub(super) fn show_water(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 Color32::WHITE,
             );
         }
+        let deepest = Meters(clarity.0 * PICTURED_CLARITIES);
         let marks = [
             (Meters(0.0), "shore".to_owned()),
             (Meters(clarity.0 / 4.0), metres_deep(clarity.0 / 4.0)),
             (clarity, format!("{}: clarity", metres_deep(clarity.0))),
-            (Meters(clarity.0 * 2.0), metres_deep(clarity.0 * 2.0)),
+            (deepest, metres_deep(deepest.0)),
         ];
         for (depth, said) in marks {
             let out = area::pictured_out(clarity, depth);
@@ -134,9 +123,7 @@ pub(super) fn show_water(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 Color32::WHITE,
             );
         }
-        let fair = turntable.canvas.area().climate.first();
-        let lit = editor.views.preview.light.lit(fair);
-        turntable.stand_lit(editor, ui, Vec::new(), lit);
+        stand(editor, ui, turntable);
     }
     sheet::section(ui, "laid in");
     let laid: Vec<String> = area::laying(&content, water)
@@ -173,69 +160,94 @@ pub(super) fn show_terrain(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     lights(editor, ui);
+    patch(
+        editor,
+        ui,
+        (key, "dry"),
+        "dry",
+        Pictured::Terrain(terrain, None),
+    );
     let mut under = editor.views.preview.under.clone().unwrap_or_default();
-    let water = content.by_path::<WaterDef>(&under);
-    let patches = [
-        ("dry".to_owned(), "dry", Pictured::Terrain(terrain, None)),
-        (
-            format!("under {} m of water", PICTURED_UNDER.0),
-            "wet",
-            Pictured::Terrain(terrain, water),
-        ),
-    ];
-    let width = ui.available_width();
-    for (said, which, pictured) in patches {
-        if which == "wet" {
-            let mut actions = Vec::new();
-            {
-                let Editor {
-                    project,
-                    form,
-                    shapes,
-                    ..
-                } = editor;
-                let project = project.as_ref().expect("a project");
-                let mut cx = FormCx::schemaless(project, shapes, form, &mut actions)
-                    .editing(TerrainDef::TABLE, Some(key));
-                form::kv(ui, "under", |ui| {
-                    if picker::row(ui, &mut cx, WaterDef::TABLE, &mut under, "/preview/under") {
-                        editor.views.preview.under = Some(under.clone());
-                    }
-                });
+    let mut actions = Vec::new();
+    {
+        let Editor {
+            project,
+            form,
+            shapes,
+            ..
+        } = editor;
+        let project = project.as_ref().expect("a project");
+        let mut cx = FormCx::schemaless(project, shapes, form, &mut actions)
+            .editing(TerrainDef::TABLE, Some(key));
+        form::kv(ui, "under", |ui| {
+            if picker::row(ui, &mut cx, WaterDef::TABLE, &mut under, "/preview/under") {
+                editor.views.preview.under = Some(under.clone());
             }
-            for action in actions {
-                crate::row_form::act(editor, action, TerrainDef::TABLE, key);
-            }
-            if water.is_none() {
-                form::hint(ui, "Pick a water to see this ground through it.");
-                continue;
-            }
-        }
-        sheet::section(ui, &said);
-        let view_key = format!("preview:{}/{key}/{which}", TerrainDef::TABLE);
-        let mut state = editor
-            .views
-            .preview
-            .stages
-            .remove(&view_key)
-            .unwrap_or_else(|| {
-                StageState::looking(looking_down_on(view_stage::center(), PATCH_SEEN))
-            });
-        let turntable = view_stage::turntable(
-            editor,
-            ui,
-            &view_key,
-            Vec2::new(width, (width * 0.6).min(280.0)),
-            &mut state,
-            pictured,
-        );
-        editor.views.preview.stages.insert(view_key, state);
-        if let Some(turntable) = turntable {
-            let fair = turntable.canvas.area().climate.first();
-            let lit = editor.views.preview.light.lit(fair);
-            turntable.stand_lit(editor, ui, Vec::new(), lit);
-        }
+        });
     }
+    for action in actions {
+        crate::row_form::act(editor, action, TerrainDef::TABLE, key);
+    }
+    let Some(water) = content.by_path::<WaterDef>(&under) else {
+        form::hint(ui, "Pick a water to see this ground through it.");
+        return;
+    };
+    let said = format!("under {} m of water", PICTURED_UNDER.0);
+    let pictured = Pictured::Terrain(terrain, Some(water));
+    patch(editor, ui, (key, "wet"), &said, pictured);
+}
+
+/// A patch of a terrain under the heading `said`, on the stage the terrain `key` keeps for
+/// `which` of its patches.
+fn patch(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    (key, which): (&str, &str),
+    said: &str,
+    pictured: Pictured,
+) {
+    sheet::section(ui, said);
+    let view_key = format!("preview:{}/{key}/{which}", TerrainDef::TABLE);
+    let width = ui.available_width();
+    let turntable = turntable(
+        editor,
+        ui,
+        view_key,
+        Vec2::new(width, (width * 0.6).min(280.0)),
+        (view_stage::center(), PATCH_SEEN),
+        pictured,
+    );
+    if let Some(turntable) = turntable {
+        stand(editor, ui, turntable);
+    }
+}
+
+/// The stage `view_key` keeps, `size` large, drawing `pictured`: first looked down on at `at`
+/// from far enough to take in `across` of it.
+fn turntable(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    view_key: String,
+    size: Vec2,
+    (at, across): (Pos<Meters>, f32),
+    pictured: Pictured,
+) -> Option<Turntable> {
+    let mut state = editor
+        .views
+        .preview
+        .stages
+        .remove(&view_key)
+        .unwrap_or_else(|| StageState::looking(looking_down_on(at, across)));
+    let turntable = view_stage::turntable(editor, ui, &view_key, size, &mut state, pictured);
+    editor.views.preview.stages.insert(view_key, state);
+    turntable
+}
+
+/// Stands the ground of `turntable` bare, in the light the previews are set to on a fair day.
+fn stand(editor: &mut Editor, ui: &Ui, turntable: Turntable) {
+    let fair = turntable.canvas.area().climate.first();
+    let lit = editor.views.preview.light.lit(fair);
+    turntable.stand(editor, ui, Vec::new(), lit);
 }
 
 /// How much of a terrain's patch its preview takes in, across.

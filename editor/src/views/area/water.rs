@@ -6,14 +6,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use engine::core::ground::{
-    GroundSize, HeightRange, Heightfield, SAMPLES_PER_METER, TILE_PIXELS, TileAt, WaterSurface,
-};
+use engine::core::ground::{Heightfield, SAMPLES_PER_METER, TileAt};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::water::WaterId;
-use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 
 use super::brush::{Stroke, StrokeKind, next_revision, water_index};
@@ -22,9 +19,7 @@ use super::brush::{Stroke, StrokeKind, next_revision, water_index};
 pub const OVER_THE_GROUND: Meters = Meters(1.0);
 
 /// What the Water tool does where it is used.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, VariantArray, AsRefStr,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum WaterMode {
     /// Fills the basin under the pointer up to the level.
@@ -154,21 +149,14 @@ impl Flood {
         let mut stroke = Stroke::begin(area, at, what).ok_or(FloodRefused::NoRoomForAWater)?;
         let index = water_index(&mut stroke.waters, water).ok_or(FloodRefused::NoRoomForAWater)?;
         let (columns, rows) = stroke.heights.samples();
-        let first = Heightfield::sample_pos(0, 0);
-        let nearest = |along: f32, samples: u32| {
-            ((along * SAMPLES_PER_METER as f32).round().max(0.0) as u32).min(samples - 1)
-        };
-        let from = (
-            nearest(at.x - first.x, columns),
-            nearest(at.y - first.y, rows),
-        );
-        let stroke_range = stroke.water.range();
+        let from = stroke.heights.sample_near(at);
+        let held = stroke.water.range().held(level);
         let mut flood = Flood {
             stroke,
             water,
             from: at,
             level,
-            held: held_level(stroke_range, level),
+            held,
             flooded: 0.0,
             deepest: Meters(0.0),
             open: OpenSides::default(),
@@ -199,14 +187,7 @@ impl Flood {
 
     /// Whether the flood has laid its water over the ground at `at`.
     pub fn floods(&self, at: Pos<Meters>) -> bool {
-        let (columns, rows) = self.stroke.heights.samples();
-        let first = Heightfield::sample_pos(0, 0);
-        let column = ((at.x - first.x) * SAMPLES_PER_METER as f32).round();
-        let row = ((at.y - first.y) * SAMPLES_PER_METER as f32).round();
-        if column < 0.0 || row < 0.0 || column as u32 >= columns || row as u32 >= rows {
-            return false;
-        }
-        let sample = (column as u32, row as u32);
+        let sample = self.stroke.heights.sample_near(at);
         self.saw(sample)
             && self.stroke.heights.sample(sample.0, sample.1) < self.held
             && self.stroke.water.sample(sample.0, sample.1) == self.held
@@ -335,25 +316,7 @@ impl Flood {
     }
 }
 
-/// `level` as a water's surface holds it over ground of `range`: the nearest step of the range.
-fn held_level(range: HeightRange, level: Meters) -> Meters {
-    let side = engine::core::ground::MIN_SIDE;
-    let mut surface = WaterSurface::dry(
-        GroundSize {
-            width: side,
-            height: side,
-        },
-        range,
-    );
-    surface.set_sample(0, 0, level);
-    surface.sample(0, 0)
-}
-
 /// The tile of `heights` whose turn floods sample `(column, row)`.
 fn tile_holding(heights: &Heightfield, (column, row): (u32, u32)) -> TileAt {
-    let (across, down) = heights.size().tiles();
-    TileAt {
-        column: (column / TILE_PIXELS).min(across.saturating_sub(1)),
-        row: (row / TILE_PIXELS).min(down.saturating_sub(1)),
-    }
+    heights.size().tile_at(Heightfield::sample_pos(column, row))
 }

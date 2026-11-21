@@ -241,7 +241,7 @@ fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 def.max_occupants,
             ),
         );
-        turntable.stand(editor, ui, Vec::new());
+        turntable.stand(editor, ui, Vec::new(), view_stage::StageLight::default());
     }
     sheet::section(ui, "a full one");
     for line in resource_summary(&content, def) {
@@ -590,7 +590,12 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
     }
     let held = (!pose.playing).then_some(Seconds(0.0));
     let standing = view_stage::standing(body, clip, held, Vec::new(), props);
-    turntable.stand(editor, ui, vec![standing]);
+    turntable.stand(
+        editor,
+        ui,
+        vec![standing],
+        view_stage::StageLight::default(),
+    );
 }
 
 /// How the row's actor stands on the stage: its appearance, what it wears in each slot and shows

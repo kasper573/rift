@@ -13,6 +13,13 @@ const SIZE: GroundSize = GroundSize {
     width: 16,
     height: 16,
 };
+/// How near an even fall a river read from stepped levels runs along its way, as a share of the
+/// even fall, and how much of the even fall it may run across its banks.
+const EVENLY: std::ops::Range<f32> = 0.6..1.4;
+const ACROSS: f32 = 0.2;
+/// How many times as long as the straight way a way stepped from point to point, straight on
+/// and cornerwise, is at its longest.
+const STEPPED: f32 = 1.083;
 const DARK: LinearRgba = LinearRgba::rgb(0.1, 0.4, 0.1);
 const LIGHT: LinearRgba = LinearRgba::rgb(0.4, 0.8, 0.3);
 
@@ -58,11 +65,11 @@ fn a_river_whose_level_drops_in_steps_runs_evenly_downstream_round_its_bends() {
     for (column, row, way) in [(80, 45, Vec2::X), (155, 120, Vec2::Y)] {
         let fall = falls.at(column, row);
         assert!(
-            fall.dot(way) > even * 0.6 && fall.dot(way) < even * 1.4,
+            EVENLY.contains(&(fall.dot(way) / even)),
             "at {column}, {row} the river falls {fall} and not {even} toward {way}"
         );
         assert!(
-            fall.perp_dot(way).abs() < even * 0.2,
+            fall.perp_dot(way).abs() < even * ACROSS,
             "at {column}, {row} the river falls {fall} across its banks"
         );
     }
@@ -112,7 +119,7 @@ fn water_tells_how_far_it_lies_from_the_waterline_where_the_ground_comes_through
         let straight = x.hypot(y) * spacing.0;
         let (nearest, farthest) = (
             straight - spacing.0 * std::f32::consts::FRAC_1_SQRT_2,
-            (straight - spacing.0 * 0.5) * 1.083,
+            (straight - spacing.0 * 0.5) * STEPPED,
         );
         assert!(
             distance.0 >= nearest - 1e-4 && distance.0 <= farthest + 1e-4,

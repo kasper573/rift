@@ -241,7 +241,7 @@ fn light_cards(world: &mut World, area: &super::Area, daylight: Daylight) {
         )
         .landed(&air, Meters(0.0), &look.sky);
         SkyLampLight {
-            shining: landed.caster(landed.sun_stronger()).0,
+            shining: landed.stronger(),
             noon: noon.azimuth,
         }
     });

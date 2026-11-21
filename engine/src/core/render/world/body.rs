@@ -175,7 +175,7 @@ pub fn dress(world: &mut World, entity: Entity, figure: &Figure) {
             ))
             .id();
         joints.insert(joint.name.clone(), placed[node]);
-        tails.insert(placed[node], tail(tree, node));
+        tails.extend(tail(tree, node).map(|tail| (placed[node], tail)));
     }
     let skins = figure
         .skins
@@ -353,16 +353,16 @@ fn bind(
     }
 }
 
-/// Where the bone of the rig's `node` ends in its own space: at its one child joint, or, where it
-/// branches or ends, at the joint itself.
-fn tail(tree: &NodeTree, node: usize) -> Vec3 {
+/// Where the bone of the rig's `node` ends in its own space: at its one child joint, where that
+/// lies off the joint itself. A joint that branches or ends has no bone.
+fn tail(tree: &NodeTree, node: usize) -> Option<Vec3> {
     let mut children = tree
         .nodes
         .iter()
         .filter(|child| child.parent == Some(node) && !child.mesh);
     match (children.next(), children.next()) {
-        (Some(child), None) => child.rest.translation,
-        _ => Vec3::ZERO,
+        (Some(child), None) => Some(child.rest.translation).filter(|tail| *tail != Vec3::ZERO),
+        _ => None,
     }
 }
 
@@ -401,12 +401,8 @@ fn limbs_of(
         .filter(|(_, flesh)| !flesh.is_empty())
         .flat_map(|(slot, flesh)| {
             let joint = joints[slot];
-            match tails
-                .get(&joint)
-                .copied()
-                .filter(|tail| *tail != Vec3::ZERO)
-            {
-                Some(tail) => vec![on_bone(joint, tail, &flesh)],
+            match tails.get(&joint) {
+                Some(&tail) => vec![on_bone(joint, tail, &flesh)],
                 None => along_flesh(joint, &flesh),
             }
         })
@@ -485,8 +481,12 @@ fn longest_way(flesh: &[Vec3], middle: Vec3) -> Vec3 {
         .into_iter()
         .max_by(|a, b| a.dot(spread * *a).total_cmp(&b.dot(spread * *b)))
         .unwrap_or(Vec3::X);
-    (0..16).fold(widest, |way, _| (spread * way).normalize_or(way))
+    (0..WAY_STEPS).fold(widest, |way, _| (spread * way).normalize_or(way))
 }
+
+/// How many times a way is turned toward the longest of its flesh: each turn takes it most of
+/// what is left, so this many leave it within what a mesh's vertices can tell.
+const WAY_STEPS: usize = 16;
 
 /// How far round its way the flesh `laid` along it lies between `from` and `to`, each point told
 /// by how far along the way and how far from it: the mean of its outer half, so what a hull
@@ -504,11 +504,6 @@ fn girth_between(laid: &[(f32, f32)], from: f32, to: f32) -> Option<f32> {
 
 /// How far `at` lies from the bone running from its joint to `tail`, all in the joint's space.
 fn from_bone(at: Vec3, tail: Vec3) -> f32 {
-    let along = tail.length_squared();
-    let share = if along > 0.0 {
-        (at.dot(tail) / along).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
+    let share = (at.dot(tail) / tail.length_squared()).clamp(0.0, 1.0);
     at.distance(tail * share)
 }

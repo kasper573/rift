@@ -53,9 +53,9 @@ struct Ripple {
 // The ripples at `at`, a ground point. Nothing where no ripple travels, and past the ground the
 // ripples are followed over, round the camera's subject.
 fn ripple(at: vec2<f32>) -> Ripple {
-    let window = weather_texel(RIPPLE_WINDOWu);
-    let texel = 1.0 / window.w;
-    let uv = (at - window.xy) / window.z * texel;
+    let corner = weather_texel(RIPPLE_WINDOWu).xy;
+    let texel = 1.0 / RIPPLE_SIDE;
+    let uv = (at - corner) / RIPPLE_CELL * texel;
     let inside = min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y));
     if inside <= 0.0 {
         return Ripple(0.0, vec2<f32>(0.0), 0.0, 0.0);
@@ -68,7 +68,7 @@ fn ripple(at: vec2<f32>) -> Ripple {
     let rim = smoothstep(0.0, RIPPLE_RIM, inside);
     return Ripple(
         here.r * rim,
-        vec2<f32>(east - west, south - north) / (2.0 * window.z) * rim,
+        vec2<f32>(east - west, south - north) / (2.0 * RIPPLE_CELL) * rim,
         (here.r - 0.25 * (east + west + south + north)) * rim,
         here.g * rim,
     );

@@ -3,7 +3,7 @@
 //! upward, each pixel fogged by how much of it the way from the eye to what it shows crosses,
 //! and lit by the sky it lies under.
 
-use super::sky_picture;
+use super::{SIGHT_LENGTHS, sky_picture};
 use crate::core::units::Meters;
 use bevy::core_pipeline::core_3d::main_transparent_pass_3d;
 use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
@@ -76,10 +76,6 @@ pub struct HazeBox {
     pub glow: Vec3,
 }
 
-/// How many lengths of fog leave a twentieth of a thing's contrast: what counts as the farthest
-/// it is seen, as weather services measure visibility.
-pub const SIGHT_LENGTHS: f32 = 3.0;
-
 impl Haze {
     /// Fog lying in `boxes`, the first [`MAX_HAZE_BOXES`] of them taken, lit by `lights` and,
     /// when `under_sky`, by the sky's picture.
@@ -144,7 +140,7 @@ impl HazeBox {
     }
 
     /// How thick the bank's fog stands at `at`: lengths of it to the metre.
-    pub fn thick_at(&self, at: Vec3) -> f32 {
+    fn thick_at(&self, at: Vec3) -> f32 {
         let up = (at.y - self.floor).max(0.0) / self.fall;
         self.thickest * (-up).exp() * self.sides_at(at.xz())
     }

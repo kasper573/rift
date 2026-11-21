@@ -66,6 +66,9 @@ fn main() {
     };
     let files = SyncedAssetReader::default();
     let mut app = App::new();
+    if launch.probe.is_some() || launch.frame_log.is_some() {
+        engine::systems::probe::time_systems(&mut app);
+    }
     app.insert_resource(files.clone())
         .insert_resource(Rng::from_entropy());
     AssetApp::register_asset_source(&mut app, AssetSourceId::Default, files.source())

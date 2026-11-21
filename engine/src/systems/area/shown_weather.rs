@@ -19,9 +19,7 @@ use crate::core::render::{CameraRig, GroundHeights, ground_pos};
 use crate::core::vfx::board::{BOARD_WIDTH, ShaderBoardPlugin, ShaderBoardWrites};
 use crate::systems::mount::render::Steed;
 use crate::systems::movement::Position;
-use crate::systems::water::ripples::{
-    RIPPLE_CELL, RIPPLE_SIDE, RippleField, RippleSource, RipplesPlugin,
-};
+use crate::systems::water::ripples::{RippleField, RippleSource, RipplesPlugin};
 
 /// Lays the weather the world's shaders read on the board they read it from, and the materials
 /// the sky and the rain are drawn with.
@@ -162,9 +160,10 @@ pub(crate) fn tread(sources: TreadSources, mut treading: ResMut<Treading>) {
                 limbs,
                 water: afloat.map(|afloat| afloat.level.0).or_else(|| {
                     let ground = ground.as_ref()?;
-                    let at = ground_pos(stands);
-                    (ground.water.depth_at(&ground.heights, at).0 > 0.0)
-                        .then(|| ground.water.height_at(at).0)
+                    let surface = ground
+                        .water
+                        .surface_over(&ground.heights, ground_pos(stands));
+                    surface.map(|surface| surface.0)
                 }),
                 put: positions
                     .get(steeds.get(entity).map_or(entity, |steed| steed.rider))
@@ -426,10 +425,7 @@ impl WeatherBoard {
         texels[5].z = shelter.lean.x;
         texels[5].w = shelter.lean.y;
         texels[6] = self.gusts.extend(0.0).extend(0.0);
-        texels[RIPPLE_WINDOW] = self
-            .rippling
-            .extend(RIPPLE_CELL.0)
-            .extend(RIPPLE_SIDE as f32);
+        texels[RIPPLE_WINDOW] = self.rippling.extend(0.0).extend(0.0);
         if shelter.tops.len() == SHELTER_SIDE * SHELTER_SIDE {
             texels[4] = shelter
                 .corner

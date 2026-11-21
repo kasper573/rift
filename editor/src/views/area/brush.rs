@@ -89,9 +89,7 @@ pub enum SculptMode {
 }
 
 /// Which ground a paint stroke may lay its terrain on, told by the water over it.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, VariantArray, AsRefStr,
-)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr)]
 pub enum PaintMask {
     #[default]
     #[strum(serialize = "anywhere")]
@@ -210,9 +208,7 @@ impl Stroke {
         }
         self.revision = next_revision();
     }
-}
 
-impl Stroke {
     /// Reads the ground under the brush at `at` from its files, wherever it hasn't been: until
     /// then a tile is known by its overview alone, and a stroke would shape what isn't there.
     fn read_under(&self, brush: &Brush, at: Pos<Meters>) {

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use engine::core::units::{Meters, MetersPerSec, Seconds};
 use engine::systems::area::shown_weather::TreadingLimb;
-use engine::systems::water::ripples::{RippleField, Ripples, Wading};
+use engine::systems::water::ripples::{LimbsInWater, RippleField, Ripples};
 
 const RIPPLES: Ripples = Ripples {
     speed: MetersPerSec(Meters(1.0)),
@@ -40,8 +40,8 @@ fn leg(at: Vec2) -> TreadingLimb {
     }
 }
 
-fn wading(limbs: &[TreadingLimb]) -> Option<Wading<'_>> {
-    Some(Wading {
+fn wading(limbs: &[TreadingLimb]) -> Option<LimbsInWater<'_>> {
+    Some(LimbsInWater {
         limbs,
         level: LEVEL,
     })

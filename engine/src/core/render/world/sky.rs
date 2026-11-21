@@ -44,6 +44,9 @@ const DUST_ONWARD: f32 = 0.8;
 const OZONE_SWALLOWS: Vec3 = Vec3::new(0.650e-6, 1.881e-6, 0.085e-6);
 const OZONE_HIGH: f32 = 25_000.0;
 const OZONE_DEEP: f32 = 30_000.0;
+/// How many steps the GPU tells the air's medium apart by, both up through it and round the
+/// way its light is thrown.
+const MEDIUM_STEPS: u32 = 256;
 /// How many steps the air's moisture is told apart by: the GPU makes the air's medium anew
 /// whenever it changes, so it follows the weather in steps, each too small to see.
 const MOISTURE_STEPS: f32 = 16.0;
@@ -149,7 +152,6 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky, farthest: Meters) {
     if !camera.contains::<AtmosphereEnvironmentMapLight>() {
         camera.insert((
             AtmosphereSettings {
-                aerial_view_lut_max_distance: reach,
                 aerial_view_lut_samples: AIR_SAMPLES,
                 ..default()
             },
@@ -365,6 +367,11 @@ impl SkyLights {
             .is_none_or(|moon| self.sun.illuminance >= moon.illuminance)
     }
 
+    /// The stronger of these lights.
+    pub fn stronger(&self) -> SunLight {
+        self.caster(self.sun_stronger()).0
+    }
+
     /// The sun when `sun_casts`, or else the moon, and the other of the two.
     pub fn caster(&self, sun_casts: bool) -> (SunLight, Option<SunLight>) {
         match (sun_casts, self.moon) {
@@ -405,6 +412,7 @@ impl SkyAir {
         let elevation = light.elevation.radians().0;
         let across = disc.radians().0.max(f32::EPSILON);
         let showing = ((elevation - horizon) / across + 0.5).clamp(0.0, 1.0);
+        // A light the ground hides is coloured as one just clear of the horizon.
         let through = self.through(from, elevation.max(horizon + 1e-4));
         let kept = through.dot(LUMINANCE);
         let color = light.color.to_linear().to_vec3() * through / kept.max(f32::EPSILON);
@@ -490,7 +498,7 @@ pub fn moisten(world: &mut World, atmosphere: Entity, sky: Sky, scattering: f32,
 /// The low air the sun's light shafts show in, as thick as `density`, standing `height` deep over
 /// the ground `ground` high, over `within`. The shafts' air lets the sun's light in but no light of
 /// the sky's, so a long way through it would only darken what lies behind: it stands only round
-/// the eye, where the haze is still clear.
+/// the eye.
 pub fn air(
     within: Rect<Meters>,
     ground: Meters,
@@ -703,8 +711,7 @@ fn medium(sky: Sky, scattering: f32, look: &SkyLook) -> ScatteringMedium {
             },
         ],
     };
-    let earth = ScatteringMedium::default();
-    ScatteringMedium::new(earth.falloff_resolution, earth.phase_resolution, terms)
+    ScatteringMedium::new(MEDIUM_STEPS, MEDIUM_STEPS, terms)
 }
 
 /// How many times dry air's dust the air of an atmosphere scatters the light.

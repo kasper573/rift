@@ -254,20 +254,9 @@ pub fn turntable(
 }
 
 impl Turntable {
-    /// Asks for the picture with `cast` standing on it, in the light it is authored in.
-    pub fn stand(self, editor: &mut Editor, ui: &Ui, cast: Vec<StandingActor>) {
-        self.stand_lit(editor, ui, cast, StageLight::default());
-    }
-
     /// Asks for the picture with `cast` standing on it, lit as `lit` says.
-    pub fn stand_lit(
-        self,
-        editor: &mut Editor,
-        ui: &Ui,
-        cast: Vec<StandingActor>,
-        lit: StageLight,
-    ) {
-        request_shot(
+    pub fn stand(self, editor: &mut Editor, ui: &Ui, cast: Vec<StandingActor>, lit: StageLight) {
+        request(
             editor,
             ui,
             &self.view_key,
@@ -384,33 +373,8 @@ pub(crate) fn show_picture(
     }
 }
 
-/// Asks the viewport `view_key` to draw `picture` with `cast` on it from `camera` at `rect`'s
-/// size next frame, in the light it is authored in.
-pub fn request(
-    editor: &mut Editor,
-    ui: &Ui,
-    view_key: &str,
-    rect: Rect,
-    camera: OrbitCamera,
-    picture: Arc<Picture>,
-    cast: Vec<StandingActor>,
-) {
-    request_shot(
-        editor,
-        ui,
-        view_key,
-        rect,
-        StageShot {
-            camera,
-            picture,
-            cast,
-            lit: StageLight::default(),
-        },
-    );
-}
-
 /// Asks the viewport `view_key` to draw `shot` at `rect`'s size next frame.
-pub fn request_shot(editor: &mut Editor, ui: &Ui, view_key: &str, rect: Rect, shot: StageShot) {
+pub fn request(editor: &mut Editor, ui: &Ui, view_key: &str, rect: Rect, shot: StageShot) {
     let StageShot {
         camera,
         picture,

@@ -14,6 +14,7 @@ use engine::core::content::{Content, ContentId};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::transition::ScreenTransitionPhase;
 use engine::core::units::{Degrees, MeterPos, Meters, Radians, WindowPx};
+use engine::systems::area::Place;
 use engine::systems::input::camera::DRAG_TURN;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
 use engine::systems::input::scope::InputScope;
@@ -151,17 +152,38 @@ impl Driver {
         self.note(&format!("=== {name}"));
         self.step_out()?;
         for staging in stage {
-            self.stage(staging)?;
-            if let Staging::Place { place } = staging {
-                self.wait(&Cond::Arrived(*place))?;
-                self.wait(&Cond::Stood)?;
-                self.stage(&Staging::Restore)?;
+            match staging {
+                Staging::Place { place } => self.place(*place)?,
+                _ => self.stage(staging)?,
             }
         }
         for step in setup {
             self.step(step)?;
         }
         Ok(())
+    }
+
+    /// Stages the player at `place` and waits until the client shows them put there and held as
+    /// arriving no longer, with the place standing, then restores what the scene before held.
+    /// Standing at the place doesn't tell the arrival: a player staged where they already stand
+    /// is there before their client hears of it, and the hold of their arrival would then land
+    /// on whatever the scene does next.
+    fn place(&mut self, place: Place) -> Result<(), Failure> {
+        let before = self.snapshot()?;
+        let was = (before.area, before.me.map(|me| me.jumps));
+        self.stage(&Staging::Place { place })?;
+        hands::wait_for(
+            self,
+            "the player put at the staged place",
+            LONG,
+            move |snapshot| {
+                let me = snapshot.me.as_ref()?;
+                ((snapshot.area, Some(me.jumps)) != was && !me.locked).then_some(())
+            },
+        )?;
+        self.wait(&Cond::Arrived(place))?;
+        self.wait(&Cond::Stood)?;
+        self.stage(&Staging::Restore)
     }
 
     /// Plays the script over and over until the scenario's duration has passed, then through to
@@ -664,7 +686,8 @@ impl Driver {
 
     /// Holds `button` with `held` over open ground near the player and moves the pointer as far
     /// as turning the camera `by` takes, a nudge at a time, then waits for the camera to settle;
-    /// the camera stops short at its limits, and only one that never moved fails.
+    /// the camera stops short at its limits, and only one that never moved fails. It is watched
+    /// all the way, as a turn all the way round ends where it began.
     fn steer(
         &mut self,
         button: Button,
@@ -682,19 +705,23 @@ impl Driver {
             .ok_or_else(|| Failure::Harness("no view to steer".to_owned()))?;
         let pixels = by.0.abs() / DRAG_TURN.0;
         let nudge = if by.0 >= 0.0 { nudge } else { nudge.back() };
-        let pressed = self.drag_by(button, held, here, pixels, nudge)?;
+        let (pressed, moved) = self.drag_by(button, held, here, pixels, nudge, |view| {
+            read(view) != before
+        })?;
         let after = self.camera_settled()?;
-        if read(&after) != before {
+        if moved || read(&after) != before {
             return Ok(());
         }
         let under = under_point(&pressed, here);
         hands::move_pointer(self, here)?;
-        self.drag_by(button, held, here, pixels, nudge)?;
+        let (_, moved) = self.drag_by(button, held, here, pixels, nudge, |view| {
+            read(view) != before
+        })?;
         let again = self.camera_settled()?;
-        let second = if read(&again) == before {
-            "nor did a second"
-        } else {
+        let second = if moved || read(&again) != before {
             "a second did"
+        } else {
+            "nor did a second"
         };
         Err(Failure::Harness(format!(
             "the camera never moved under a drag of {:.0}° pressed at {:?} over {under}; {second}",
@@ -705,7 +732,8 @@ impl Driver {
 
     /// Holds `button` with `held` on the pointer, which stands at `here`, and moves it `pixels`
     /// along `nudge`, starting over from `here` where the window's edge stops it, then lets go:
-    /// what the client showed as the button went down.
+    /// what the client showed as the button went down, and whether the view `moved` at any
+    /// nudge.
     fn drag_by(
         &mut self,
         button: Button,
@@ -713,17 +741,19 @@ impl Driver {
         here: Pos<WindowPx>,
         pixels: f32,
         nudge: Nudge,
-    ) -> Result<ProbeSnapshot, Failure> {
+        moved: impl Fn(&ProbeView) -> bool,
+    ) -> Result<(ProbeSnapshot, bool), Failure> {
         let modifiers = hands::modifier_keys(held);
         for key in &modifiers {
             hands::key_down(self, key)?;
         }
         let pressed = hands::button_down(self, button)?;
         let mut at = here;
-        let mut moved = 0.0;
+        let mut dragged = 0.0;
+        let mut view_moved = false;
         let mut outcome = Ok(());
-        while moved < pixels {
-            let step = (pixels - moved).min(STEER_STEP);
+        while dragged < pixels {
+            let step = (pixels - dragged).min(STEER_STEP);
             at = nudged(at, nudge.scaled(step / STEER_STEP));
             let Some(screen) = self.screen else { break };
             if at.x < 1.0 || at.y < 1.0 || at.x >= screen.width - 1.0 || at.y >= screen.height - 1.0
@@ -734,17 +764,20 @@ impl Driver {
                 hands::button_down(self, button)?;
                 continue;
             }
-            if let Err(failure) = hands::move_pointer(self, at) {
-                outcome = Err(failure);
-                break;
+            match hands::move_pointer(self, at) {
+                Ok(seen) => view_moved |= seen.view.as_ref().is_some_and(&moved),
+                Err(failure) => {
+                    outcome = Err(failure);
+                    break;
+                }
             }
-            moved += step;
+            dragged += step;
         }
         hands::button_up(self, button)?;
         for key in modifiers.iter().rev() {
             hands::key_up(self, key)?;
         }
-        outcome.map(|()| pressed)
+        outcome.map(|()| (pressed, view_moved))
     }
 
     /// The view once the camera has come to rest: unchanged over a couple of frames.

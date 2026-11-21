@@ -455,21 +455,29 @@ impl RenderedView {
         if self.shaped == shaped {
             return;
         }
+        let stroked = match &request.stroke {
+            Some(stroke) => {
+                let listed: Option<Vec<WaterId>> = stroke
+                    .waters
+                    .iter()
+                    .map(|water| request.content.by_path::<WaterDef>(water))
+                    .collect();
+                // A stroke naming a water the game no longer holds is laid once it does.
+                let Some(listed) = listed else {
+                    return;
+                };
+                Some((stroke, listed))
+            }
+            None => None,
+        };
         self.shaped = shaped;
-        let listed: Option<Vec<WaterId>> = request.stroke.as_ref().and_then(|stroke| {
-            stroke
-                .waters
-                .iter()
-                .map(|water| request.content.by_path::<WaterDef>(water))
-                .collect()
-        });
-        let ground = match &request.stroke {
-            Some(stroke) => ShapedGround {
+        let ground = match &stroked {
+            Some((stroke, listed)) => ShapedGround {
                 heights: &stroke.heights,
                 paint: &stroke.paint,
                 water: &stroke.water,
                 water_map: &stroke.water_map,
-                waters: listed.as_deref().unwrap_or(&area.waters),
+                waters: listed,
             },
             None => ShapedGround::of(&area),
         };

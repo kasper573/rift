@@ -8,6 +8,7 @@
 //! upload budget, standing in for what stood there until it does. A chunk the sight leaves past
 //! what it keeps is let go.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use bevy::gltf::{Gltf, GltfMaterial};
@@ -73,13 +74,26 @@ pub(super) struct Instances {
     /// them.
     props: u32,
     expanding: HashMap<u32, (Lot, Task<Expanded>)>,
-    expanded: Vec<(u32, Lot, Expanded)>,
+    expanded: VecDeque<(u32, Lot, Expanded)>,
     models: HashMap<PropId, Handle<Gltf>>,
     dressed: HashSet<Drawn>,
     standing: HashMap<u32, Standing>,
     stale: HashSet<u32>,
     /// Counts each time the props standing change.
     props_revision: u64,
+    wanted: Option<Wanted>,
+}
+
+/// The lots the latest plan wants, worked out once for it: whether every one of them stood fresh
+/// and dressed when they were last gone over, with nothing standing changed since, so that a
+/// plan wanting the same lots has nothing to stand; whether they stood so already for the plan
+/// before; and whether what the plan doesn't keep has been let go of since.
+struct Wanted {
+    plan: Arc<Plan>,
+    lots: Vec<Lot>,
+    stood: bool,
+    carried: bool,
+    cleared: bool,
 }
 
 impl Instances {
@@ -96,12 +110,13 @@ impl Instances {
             canopy: Canopy::default(),
             props: content.table::<PropDef>().len() as u32,
             expanding: HashMap::default(),
-            expanded: Vec::new(),
+            expanded: VecDeque::new(),
             models: HashMap::default(),
             dressed: HashSet::default(),
             standing: HashMap::default(),
             stale: HashSet::default(),
             props_revision: 0,
+            wanted: None,
         }
     }
 
@@ -175,6 +190,7 @@ impl Instances {
         }
         self.props_revision += 1;
         self.canopy.sources_revision += 1;
+        self.wanted = None;
     }
 
     /// A number that changes each time the props standing in the arena do.
@@ -205,6 +221,7 @@ impl Instances {
                 .filter(|(_, standing)| touched(&standing.lot))
                 .map(|(key, _)| *key),
         );
+        self.wanted = None;
     }
 }
 
@@ -366,17 +383,78 @@ struct Canopy {
 pub(super) fn stand(
     world: &mut World,
     streaming: &mut Streaming,
-    plan: &Plan,
+    plan: &Arc<Plan>,
     root: Entity,
 ) -> Shortfalls {
     let ground = streaming.area.size.bounds();
-    let wanted = wanted_lots(streaming, &plan.seen, ground);
+    let fresh_plan = streaming
+        .instances
+        .wanted
+        .as_ref()
+        .is_none_or(|wanted| !Arc::ptr_eq(&wanted.plan, plan));
+    if fresh_plan {
+        let lots = wanted_lots(streaming, &plan.seen, ground);
+        let stood = streaming
+            .instances
+            .wanted
+            .take()
+            .is_some_and(|before| before.stood && same_lots(&before.lots, &lots));
+        streaming.instances.wanted = Some(Wanted {
+            plan: plan.clone(),
+            lots,
+            stood,
+            carried: stood,
+            cleared: false,
+        });
+    }
+    let extents = sizes(world, streaming);
+    let Some(wanted) = streaming.instances.wanted.as_mut() else {
+        return Shortfalls::default();
+    };
+    if wanted.stood {
+        return Shortfalls::default();
+    }
+    let wanted = std::mem::take(&mut wanted.lots);
+    let shortfalls = stand_lots(world, streaming, plan, root, (&wanted, extents));
+    let stood = ![shortfalls.props, shortfalls.copies, shortfalls.far]
+        .into_iter()
+        .any(Shortfall::any)
+        && streaming
+            .instances
+            .standing
+            .values()
+            .all(|standing| standing.replacing.is_none());
+    if let Some(kept) = streaming.instances.wanted.as_mut() {
+        kept.lots = wanted;
+        kept.stood = stood;
+        kept.carried = false;
+    }
+    shortfalls
+}
+
+/// Whether `a` and `b` hold the same lots, in whatever order.
+fn same_lots(a: &[Lot], b: &[Lot]) -> bool {
+    a.len() == b.len() && {
+        let held: HashSet<&Lot> = a.iter().collect();
+        b.iter().all(|lot| held.contains(lot))
+    }
+}
+
+/// Stands the lots of `wanted`, as much as a frame's budget allows, and how much of each part of
+/// them has yet to stand.
+fn stand_lots(
+    world: &mut World,
+    streaming: &mut Streaming,
+    plan: &Plan,
+    root: Entity,
+    (wanted, extents): (&[Lot], Option<Extents>),
+) -> Shortfalls {
+    let ground = streaming.area.size.bounds();
     let wanted_at: HashMap<[u32; 2], Lot> =
         wanted.iter().map(|&lot| (lot.keys(ground), lot)).collect();
     let taken_in = streaming
         .sight
         .map(|sight| Reaches::of(&streaming.instances.copies, sight, sight.reach.0));
-    let extents = sizes(world, streaming);
     let instances = &mut streaming.instances;
     instances
         .expanding
@@ -398,8 +476,15 @@ pub(super) fn stand(
     send(world, streaming, root);
     dress(world, streaming, root);
     retire(world, streaming, root);
+    let expanded_keys: HashSet<u32> = streaming
+        .instances
+        .expanded
+        .iter()
+        .map(|(key, ..)| *key)
+        .collect();
+    let mut shared = None;
     let mut shortfalls = Shortfalls::default();
-    for lot in wanted {
+    for &lot in wanted {
         let keys = lot.keys(ground);
         let instances = &streaming.instances;
         let standing_as = |key: &u32| {
@@ -445,10 +530,9 @@ pub(super) fn stand(
             continue;
         }
         *short += 1;
-        let waiting = keys.iter().any(|key| {
-            instances.expanding.contains_key(key)
-                || instances.expanded.iter().any(|(held, ..)| held == key)
-        });
+        let waiting = keys
+            .iter()
+            .any(|key| instances.expanding.contains_key(key) || expanded_keys.contains(key));
         if waiting || instances.expanding.len() >= EXPANDING_AT_ONCE {
             continue;
         }
@@ -487,7 +571,11 @@ pub(super) fn stand(
                 newer
             }
         };
-        let task = expansion(streaming, &plan.seen, ground, lot, extents, key);
+        let shared = shared.get_or_insert_with(|| SharedGround {
+            heights: Arc::new(streaming.heights.clone()),
+            paint: Arc::new(streaming.paint.clone()),
+        });
+        let task = expansion(streaming, (&plan.seen, &*shared), ground, lot, extents, key);
         streaming
             .instances
             .expanding
@@ -502,6 +590,16 @@ pub(super) fn stand(
 /// while it stands, so a walk back to one finds its model and its atlas rather than loading and
 /// baking them again.
 pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
+    let mut carried = false;
+    if let Some(wanted) = streaming.instances.wanted.as_mut()
+        && wanted.stood
+    {
+        if wanted.cleared {
+            return;
+        }
+        wanted.cleared = true;
+        carried = wanted.carried;
+    }
     let ground = streaming.area.size.bounds();
     let keep = plan.seen.reach.0 * KEEP_SHARE;
     let kept = |lot: Lot| {
@@ -516,6 +614,11 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, r
         .filter(|(_, standing)| !kept(standing.lot))
         .map(|(key, _)| *key)
         .collect();
+    // Lots that stood as they did for the plan before, all of them swept after since, leave
+    // nothing to sweep when none goes.
+    if carried && gone.is_empty() {
+        return;
+    }
     for key in gone {
         take_away(world, instances, root, key);
     }
@@ -989,7 +1092,7 @@ fn sibling_keys(key: u32) -> [u32; 2] {
 /// The work of laying out `lot` to stand at `key`, off the frame.
 fn expansion(
     streaming: &Streaming,
-    seen: &Seen,
+    (seen, shared): (&Seen, &SharedGround),
     ground: Rect<Meters>,
     lot: Lot,
     extents: Option<Extents>,
@@ -997,8 +1100,7 @@ fn expansion(
 ) -> impl Future<Output = Expanded> + Send + 'static {
     let area = streaming.area.clone();
     let filed = streaming.instances.filed.clone();
-    let heights = streaming.heights.clone();
-    let paint = streaming.paint.clone();
+    let (heights, paint) = (shared.heights.clone(), shared.paint.clone());
     let copies = streaming.instances.copies.clone();
     let props = streaming.instances.props;
     let lens = seen.lens();
@@ -1024,6 +1126,13 @@ fn expansion(
             }
         }
     }
+}
+
+/// The ground as it stands when lots are set expanding, shared by every lot set expanding then:
+/// each copy of the ground copies the whole table of its tiles.
+struct SharedGround {
+    heights: Arc<Heightfield>,
+    paint: Arc<PaintMap>,
 }
 
 /// The props standing in `chunk` of `area`'s `ground` as the arena holds them, each on the ground
@@ -1172,12 +1281,14 @@ fn paint_chunks(bounds: Rect<Meters>) -> impl Iterator<Item = PaintChunk> {
 /// frame's budget holds, wanting the models of what they draw, each to take the place of what
 /// stands at its pair's other key once it is dressed.
 fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
-    while let Some((_, _, expanded)) = streaming.instances.expanded.first() {
+    while let Some((_, _, expanded)) = streaming.instances.expanded.front() {
         let bytes = expanded.records.len() * InstanceRecord::BYTES as usize;
         if !upload::spend(world, bytes) {
             return;
         }
-        let (key, lot, expanded) = streaming.instances.expanded.remove(0);
+        let Some((key, lot, expanded)) = streaming.instances.expanded.pop_front() else {
+            return;
+        };
         let mut models_of = HashMap::new();
         for &drawn in &expanded.drawn {
             let prop = prop_of(&streaming.instances.copies, drawn);

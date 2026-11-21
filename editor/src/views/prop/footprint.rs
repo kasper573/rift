@@ -234,7 +234,13 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     if let Some(footprint) = landed {
         super::shape(editor, key, footprint);
     }
-    stage::request(editor, ui, &view_key, rect, camera, picture, Vec::new());
+    let shot = stage::StageShot {
+        camera,
+        picture,
+        cast: Vec::new(),
+        lit: stage::StageLight::default(),
+    };
+    stage::request(editor, ui, &view_key, rect, shot);
 }
 
 fn half_extents(from: &Footprint, bounds: Option<(Vec3, Vec3)>) -> (f32, f32) {

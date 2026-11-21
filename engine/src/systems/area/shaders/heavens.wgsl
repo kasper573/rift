@@ -15,6 +15,7 @@ struct Heavens {
     sun_color: vec4<f32>,
     turned: mat3x3<f32>,
     twinkling: f32,
+    moon_size: f32,
     air: array<vec4<f32>, AIR_WAYS>,
     cloud_base: f32,
     cloud_tile: f32,
@@ -37,6 +38,10 @@ fn light_color() -> vec3<f32> {
 
 fn moon_way() -> vec3<f32> {
     return heavens.moon;
+}
+
+fn moon_size() -> f32 {
+    return heavens.moon_size;
 }
 
 fn sun_way() -> vec3<f32> {

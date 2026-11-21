@@ -56,13 +56,14 @@ use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::sample::FrameWork;
 use crate::core::render::video::VideoPreferences;
+use crate::core::render::world::SIGHT_LENGTHS;
 use crate::core::render::world::backdrop::{BackdropMaterial, backdrop};
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::gpu::arena::PropArena;
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
 use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS, SheetOver};
 use crate::core::render::world::haze::{
-    Haze, HazeBox, HazeLight, HazeSight, HazeSky, MAX_HAZE_BOXES, SIGHT_LENGTHS,
+    Haze, HazeBox, HazeLight, HazeSight, HazeSky, MAX_HAZE_BOXES,
 };
 use crate::core::render::world::lights::{self, Lamp};
 use crate::core::render::world::opacity::Opacity;
@@ -84,9 +85,9 @@ use crate::systems::water::WaterId;
 /// An area's scenery as it stands in a world: everything hangs under `root`, the terrain mesh is
 /// `terrain`, `sun` is the light that casts its shadows when the area has a sun, the sun by day
 /// and the full moon by night, `second` the other of the two, which lights the air and casts
-/// none, `atmosphere` the air over it, `sky` the dome its sky is painted on when the
-/// area paints one, `picture` the picture drawn of that sky, and `rain` the shells its rain falls on when its climate draws rain under an
-/// open sky.
+/// none, `atmosphere` the air over it, `sky` the dome its sky is painted on when the area paints
+/// one, `picture` the picture drawn of that sky, and `rain` the shells its rain falls on when its
+/// climate draws rain under an open sky.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scenery {
     pub root: Entity,
@@ -343,7 +344,6 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
             lay_waters(world, streaming, content, &area.waters);
         }
         streaming.waters.clone_from(&area.waters);
-        let waters = streaming.waters.clone();
         lay_streamed_ground(
             world,
             streaming,
@@ -352,7 +352,7 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
                 paint: &paint,
                 water: &water,
                 water_map: &water_map,
-                waters: &waters,
+                waters: &area.waters,
             },
         );
         let (old, new) = (&before.prop_sources, &area.prop_sources);
@@ -385,18 +385,18 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
                     None
                 }
             });
-        let playing = |area: &Area| -> Vec<PropPlacement> {
-            area.playing
+        let acting = |area: &Area| -> Vec<PropPlacement> {
+            area.acting
                 .iter()
                 .map(|&index| area.props[index].clone())
                 .collect()
         };
-        if area.lights != before.lights || playing(area) != playing(&before) {
+        if area.lights != before.lights || acting(area) != acting(&before) {
             for (_, stood) in streaming
                 .stood
                 .lights
                 .drain()
-                .chain(streaming.stood.playing.drain())
+                .chain(streaming.stood.acting.drain())
             {
                 world.despawn(stood);
             }
@@ -416,7 +416,8 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
 
 /// The files the scenery of an area is made from beyond the area itself, each with what it held
 /// when read: its terrains, their covers' shaders, its waters and their shaders, the props it
-/// stands and strews, and their models. Scenery stood from equal sources looks alike, so it need not stand again.
+/// stands and strews, and their models. Scenery stood from equal sources looks alike, so it need
+/// not stand again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sources(Vec<(String, FileHash)>);
 
@@ -782,8 +783,8 @@ impl Streaming {
 #[derive(Default)]
 struct Stood {
     lights: HashMap<usize, Entity>,
-    /// What stands for each prop that plays vfx of its own, by its place among those.
-    playing: HashMap<usize, Entity>,
+    /// What stands for each prop that acts of its own accord, by its place among those.
+    acting: HashMap<usize, Entity>,
 }
 
 /// A chunk of the ground at a level of detail: the node of the quadtree over the samples it is,
@@ -875,7 +876,7 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     shortfalls.grass = grass::grow(world, streaming, &plan.seen);
     streaming.shortfalls = shortfalls;
     stream_lights(world, streaming, &plan, root);
-    stream_playing(world, streaming, &plan, root);
+    stream_acting(world, streaming, &plan, root);
     streaming.whole = !shortfalls.total().any();
     if streaming.whole {
         streaming.stood_at = frames_drawn(world);
@@ -1161,33 +1162,33 @@ fn stream_lights(world: &mut World, streaming: &mut Streaming, plan: &Plan, root
     }
 }
 
-/// Stands something for each prop `plan` stands that plays vfx of its own, for the vfx to play
-/// on, and takes down those it no longer keeps.
-fn stream_playing(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
-    let playing = &plan.playing;
+/// Stands something for each prop `plan` stands that acts of its own accord, for its vfx to
+/// play on and its ripples to spread from, and takes down those it no longer keeps.
+fn stream_acting(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
+    let acting = &plan.acting;
     let gone: Vec<usize> = streaming
         .stood
-        .playing
+        .acting
         .keys()
-        .filter(|index| !playing.kept.contains(*index))
+        .filter(|index| !acting.kept.contains(*index))
         .copied()
         .collect();
     for index in gone {
-        if let Some(entity) = streaming.stood.playing.remove(&index) {
+        if let Some(entity) = streaming.stood.acting.remove(&index) {
             world.despawn(entity);
         }
     }
-    let near: Vec<usize> = playing
+    let near: Vec<usize> = acting
         .near
         .iter()
-        .filter(|index| !streaming.stood.playing.contains_key(*index))
+        .filter(|index| !streaming.stood.acting.contains_key(*index))
         .copied()
         .collect();
     for index in near {
-        let placed = &streaming.area.props[streaming.area.playing[index]];
+        let placed = &streaming.area.props[streaming.area.acting[index]];
         let entity =
-            props::stand_playing(world, &streaming.content, &streaming.heights, placed, root);
-        streaming.stood.playing.insert(index, entity);
+            props::stand_acting(world, &streaming.content, &streaming.heights, placed, root);
+        streaming.stood.acting.insert(index, entity);
     }
 }
 
@@ -1287,8 +1288,7 @@ pub fn light(
     });
     let shone = lights_at(area, weather, daylight, look);
     let landed = shone.map(|lights| lights.landed(&air, ground, &look.sky));
-    let sun = shone.map(|lights| lights.sun);
-    let elevation = sun.map(|sun| sun.elevation);
+    let elevation = shone.map(|lights| lights.sun.elevation);
     let ambient = AmbientLight {
         color: area.lighting.ambient.color(),
         brightness: look.light.ambient_nits
@@ -1296,7 +1296,7 @@ pub fn light(
         ..default()
     };
     world.resource_mut::<CloudSheet>().cover(clouds, water);
-    let shining = landed.map(|landed| landed.caster(landed.sun_stronger()).0);
+    let shining = landed.map(|landed| landed.stronger());
     if let (Some(shone), Some(landed), Some(shining), Some(entity)) =
         (shone, landed, shining, scenery.sun)
     {
@@ -1355,7 +1355,7 @@ pub fn light(
                     on_clouds.illuminance / full,
                 ),
                 sky::night(daylight, sun, &look.sky),
-                &look.clouds,
+                look,
             )
             .turned(
                 area.lighting.sun.map_or(Mat3::IDENTITY, |noon| {
@@ -1420,7 +1420,7 @@ pub fn light(
                 .total_cmp(&b.bank.distance(eye.xz()))
         });
         let sight = sight_of(world, camera, area.heights.range().lowest);
-        // What a colour of 1 shines at: what the full sun lights a white face square to it to.
+        // A white face square to the full sun shines at this, which a colour of 1 stands for.
         let white = look.light.sun_lux / PI;
         let boxes: Vec<HazeBox> = banks
             .into_iter()
@@ -1586,7 +1586,7 @@ fn fog_lights(landed: Option<SkyLights>, boxes: &[HazeBox], eye: Vec3) -> [HazeL
         let toward = lights::toward(light.elevation, light.azimuth);
         let crossed: f32 = boxes
             .iter()
-            .map(|lying| lying.crossed(eye, eye + toward * BEYOND_FOG))
+            .map(|lying| lying.crossed(eye, eye + toward * BEYOND_FOG.0))
             .sum();
         *slot = HazeLight {
             toward,
@@ -1597,7 +1597,7 @@ fn fog_lights(landed: Option<SkyLights>, boxes: &[HazeBox], eye: Vec3) -> [HazeL
 }
 
 /// How far toward a light the fog over a point is followed: past the top of any bank.
-const BEYOND_FOG: f32 = 100_000.0;
+const BEYOND_FOG: Meters = Meters(100_000.0);
 
 /// How moist the air is under `weather`.
 fn humidity(weather: &Weather, look: &Look) -> f32 {
@@ -1619,7 +1619,7 @@ fn spawn_dome(
         site: SiteUniform::default(),
         params,
         weather: world.resource::<ShaderBoardImage>().image.clone(),
-        heavens: Heavens::clear(world.resource::<CloudSheet>().look()),
+        heavens: Heavens::clear(world.resource::<Look>()),
         clouds: world.resource::<CloudSheet>().field(),
         shader,
         picture: false,
@@ -1689,7 +1689,7 @@ fn spawn_rain(
         site: SiteUniform::default(),
         params,
         weather: world.resource::<ShaderBoardImage>().image.clone(),
-        heavens: Heavens::clear(world.resource::<CloudSheet>().look()),
+        heavens: Heavens::clear(world.resource::<Look>()),
         clouds: world.resource::<CloudSheet>().field(),
         shader,
     };
@@ -2003,11 +2003,11 @@ fn planner_of(area: &Arc<Area>) -> Making<Arc<Planner>> {
     Making::Task(AsyncComputeTaskPool::get().spawn(async move {
         let mut lights = SpatialIndex::new(PLACEMENT_CELL);
         lights.refile_spots(area.lights.iter().map(|light| light.at));
-        let mut playing = SpatialIndex::new(PLACEMENT_CELL);
-        playing.refile_spots(area.playing.iter().map(|&index| area.props[index].at));
+        let mut acting = SpatialIndex::new(PLACEMENT_CELL);
+        acting.refile_spots(area.acting.iter().map(|&index| area.props[index].at));
         Arc::new(Planner {
             lights,
-            playing,
+            acting,
             area,
         })
     }))
