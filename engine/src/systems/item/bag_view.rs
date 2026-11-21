@@ -287,6 +287,17 @@ impl Arranging {
     }
 }
 
+/// How wide a pane must be for the bag shown in `placement` to set its heading, search, type
+/// picker and sort button on one row, as it last measured them; nothing before it first shows.
+pub fn least_bag_width(gui: &egui::Context, placement: Placed) -> f32 {
+    gui.data(|data| data.get_temp::<f32>(least_id(placement)))
+        .unwrap_or(0.0)
+}
+
+fn least_id(placement: Placed) -> egui::Id {
+    egui::Id::new(("bag view least width", placement))
+}
+
 /// How long the bag waits for the server to answer a move or a sort, in seconds.
 const GIVEN_UP_AFTER: f64 = 2.0;
 /// How narrow the search grows before the controls crowd the heading: two slots wide.
@@ -348,8 +359,17 @@ fn controls_row(
 ) -> Option<BagSort> {
     let words = &messages::of(content).item;
     ui.spacing_mut().item_spacing.x = 4.0;
+    let before = ui.available_width();
     let sort = sort_button(ui, words, sorting);
     type_picker(ui, content, bag, filter, view.placement);
+    let tools = before - ui.available_width() + ui.spacing().item_spacing.x;
+    let least = (heading_width + RULE_LEAST + tools + SEARCH_LEAST).ceil();
+    let kept = least_id(view.placement);
+    if !sorting && ui.data(|data| data.get_temp::<f32>(kept)) != Some(least) {
+        ui.data_mut(|data| data.insert_temp(kept, least));
+        ui.ctx()
+            .request_discard("the bag's heading row changed its least width");
+    }
     let room = ui.available_width() - heading_width - RULE_LEAST;
     let width = room.clamp(SEARCH_LEAST, SEARCH_MOST);
     ui.allocate_ui(Vec2::new(width, controls::CONTROL_HEIGHT), |ui| {
@@ -414,8 +434,14 @@ fn type_picker(
         |category| category.named(words),
     );
     let name = words.item_type();
+    let entries = std::iter::once(words.all_types().to_owned()).chain(
+        categories_used(content)
+            .into_iter()
+            .map(|category| category.named(words)),
+    );
     let shown = controls::combo(("bag type", placement))
         .selected_text(picked)
+        .fitting(entries)
         .named(name)
         .show_ui(ui, |ui| {
             if ui

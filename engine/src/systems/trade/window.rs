@@ -14,7 +14,7 @@ use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Centred, WindowKey};
-use crate::systems::item::bag_view::{BagView, bag_view};
+use crate::systems::item::bag_view::{BagView, bag_view, least_bag_width};
 use crate::systems::item::grid::{scrolled, slots_span};
 use crate::systems::item::transfer::{
     self, ItemTransfer, TransferPane, TransferWindow, transfer_window,
@@ -39,7 +39,7 @@ pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
     let window = Centred {
         key: WindowKey::Trade,
         of: Placed::Trade,
-        body: Vec2::new(width(), BODY_HEIGHT),
+        body: Vec2::new(width(gui), BODY_HEIGHT),
         top: 120.0,
     };
     let title = |trading: &TradeView| messages::of(&content).trade.window_title(&trading.with);
@@ -135,7 +135,7 @@ fn body(
     let room = ui.available_rect_before_wrap().shrink2(sheet::PANE_PAD);
     let bar = Rect::from_min_max(Pos2::new(room.min.x, room.max.y - BAR_HEIGHT), room.max);
     let panes = Rect::from_min_max(room.min, Pos2::new(room.max.x, bar.min.y));
-    let ([bag_at, mine_at], theirs_at) = sheet::spaced_columns(panes, [pane(), pane()]);
+    let ([bag_at, mine_at], theirs_at) = sheet::spaced_columns(panes, [bag_pane(ui.ctx()), pane()]);
     ui.scope_builder(column(bag_at), |ui| {
         let view = BagView {
             heading: words.interface.inventory(),
@@ -207,8 +207,13 @@ fn pane() -> f32 {
     slots_span(COLUMNS)
 }
 
-fn width() -> f32 {
-    3.0 * pane() + 2.0 * sheet::GUTTER
+/// The bag's pane, as wide as a pane or as the bag's heading row needs.
+fn bag_pane(gui: &egui::Context) -> f32 {
+    pane().max(least_bag_width(gui, Placed::Trade))
+}
+
+fn width(gui: &egui::Context) -> f32 {
+    bag_pane(gui) + 2.0 * pane() + 2.0 * sheet::GUTTER
 }
 
 fn view(world: &World) -> Option<&TradeView> {

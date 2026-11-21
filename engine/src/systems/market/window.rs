@@ -23,7 +23,7 @@ use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Seat, Sizing, WindowKey};
 use crate::systems::input::map::{self, InputAction};
-use crate::systems::item::bag_view::{BagView, bag_view};
+use crate::systems::item::bag_view::{BagView, bag_view, least_bag_width};
 use crate::systems::item::card;
 use crate::systems::item::grid::scrolled;
 use crate::systems::item::inline::{self, InlineItem};
@@ -703,7 +703,7 @@ fn new_listing(ui: &mut Ui, world: &mut World, settings: &MarketSettings) {
     let words = messages::of(&content);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(BAG_WIDTH);
+            ui.set_width(BAG_WIDTH.max(least_bag_width(ui.ctx(), Placed::Market)));
             let view = BagView {
                 heading: words.interface.inventory(),
                 placement: Placed::Market,

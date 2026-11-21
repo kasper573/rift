@@ -171,6 +171,7 @@ pub fn combo(id_salt: impl egui::AsIdSalt) -> Combo {
         id: egui::Id::new(id_salt),
         text: WidgetText::default(),
         name: None,
+        fits: Vec::new(),
         width: None,
         truncate: false,
     }
@@ -180,6 +181,7 @@ pub struct Combo {
     id: egui::Id,
     text: WidgetText,
     name: Option<String>,
+    fits: Vec<WidgetText>,
     width: Option<f32>,
     truncate: bool,
 }
@@ -194,6 +196,13 @@ impl Combo {
     /// What a screen reader calls the button, where no label beside it names it.
     pub fn named(mut self, name: impl Into<String>) -> Combo {
         self.name = Some(name.into());
+        self
+    }
+
+    /// Keeps the button as wide as the widest of `texts` needs, so picking another of them never
+    /// changes its width.
+    pub fn fitting<T: Into<WidgetText>>(mut self, texts: impl IntoIterator<Item = T>) -> Combo {
+        self.fits = texts.into_iter().map(Into::into).collect();
         self
     }
 
@@ -220,7 +229,24 @@ impl Combo {
         let open = egui::Popup::is_id_open(ui.ctx(), popup);
         let padding = ui.spacing().button_padding;
         let caret = ui.spacing().icon_spacing + ui.spacing().icon_width;
-        let least = self.width.unwrap_or(ui.spacing().combo_width);
+        let fitted = self
+            .fits
+            .iter()
+            .map(|text| {
+                text.clone()
+                    .into_galley(
+                        ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Button,
+                    )
+                    .size()
+                    .x
+                    + 2.0 * padding.x
+                    + caret
+            })
+            .fold(0.0, f32::max);
+        let least = self.width.unwrap_or(ui.spacing().combo_width).max(fitted);
         let wrap = if self.truncate {
             egui::TextWrapMode::Truncate
         } else {

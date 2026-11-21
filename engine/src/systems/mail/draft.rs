@@ -13,7 +13,7 @@ use super::{LetterAnswered, SendLetter};
 use crate::core::content::Content;
 use crate::systems::GameSettings;
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::bag_view::{BagView, bag_view};
+use crate::systems::item::bag_view::{BagView, bag_view, least_bag_width};
 use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, TrayWindow, tray_window};
 use crate::systems::item::tray::ItemTray;
 use crate::systems::item::widget::slot_note_source;
@@ -140,7 +140,8 @@ pub(super) fn show(ui: &mut Ui, world: &mut World, view: &SocietyView) {
     let content = world.resource::<Content>().clone();
     let messages = messages::of(&content);
     let room = ui.available_rect_before_wrap();
-    let letter_width = room.width() - BAG_WIDTH - 4.0 * sheet::PANE_PAD.x;
+    let bag_width = BAG_WIDTH.max(least_bag_width(ui.ctx(), Placed::Menu));
+    let letter_width = room.width() - bag_width - 4.0 * sheet::PANE_PAD.x;
     let ([letter_at], bag_at) = sheet::columns(ui, room, [letter_width]);
     let area = egui::ScrollArea::vertical().id_salt("letter being written");
     sheet::scroll_pane(ui, letter_at, area, |ui| {
