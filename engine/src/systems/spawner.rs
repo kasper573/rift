@@ -11,7 +11,7 @@ use crate::core::content::{Content, RowCheck, SchemaMark, serial};
 use crate::core::content::{ContentProblem, Loading};
 use crate::core::geometry::corners;
 use crate::core::ground::TileAt;
-use crate::core::math::{Pos, Rect, Rng};
+use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::script::{
     Arrow, Compiler, EffectCall, EffectDef, EffectStep, EventDef, EventKind, Instances, NEXT,
     ScriptEvent, ScriptFault, Scripts, Value, ValueType, Vocabulary,
@@ -1069,8 +1069,8 @@ fn refill(
 }
 
 /// Fills the entry, away from where `watching` look from as far as the ground allows, or leaves
-/// it idle when nothing of its spawner holds under the sky. An entry whose spawner's ground the
-/// world doesn't hold waits, freed, until a character comes near enough that it does.
+/// it idle when nothing of its spawner holds under the sky. An entry whose ground the world
+/// doesn't hold waits, freed, until a character comes near enough that it does.
 fn spawn_entry(
     world: &mut World,
     content: &Content,
@@ -1145,11 +1145,12 @@ fn spawn_entry(
     }
 }
 
-/// Whether the world holds the ground a spawner draws where its entries stand: a spawner's
-/// bounds are held only while a character is near.
+/// Whether the world holds the ground the module's entries stand on: a spawner's bounds and a
+/// resident's home are held only while a character is near.
 fn grounded(area: &Area, module: &AreaModule) -> bool {
     match module {
         AreaModule::Spawner(spawner) => spawner.within.is_none_or(|bounds| area.holds(bounds)),
+        AreaModule::Resident(resident) => area.holds(Rect::new(resident.at, Size::zero())),
         _ => true,
     }
 }

@@ -3,7 +3,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::query::Allow;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::time::{DayClock, TimeCourse};
-use engine::core::units::HourOfDay;
+use engine::core::units::{HourOfDay, Meters};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::spawner::{self, Spawned};
@@ -269,27 +269,53 @@ fn kinds(sim: &mut Sim, npcs: &[Entity]) -> [bool; 2] {
 #[test]
 fn an_entry_due_where_nobody_is_near_waits_until_a_player_brings_its_ground_back() {
     const RESPAWN: f32 = 10.0;
+    const HOME: Pos<Meters> = Pos::new(550.0, 6.0);
+    let time = |name: &str, from: f32| json!({ "name": name, "from": from, "eases": 0.0, "color": [0, 0, 0], "icon": "icons/time.png" });
     let content = Game::new()
         .npc("hawk", 5.0, json!([]))
+        .npc(
+            "keeper",
+            40.0,
+            json!([{ "type": "absence", "spans": [{ "time": "Night" }] }]),
+        )
         .area(
             "field",
             &Map::open(600, 12),
-            json!([{
-                "type": "spawner",
-                "populations": [{
-                    "spawns": [{ "type": "npc", "npc": path("npc", "hawk") }],
-                    "max_spawned_at_once": 1,
-                    "respawn": RESPAWN,
-                }],
-                "within": { "x": 540.0, "y": 2.0, "w": 20.0, "h": 8.0 },
-            }]),
+            json!([
+                {
+                    "type": "spawner",
+                    "populations": [{
+                        "spawns": [{ "type": "npc", "npc": path("npc", "hawk") }],
+                        "max_spawned_at_once": 1,
+                        "respawn": RESPAWN,
+                    }],
+                    "within": { "x": 540.0, "y": 2.0, "w": 20.0, "h": 8.0 },
+                },
+                { "type": "resident", "npc": path("npc", "keeper"), "at": { "x": HOME.x, "y": HOME.y } },
+            ]),
         )
         .hero("field", 4.0, 6.0)
+        .asset("icons/time.png", testkit::png(1, 1))
+        .edit_settings(|settings| {
+            settings["daylight"] = json!({
+                "day_length": 1200.0,
+                "start": NOON,
+                "times": [time("Day", 6.0), time("Night", 21.0)],
+            });
+        })
         .load_to_play();
     let mut sim = Sim::new(content.clone());
     let field = area::load(&content, sim.id::<area::AreaDef>("field"));
-    sim.serve("field")
-        .add((sleep::settle, region::settle, spawner::tend).chain());
+    sim.serve("field").add(
+        (
+            area::weather::turn_sky,
+            sleep::settle,
+            region::settle,
+            spawner::tend,
+        )
+            .chain(),
+    );
+    hold(&mut sim, NOON);
     let hero = sim.join(1);
     // The ground is held on a thread of its own, which takes real time, not the world's.
     let go_to = |sim: &mut Sim, x: f32, until: &dyn Fn(&mut Sim) -> bool| {
@@ -304,22 +330,25 @@ fn an_entry_due_where_nobody_is_near_waits_until_a_player_brings_its_ground_back
         }
     };
 
-    go_to(&mut sim, 545.0, &|sim| standing(sim).len() == 1);
-    let hawk = standing(&mut sim)[0];
-    go_to(&mut sim, 4.0, &|_| {
-        !field.mesh().walkable(Pos::new(550.0, 6.0))
-    });
+    go_to(&mut sim, 545.0, &|sim| standing(sim).len() == 2);
+    let hawk = sim.npc("hawk");
+    go_to(&mut sim, 4.0, &|_| !field.mesh().walkable(HOME));
     sim.world.despawn(hawk);
+    hold(&mut sim, MIDNIGHT);
     sim.later(RESPAWN + 1.0);
+    hold(&mut sim, NOON);
+    sim.later(1.0);
     assert!(
         standing(&mut sim).is_empty(),
-        "an entry due on ground nobody holds stays empty"
+        "an entry due on ground nobody holds stays empty: a spawner's, and that of a resident \
+         back from its hours away"
     );
-    go_to(&mut sim, 545.0, &|sim| standing(sim).len() == 1);
+    go_to(&mut sim, 545.0, &|sim| standing(sim).len() == 2);
+    let keeper = sim.npc("keeper");
     assert_eq!(
-        standing(&mut sim).len(),
-        1,
-        "the entry fills once a player brings its ground back"
+        (sim.npcs("hawk").len(), position(&sim.world, keeper)),
+        (1, Some(HOME)),
+        "each entry fills once a player brings its ground back, the resident at its home"
     );
 }
 
