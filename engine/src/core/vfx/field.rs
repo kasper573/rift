@@ -18,6 +18,7 @@ use bevy::render::renderer::RenderQueue;
 use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderSystems};
 use half::f16;
+use half::slice::HalfFloatSliceExt;
 
 use crate::core::render::sample::UploadedBytes;
 
@@ -35,17 +36,23 @@ pub struct ShaderFieldImage {
     pub side: usize,
 }
 
-/// What the field holds now, row by row, as it was last published.
+/// What the field holds now, row by row, as it was last published: its texels as the picture
+/// keeps them.
 #[derive(Resource, Clone, Default, ExtractResource)]
 #[extract_app(RenderApp)]
-pub struct ShaderFieldWrite(Option<Arc<[[f32; 2]]>>);
+pub struct ShaderFieldWrite(Option<Arc<[f16]>>);
 
 impl ShaderFieldWrite {
     /// A field holding `first` in the red of its texels and `second` in their green.
     pub fn holding(first: &[f32], second: &[f32]) -> ShaderFieldWrite {
-        ShaderFieldWrite(Some(
-            first.iter().zip(second).map(|(a, b)| [*a, *b]).collect(),
-        ))
+        let paired: Vec<f32> = first
+            .iter()
+            .zip(second)
+            .flat_map(|(a, b)| [*a, *b])
+            .collect();
+        let mut texels = vec![f16::ZERO; paired.len()];
+        texels.convert_from_f32_slice(&paired);
+        ShaderFieldWrite(Some(texels.into()))
     }
 }
 
@@ -92,7 +99,7 @@ fn write_field(
     mut uploaded: ResMut<UploadedBytes>,
     mut written: Local<Option<TextureId>>,
 ) {
-    let (Some(field), Some(values)) = (field, &write.0) else {
+    let (Some(field), Some(texels)) = (field, &write.0) else {
         return;
     };
     let Some(gpu) = images.get(&field.image) else {
@@ -104,11 +111,7 @@ fn write_field(
     }
     *written = Some(gpu.texture.id());
     let side = field.side as u32;
-    let data: Vec<u8> = values
-        .iter()
-        .flatten()
-        .flat_map(|value| f16::from_f32(*value).to_le_bytes())
-        .collect();
+    let data: &[u8] = bytemuck::cast_slice(texels.reinterpret_cast());
     queue.write_texture(
         TexelCopyTextureInfo {
             texture: &gpu.texture,
@@ -116,7 +119,7 @@ fn write_field(
             origin: Origin3d::ZERO,
             aspect: TextureAspect::All,
         },
-        &data,
+        data,
         TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(side * TEXEL_BYTES as u32),

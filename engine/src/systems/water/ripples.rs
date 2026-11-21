@@ -323,8 +323,9 @@ impl RippleField {
         self.unpublished |= steps > 0;
     }
 
-    /// The water's rise and fall and its froth as they stand, if they changed since they were
-    /// last asked for.
+    /// The water's rise and fall and its froth as they stand, if the ripples travelled on or the
+    /// field followed its middle since they were last asked for: water broken since then shows
+    /// once it has travelled a step.
     pub fn unpublished(&mut self) -> Option<(&[f32], &[f32])> {
         std::mem::take(&mut self.unpublished).then_some((&self.now, &self.froth))
     }
@@ -369,7 +370,6 @@ impl RippleField {
         }
         if broken {
             self.quiet = Some(0.0);
-            self.unpublished = true;
         }
     }
 

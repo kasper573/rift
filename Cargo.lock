@@ -3781,6 +3781,7 @@ dependencies = [
  "bevy_time",
  "blake3",
  "blocking",
+ "bytemuck",
  "chrono",
  "derive_more",
  "dotenvy",
