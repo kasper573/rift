@@ -74,7 +74,7 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
 
 use super::atlas::{
-    AtlasLayout, AtlasTexture, CANOPY_EXTENT_MAX, GpuTerrainAtlas, SURFACE_FALL_UNIT, TerrainAtlas,
+    AtlasLayout, AtlasTexture, CANOPY_EXTENT_MAX, GpuTerrainAtlas, SURFACE_FALL_MOST, TerrainAtlas,
 };
 use super::cull;
 use crate::core::ground::{
@@ -600,7 +600,7 @@ struct SheetUniform {
     index: u32,
     on_water: u32,
     open_samples: u32,
-    fall_unit: f32,
+    fall_most: f32,
     under_sky: u32,
     mirrors_land: u32,
     bends: f32,
@@ -1442,7 +1442,7 @@ fn bind_sheets(
                     index: u32::from(sheet.over.index()),
                     on_water: u32::from(sheet.over.is_water()),
                     open_samples: (OPEN_REACH.0 * SAMPLES_PER_METER as f32) as u32,
-                    fall_unit: SURFACE_FALL_UNIT,
+                    fall_most: SURFACE_FALL_MOST,
                     under_sky: u32::from(matches!(
                         sheet.over,
                         SheetOver::Water { sky: Some(_), .. }

@@ -22,10 +22,12 @@ use crate::core::units::{CellPos, Degrees, GROUND_ORIGIN, GridDims, GridSize, Me
 
 use peaks::Peaks;
 
+mod fall;
 mod peaks;
 mod ray;
 mod shore;
 
+pub use fall::{WaterFalls, fall_margin};
 pub use shore::shore_distances;
 
 /// Positions on the ground are `f32` metres snapped to sixteenths, which stay exact up to here.

@@ -1,5 +1,7 @@
 use bevy::prelude::*;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, shore_distances};
+use engine::core::ground::{
+    GroundSize, Heightfield, SAMPLES_PER_METER, WaterFalls, shore_distances,
+};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{Patch, Place, Spread, strew_places};
 use engine::core::render::world::lod::GRAIN_PIXELS;
@@ -30,6 +32,50 @@ fn patch<'a>(heights: &'a Heightfield, share: &'a dyn Fn(u32, u32) -> f32) -> Pa
         rows,
         share,
     }
+}
+
+#[test]
+fn a_river_whose_level_drops_in_steps_runs_evenly_downstream_round_its_bends() {
+    let spacing = Meters(1.0 / SAMPLES_PER_METER as f32);
+    let side = 200;
+    // A channel five metres wide that runs east and then turns south, dropping eight
+    // millimetres every ten metres of its way.
+    let river: Vec<Option<f32>> = (0..side * side)
+        .map(|at| {
+            let (column, row) = (at % side, at / side);
+            let along = if (40..50).contains(&row) && column < 160 {
+                column
+            } else if (150..160).contains(&column) && row >= 40 {
+                155 + row - 45
+            } else {
+                return None;
+            };
+            Some(1.0 - 0.008 * (along / 20) as f32)
+        })
+        .collect();
+    let falls = WaterFalls::read(&river, side, spacing);
+    let even = 0.008 / 10.0;
+    for (column, row, way) in [(80, 45, Vec2::X), (155, 120, Vec2::Y)] {
+        let fall = falls.at(column, row);
+        assert!(
+            fall.dot(way) > even * 0.6 && fall.dot(way) < even * 1.4,
+            "at {column}, {row} the river falls {fall} and not {even} toward {way}"
+        );
+        assert!(
+            fall.perp_dot(way).abs() < even * 0.2,
+            "at {column}, {row} the river falls {fall} across its banks"
+        );
+    }
+    assert_eq!(falls.at(20, 100), Vec2::ZERO, "dry ground far from it");
+
+    let pond: Vec<Option<f32>> = (0..side * side)
+        .map(|at| (at % side > 30).then_some(1.0))
+        .collect();
+    let still = WaterFalls::read(&pond, side, spacing);
+    assert!(
+        (0..side * side).all(|at| still.at(at % side, at / side).length() < 1e-6),
+        "still water falls no way"
+    );
 }
 
 #[test]

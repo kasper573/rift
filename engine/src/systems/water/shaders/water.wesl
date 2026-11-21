@@ -358,9 +358,9 @@ fn fragment(in: WaterOutput) -> FragmentOutput {
     if abs(offshore) < SHORE_READ {
         offshore = mix(shore_at(in.world_position.xz), offshore, smoothstep(0.6 * SHORE_READ, SHORE_READ, abs(offshore)));
     }
-    // A point belongs to the water most of the pixels round it name, and no water lies where
-    // none stands over the ground, or behind the waterline.
-    if in.depths.a < 0.5 || in.lies.x <= 0.0 || offshore <= 0.0 {
+    // A point belongs to the water that leads among the pixels round it, and no water lies
+    // where none stands over the ground, or behind the waterline.
+    if in.depths.a <= 0.0 || in.lies.x <= 0.0 || offshore <= 0.0 {
         discard;
     }
     deep = in.lies.x;

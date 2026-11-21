@@ -24,8 +24,8 @@ use super::residency::Residency;
 use super::upload::UploadBudget;
 use crate::core::ground::{
     GroundGrid, GroundSize, GroundValue, HeightRange, Heightfield, Level, OVERVIEW_STRIDE,
-    PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion, WaterLevel, WaterMap,
-    WaterSurface, shore_distances,
+    PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion, WaterFalls, WaterLevel,
+    WaterMap, WaterSurface, fall_margin, shore_distances,
 };
 use crate::core::jobs::Handoff;
 use crate::core::math::{Rect, Size};
@@ -94,8 +94,8 @@ pub enum AtlasTexture {
     /// there wherever any does.
     Paint,
     /// The surface a sheet on water lies on, a texel a sample: its level as the heights are held,
-    /// how it falls toward east and south as levels of [`SURFACE_FALL_UNIT`] over the midpoint,
-    /// and how far it lies out from the waterline, from [`SHORE_BACK`] behind it to [`SHORE_REACH`].
+    /// how it falls toward east and south, kept as [`SURFACE_FALL_MOST`] tells, and how far it
+    /// lies out from the waterline, from [`SHORE_BACK`] behind it to [`SHORE_REACH`].
     Surface,
     OverviewHeights,
     OverviewPaint,
@@ -367,7 +367,7 @@ const CANOPY_ROWS_PER_WRITE: u32 = 64;
 const SLOT_BYTES: usize = (SLOT_SIDE * SLOT_SIDE) as usize * 12;
 
 /// The samples past a slot that its surface is read across, so a slot's surface meets its
-/// neighbours': as far as the shore reaches, farther than the fall is read.
+/// neighbours': as far as the shore reaches.
 const SHORE_MARGIN: u32 = (SHORE_REACH.0 * SAMPLES_PER_METER as f32) as u32;
 
 /// How far under the ground the surface lies away from any water.
@@ -377,15 +377,14 @@ const DRY_SINK: Meters = Meters(1.0);
 /// sinks under it.
 const LEVEL_RUNS_ON: usize = 4;
 
-/// How far either way along the water the surface's fall is read, in samples: far enough that the
-/// gentlest river's fall shows through the steps its levels are kept in.
-const FALL_SAMPLES: usize = 4;
+/// The steepest fall a surface texel tells, in metres a metre: its levels each way from the
+/// midpoint hold the fall's share of this by its square root, so the gentlest river, falling
+/// less than a millimetre a metre, still tells which way it runs.
+pub const SURFACE_FALL_MOST: f32 = 2.0;
 
-/// The fall a level of a surface texel's fall stands for, in metres a metre.
-pub const SURFACE_FALL_UNIT: f32 = 1.0 / 4096.0;
-
-/// The fall level of a surface that doesn't fall.
+/// The fall level of a surface that doesn't fall, and how many levels lie to each side of it.
 const FALL_MIDDLE: f32 = 32768.0;
+const FALL_LEVELS: f32 = 32767.0;
 
 /// The grids of the ground the atlas holds, shared with the area's.
 #[derive(Clone)]
@@ -519,9 +518,31 @@ impl AtlasGround {
         let heights = self.heights.block(around, wide, wide);
         let water = self.water.block(around, wide, wide);
         let spacing = Meters(1.0 / SAMPLES_PER_METER as f32);
+        let falls = if wet(&heights, &water).any(|wet| wet) {
+            // The fall is read farther round than the shore, on a block of its own.
+            let far = fall_margin(spacing) as u32;
+            let wider = wide + far * 2;
+            let around = (around.0 - i64::from(far), around.1 - i64::from(far));
+            let falls = WaterFalls::read(
+                &standing(
+                    &self.heights.block(around, wider, wider),
+                    &self.water.block(around, wider, wider),
+                    self.heights.range(),
+                ),
+                wider as usize,
+                spacing,
+            );
+            (far..far + wide)
+                .flat_map(|row| (far..far + wide).map(move |column| (column, row)))
+                .map(|(column, row)| falls.at(column as usize, row as usize))
+                .collect()
+        } else {
+            vec![Vec2::ZERO; heights.len()]
+        };
         let surface = surface_bytes(
             &heights,
             &water,
+            &falls,
             wide as usize,
             spacing,
             self.heights.range(),
@@ -593,7 +614,7 @@ impl AtlasGround {
         let values = self.heights.overview_dims();
         let (low, high) = overview_bounds(&self.heights, tile);
         let spacing = Meters((OVERVIEW_STRIDE * step) as f32 / SAMPLES_PER_METER as f32);
-        let margin = ((SHORE_REACH.0 / spacing.0).ceil() as u32).max(FALL_SAMPLES as u32);
+        let margin = ((SHORE_REACH.0 / spacing.0).ceil() as u32).max(fall_margin(spacing) as u32);
         let (first_column, columns) = sources(low.0, high.0, values.0, step);
         let (first_row, rows) = sources(low.1, high.1, values.1, step);
         if columns.is_empty() || rows.is_empty() {
@@ -609,9 +630,18 @@ impl AtlasGround {
         let (skip_rows, wide_rows) = around(first_row, rows.len(), values.1);
         let heights = self.heights.overview_at(&wide_columns, &wide_rows);
         let water = self.water.overview_at(&wide_columns, &wide_rows);
+        let falls = WaterFalls::read(
+            &standing(&heights, &water, self.heights.range()),
+            wide_columns.len(),
+            spacing,
+        );
+        let falls: Vec<Vec2> = (0..heights.len())
+            .map(|at| falls.at(at % wide_columns.len(), at / wide_columns.len()))
+            .collect();
         let surface = surface_bytes(
             &heights,
             &water,
+            &falls,
             wide_columns.len(),
             spacing,
             self.heights.range(),
@@ -639,23 +669,20 @@ impl AtlasGround {
 /// to it, so a sheet runs on flat into the bank and meets it where the water does, and the
 /// ground beside the water knows how high over it it lies; away from any water it lies under
 /// the ground.
-/// Its fall is read as far along the water as [`FALL_SAMPLES`] either way, so dry ground beside it
-/// doesn't count. Where the water's map ends over ground that lies under the water's level, no
-/// bank says where the water stops: there the waterline runs halfway to the first dry point, the
-/// point counted as far over the water as the water beside it is deep.
+/// It falls as `falls` say of each point, in metres a metre toward east and south. Where the
+/// water's map ends over ground that lies under the water's level, no bank says where the water
+/// stops: there the waterline runs halfway to the first dry point, the point counted as far over
+/// the water as the water beside it is deep.
 fn surface_bytes(
     heights: &[u16],
     water: &[WaterLevel],
+    falls: &[Vec2],
     columns: usize,
     spacing: Meters,
     range: HeightRange,
 ) -> Vec<u8> {
     let rows = heights.len() / columns;
-    let wet: Vec<bool> = heights
-        .iter()
-        .zip(water)
-        .map(|(ground, surface)| surface.level() > *ground)
-        .collect();
+    let wet: Vec<bool> = wet(heights, water).collect();
     let sink = (DRY_SINK.0 / range.step()).ceil() as u16;
     let at = |column: usize, row: usize| row * columns + column;
     let wet_at = |column: isize, row: isize| {
@@ -720,35 +747,41 @@ fn surface_bytes(
     for row in 0..rows {
         for column in 0..columns {
             let here = at(column, row);
-            let fall = |way: (isize, isize)| {
-                let reach = |sign: isize| {
-                    (1..=FALL_SAMPLES).rev().find_map(|samples| {
-                        let off = samples as isize * sign;
-                        wet_at(column as isize + way.0 * off, row as isize + way.1 * off)
-                            .map(|index| (f32::from(water[index].level()), samples))
-                    })
-                };
-                let here = (f32::from(levels[here]), 0);
-                let (ahead, behind) = (reach(1).unwrap_or(here), reach(-1).unwrap_or(here));
-                let span = (ahead.1 + behind.1) as f32 * spacing.0;
-                let fall = if span > 0.0 {
-                    (behind.0 - ahead.0) * range.step() / span
-                } else {
-                    0.0
-                };
-                (fall / SURFACE_FALL_UNIT + FALL_MIDDLE)
-                    .round()
-                    .clamp(0.0, f32::from(u16::MAX)) as u16
+            let fall = |fall: f32| {
+                let share = (fall / SURFACE_FALL_MOST).clamp(-1.0, 1.0);
+                (share.signum() * share.abs().sqrt() * FALL_LEVELS + FALL_MIDDLE).round() as u16
             };
             let shore = ((shores[here].0 + SHORE_BACK.0) / (SHORE_REACH.0 + SHORE_BACK.0)
                 * f32::from(u16::MAX))
             .round() as u16;
-            for value in [levels[here], fall((1, 0)), fall((0, 1)), shore] {
+            for value in [
+                levels[here],
+                fall(falls[here].x),
+                fall(falls[here].y),
+                shore,
+            ] {
                 bytes.extend(value.to_le_bytes());
             }
         }
     }
     bytes
+}
+
+/// Whether water stands over each point of the ground.
+fn wet<'a>(heights: &'a [u16], water: &'a [WaterLevel]) -> impl Iterator<Item = bool> + 'a {
+    heights
+        .iter()
+        .zip(water)
+        .map(|(ground, surface)| surface.level() > *ground)
+}
+
+/// How high the water stands at each point, in metres over the lowest of `range`, none on dry
+/// ground.
+fn standing(heights: &[u16], water: &[WaterLevel], range: HeightRange) -> Vec<Option<f32>> {
+    wet(heights, water)
+        .zip(water)
+        .map(|(wet, surface)| wet.then(|| f32::from(surface.level()) * range.step()))
+        .collect()
 }
 
 /// The texels of the paint: the terrain at each pixel, then the water.
