@@ -1153,6 +1153,40 @@ impl<T: Value> GroundGrid<T> {
         Ok(())
     }
 
+    /// This ground with every one of `tiles` loaded into the copy alone, where the ground hasn't
+    /// loaded it: a reader working through the whole of a large ground holds only the tiles it
+    /// works on at once, and drops them with the copy.
+    pub fn holding(
+        &self,
+        tiles: impl IntoIterator<Item = TileAt>,
+    ) -> Result<GroundGrid<T>, ContentProblem> {
+        let mut held = self.clone();
+        for at in tiles {
+            if at.column >= self.grid.across || at.row >= self.grid.down {
+                continue;
+            }
+            let index = self.grid.index(at);
+            if self.tiles[index].is_loaded() {
+                continue;
+            }
+            held.tiles[index] = Arc::new(Slot::new(None, self.tiles[index].stored.clone()));
+            held.load(at)?;
+        }
+        Ok(held)
+    }
+
+    /// This ground as it reads with none of its tiles loaded from their files, each of their
+    /// values the overview's nearest: the same values however many tiles the ground has loaded.
+    pub fn unloaded(&self) -> GroundGrid<T> {
+        let mut unloaded = self.clone();
+        for slot in &mut unloaded.tiles {
+            if let Some(stored) = &slot.stored {
+                *slot = Arc::new(Slot::new(None, Some(stored.clone())));
+            }
+        }
+        unloaded
+    }
+
     /// Loads every tile, on every core: the problems of the tiles that don't load.
     pub fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
         (0..self.tiles.len())

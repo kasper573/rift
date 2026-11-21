@@ -77,6 +77,7 @@ use crate::systems::actor::Pose;
 use crate::systems::area::sky::SkyCondition;
 use crate::systems::area::sky::SkyTable;
 use crate::systems::area_instance::AreaInstanceRules;
+use crate::systems::area_map::baked::{self, BakedMap, MAP_KEYS, MAP_PICTURES};
 use crate::systems::mount::MountKind;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
@@ -191,7 +192,8 @@ pub const RAIN: PartSpec = PartSpec::File {
 
 /// A place in the world: a stretch of ground painted with terrains, with water lying on it, the
 /// light it stands in, its climate and how its rain falls over it, and a scene of modules on it.
-/// Its scene, the tiles of its heights, paint and water, and its rain map are parts of its bundle.
+/// Its scene, the tiles of its heights, paint and water, its rain map and its baked map are parts
+/// of its bundle.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaDef {
@@ -231,6 +233,8 @@ pub struct AreaDef {
     pub water_map: WaterMap,
     #[serde(skip)]
     pub rain: Option<ShareMap>,
+    #[serde(skip)]
+    pub map: BakedMap,
 }
 
 impl ContentFile for AreaDef {
@@ -265,6 +269,7 @@ impl ContentFile for AreaDef {
             water: WaterSurface::dry(size, height_range),
             water_map: WaterMap::plain(size),
             rain: None,
+            map: BakedMap::default(),
         })
     }
 
@@ -313,9 +318,11 @@ impl Bundle for AreaDef {
         WATER_OVERVIEW,
         WATER_MAP_OVERVIEW,
         RAIN,
+        MAP_PICTURES,
+        MAP_KEYS,
     ];
     const WRITTEN: &'static [PartSpec] = Self::PARTS;
-    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT, WATER, WATER_MAP];
+    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT, WATER, WATER_MAP, MAP_PICTURES];
 
     fn read_parts(&mut self, parts: &mut Parts) {
         scene::read(&mut self.scene, &BTreeMap::new(), parts);
@@ -356,6 +363,7 @@ impl Bundle for AreaDef {
             &mut self.water_map,
         );
         self.rain = read_share_map(parts, RAIN);
+        self.map = baked::read(parts);
     }
 
     fn write_parts(&self, bundle: &str, writer: &mut FileWriter) -> io::Result<()> {
@@ -390,7 +398,7 @@ impl Bundle for AreaDef {
         put(writer, part(RAIN, ""), || {
             self.rain.as_ref().map(ShareMap::encode)
         })?;
-        Ok(())
+        baked::write(&self.map, bundle, writer)
     }
 }
 

@@ -81,6 +81,9 @@ minisign = "0.10"
 self-replace = "1.5"
 walkdir = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
+webp = { version = "0.3", default-features = false }
+contour = "0.13"
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 oauth2-test-server = "0.2.3"
 openidconnect = "4"
 

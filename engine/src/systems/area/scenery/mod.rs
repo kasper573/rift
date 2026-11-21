@@ -15,6 +15,7 @@ mod plan;
 mod props;
 mod waters;
 
+pub use instances::impostor_of;
 pub use plan::{Eyes, Sight};
 pub use props::{extent_of, prop_transform};
 

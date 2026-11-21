@@ -79,6 +79,7 @@ fn vertex(in: Vertex) -> Placed {
 @fragment
 fn fragment(in: Placed) -> @location(0) vec4<f32> {
     read_weather();
+    let caster = caster_way();
     var input = pbr_input_new();
     input.material.flags |= STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT;
     input.material.metallic = 0.0;
@@ -118,7 +119,7 @@ fn fragment(in: Placed) -> @location(0) vec4<f32> {
     }
     let soaked = max(wetness(in.world_position.xyz), lapped) * laid.wet.z;
     let over = canopied(in.world_position.xyz);
-    let color = mix(laid.color, over.rgb, over.a) * (1.0 + dancing(in.world_position.xyz, sunk));
+    let color = mix(laid.color, over.rgb, over.a) * (1.0 + dancing(in.world_position.xyz, sunk, caster));
     input.material.base_color = vec4<f32>(color * mix(1.0, laid.wet.x, soaked), 1.0);
     // The water over sunk ground is what mirrors: the ground under it shows no gloss of its own.
     let glossy = soaked * (1.0 - smoothstep(0.0, GLOSS_DROWNS, sunk));
@@ -127,10 +128,10 @@ fn fragment(in: Placed) -> @location(0) vec4<f32> {
 }
 
 // How much brighter the light the water's surface gathers makes the bed at `at`, `under` metres
-// of water: a net of bright lines drifting over the bed where the sun or the moon shines
-// through the surface, brightest a little under it and gone where the water fades the light
-// away or the sky is overcast.
-fn dancing(at: vec3<f32>, under: f32) -> f32 {
+// of water, lit from the way `caster`: a net of bright lines drifting over the bed where the sun
+// or the moon shines through the surface, brightest a little under it and gone where the water
+// fades the light away or the sky is overcast.
+fn dancing(at: vec3<f32>, under: f32, caster: vec3<f32>) -> f32 {
     if under <= 0.0 {
         return 0.0;
     }
@@ -139,9 +140,9 @@ fn dancing(at: vec3<f32>, under: f32) -> f32 {
     let fading = textureLoad(waters, vec2<i32>(water, 0), 0).rgb;
     let through = exp(-max(fading.r, max(fading.g, fading.b)) * under);
     let gathered = under / NET_GATHERS * exp(1.0 - under / NET_GATHERS);
-    let shining = max(caster_way().y, 0.0) * (1.0 - weather.clouds);
+    let shining = max(caster.y, 0.0) * (1.0 - weather.clouds);
     // Light slanting down through the water lands off to the side of where it went in.
-    let landed = (at.xz - caster_way().xz * under) / NET_SPAN;
+    let landed = (at.xz - caster.xz * under) / NET_SPAN;
     let drift = weather.time * 0.35;
     let one = dancing_noise(landed + vec2<f32>(drift, drift * 0.6));
     let other = dancing_noise(landed * 1.3 - vec2<f32>(drift * 0.7, drift) + 11.0);

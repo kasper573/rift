@@ -38,7 +38,7 @@ use crate::core::render::world::gpu::atlas::{
     AtlasLayout, CANOPY_BANDS, CANOPY_EXTENT_MAX, CanopyMap, TerrainAtlas,
 };
 use crate::core::render::world::gpu::impostor::{
-    self, AtlasKey, BakeMaterialKey, ImpostorStore, LookBakeKey, LookFromAbove,
+    self, AtlasKey, BakeMaterialKey, ImpostorFrame, ImpostorStore, LookBakeKey, LookFromAbove,
 };
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
@@ -830,12 +830,7 @@ fn sizes(world: &mut World, streaming: &mut Streaming) -> Option<Extents> {
         let key = match streaming.instances.impostor_keys.get(&prop) {
             Some(key) => Some(*key),
             None => {
-                let key = world
-                    .get_resource::<PropModels>()
-                    .and_then(|models| models.parts(model.id()))
-                    .map(<[_]>::to_vec)
-                    .and_then(|parts| prop_dress(world, &streaming.content, prop, &model, &parts))
-                    .and_then(|dressed| dressed.impostor);
+                let key = impostor_of(world, &streaming.content, prop, &model);
                 if let Some(key) = key {
                     streaming.instances.impostor_keys.insert(prop, key);
                 }
@@ -1422,6 +1417,21 @@ fn dress(world: &mut World, streaming: &mut Streaming, root: Entity) {
     }
 }
 
+/// The atlas `prop` of `content` is drawn from far off, its impostor wanted, once its `model`
+/// is on the GPU and can be dressed.
+pub fn impostor_of(
+    world: &mut World,
+    content: &Content,
+    prop: PropId,
+    model: &Handle<Gltf>,
+) -> Option<AtlasKey> {
+    let parts = world
+        .get_resource::<PropModels>()?
+        .parts(model.id())?
+        .to_vec();
+    prop_dress(world, content, prop, model, &parts)?.impostor
+}
+
 /// How the arena draws `prop` of `content`, its `model` drawn in `parts`.
 fn prop_dress(
     world: &mut World,
@@ -1550,13 +1560,19 @@ fn want_impostor(
         .map(|hash| hash.hash.as_str())
         .unwrap_or_default();
     let key = impostor::atlas_key(model_hash, overhang, &keys);
-    if world.contains_resource::<ImpostorStore>() {
+    let bounds = world
+        .get_resource::<PropModels>()
+        .and_then(|models| models.bounds(model.id()));
+    if let Some(bounds) = bounds
+        && world.contains_resource::<ImpostorStore>()
+    {
         let profile = world.resource::<Profile>().clone();
         let materials: Arc<[UntypedHandle]> =
             materials.iter().cloned().map(Handle::untyped).collect();
+        let frame = ImpostorFrame { bounds, overhang };
         world
             .resource_mut::<ImpostorStore>()
-            .want(&profile, model.id(), key, materials, overhang);
+            .want(&profile, model.id(), key, materials, frame);
     }
     Some(key)
 }

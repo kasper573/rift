@@ -3,8 +3,9 @@ use ui::egui::{self, CursorIcon, Sense, Ui, UiBuilder, Vec2};
 use ui::face::TextRole;
 use ui::float;
 
-use super::{BUTTON, MapReachStep, MapSight, MapView, MapWindow, minimap};
+use super::{BUTTON, MapReachStep, MapSight, MapView, MapWindow, minimap, pictures};
 use crate::core::content::Content;
+use crate::core::gui;
 use crate::core::math::{Pos, Rect};
 use crate::core::units::{MeterSize, Meters};
 use crate::systems::GameSettings;
@@ -42,14 +43,40 @@ pub(super) struct MapTabLook {
     /// The reach drawn, which eases toward the reach the step asks for.
     drawn: Option<Meters>,
     middle: Option<Pos<Meters>>,
-    shows: Option<Rect<Meters>>,
+    /// The sheet the map was drawn on last, which its zoom steps are preloaded for.
+    sheet: Option<egui::Rect>,
     pub(super) sight: Option<MapSight>,
 }
 
-impl MapTabLook {
-    /// The ground the tab shows, with the area it is of.
-    pub fn shows(&self) -> Option<(AreaId, Rect<Meters>)> {
-        self.area.zip(self.shows)
+/// Asks for what the map shows at each of its zoom steps when it opens on the player at `at` in
+/// `area`, so neither opening the map nor zooming it waits on a picture.
+pub(super) fn preload(world: &mut World, area: AreaId, at: Pos<Meters>) {
+    let Some(gui) = gui::context(world) else {
+        return;
+    };
+    let Some(bounds) =
+        area::loaded(world.resource::<Content>(), area).map(|area| area.size.bounds())
+    else {
+        return;
+    };
+    let sheet = world
+        .resource::<MapTabLook>()
+        .sheet
+        .unwrap_or_else(|| gui.content_rect());
+    let reaches = reaches_of(world.resource::<GameSettings>(), Some(bounds), sheet);
+    for reach in reaches {
+        let per_meter = minimap::GROUND / reach.0;
+        let middle = covering(at, bounds, sheet, per_meter);
+        let (across, down) = (
+            sheet.width() / per_meter / 2.0,
+            sheet.height() / per_meter / 2.0,
+        );
+        let shown = Rect::from_points([
+            Pos::new(middle.x - across, middle.y - down),
+            Pos::new(middle.x + across, middle.y + down),
+        ]);
+        let pixels = per_meter * gui.pixels_per_point();
+        pictures::want(world, area, shown, pixels, pictures::Wanted::Preload);
     }
 }
 
@@ -58,7 +85,6 @@ pub(super) fn rest(world: &mut World) {
         let mut look = world.resource_mut::<MapTabLook>();
         look.middle = None;
         look.drawn = None;
-        look.shows = None;
         look.sight = None;
     }
 }
@@ -92,19 +118,30 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
     }
     let rests_on = spot.map_or(view.at, |(_, at)| at);
     let area_name = view.area.get(&content).name.clone();
-    let reaches = reaches_of(world, &view, sheet);
+    let bounds = area::loaded(&content, view.area).map(|area| area.size.bounds());
+    let reaches = reaches_of(world.resource::<GameSettings>(), bounds, sheet);
     let step = step
         .unwrap_or(MapReachStep(u32::MAX))
         .min(MapReachStep(reaches.len() as u32 - 1));
     view.step = step;
     view.last_step = MapReachStep(reaches.len() as u32 - 1);
     let wanted = reaches[step.0 as usize];
-    let drawn = ease(
-        ui,
-        drawn.filter(|_| world.resource::<MapTabLook>().area == Some(view.area)),
-        wanted,
+    let widest = reaches[reaches.len() - 1];
+    // A sheet grown since the last frame lowers the widest reach at once, while the zoom is
+    // still easing out of the reach it had.
+    let drawn = Meters(
+        ease(
+            ui,
+            drawn.filter(|_| world.resource::<MapTabLook>().area == Some(view.area)),
+            wanted,
+        )
+        .0
+        .min(widest.0),
     );
     view.reach = drawn;
+    let per_meter = view.per_meter();
+    let covered =
+        |at: Pos<Meters>| bounds.map_or(at, |bounds| covering(at, bounds, sheet, per_meter));
     let whole = ui.interact(sheet, ui.id().with("sheet"), Sense::drag());
     let reach = view.reach.0;
     whole.widget_info(|| {
@@ -112,21 +149,18 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said)
     });
     let mut middle = held.filter(|_| world.resource::<MapTabLook>().area == Some(view.area));
-    let dragged = whole.drag_delta();
-    if dragged != Vec2::ZERO {
-        let pulled = view.ground(view.center() - dragged);
-        let bounds = area::loaded(&content, view.area).map(|area| area.size.bounds());
-        middle = Some(bounds.map_or(pulled, |bounds| {
-            Pos::new(
-                pulled.x.clamp(bounds.min_x(), bounds.max_x()),
-                pulled.y.clamp(bounds.min_y(), bounds.max_y()),
-            )
-        }));
-    }
     view.window = MapWindow::Sheet {
         rect: sheet,
-        middle: middle.unwrap_or(rests_on),
+        middle: covered(middle.unwrap_or(rests_on)),
     };
+    let dragged = whole.drag_delta();
+    if dragged != Vec2::ZERO {
+        middle = Some(covered(view.ground(view.center() - dragged)));
+        view.window = MapWindow::Sheet {
+            rect: sheet,
+            middle: covered(middle.unwrap_or(rests_on)),
+        };
+    }
     let whole = whole.on_hover_cursor(if dragged == Vec2::ZERO {
         CursorIcon::Grab
     } else {
@@ -138,7 +172,7 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
     let along = Vec2::new(2.0 * BUTTON + BUTTON_GAP, 0.0);
     let stepped = super::reach_buttons(ui, &view, [corner - along, corner]);
     let stepped = stepped.or_else(|| super::wheeled(ui, world, &whole, &view));
-    let off_me = middle.unwrap_or(rests_on) != view.at;
+    let off_me = covered(middle.unwrap_or(rests_on)) != covered(view.at);
     if !view.away
         && centre_button(
             ui,
@@ -154,31 +188,53 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
         &area_name,
         sheet.center_bottom() - Vec2::new(0.0, NAME_ROOM),
     );
-    let from = view.ground(sheet.min);
-    let to = view.ground(sheet.max);
     let mut look = world.resource_mut::<MapTabLook>();
     look.area = Some(view.area);
     look.middle = middle;
     look.drawn = Some(drawn);
-    look.shows = Some(Rect::from_points([from, to]));
+    look.sheet = Some(sheet);
     look.step = stepped.or(Some(step));
 }
 
-/// The reaches the map can be drawn at: the game's, up to the one that fits the whole area in the
-/// sheet, which is the furthest it zooms out.
-fn reaches_of(world: &World, view: &MapView, sheet: egui::Rect) -> Vec<Meters> {
-    let settings = world.resource::<GameSettings>();
+/// The reaches the map can be drawn at: the game's, up to the one at which the area just covers
+/// the sheet, which is the furthest it zooms out, so the map never shows past the area's edge.
+fn reaches_of(
+    settings: &GameSettings,
+    bounds: Option<Rect<Meters>>,
+    sheet: egui::Rect,
+) -> Vec<Meters> {
     let mut reaches: Vec<Meters> = settings.map_reaches.0.clone();
-    let Some(size) = area::loaded(&view.content, view.area).map(|area| area.size.bounds()) else {
+    let Some(size) = bounds else {
         return reaches;
     };
     let across = (size.max_x() - size.min_x()).max(1.0);
     let down = (size.max_y() - size.min_y()).max(1.0);
-    let per_meter = (sheet.width() / across).min(sheet.height() / down);
-    let fit = Meters(minimap::GROUND / per_meter);
-    reaches.retain(|reach| reach.0 < fit.0);
-    reaches.push(fit);
+    let per_meter = (sheet.width() / across).max(sheet.height() / down);
+    let cover = Meters(minimap::GROUND / per_meter);
+    reaches.retain(|reach| reach.0 < cover.0);
+    reaches.push(cover);
     reaches
+}
+
+/// The middle nearest `at` for a sheet drawn at `per_meter` that shows no ground past `bounds`.
+fn covering(
+    at: Pos<Meters>,
+    bounds: Rect<Meters>,
+    sheet: egui::Rect,
+    per_meter: f32,
+) -> Pos<Meters> {
+    let along = |at: f32, low: f32, high: f32, shown: f32| {
+        let half = shown / per_meter / 2.0;
+        if high - low <= 2.0 * half {
+            (low + high) / 2.0
+        } else {
+            at.clamp(low + half, high - half)
+        }
+    };
+    Pos::new(
+        along(at.x, bounds.min_x(), bounds.max_x(), sheet.width()),
+        along(at.y, bounds.min_y(), bounds.max_y(), sheet.height()),
+    )
 }
 
 /// Moves the drawn reach toward `wanted`, the way the camera's zoom eases.

@@ -62,9 +62,10 @@ folder, and starts the other binaries from its own binaries folder when a comman
 
 | Command | What it does |
 | --- | --- |
-| [`rift check <game>`](#checking-a-game) | Checks that the game loads whole and reads as the editor writes it. |
+| [`rift check <game>`](#checking-a-game) | Checks that the game loads whole, reads as the editor writes it, and has its maps baked. |
 | [`rift format <game>`](#checking-a-game) | Rewrites the files that don't. |
 | [`rift fit <game> <prop>…`](#fitting-footprints) | Shapes props' footprints to their models. |
+| [`rift bake maps <game>`](#baking-the-maps) | Bakes the maps of every area into its bundle. |
 | [`rift ask <game>`](#asking-about-a-game) | Answers the probe's questions about the game, without a client. |
 | [`rift render area <game> <shot> <out>`](#rendering-an-area) | Draws a picture of an area off screen. |
 | [`rift render dialogue <game> <out>`](#rendering-the-dialogue) | Draws the dialogue in every style it sets, over many grounds. |
@@ -82,9 +83,11 @@ rift check <game>
 rift format <game>
 ```
 
-`rift check` fails unless the game loads whole and every file reads exactly as the editor writes it,
-so that saving the game in the editor changes only what was edited. `rift format` rewrites the files
-that read otherwise: what each holds stays, only its layout changes.
+`rift check` fails unless the game loads whole, every file reads exactly as the editor writes it, so
+that saving the game in the editor changes only what was edited, and the map of every area is baked
+from the area as it is (see [baking the maps](#baking-the-maps)). It bakes nothing itself, and takes
+no GPU: a map's keys are worked out from the area's files alone. `rift format` rewrites the files that
+read otherwise: what each holds stays, only its layout changes.
 
 ### Fitting footprints
 
@@ -97,6 +100,25 @@ takes from whoever walks up to it, as the editor's fit does one prop at a time. 
 round all of the model a walker would meet, not only what touches the ground: a boulder that bulges
 over a narrow foot blocks as far as it bulges, and a crown overhead is walked under. A walker is as
 tall as the game's player unless `--tall` says otherwise; a low height fits a tree to its trunk alone.
+
+### Baking the maps
+
+```sh
+rift bake maps <game> [--profile <dir>]
+```
+
+The maps a player opens show each area as a survey map draws it, from pictures the designer bakes
+into the area's bundle: `map/<level>_<column>_<row>.webp`, a picture of each square of every level,
+and `map.json`, the key each was drawn from. The game only ever reads them, so they cost a player's
+machine nothing to draw. The editor bakes them from its File menu, and bakes an area that has no map
+at all on its own (a new area, or a game never baked) as soon as it holds one; `rift bake maps`
+bakes them off screen the same way. Both need a GPU, as each prop is drawn from its impostor.
+
+A bake draws again only the squares whose key changed: a square's key is made of the ground, the
+props and the style it shows, so an edit puts only the squares it reaches out of date. Until the maps
+are baked again, the game shows them as they were baked, and `rift check` names every area whose map
+is out of date. `--profile` keeps the models' impostors between bakes, as a player's profile keeps
+them.
 
 ### Asking about a game
 

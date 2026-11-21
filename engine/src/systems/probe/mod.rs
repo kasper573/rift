@@ -379,7 +379,7 @@ pub struct ProbeSnapshot {
     pub map_marks: Vec<ProbeMapMark>,
     /// The rings of marks open round a townsperson on the minimap or the map.
     pub map_rings: Vec<ProbeMapRing>,
-    /// How many of the squares of ground the maps show have their satellite picture yet.
+    /// How many of the squares of ground the maps show have their picture yet.
     pub map_tiles: ProbeMapTiles,
     /// The bag as each window that shows it shows it.
     pub bag_views: Vec<ProbeBagView>,
@@ -891,14 +891,14 @@ pub struct ProbeMapRing {
     pub open: f32,
 }
 
-/// The squares of ground the maps show as a satellite sees it: how many, how many of them show
-/// their satellite picture, and how many their painted one while that is on its way. A map the
-/// player has painted asks for none.
+/// The squares of ground the maps show: how many, and how many of them show their picture yet.
+/// `ahead` counts the squares asked for before a map shows them (the whole area, and the full
+/// map's zoom steps round the player) that have no picture yet.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default)]
 pub struct ProbeMapTiles {
     pub wanted: u32,
-    pub satellite: u32,
-    pub painted: u32,
+    pub shown: u32,
+    pub ahead: u32,
 }
 
 /// One window's bag: the words and the type of item it is narrowed to, and the slots it shows,
@@ -2495,13 +2495,13 @@ fn map_rings(world: &World) -> Vec<ProbeMapRing> {
 
 fn map_tiles(world: &World) -> ProbeMapTiles {
     let tiles = world
-        .get_resource::<area_map::satellite::SatelliteMap>()
+        .get_resource::<area_map::pictures::MapPictures>()
         .map(|map| map.tiles())
         .unwrap_or_default();
     ProbeMapTiles {
         wanted: tiles.wanted,
-        satellite: tiles.satellite,
-        painted: tiles.wanted - tiles.satellite,
+        shown: tiles.shown,
+        ahead: tiles.ahead,
     }
 }
 

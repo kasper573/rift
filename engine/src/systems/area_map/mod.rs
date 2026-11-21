@@ -1,6 +1,8 @@
-mod ground;
+pub mod bake;
+pub mod baked;
 pub mod minimap;
-pub mod satellite;
+pub mod pictures;
+pub mod survey;
 pub mod tab;
 
 use std::collections::HashMap;
@@ -39,24 +41,22 @@ use crate::systems::npc::Npc;
 use crate::systems::party;
 use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
-use crate::systems::settings::UserSettings;
 use crate::systems::{GameSettings, visibility};
 
 pub struct AreaMapPlugin;
 
 impl Plugin for AreaMapPlugin {
     fn build(&self, app: &mut App) {
-        satellite::init(app);
-        app.init_resource::<ground::MapGround>()
-            .init_resource::<tab::MapTabLook>()
+        pictures::init(app);
+        app.init_resource::<tab::MapTabLook>()
             .init_resource::<MarksShown>()
             .add_systems(
                 Update,
-                (tab::rest, picture_the_ground, satellite::keep)
+                (tab::rest, preload, pictures::keep)
                     .chain()
                     .run_if(in_state(ClientScreen::Area)),
             )
-            .add_systems(OnExit(ClientScreen::Area), satellite::forget);
+            .add_systems(OnExit(ClientScreen::Area), pictures::forget);
     }
 }
 
@@ -90,6 +90,14 @@ impl MapSight {
             MapSight::Pin(pin) => Some(pin),
         }
     }
+}
+
+/// Whether the maps hold every picture they show or keep ready of `area`, so the view an arrival
+/// reveals is never followed by a map still filling in.
+pub fn ready_for(world: &World, area: AreaId) -> bool {
+    world
+        .get_resource::<pictures::MapPictures>()
+        .is_none_or(|map| map.ready_for(area))
 }
 
 /// Opens the map on `sight`, which it shows for as long as it stays open: closing the map or
@@ -138,10 +146,6 @@ impl MapReaches {
     fn at(&self, step: MapReachStep) -> Meters {
         let step = step.min(self.last_step());
         self.0.get(step.0 as usize).copied().unwrap_or(Meters(1.0))
-    }
-
-    fn widest(&self) -> Meters {
-        self.at(self.last_step())
     }
 
     pub fn closest(&self) -> Meters {
@@ -483,7 +487,7 @@ fn pinned(ui: &mut Ui, view: &MapView, pin: &MapPin) {
     );
     let spot = egui::Rect::from_center_size(head, Vec2::splat(2.0 * HOVER_REACH)).union(name);
     let said = view.messages().pinned_by(view.key(), &pin.name);
-    ui.interact(spot, ui.id().with("pin"), Sense::hover())
+    marker(ui, spot, ui.id().with("pin"))
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
 }
 
@@ -522,7 +526,10 @@ const PARTY_MEMBER: Color32 = Color32::from_rgb(0xE6, 0xC2, 0x5B);
 const PIN: Color32 = Color32::from_rgb(0xD9, 0x4F, 0x4F);
 const EDGE: Color32 = ink::FRAME;
 
-fn picture_the_ground(world: &mut World) {
+/// Asks, whether a map shows them or not, for the pictures of the whole area the player is in
+/// and of what the full map shows round the player at each of its zoom steps. The ground under a
+/// map never changes, so what a map opens on, or zooms to, is already there.
+fn preload(world: &mut World) {
     let Some(me) = session::me(world) else {
         return;
     };
@@ -532,13 +539,8 @@ fn picture_the_ground(world: &mut World) {
     ) else {
         return;
     };
-    let widest = world.resource::<GameSettings>().map_reaches.widest().0;
-    let about_me = Rect::new(at, default()).inflate(widest, widest);
-    let on_the_tab = world.resource::<tab::MapTabLook>().shows();
-    let shown: Vec<(AreaId, Rect<Meters>)> = std::iter::once((area, about_me))
-        .chain(on_the_tab)
-        .collect();
-    ground::keep(world, &shown);
+    pictures::want_whole(world, area);
+    tab::preload(world, area, at);
 }
 
 fn stands_at(world: &World, entity: Entity) -> Option<Pos<Meters>> {
@@ -603,92 +605,82 @@ fn within(shape: &[Pos2], quad: [Pos2; 4]) -> Vec<Pos2> {
     kept
 }
 
-/// How the maps picture the ground: as a satellite sees it, or painted from what the ground is
-/// made of, which draws nothing more than the map.
-#[derive(
-    Serialize, Deserialize, strum::VariantArray, Clone, Copy, Debug, Default, PartialEq, Eq,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum MapPicture {
-    #[default]
-    Satellite,
-    Painted,
-}
-
 fn ground_under(ui: &Ui, world: &mut World, view: &MapView) {
-    let satellite = world.resource::<UserSettings>().map_picture() == MapPicture::Satellite;
-    if satellite {
-        let corners: Vec<Pos<Meters>> = view
-            .outline()
-            .into_iter()
-            .map(|point| view.ground(point))
-            .collect();
-        let low = corners
-            .iter()
-            .fold(Pos::new(f32::INFINITY, f32::INFINITY), |low, at| {
-                low.min(*at)
-            });
-        let high = corners.iter().fold(
-            Pos::new(f32::NEG_INFINITY, f32::NEG_INFINITY),
-            |high, at| high.max(*at),
-        );
-        let shown = Rect::from_points([low, high]);
-        let wanted = match view.window {
-            MapWindow::Disc { .. } => satellite::Wanted::Minimap,
-            MapWindow::Sheet { .. } => satellite::Wanted::Map,
-        };
-        let pixels = view.per_meter() * ui.ctx().pixels_per_point();
-        satellite::want(world, view.area, shown, pixels, wanted);
-    }
+    let shown = ground_shown(view);
+    let pixels = view.per_meter() * ui.ctx().pixels_per_point();
+    let wanted = match view.window {
+        MapWindow::Disc { .. } => pictures::Wanted::Minimap,
+        MapWindow::Sheet { .. } => pictures::Wanted::Map,
+    };
+    pictures::want(world, view.area, shown, pixels, wanted);
     let painter = ui.painter();
     let disc = view.outline();
     painter.add(Shape::convex_polygon(disc.clone(), NO_GROUND, Stroke::NONE));
     let content = world.resource::<Content>();
-    if let Some(area) = area::loaded(content, view.area) {
-        let held = within(&disc, corners(view, area.size.bounds()));
-        if held.len() >= 3 {
-            painter.add(Shape::convex_polygon(held, BLANK, Stroke::NONE));
-        }
-    }
-    for picture in world.resource::<ground::MapGround>().pictures(view.area) {
-        pictured(
-            painter,
-            view,
-            &disc,
-            picture.texture.id(),
-            picture.rect,
-            Color32::WHITE,
-        );
-    }
-    if !satellite {
+    let Some(bounds) = area::loaded(content, view.area).map(|area| area.size.bounds()) else {
         return;
+    };
+    let held = within(&disc, corners(view, bounds));
+    if held.len() >= 3 {
+        painter.add(Shape::convex_polygon(held, BLANK, Stroke::NONE));
     }
     let now = ui.input(|input| input.time);
     let mut fading = false;
     for picture in world
-        .resource::<satellite::SatelliteMap>()
+        .resource::<pictures::MapPictures>()
         .pictures(view.area)
     {
         let shown = picture.shown(now);
         fading |= shown < 1.0;
         let tint = Color32::WHITE.gamma_multiply(shown);
-        pictured(painter, view, &disc, picture.texture, picture.rect, tint);
+        if let Some(ground) = picture.rect.intersection(&bounds) {
+            pictured(
+                painter,
+                view,
+                &disc,
+                picture.texture,
+                picture.rect,
+                ground,
+                tint,
+            );
+        }
     }
     if fading {
         ui.ctx().request_repaint();
     }
 }
 
+/// The stretch of ground the view's window reaches over, squared off.
+fn ground_shown(view: &MapView) -> Rect<Meters> {
+    let corners: Vec<Pos<Meters>> = view
+        .outline()
+        .into_iter()
+        .map(|point| view.ground(point))
+        .collect();
+    let low = corners
+        .iter()
+        .fold(Pos::new(f32::INFINITY, f32::INFINITY), |low, at| {
+            low.min(*at)
+        });
+    let high = corners.iter().fold(
+        Pos::new(f32::NEG_INFINITY, f32::NEG_INFINITY),
+        |high, at| high.max(*at),
+    );
+    Rect::from_points([low, high])
+}
+
 /// Draws the picture `texture` of the ground `rect` covers, as far as the view's `disc` shows it.
+/// Draws the picture `texture` of the square `rect`, as far as `ground` of it, within `disc`.
 fn pictured(
     painter: &egui::Painter,
     view: &MapView,
     disc: &[Pos2],
     texture: egui::TextureId,
     rect: Rect<Meters>,
+    ground: Rect<Meters>,
     tint: Color32,
 ) {
-    let shown = within(disc, corners(view, rect));
+    let shown = within(disc, corners(view, ground));
     if shown.len() < 3 {
         return;
     }
@@ -829,7 +821,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                 _ => LineText::plain(mark.name.clone()),
             };
             let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * HOVER_REACH));
-            let node = ui.interact(spot, ui.id().with(("mark", index)), Sense::hover());
+            let node = marker(ui, spot, ui.id().with(("mark", index)));
             let label = said.clone();
             node.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label.clone())
@@ -878,7 +870,7 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
         Some((shown, at)) => topmost.map(|_| {
             let reach = 2.0 * ring_reach(shown.open);
             let disc = egui::Rect::from_center_size(*at, Vec2::splat(reach));
-            ui.interact(disc, ui.id().with(("ring told", shown.who)), Sense::hover())
+            marker(ui, disc, ui.id().with(("ring told", shown.who)))
         }),
         None => topmost,
     };
@@ -1054,7 +1046,7 @@ fn myself(ui: &mut Ui, view: &MapView) {
     arrow(ui, at, view.faces(), 8.0, Color32::WHITE);
     let spot = egui::Rect::from_center_size(at, Vec2::splat(16.0));
     let said = view.messages().you_here(view.key());
-    ui.interact(spot, ui.id().with("me"), Sense::hover())
+    marker(ui, spot, ui.id().with("me"))
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
 }
 
@@ -1154,6 +1146,12 @@ fn wheeled(ui: &Ui, world: &World, chart: &egui::Response, view: &MapView) -> Op
     let [closer, wider] = zooms.map(|zoom| i64::from(map::wheeled(world, zoom)));
     let step = (i64::from(view.step.0) - closer + wider).clamp(0, i64::from(view.last_step.0));
     (step != i64::from(view.step.0)).then_some(MapReachStep(step as u32))
+}
+
+/// A mark on a map. It takes clicks and drags from the ground under it, so the ground shows its
+/// cursor and moves only while the pointer is on bare ground.
+fn marker(ui: &Ui, spot: egui::Rect, id: egui::Id) -> egui::Response {
+    ui.interact(spot, id, Sense::click_and_drag())
 }
 
 fn lettered(ui: &mut Ui, name: &str, top: Pos2) -> egui::Rect {

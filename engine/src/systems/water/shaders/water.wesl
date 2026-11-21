@@ -17,9 +17,10 @@
 // `rough` (0 a still pond): the sky's picture, the land and the things the mirrored line of
 // sight meets on screen, and the sun's or the moon's glint. The line is followed off the surface
 // as it lies, so the image of the land holds still, and the face's own turn then shakes where
-// the image is read. `mirrors(normal)` is how much of a
-// mirror the face is from where the eye stands. `bends()` is 0 for a player who has stilled the
-// bending of what lies under water, 1 otherwise.
+// the image is read. A shader calls `mirror` outside any branch that only some of its pixels
+// take: the glint reads the sky's lights, which llvmpipe faults on inside such a branch.
+// `mirrors(normal)` is how much of a mirror the face is from where the eye stands. `bends()` is
+// 0 for a player who has stilled the bending of what lies under water, 1 otherwise.
 //
 // As a sheet has them: `depth()` how many metres of water stand over the ground, `shore()` how
 // far the point lies out from the waterline, as far as the area's surface tells it, `open()` how far from
@@ -118,6 +119,7 @@ var<private> shine: vec3<f32>;
 var<private> gives: vec4<f32>;
 var<private> fades: vec4<f32>;
 var<private> body: vec3<f32>;
+var<private> caster: vec3<f32>;
 
 fn depth() -> f32 {
     return deep;
@@ -171,9 +173,8 @@ fn column(bend: vec2<f32>) -> f32 {
     let under = bed_under(landing(bend));
     let seen = distance(under, spot);
     let sunk = max(spot.y - under.y, 0.0);
-    let toward = caster_way();
     // The light goes down through the water no flatter than the surface bends it.
-    let steep = sqrt(1.0 - (1.0 - toward.y * toward.y) / (WATER_SLOWS * WATER_SLOWS));
+    let steep = sqrt(1.0 - (1.0 - caster.y * caster.y) / (WATER_SLOWS * WATER_SLOWS));
     return seen + sunk / steep;
 }
 
@@ -349,6 +350,7 @@ fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) 
 
 @fragment
 fn fragment(in: WaterOutput) -> FragmentOutput {
+    caster = caster_way();
     // Near the waterline its place is read for the pixel itself, so it runs smoothly where the
     // sheet's own points would turn it at each of them.
     var offshore = in.lies.y;

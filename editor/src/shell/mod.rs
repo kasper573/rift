@@ -214,6 +214,16 @@ fn top_bar(editor: &mut Editor, root: &mut egui::Ui) {
                         ui.close();
                     }
                     ui.separator();
+                    let bakes = has_project
+                        && editor
+                            .project
+                            .as_ref()
+                            .is_some_and(|project| project.read_only.is_none())
+                        && !crate::maps::baking(editor);
+                    if menu::entry_if(ui, bakes, "Bake maps").clicked() {
+                        crate::maps::bake_all(editor);
+                        ui.close();
+                    }
                     if menu::entry_if(ui, has_project, "Find unused content…").clicked() {
                         unused_dialog::find_unused(editor);
                         ui.close();

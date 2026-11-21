@@ -261,6 +261,9 @@ pub struct GameSettings {
     pub sight: Meters,
     /// How far a player's map of the ground around them reaches, at each step they may choose.
     pub map_reaches: area_map::MapReaches,
+    /// How many pixels a metre of ground spans in the maps' sharpest pictures, as the designer
+    /// bakes them: sharper maps take longer to bake, and more room in the game's files.
+    pub map_detail: area_map::pictures::MapDetail,
     /// Without it, water slows no one who wades through it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wading: Option<movement::Wading>,
@@ -981,6 +984,12 @@ fn check_settings(loading: &mut Loading) {
     }
     check.at_least("/sight", settings.sight.0, 0.0, "meters");
     settings.map_reaches.check("/map_reaches", &mut check);
+    check.at_least(
+        "/map_detail",
+        settings.map_detail.0,
+        f32::EPSILON,
+        "pixels a meter",
+    );
     if let Some(wading) = &settings.wading {
         wading.check("/wading", &mut check);
     }

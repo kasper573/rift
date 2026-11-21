@@ -699,46 +699,65 @@ fn surface_bytes(
     };
     let depth_of =
         |index: usize| (f32::from(water[index].level()) - f32::from(heights[index])) * range.step();
-    let (mut levels, depths): (Vec<Option<u16>>, Vec<f32>) = (0..heights.len())
-        .map(|here| {
-            if wet[here] {
-                return (Some(water[here].level()), depth_of(here));
-            }
-            let Some(level) = wet_beside(here).map(|index| water[index].level()).max() else {
-                return (None, -DRY_SINK.0);
-            };
-            if level <= heights[here] {
-                let over = f32::from(heights[here]) - f32::from(level);
-                return (Some(level), -over * range.step());
-            }
+    let around = |here: usize| {
+        let (column, row) = ((here % columns) as isize, (here / columns) as isize);
+        (-1..=1)
+            .flat_map(move |down| (-1..=1).map(move |across| (column + across, row + down)))
+            .filter(move |&(column, row)| {
+                column >= 0 && row >= 0 && (column as usize) < columns && (row as usize) < rows
+            })
+            .map(move |(column, row)| at(column as usize, row as usize))
+            .filter(move |&there| there != here)
+    };
+    let mut levels: Vec<Option<u16>> = vec![None; heights.len()];
+    let mut depths = vec![-DRY_SINK.0; heights.len()];
+    let soaked: Vec<usize> = (0..heights.len()).filter(|&here| wet[here]).collect();
+    if soaked.is_empty() {
+        let (flat, inland) = (fall_texel(0.0), shore_texel(Meters(-SHORE_BACK.0)));
+        return heights
+            .iter()
+            .flat_map(|ground| [ground.saturating_sub(sink), flat, flat, inland])
+            .flat_map(u16::to_le_bytes)
+            .collect();
+    }
+    for &here in &soaked {
+        levels[here] = Some(water[here].level());
+        depths[here] = depth_of(here);
+    }
+    let shore = beside_all(&soaked, |here| around(here).filter(|&there| !wet[there]));
+    for &here in &shore {
+        let Some(level) = wet_beside(here).map(|index| water[index].level()).max() else {
+            continue;
+        };
+        levels[here] = Some(level);
+        depths[here] = if level <= heights[here] {
+            -(f32::from(heights[here]) - f32::from(level)) * range.step()
+        } else {
             let (deep, count) = wet_beside(here).fold((0.0, 0.0), |(deep, count), index| {
                 (deep + depth_of(index), count + 1.0)
             });
-            (Some(level), -deep / count)
-        })
-        .unzip();
+            -deep / count
+        };
+    }
     // The level runs on over the ground a few points further, so what lies beside the water
     // can tell how high over it it stands.
+    let mut reached: Vec<usize> = (0..levels.len())
+        .filter(|&here| levels[here].is_some())
+        .collect();
     for _ in 1..LEVEL_RUNS_ON {
-        let reached = levels.clone();
-        for (here, level) in levels.iter_mut().enumerate() {
-            if level.is_some() {
-                continue;
-            }
-            let (column, row) = ((here % columns) as isize, (here / columns) as isize);
-            *level = (-1..=1)
-                .flat_map(|down| (-1..=1).map(move |across| (column + across, row + down)))
-                .filter(|(column, row)| {
-                    *column >= 0
-                        && *row >= 0
-                        && (*column as usize) < columns
-                        && (*row as usize) < rows
-                })
-                .filter_map(|(column, row)| reached[at(column as usize, row as usize)])
-                .max();
+        let next = beside_all(&reached, |here| {
+            around(here).filter(|&there| levels[there].is_none())
+        });
+        let risen: Vec<Option<u16>> = next
+            .iter()
+            .map(|&here| around(here).filter_map(|there| levels[there]).max())
+            .collect();
+        for (&here, level) in next.iter().zip(risen) {
+            levels[here] = level;
         }
+        reached = next;
     }
-    let levels: Vec<u16> = levels
+    let surface: Vec<u16> = levels
         .iter()
         .zip(heights)
         .map(|(level, ground)| level.unwrap_or_else(|| ground.saturating_sub(sink)))
@@ -748,18 +767,11 @@ fn surface_bytes(
     for row in 0..rows {
         for column in 0..columns {
             let here = at(column, row);
-            let fall = |fall: f32| {
-                let share = (fall / SURFACE_FALL_MOST).clamp(-1.0, 1.0);
-                (share.signum() * share.abs().sqrt() * FALL_LEVELS + FALL_MIDDLE).round() as u16
-            };
-            let shore = ((shores[here].0 + SHORE_BACK.0) / (SHORE_REACH.0 + SHORE_BACK.0)
-                * f32::from(u16::MAX))
-            .round() as u16;
             for value in [
-                levels[here],
-                fall(falls[here].x),
-                fall(falls[here].y),
-                shore,
+                surface[here],
+                fall_texel(falls[here].x),
+                fall_texel(falls[here].y),
+                shore_texel(shores[here]),
             ] {
                 bytes.extend(value.to_le_bytes());
             }
@@ -783,6 +795,29 @@ fn standing(heights: &[u16], water: &[WaterLevel], range: HeightRange) -> Vec<Op
         .zip(water)
         .map(|(wet, surface)| wet.then(|| f32::from(surface.level()) * range.step()))
         .collect()
+}
+
+/// A surface's fall, in metres a metre, as its texel holds it.
+fn fall_texel(fall: f32) -> u16 {
+    let share = (fall / SURFACE_FALL_MOST).clamp(-1.0, 1.0);
+    (share.signum() * share.abs().sqrt() * FALL_LEVELS + FALL_MIDDLE).round() as u16
+}
+
+/// How far a point lies from the nearest dry ground, as its texel holds it.
+fn shore_texel(distance: Meters) -> u16 {
+    ((distance.0 + SHORE_BACK.0) / (SHORE_REACH.0 + SHORE_BACK.0) * f32::from(u16::MAX)).round()
+        as u16
+}
+
+/// Every point `beside` gives for any of `points`, each once, in order.
+fn beside_all<I: Iterator<Item = usize>>(
+    points: &[usize],
+    beside: impl Fn(usize) -> I,
+) -> Vec<usize> {
+    let mut all: Vec<usize> = points.iter().flat_map(|&here| beside(here)).collect();
+    all.sort_unstable();
+    all.dedup();
+    all
 }
 
 /// The texels of the paint: the terrain at each pixel, then the water.

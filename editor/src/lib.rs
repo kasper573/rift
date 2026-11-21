@@ -15,6 +15,7 @@ mod inbox;
 pub mod keymap;
 pub mod levels;
 pub mod make;
+pub mod maps;
 pub mod modal;
 pub mod moves;
 pub mod output_log;

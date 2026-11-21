@@ -1,4 +1,5 @@
 mod ask;
+mod bake;
 mod bench;
 mod binaries;
 mod check;
@@ -29,7 +30,8 @@ struct Rift {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Checks that a game folder loads whole, and that every file reads as the editor writes it.
+    /// Checks that a game folder loads whole, that every file reads as the editor writes it, and
+    /// that the maps of its areas are baked from them as they are.
     Check { game: PathBuf },
     /// Rewrites every file of a game folder that doesn't read as the editor writes it, as the editor
     /// writes it.
@@ -51,6 +53,9 @@ enum Command {
     /// Draws a piece of a game off screen.
     #[command(subcommand)]
     Render(Render),
+    /// Works out what the designer bakes into a game, off screen, as the editor bakes it.
+    #[command(subcommand)]
+    Bake(Bake),
     /// The game server's capacity, on a generated game, the crowd, or on GAME; with GAME, then the
     /// game client's and the editor's frame rates, and whether the server and the client hold
     /// their memory level as a player plays it.
@@ -144,6 +149,20 @@ enum Render {
 }
 
 #[derive(Subcommand)]
+enum Bake {
+    /// Bakes the maps of every area of GAME into its bundles: the squares whose ground, props or
+    /// style changed since they were baked are drawn again, and the rest kept.
+    Maps {
+        game: PathBuf,
+        /// The folder the renderer keeps what it works out once and reads again (the models'
+        /// impostors) under, as a player's profile keeps it: a fresh one for this run when not
+        /// given.
+        #[arg(long)]
+        profile: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
 enum Schema {
     /// What a game client started with a probe address answers on it.
     Probe,
@@ -179,6 +198,7 @@ fn main() {
             }
         }
         Command::Render(Render::Dialogue { game, out, over }) => dialogue::run(&game, &out, &over),
+        Command::Bake(Bake::Maps { game, profile }) => bake::maps(&game, profile.as_deref()),
         Command::Bench {
             game,
             spread,

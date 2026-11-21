@@ -24,6 +24,7 @@ use engine::core::stage::card as card_stage;
 use engine::core::units::{Meters, Millis};
 use engine::systems;
 use engine::systems::area::scenery;
+use engine::systems::area_map::bake::MapBakePlugin;
 use engine::systems::frame_rate::{self, FrameCountPlugin, FrameRates};
 use engine::systems::probe::{
     self, EditorScenery, FRAMES_KEPT, FrameSample, FrameSamples, ProbeFramesPlugin,
@@ -108,7 +109,7 @@ impl Plugin for EditorPlugin {
         app.world_mut()
             .resource_mut::<MainScheduleOrder>()
             .insert_after(Update, Background);
-        app.add_plugins((EguiPlugin::default(), FrameCountPlugin))
+        app.add_plugins((EguiPlugin::default(), FrameCountPlugin, MapBakePlugin))
             .insert_resource(editor)
             .init_resource::<crate::thumbs::ReadThumbnails>()
             .add_observer(crate::thumbs::took)
@@ -363,6 +364,7 @@ pub struct Editor {
     pub play: play::PlayTest,
     pub pick: Option<PlacePick>,
     pub busy: crate::busy::Busy,
+    pub maps: crate::maps::MapBakes,
     pub quit: bool,
 }
 
@@ -446,6 +448,7 @@ impl Editor {
             play: PlayTest::default(),
             pick: None,
             busy: Default::default(),
+            maps: Default::default(),
             quit: false,
         }
     }
@@ -1282,6 +1285,7 @@ fn background(world: &mut World) {
             editor.tick_journal();
         }
         play::poll(&mut editor);
+        crate::maps::drive(&mut editor, world);
         views::sync(&mut editor, world);
     });
 }

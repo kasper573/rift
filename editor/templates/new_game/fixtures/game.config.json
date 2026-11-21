@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "9b19293b",
+  "content_version": "61318f31",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -17,6 +17,7 @@
     32.0,
     64.0
   ],
+  "map_detail": 2.0,
   "corpses_linger": 5.0,
   "claims_last": 60.0,
   "slots": {

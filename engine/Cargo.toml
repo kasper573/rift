@@ -112,6 +112,9 @@ half = "2"
 bytemuck = "1"
 bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
 image.workspace = true
+webp.workspace = true
+contour.workspace = true
+tiny-skia.workspace = true
 wgpu = { workspace = true, features = ["counters"] }
 opener = "0.9"
 oidc = { path = "../oidc" }

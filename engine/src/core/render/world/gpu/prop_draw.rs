@@ -518,7 +518,7 @@ fn draw_bakes(bakes: BakeQueue) {
             orders.bakes.push(job);
             continue;
         };
-        let cells = impostor::bake_cells(&job.placed, job.overhang);
+        let cells = impostor::bake_cells(job.frame());
         let mut written = encase::StorageBuffer::new(Vec::<u8>::new());
         written
             .write(&cells)
@@ -653,7 +653,7 @@ fn bake_parts<'a>(
     for (part, material) in job.placed.parts.iter().zip(job.materials.iter()) {
         let prepared = materials.get(material.id())?;
         warmth.warm(pipeline, cache, material.type_id(), &prepared.properties);
-        let Some(level) = impostor::bake_level(&job.placed, job.overhang, part) else {
+        let Some(level) = impostor::bake_level(job.frame(), part) else {
             continue;
         };
         let bound = allocators

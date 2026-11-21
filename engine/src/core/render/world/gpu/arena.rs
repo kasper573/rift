@@ -598,13 +598,18 @@ impl PropModels {
             .or_insert_with(|| ModelState::Loading(gltf.clone()));
     }
 
+    /// The box `gltf`'s model fills, once it is prepared.
+    pub fn bounds(&self, gltf: AssetId<Gltf>) -> Option<Aabb> {
+        match self.models.get(&gltf)? {
+            ModelState::Prepared { model, .. } => Some(model.bounds),
+            ModelState::Sent(_, bounds) => Some(*bounds),
+            _ => None,
+        }
+    }
+
     /// How big `gltf`'s model is, once it is prepared.
     pub fn size(&self, gltf: AssetId<Gltf>) -> Option<ModelSize> {
-        let bounds = match self.models.get(&gltf)? {
-            ModelState::Prepared { model, .. } => model.bounds,
-            ModelState::Sent(_, bounds) => *bounds,
-            _ => return None,
-        };
+        let bounds = self.bounds(gltf)?;
         Some(ModelSize {
             extent: Meters(2.0 * bounds.half_extents.max_element()),
             radius: Meters(Vec3::from(bounds.half_extents).length()),

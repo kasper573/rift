@@ -26,6 +26,7 @@ use crate::systems::area::rain::{self, RainHeard};
 use crate::systems::area::sky::SkyCondition;
 use crate::systems::area::sky::SkyNow;
 use crate::systems::area::{self, AreaId, AreaTag, scenery};
+use crate::systems::area_map;
 use crate::systems::identity::GlobalId;
 use crate::systems::input::map::InputAction;
 use crate::systems::input::scope;
@@ -116,7 +117,8 @@ pub fn carry_view_across(world: &mut World) {
                 let drawable = !covering
                     && area::render::shown(world) == Some(pose.area)
                     && !scenery::standing(world)
-                    && !readying(world);
+                    && !readying(world)
+                    && area_map::ready_for(world, pose.area);
                 if now - held.since > ARRIVAL_PATIENCE || (drawable && held.rendered) {
                     reveal(world, pose);
                     (Some(pose), None)

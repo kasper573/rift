@@ -7,20 +7,23 @@ use engine::core::vfx;
 use engine::systems::actor::model::{ActorModel, ModelDef};
 use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
 use engine::systems::actor::stance;
+use engine::systems::area::AreaDef;
+use engine::systems::area_map::bake;
 use engine::systems::item::ItemDef;
 use engine::systems::{GameSettings, registry};
 use walkdir::WalkDir;
 
 use crate::folder;
 
-/// Exits with an error when the game folder isn't whole: it must load as a game, and every file of
-/// a kind the editor writes must read exactly as the editor writes it, so saving the game in the
-/// editor changes only what was edited.
+/// Exits with an error when the game folder isn't whole: it must load as a game, every file of a
+/// kind the editor writes must read exactly as the editor writes it, so saving the game in the
+/// editor changes only what was edited, and the map of every area must be baked from the area as
+/// it is.
 pub fn run(game: &Path) {
     let problems = problems(game);
     if problems.is_empty() {
         println!(
-            "{}: loads whole, every file as the editor writes it",
+            "{}: loads whole, every file as the editor writes it, every map baked",
             game.display()
         );
         return;
@@ -59,6 +62,7 @@ fn problems(game: &Path) -> Vec<String> {
     };
     check_bodies(&content, &mut out);
     check_shaders(&content, &mut out);
+    check_maps(&content, &mut out);
     let rewritten = as_the_editor_writes(game, content);
     for file in &rewritten.unwritten {
         out.push(format!("{file}: a file the editor never writes"));
@@ -84,6 +88,31 @@ fn check_shaders(content: &Content, out: &mut Vec<String>) {
             vfx::shader::shader_file(failed.shader.path(content)),
             failed.pass,
             failed.message
+        ));
+    }
+}
+
+/// Every area whose baked map isn't baked from the area as it is: never baked, or with squares
+/// out of date, missing or left over.
+fn check_maps(content: &Content, out: &mut Vec<String>) {
+    for area in content.ids::<AreaDef>() {
+        let Some(standing) = bake::standing(content, area) else {
+            continue;
+        };
+        if standing.current() {
+            continue;
+        }
+        let path = area.path(content);
+        let problem = if standing.unbaked() {
+            "its map was never baked".to_owned()
+        } else {
+            format!(
+                "{} of its map's {} squares are out of date, {} missing and {} left over",
+                standing.out_of_date, standing.squares, standing.missing, standing.extra
+            )
+        };
+        out.push(format!(
+            "{path}: {problem}: bake the maps again, in the editor or with `rift bake maps`"
         ));
     }
 }

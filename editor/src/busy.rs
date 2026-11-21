@@ -38,6 +38,11 @@ impl Progress {
         self.total.store(total.unwrap_or(0), Ordering::Relaxed);
     }
 
+    /// Whether the work is doing `doing`.
+    pub fn is_doing(&self, doing: &str) -> bool {
+        *self.doing.lock().unwrap_or_else(PoisonError::into_inner) == doing
+    }
+
     /// Counts `done` of what the work is doing.
     pub fn done(&self, done: usize) {
         self.done.store(done, Ordering::Relaxed);
@@ -128,6 +133,22 @@ impl Editor {
             }
         });
         Ok(())
+    }
+
+    /// Waits, after every step it already waits on, until `done` holds of work done elsewhere,
+    /// which tells how far it has come in `progress`, such as work done in the world's own
+    /// schedule.
+    pub fn wait_on(
+        &mut self,
+        label: impl Into<String>,
+        progress: Arc<Progress>,
+        done: fn(&Editor) -> bool,
+    ) {
+        self.busy.push(Step {
+            label: label.into(),
+            progress,
+            wait: SyncCell::new(Box::new(Elsewhere { done })),
+        });
     }
 
     /// Runs `then` once every step the editor waits on is done: at once when it waits on none.
@@ -306,6 +327,19 @@ impl Wait for Once {
             project.settle();
         }
     }
+}
+
+struct Elsewhere {
+    done: fn(&Editor) -> bool,
+}
+
+impl Wait for Elsewhere {
+    fn poll(&mut self, editor: &mut Editor, _: &Arc<Progress>) -> bool {
+        (self.done)(editor)
+    }
+
+    // The work is moved on by the world's schedule, which a blocked frame never reaches.
+    fn block(&mut self, _: &mut Option<Project>) {}
 }
 
 fn settled(editor: &Editor) -> bool {

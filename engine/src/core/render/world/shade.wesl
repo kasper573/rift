@@ -30,6 +30,8 @@ fn lighting(input: PbrInput) -> vec4<f32> {
 
 // The way toward the light that casts the world's shadows, the sun by day and the moon by night:
 // of the sky's lights, the one whose shafts show in the air. Straight up where none shines.
+// A fragment shader finds it once, before anything branches: llvmpipe faults reading the lights
+// inside a branch that only some of a draw's pixels take.
 fn caster_way() -> vec3<f32> {
     var way = vec3<f32>(0.0, 1.0, 0.0);
     for (var index = 0u; index < lights.n_directional_lights; index++) {

@@ -11,6 +11,10 @@ lint:
     cargo clippy --all-targets -- -D warnings
     cargo run --quiet -p cli --bin rift -- check editor/templates/new_game
 
+[doc("Bakes the maps of the editor's templates, which `just lint` holds to being baked. Needs a GPU.")]
+bake-templates:
+    cargo run --quiet -p cli --bin rift -- bake maps editor/templates/new_game
+
 # Every test lives in a tests/ folder, and every example in the docs compiles and runs; the libs' and
 # bins' own test harnesses would build for nothing.
 [doc("The unit and integration tests, and the examples in the docs.")]

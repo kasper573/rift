@@ -25,7 +25,7 @@ use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{CharactersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
 use crate::systems::actor::plate;
-use crate::systems::area_map::{MapPicture, MapReachStep};
+use crate::systems::area_map::MapReachStep;
 use crate::systems::attention::AttentionMark;
 use crate::systems::chat::ChatEmbedKind;
 use crate::systems::hud;
@@ -604,13 +604,6 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, words: &SettingsMes
             video.detail = detail;
         }
         ui.end_row();
-        let label = ui.label(words.map_picture());
-        let name = |picture| map_picture_name(picture, words);
-        let current = settings.map_picture();
-        if let Some(picture) = picker(ui, "map picture", current, name, label.id) {
-            settings.ui.minimap.picture = picture;
-        }
-        ui.end_row();
     });
     if video != settings.video {
         settings.video = video;
@@ -894,13 +887,6 @@ fn grass_name(grass: GrassQuality, words: &SettingsMessages) -> &str {
     }
 }
 
-fn map_picture_name(picture: MapPicture, words: &SettingsMessages) -> &str {
-    match picture {
-        MapPicture::Satellite => words.map_satellite(),
-        MapPicture::Painted => words.map_painted(),
-    }
-}
-
 fn detail_name(detail: PropDetail, words: &SettingsMessages) -> &str {
     match detail {
         PropDetail::Low => words.level_low(),
@@ -1041,10 +1027,6 @@ impl UserSettings {
 
     pub(crate) fn toggle_minimap_turning(&mut self) {
         self.ui.minimap.turns_with_camera = !self.ui.minimap.turns_with_camera;
-    }
-
-    pub(crate) fn map_picture(&self) -> MapPicture {
-        self.ui.minimap.picture
     }
 
     pub(crate) fn minimap_reach(&self) -> Option<MapReachStep> {
@@ -1196,8 +1178,6 @@ struct MinimapSettings {
     /// None keeps the reach the game's sight gives.
     #[serde(default)]
     reach: Option<MapReachStep>,
-    #[serde(default)]
-    picture: MapPicture,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1545,13 +1525,6 @@ messages! {
         grass,
         /// The label of the settings row for how close props draw their models.
         detail,
-        /// The label of the settings row for how the minimap and the map picture the ground.
-        map_picture,
-        /// The choice of that row that pictures the ground as a satellite sees it.
-        map_satellite,
-        /// The choice of that row that paints the ground in the colours of what it is made of,
-        /// which draws nothing more than the map.
-        map_painted,
         /// The name of the video setting level `off` among the choices of any video setting that has it.
         level_off,
         /// The name of the video setting level `lowest` among the choices of any video setting that has it.

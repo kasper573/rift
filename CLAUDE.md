@@ -89,4 +89,5 @@ Before you start work on a task run benchmarks via `just bench` and save the res
 After you finish the task:
 
 - `cargo fmt` · `just lint` (clippy among it, no warnings) · `just test` · `just dist`, and `just smoke target/dist` when the change reaches the website or the game client.
+- When `just lint` names a template's map out of date (a change to a template's areas, or to how the maps are drawn, which bumps the survey's style), `just bake-templates` and commit what it wrote.
 - Run benchmarks again and compare the results to the previous run. If there is a significant regression, investigate and fix it.
