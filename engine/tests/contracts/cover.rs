@@ -1,8 +1,9 @@
 use bevy::prelude::*;
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, shore_distances};
 use engine::core::math::Pos;
-use engine::core::render::world::cover::{Patch, Place, SHORE_REACH, Spread, strew_places};
+use engine::core::render::world::cover::{Patch, Place, Spread, strew_places};
 use engine::core::render::world::lod::GRAIN_PIXELS;
+use engine::core::render::world::water::SHORE_REACH;
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use testkit::HEIGHTS;
 

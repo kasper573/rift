@@ -10,7 +10,9 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
-use engine::core::ground::{GroundSize, HeightRange, Heightfield, SAMPLES_PER_METER, TileAt};
+use engine::core::ground::{
+    GroundSize, HeightRange, Heightfield, SAMPLES_PER_METER, TileAt, WaterSurface,
+};
 use engine::core::math::{Pos, Rect};
 use engine::core::render::camera::ground_hit;
 use engine::core::render::world::body::{Body, BodyPlugin};
@@ -1004,9 +1006,18 @@ fn spawn_hero(app: &mut App, content: &engine::core::content::Content, action: A
 }
 
 #[test]
-fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
+fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_or_in_the_water_under_it() {
+    let pond = WaterSurface::from_fn(
+        GroundSize {
+            width: 8,
+            height: 8,
+        },
+        HEIGHTS,
+        |column, _| Meters(if column >= 12 { 0.3 } else { 0.0 }),
+    );
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
+        .water("field", &pond)
         .sfx("whoosh")
         .sfx("thud")
         .sfx("crash")
@@ -1039,6 +1050,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
     let walker = Pos::new(1.5, 1.5);
     let hurrier = Pos::new(1.5, 3.5);
+    let wader = Pos::new(7.0, 1.5);
     let striker = Pos::new(3.5, 3.5);
     let worker = Pos::new(3.5, 1.5);
     let fallen = Pos::new(2.5, 2.5);
@@ -1048,6 +1060,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     for (at, action, speed) in [
         (walker, Action::Walk, WALK_PACE),
         (hurrier, Action::Walk, WALK_PACE * 2.0),
+        (wader, Action::Walk, WALK_PACE),
         (striker, Action::Attack, MetersPerSec::default()),
         (worker, Action::Attack, MetersPerSec::default()),
         (fallen, Action::Dead, MetersPerSec::default()),
@@ -1138,6 +1151,10 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         of(hurrier).len(),
         2 * of(walker).len(),
         "a walker covering twice the ground its walk covers puts its feet down twice as often"
+    );
+    assert!(
+        of(wader).len() >= 2 && of(wader).iter().all(|id| *id == sfx(testkit::POND)),
+        "a wader's feet sound the water they come down in, whatever lies under it: {heard:?}"
     );
     assert_eq!(
         of(striker),

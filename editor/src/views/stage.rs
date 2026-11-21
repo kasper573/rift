@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use engine::core::content::Content;
 use engine::core::math::{Offset, Pos};
-use engine::core::units::{Degrees, Meters, Radians};
+use engine::core::units::{Degrees, HourOfDay, Meters, Radians};
 use engine::systems::area::scenery::Sources;
-use engine::systems::area::{self, Kept, PROP_STAGE, Picture, Pictured};
+use engine::systems::area::{self, Kept, PROP_STAGE, Picture, Pictured, Weather};
 use ui::egui::{self, Color32, Pos2, Rect, Stroke, Ui};
 use ui::face;
 use ui::{chip, theme};
@@ -155,6 +155,15 @@ pub struct StageState {
 }
 
 impl StageState {
+    /// A stage seen through `camera`.
+    pub fn looking(camera: OrbitCamera) -> StageState {
+        StageState {
+            camera,
+            following: Offset::zero(),
+            picture: StagePicture::default(),
+        }
+    }
+
     /// A stage framing a thing `radius` metres big.
     pub fn framing(radius: f32) -> StageState {
         StageState {
@@ -245,18 +254,49 @@ pub fn turntable(
 }
 
 impl Turntable {
-    /// Asks for the picture with `cast` standing on it.
+    /// Asks for the picture with `cast` standing on it, in the light it is authored in.
     pub fn stand(self, editor: &mut Editor, ui: &Ui, cast: Vec<StandingActor>) {
-        request(
+        self.stand_lit(editor, ui, cast, StageLight::default());
+    }
+
+    /// Asks for the picture with `cast` standing on it, lit as `lit` says.
+    pub fn stand_lit(
+        self,
+        editor: &mut Editor,
+        ui: &Ui,
+        cast: Vec<StandingActor>,
+        lit: StageLight,
+    ) {
+        request_shot(
             editor,
             ui,
             &self.view_key,
             self.rect,
-            self.canvas.camera,
-            self.picture,
-            cast,
+            StageShot {
+                camera: self.canvas.camera,
+                picture: self.picture,
+                cast,
+                lit,
+            },
         );
     }
+}
+
+/// What a stage is asked to draw: `picture` with `cast` standing on it, from `camera`, lit as
+/// `lit` says.
+pub struct StageShot {
+    pub camera: OrbitCamera,
+    pub picture: Arc<Picture>,
+    pub cast: Vec<StandingActor>,
+    pub lit: StageLight,
+}
+
+/// The light a stage is drawn in: at an hour of the game's day, under a weather, each as its
+/// picture's area is authored when none is given.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct StageLight {
+    pub hour: Option<HourOfDay>,
+    pub weather: Option<Weather>,
 }
 
 /// A rig standing in the middle of the stage, in `clip` held at `held`, sounding the cues it
@@ -345,7 +385,7 @@ pub(crate) fn show_picture(
 }
 
 /// Asks the viewport `view_key` to draw `picture` with `cast` on it from `camera` at `rect`'s
-/// size next frame.
+/// size next frame, in the light it is authored in.
 pub fn request(
     editor: &mut Editor,
     ui: &Ui,
@@ -355,6 +395,28 @@ pub fn request(
     picture: Arc<Picture>,
     cast: Vec<StandingActor>,
 ) {
+    request_shot(
+        editor,
+        ui,
+        view_key,
+        rect,
+        StageShot {
+            camera,
+            picture,
+            cast,
+            lit: StageLight::default(),
+        },
+    );
+}
+
+/// Asks the viewport `view_key` to draw `shot` at `rect`'s size next frame.
+pub fn request_shot(editor: &mut Editor, ui: &Ui, view_key: &str, rect: Rect, shot: StageShot) {
+    let StageShot {
+        camera,
+        picture,
+        cast,
+        lit,
+    } = shot;
     let Some(project) = editor.project.as_ref() else {
         return;
     };
@@ -370,11 +432,12 @@ pub fn request(
         key: view_key.to_owned(),
         size,
         camera,
-        weather: picture.area.climate.first(),
-        hour: None,
+        weather: lit.weather.unwrap_or(picture.area.climate.first()),
+        hour: lit.hour,
         picture,
         content,
         stroke: None,
+        bare_bed: false,
         ghost: None,
         stood: Arc::new([]),
         cast: cast.into(),

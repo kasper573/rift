@@ -6,7 +6,7 @@
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitCode, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -28,7 +28,7 @@ use serde::Serialize;
 use web_server::{DESKTOP_SIGN_IN_ENV_PREFIX, SignInSettings, WebServerConfig};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let binaries = args
         .next()
@@ -120,7 +120,7 @@ async fn main() {
             "the settled window is the new snapshot, {}: look at it before trusting it",
             snapshot_path().display()
         );
-        return;
+        return ExitCode::SUCCESS;
     }
     let snapshot = image::open(snapshot_path())
         .expect("the trusted snapshot: take it with --snapshot")
@@ -136,12 +136,14 @@ async fn main() {
             kept.display(),
             snapshot_path().display()
         );
-        std::process::exit(1);
+        // Returned rather than exited with, so everything the smoke started is stopped first.
+        return ExitCode::FAILURE;
     }
     println!(
         "the seeded player joined on the game client downloaded from the site, and it drew the game \
          (resemblance {resemblance:.2})"
     );
+    ExitCode::SUCCESS
 }
 
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);

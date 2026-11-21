@@ -1,10 +1,13 @@
-use editor::views::area::brush::{Brush, SculptMode, Stroke, StrokeKind, commit};
+use editor::views::area::brush::{Brush, PaintMask, SculptMode, Stroke, StrokeKind, commit};
+use editor::views::area::water::{Flood, FloodRefused, OpenSides};
 use editor::views::area::{AreaSnapshot, contours, nodes, place, scatter};
+use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{Degrees, Meters};
 use engine::systems::area::{AreaDef, AreaModule, TerrainDef};
+use engine::systems::water::WaterDef;
 use serde_json::json;
-use testkit::{Game, Map, path};
+use testkit::{Game, HEIGHTS, Map, POND, path};
 
 use crate::support::{self, area};
 
@@ -77,8 +80,11 @@ fn a_paint_stroke_lands_in_the_paint_map_and_lists_a_new_terrain() {
     let id = reader
         .id_of::<TerrainDef>(&rock)
         .expect("rock is a terrain");
-    let mut stroke =
-        Stroke::begin(&before, at, StrokeKind::Paint { terrain: id }).expect("room for a terrain");
+    let rock_anywhere = StrokeKind::Paint {
+        terrain: id,
+        mask: PaintMask::Anywhere,
+    };
+    let mut stroke = Stroke::begin(&before, at, rock_anywhere).expect("room for a terrain");
     stroke.apply(&Brush::default(), at, 0.1, Meters(0.0));
     assert!(commit(&mut editor, &area(), &stroke));
     support::settled(&mut editor);
@@ -99,6 +105,118 @@ fn a_paint_stroke_lands_in_the_paint_map_and_lists_a_new_terrain() {
         painted.terrains.len() >= before.terrains.len(),
         "a terrain painted for the first time joins the area's list"
     );
+}
+
+#[test]
+fn a_masked_paint_stroke_keeps_to_the_ground_under_water_or_to_the_dry() {
+    let pond = WaterSurface::from_fn(
+        GroundSize {
+            width: 8,
+            height: 8,
+        },
+        HEIGHTS,
+        |column, _| Meters(if column >= 8 { 0.5 } else { 0.0 }),
+    );
+    let (wet, dry) = (Pos::new(6.0, 4.0), Pos::new(2.0, 4.0));
+    for (mask, painted, kept) in [
+        (PaintMask::UnderWater, wet, dry),
+        (PaintMask::DryGround, dry, wet),
+    ] {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let mut editor = support::open(support::game().water(support::AREA, &pond), &scratch);
+        let before = terrain(&editor);
+        let rock = editor
+            .reader()
+            .expect("a reader")
+            .id_of::<TerrainDef>(&path("terrain", testkit::ROCK))
+            .expect("rock is a terrain");
+        let middle = Pos::new(4.0, 4.0);
+        let masked = StrokeKind::Paint {
+            terrain: rock,
+            mask,
+        };
+        let mut stroke = Stroke::begin(&before, middle, masked).expect("room for a terrain");
+        let wide = Brush {
+            falloff: 0.0,
+            ..Brush::default()
+        };
+        stroke.apply(&wide, middle, 0.1, Meters(0.0));
+        assert!(commit(&mut editor, &area(), &stroke));
+        support::settled(&mut editor);
+        let after = terrain(&editor);
+        assert_eq!(
+            after.terrains[usize::from(after.paint.at(painted))],
+            rock,
+            "{mask:?}: rock lies where the mask lets it"
+        );
+        assert_eq!(
+            after.paint.at(kept),
+            before.paint.at(kept),
+            "{mask:?}: the ground the mask keeps the brush off stays as it was"
+        );
+    }
+}
+
+#[test]
+fn a_flood_fills_a_basin_to_its_rim_and_is_undone_as_one_step() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut editor = support::open(support::game().pond(), &scratch);
+    let (middle, beyond) = (Pos::new(4.0, 4.0), Pos::new(0.5, 0.5));
+    let flat = terrain(&editor);
+    let mut dug =
+        Stroke::begin(&flat, middle, StrokeKind::Sculpt(SculptMode::Lower)).expect("a stroke");
+    let small = Brush {
+        radius: Meters(2.0),
+        ..Brush::default()
+    };
+    dug.apply(&small, middle, 0.1, Meters(0.0));
+    assert!(commit(&mut editor, &area(), &dug));
+    support::settled(&mut editor);
+    let basin = terrain(&editor);
+    let pond = editor
+        .reader()
+        .expect("a reader")
+        .id_of::<WaterDef>(&path("water", POND))
+        .expect("the pond is a water");
+    let level = Meters(-0.1);
+    assert_eq!(
+        Flood::begin(&basin, beyond, pond, level).err(),
+        Some(FloodRefused::AboveTheLevel {
+            ground: Meters(0.0)
+        }),
+        "ground that stands above the level has nothing to flood"
+    );
+    let mut flood = Flood::begin(&basin, middle, pond, level).expect("a basin to flood");
+    assert!(flood.spread(|| true), "a flood left to spread stands whole");
+    assert!(
+        flood.flooded > 1.0 && flood.open == OpenSides::default(),
+        "the flood fills the basin and stops at its rim, short of the area's edges"
+    );
+    assert!(commit(&mut editor, &area(), &flood.stroke));
+    support::settled(&mut editor);
+    let flooded = terrain(&editor);
+    assert!(
+        flooded.water.depth_at(&flooded.heights, middle) > Meters(0.1),
+        "water stands in the basin"
+    );
+    assert_eq!(
+        flooded.water.depth_at(&flooded.heights, beyond),
+        Meters(0.0),
+        "the ground beyond the rim stays dry"
+    );
+    assert_eq!(flooded.waters, [pond], "the area names the water laid");
+    assert!(
+        Flood::begin(&flooded, middle, pond, level).is_err(),
+        "water already standing at the level takes no more"
+    );
+    editor.undo();
+    let undone = terrain(&editor);
+    assert_eq!(
+        undone.water.depth_at(&undone.heights, middle),
+        Meters(0.0),
+        "undoing the flood leaves the basin dry"
+    );
+    assert!(undone.waters.is_empty(), "and the area names no water");
 }
 
 #[test]

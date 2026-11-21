@@ -1,6 +1,7 @@
 import bevy_pbr::render::{
     forward_io::VertexOutput,
-    mesh_view_bindings::view,
+    mesh_view_bindings::{lights, view},
+    mesh_view_types::DIRECTIONAL_LIGHT_FLAGS_VOLUMETRIC_BIT,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
     pbr_types::PbrInput,
@@ -25,6 +26,20 @@ fn lighting(input: PbrInput) -> vec4<f32> {
     var shortened = input;
     shortened.N = input.N * HAIR_SHORT;
     return apply_pbr_lighting(shortened);
+}
+
+// The way toward the light that casts the world's shadows, the sun by day and the moon by night:
+// of the sky's lights, the one whose shafts show in the air. Straight up where none shines.
+fn caster_way() -> vec3<f32> {
+    var way = vec3<f32>(0.0, 1.0, 0.0);
+    for (var index = 0u; index < lights.n_directional_lights; index++) {
+        let light = &lights.directional_lights[index];
+        way = (*light).direction_to_light;
+        if ((*light).flags & DIRECTIONAL_LIGHT_FLAGS_VOLUMETRIC_BIT) != 0u {
+            break;
+        }
+    }
+    return way;
 }
 
 // The colour of a pixel of a standard material in the world's light, or glowing with its own

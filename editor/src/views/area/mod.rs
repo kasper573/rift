@@ -33,6 +33,7 @@ pub mod tools;
 pub mod view_ground;
 pub mod viewport;
 pub mod warps;
+pub mod water;
 
 pub use resize::ResizeDialog;
 
@@ -76,7 +77,7 @@ use strum::{AsRefStr, VariantArray};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
-use self::brush::{Brush, SculptMode, Stroke};
+use self::brush::{Brush, PaintMask, SculptMode, Stroke};
 use self::camera::{AreaCanvas, OrbitCamera, StandingBox};
 use self::flags::{SceneFlags, SceneLevel};
 use self::hour::{DayPreview, ShownSky, SkyFollowing};
@@ -153,6 +154,7 @@ pub enum AreaTool {
     Select,
     Sculpt,
     Paint,
+    Water,
     Place,
     Scatter,
     Module,
@@ -190,6 +192,7 @@ impl AreaTool {
             AreaTool::Select => EditorKey::SelectTool,
             AreaTool::Sculpt => EditorKey::SculptTool,
             AreaTool::Paint => EditorKey::PaintTool,
+            AreaTool::Water => EditorKey::WaterTool,
             AreaTool::Place => EditorKey::PlaceTool,
             AreaTool::Scatter => EditorKey::ScatterTool,
             AreaTool::Module => EditorKey::ModuleTool,
@@ -232,7 +235,12 @@ pub struct AreaViewState {
     pub level: Meters,
     /// The terrain file the paint brush lays, once one is picked.
     pub paint_terrain: Option<String>,
+    /// Which ground the paint brush lays it on.
+    pub paint_mask: PaintMask,
+    /// Whether the picture leaves the water out, to show the bare bed.
+    pub bare_bed: bool,
     pub stroke: Option<Stroke>,
+    pub water: water::WaterTool,
     pub placeable: Option<Placeable>,
     /// How a prop placed next is turned.
     pub place_yaw: Degrees,
@@ -318,7 +326,10 @@ impl AreaViewState {
     }
 
     pub(crate) fn cancel_gesture(&mut self) -> bool {
-        self.drag.take().is_some() | self.placing.take().is_some() | self.stroke.take().is_some()
+        self.drag.take().is_some()
+            | self.placing.take().is_some()
+            | self.stroke.take().is_some()
+            | self.water.cancel()
     }
 
     /// The blueprint the Place tool stamps, when one is picked.
@@ -916,11 +927,23 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
     let (cast, stood) = cast(editor, view_key, frame);
     let ghost = place::ghost(editor, view_key, frame);
     let view = editor.views.area.view(view_key);
-    let stroke = view.stroke.as_ref().map(|stroke| StrokeTerrain {
-        revision: stroke.revision,
-        heights: stroke.heights.clone(),
-        paint: stroke.paint.clone(),
-    });
+    let stroke = view
+        .stroke
+        .as_ref()
+        .or(view.water.flood.as_ref().map(|flood| &flood.stroke))
+        .map(|stroke| StrokeTerrain {
+            revision: stroke.revision,
+            heights: stroke.heights.clone(),
+            paint: stroke.paint.clone(),
+            water: stroke.water.clone(),
+            water_map: stroke.water_map.clone(),
+            waters: stroke
+                .waters
+                .iter()
+                .filter_map(|&water| frame.reader.path_of(water).map(str::to_owned))
+                .collect(),
+        });
+    let bare_bed = view.bare_bed;
     let camera = view.camera;
     let weather = view.weather(frame.area());
     let hour = editor.views.area.day.hour();
@@ -935,6 +958,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         hour,
         content: frame.content.clone(),
         stroke,
+        bare_bed,
         ghost,
         cast,
         stood,
@@ -1538,7 +1562,11 @@ impl AreaSnapshot {
     pub fn area_id(&self) -> Option<AreaId> {
         match self.pictured {
             Pictured::Area(id) => Some(id),
-            Pictured::Blueprint(_) | Pictured::Prop(_) | Pictured::Stage => None,
+            Pictured::Blueprint(_)
+            | Pictured::Prop(_)
+            | Pictured::Stage
+            | Pictured::Water(_)
+            | Pictured::Terrain(..) => None,
         }
     }
 

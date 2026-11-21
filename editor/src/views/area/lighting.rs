@@ -36,8 +36,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
         part(
             ui,
             "Sun",
-            "Where the sun stands at noon and its colour; the full moon stands opposite it by \
-             night. Without one, the area is lit by its ambient light alone.",
+            "Where the sun stands at noon and its colour above the air, white or near it for a \
+             sun like ours: the air it shines through reddens and dims it toward the horizon. \
+             The full moon stands opposite it by night. Without one, the area is lit by its \
+             ambient light alone.",
             |ui| changed |= forms::of_type(ui, &mut cx, &mut lighting.sun, "/lighting/sun"),
         );
         part(
@@ -49,8 +51,9 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
         part(
             ui,
             "Dome",
-            "How the dome of an open sky is painted, with the weather's clouds, the moon and the \
-             stars.",
+            "What lies beyond the air or in it, as the dome's shader paints it: the stars, the \
+             moon's face, the weather's clouds. The day's blue, the dusk's glow and the sun's \
+             glare are the air's own.",
             |ui| changed |= forms::of_type(ui, &mut cx, &mut lighting.dome, "/lighting/dome"),
         );
         part(

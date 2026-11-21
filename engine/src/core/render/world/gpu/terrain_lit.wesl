@@ -10,8 +10,10 @@ import bevy_pbr::render::{
 import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION)
 import bevy_pbr::ssao::utils::ssao_multibounce;
-import engine::core::render::world::gpu::terrain::{ground, ground_point, paint_of};
-import engine::core::render::world::shade::lighting;
+import engine::core::render::world::gpu::terrain::{
+    ground, ground_point, paint_of, patch_point, water_level, water_of,
+};
+import engine::core::render::world::shade::{caster_way, lighting};
 
 // The terrains' pictures as one stack; for each terrain its colour and tile in the first row of
 // `layers`, its picture's place in the stack in the second and how it looks soaked in the third;
@@ -26,6 +28,18 @@ import engine::core::render::world::shade::lighting;
 @group(3) @binding(105) var canopy: texture_2d_array<f32>;
 @group(3) @binding(106) var canopy_extent: texture_2d_array<f32>;
 @group(3) @binding(107) var canopy_sampler: sampler;
+// For each of the area's waters how fast it fades each colour in the first row, and how deep a
+// white bed shows through it in the second row's a.
+@group(3) @binding(108) var waters: texture_2d<f32>;
+
+// How high over a waterline the ground lies wet, in metres: a hand's height.
+const LAPPED: f32 = 0.12;
+// The light the water's surface gathers on a bed just under it, in times the light that falls
+// there, how wide its net is in metres, and how deep the brightest of it lies: nearer the
+// surface the light has not yet gathered, deeper it has spread again.
+const NET_BRIGHTEST: f32 = 0.6;
+const NET_SPAN: f32 = 0.55;
+const NET_GATHERS: f32 = 0.35;
 
 struct Vertex {
     @builtin(instance_index) instance: u32,
@@ -37,6 +51,8 @@ struct Placed {
     @location(0) world_position: vec4<f32>,
     @location(1) world_normal: vec3<f32>,
     @location(2) @interpolate(flat) stride: u32,
+    // How high the water's surface stands over the point, in metres.
+    @location(3) water: f32,
 }
 
 // What the terrains lay at a point: their colour, and how they look soaked, the share of their
@@ -50,7 +66,8 @@ struct Laid {
 fn vertex(in: Vertex) -> Placed {
     let point = ground_point(in.position, in.instance);
     let world = vec4<f32>(point.world, 1.0);
-    return Placed(position_world_to_clip(point.world), world, point.normal, point.stride);
+    let water = water_level(patch_point(in.position, in.instance).sample);
+    return Placed(position_world_to_clip(point.world), world, point.normal, point.stride, water);
 }
 
 @fragment
@@ -80,12 +97,48 @@ fn fragment(in: Placed) -> @location(0) vec4<f32> {
             saturate(pow(n_dot_v + ssao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ssao);
     }
     let laid = painted(in.world_position.xz, in.stride);
-    let soaked = wetness(in.world_position.xyz) * laid.wet.z;
+    let under = in.water - in.world_position.y;
+    let lapped = 1.0 - smoothstep(0.0, LAPPED, -under);
+    let soaked = max(wetness(in.world_position.xyz), lapped) * laid.wet.z;
     let over = canopied(in.world_position.xyz);
-    let color = mix(laid.color, over.rgb, over.a);
+    let color = mix(laid.color, over.rgb, over.a) * (1.0 + dancing(in.world_position.xyz, under));
     input.material.base_color = vec4<f32>(color * mix(1.0, laid.wet.x, soaked), 1.0);
     input.material.perceptual_roughness = mix(finish.x, laid.wet.y, soaked);
     return main_pass_post_lighting_processing(input, lighting(input));
+}
+
+// How much brighter the light the water's surface gathers makes the bed at `at`, `under` metres
+// of water: a net of bright lines drifting over the bed where the sun or the moon shines
+// through the surface, brightest a little under it and gone where the water fades the light
+// away or the sky is overcast.
+fn dancing(at: vec3<f32>, under: f32) -> f32 {
+    if under <= 0.0 {
+        return 0.0;
+    }
+    let pixel = vec2<u32>(max((at.xz - ground.origin) * f32(ground.samples_per_metre), vec2<f32>(0.0)));
+    let water = min(i32(water_of(min(pixel, ground.samples - 2u))), i32(textureDimensions(waters).x) - 1);
+    let fading = textureLoad(waters, vec2<i32>(water, 0), 0).rgb;
+    let through = exp(-max(fading.r, max(fading.g, fading.b)) * under);
+    let gathered = under / NET_GATHERS * exp(1.0 - under / NET_GATHERS);
+    let shining = max(caster_way().y, 0.0) * (1.0 - weather.clouds);
+    // Light slanting down through the water lands off to the side of where it went in.
+    let landed = (at.xz - caster_way().xz * under) / NET_SPAN;
+    let drift = weather.time * 0.35;
+    let one = dancing_noise(landed + vec2<f32>(drift, drift * 0.6));
+    let other = dancing_noise(landed * 1.3 - vec2<f32>(drift * 0.7, drift) + 11.0);
+    let line = 1.0 - smoothstep(0.0, 0.12, abs(one - other));
+    return NET_BRIGHTEST * line * line * gathered * through * shining;
+}
+
+fn dancing_noise(at: vec2<f32>) -> f32 {
+    let cell = floor(at);
+    let f = fract(at);
+    let s = f * f * (3.0 - 2.0 * f);
+    let a = hash2(cell);
+    let b = hash2(cell + vec2<f32>(1.0, 0.0));
+    let c = hash2(cell + vec2<f32>(0.0, 1.0));
+    let d = hash2(cell + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, s.x), mix(c, d, s.x), s.y);
 }
 
 // What the terrains lay at `at` on a patch laid every `stride` samples: those of the four paint

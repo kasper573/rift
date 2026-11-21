@@ -686,7 +686,12 @@ fn game() -> Game {
             })
         },
     );
-    let mut rows = vec![format!("{}{}", ".".repeat(15), "#".repeat(9)); 12];
+    // The lake's bed is ground like the beach's: only how deep the water stands over it keeps
+    // a walker off it, but for the shallows along its north shore, which lie over rock.
+    let mut rows = vec![".".repeat(24); 12];
+    for row in &mut rows[..4] {
+        row.replace_range(15..24, &"#".repeat(9));
+    }
     for row in &mut rows[2..4] {
         row.replace_range(2..4, "##");
     }
@@ -717,7 +722,10 @@ fn game() -> Game {
         .vfx("defeated")
         .npc("dummy", 100.0, json!([]))
         .asset("icons/skill.png", testkit::png(1, 1))
-        .edit_settings(|settings| settings["lingers_for"] = json!(30.0))
+        .edit_settings(|settings| {
+            settings["lingers_for"] = json!(30.0);
+            settings["wading"] = json!({ "deepest": 0.5, "slowest": 0.5, "too_deep": 0.6 });
+        })
         .model("mare", 2.0, json!([]))
         .model("crow", 2.0, json!([]))
         .model("boat", 1.0, json!([]))

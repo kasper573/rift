@@ -17,6 +17,7 @@ use crate::core::ground::Heightfield;
 use crate::core::math::Rect;
 use crate::core::render::camera;
 use crate::core::render::video::{ShadowQuality, VideoPreferences};
+use crate::core::render::world::sky::SunLight;
 use crate::core::units::{Degrees, Meters, Seconds};
 
 /// How strong the world's lights are.
@@ -71,11 +72,38 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
         shadow_cascades(ShadowQuality::High, ShadowReach::CLOSE),
         ShadowReach::CLOSE,
         VolumetricLight,
-        // The light stands a little over the horizon when its sun or moon has sunk to it, so the
-        // sky draws them where they truly stand rather than leaving it to the light.
         SunDisk::OFF,
         sun_transform(elevation, azimuth, Vec2::ZERO),
     )
+}
+
+/// The other light of a sky whose sun casts the shadows, or whose moon does: it lights the air
+/// and the ground and casts none.
+pub fn unshadowed(light: SunLight) -> impl Bundle {
+    (
+        DirectionalLight {
+            color: light.color,
+            illuminance: light.illuminance,
+            shadow_maps_enabled: false,
+            ..default()
+        },
+        SunDisk::OFF,
+        shining_from(light.elevation, light.azimuth),
+    )
+}
+
+/// Where a light `elevation` above the horizon at `azimuth` clockwise from north shines from.
+pub fn shining_from(elevation: Degrees, azimuth: Degrees) -> Transform {
+    Transform::default().looking_to(-toward(elevation, azimuth), Vec3::Y)
+}
+
+/// The disc of a light `size` across: as wide as that where the ground hides it, and `drawn`
+/// in the sky by the air, or left to whatever else paints the sky.
+pub fn disc(size: Degrees, drawn: bool) -> SunDisk {
+    SunDisk {
+        angular_size: size.radians().0,
+        intensity: if drawn { 1.0 } else { 0.0 },
+    }
 }
 
 /// How far off its camera a sun's shadows reach: as far as the camera sees the ground, and no
@@ -142,39 +170,34 @@ impl ShadowReach {
     }
 }
 
-/// Every sun and moon casts its shadows as the player's video preferences ask, as far as its
-/// camera sees, anew whenever either changes.
+/// Every light that casts the world's shadows casts them as the player's video preferences ask,
+/// as far as its camera sees, anew whenever either changes.
 pub(super) fn cast_shadows(
     video: Res<VideoPreferences>,
     mut lights: Query<(
         &mut DirectionalLight,
         &mut CascadeShadowConfig,
-        Option<Ref<ShadowReach>>,
+        Ref<ShadowReach>,
     )>,
 ) {
     for (mut light, mut cascades, reach) in &mut lights {
-        let reached = reach.as_ref().is_some_and(Ref::is_changed);
-        if !light.is_added() && !video.is_changed() && !reached {
+        if !light.is_added() && !video.is_changed() && !reach.is_changed() {
             continue;
         }
         light.shadow_maps_enabled = video.shadows != ShadowQuality::Off;
-        *cascades = shadow_cascades(
-            video.shadows,
-            reach.map_or(ShadowReach::CLOSE, |reach| *reach),
-        );
+        *cascades = shadow_cascades(video.shadows, *reach);
     }
 }
 
 /// Where a sun `elevation` above the horizon at `azimuth` clockwise from north shines from, the
 /// field of cloud's shadows laid over the ground round `over` along its rays, squeezed across them
-/// as the light sinks so they reach as far at every hour. A light on the horizon shines from a
-/// little over it, for the clouds to cast shadows at all.
+/// as the light sinks so they reach as far at every hour, and no further once it stands on the
+/// horizon, where they would reach without end.
 pub fn sun_transform(elevation: Degrees, azimuth: Degrees, over: Vec2) -> Transform {
-    let elevation = Degrees(elevation.0.max(LOWEST_LIGHT));
     let toward_sun = toward(elevation, azimuth);
     let over = Vec3::new(over.x, 0.0, over.y);
     let span = SHADOW_SPAN.0 / 2.0;
-    let slant = elevation.radians().0.sin();
+    let slant = Degrees(elevation.0.max(LOWEST_LIGHT)).radians().0.sin();
     Transform::from_translation(over + toward_sun * 50.0)
         .looking_at(over, Vec3::Y)
         .with_scale(Vec3::new(span, span * slant, span))

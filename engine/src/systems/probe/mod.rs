@@ -56,11 +56,12 @@ use crate::core::render::sample::{
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
+use crate::core::render::world::haze::Haze;
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::outline::Outline;
-use crate::core::render::world::sky::Daylight;
+use crate::core::render::world::sky::{Daylight, SkyLights};
 use crate::core::render::world::{OnItsWay, missing_drawn};
-use crate::core::render::{self, CameraRig, Pointed, ground_height, world_point};
+use crate::core::render::{self, CameraRig, Look, Pointed, ground_height, world_point};
 use crate::core::script::DialogueCamera;
 use crate::core::script::Scripts;
 use crate::core::stage::card::HungCardLamp;
@@ -424,6 +425,8 @@ pub struct ProbeSnapshot {
     pub weather: Option<ProbeWeather>,
     pub transition: ScreenTransitionPhase,
     pub daylight: Daylight,
+    /// Where the sun and the moon stand over the shown area, which has a sky of its own.
+    pub heavens: Option<ProbeHeavens>,
     /// The time of day that holds, in a game that names its times and once the client has been
     /// told the hour.
     pub time_of_day: Option<TimeOfDayName>,
@@ -1076,8 +1079,9 @@ pub struct ProbeFinishedQuest {
 /// null before the course is known; how much cloud covers the sky, how much water it holds and how
 /// hard it rains under the wettest of it, each 0 to 1; and where the player stands, how hard it
 /// rains, how wet the ground lies, whether they stand sheltered from the rain, and how much of the
-/// sun's or the moon's light the cloud overhead takes from them, 0 none to 1 all of it; and how
-/// brightly lightning lights the world this moment.
+/// sun's or the moon's light the cloud overhead takes from them, 0 none to 1 all of it; how
+/// brightly lightning lights the world this moment; and how far the fog the camera's eye stands
+/// in lets it see, looking level, or null where no fog bank lies over it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeWeather {
     pub spell: Option<String>,
@@ -1089,6 +1093,15 @@ pub struct ProbeWeather {
     pub sheltered: bool,
     pub shaded: f32,
     pub flash: f32,
+    pub sight: Option<Meters>,
+}
+
+/// How high the sun and the moon stand over the horizon as the client draws them, under it
+/// below zero; no moon in an area whose light stands fixed.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
+pub struct ProbeHeavens {
+    pub sun: Degrees,
+    pub moon: Option<Degrees>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -1550,6 +1563,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .get_resource::<Daylight>()
             .copied()
             .unwrap_or_default(),
+        heavens: area.and_then(|area| heavens(world, area)),
         time_of_day: sky::now(world)
             .hour
             .and_then(|_| sky::time_of_day(world))
@@ -1616,6 +1630,28 @@ fn weather(world: &World, area: AreaId, me: Option<Entity>) -> Option<ProbeWeath
                 sheet.shade_over(at, world.resource::<CloudDrift>().drift())
             }),
         flash: shown.flash,
+        sight: world
+            .get_resource::<CameraRig>()
+            .zip(world.try_query::<&Haze>())
+            .and_then(|(rig, mut hazes)| hazes.iter(world).next()?.sight_at(rig.eye())),
+    })
+}
+
+fn heavens(world: &World, area: AreaId) -> Option<ProbeHeavens> {
+    let noon = area::load(world.resource::<Content>(), area).lighting.sun?;
+    let daylight = world.get_resource::<Daylight>().copied()?;
+    let lights = SkyLights::at(
+        daylight,
+        noon.elevation,
+        noon.azimuth,
+        noon.color.color(),
+        0.0,
+        0.0,
+        world.get_resource::<Look>()?,
+    );
+    Some(ProbeHeavens {
+        sun: lights.sun.elevation,
+        moon: lights.moon.map(|moon| moon.elevation),
     })
 }
 

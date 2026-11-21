@@ -24,13 +24,13 @@ use super::residency::Residency;
 use super::upload::UploadBudget;
 use crate::core::ground::{
     GroundGrid, GroundSize, GroundValue, HeightRange, Heightfield, Level, OVERVIEW_STRIDE,
-    PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion, WaterLevel, WaterSurface,
-    shore_distances,
+    PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion, WaterLevel, WaterMap,
+    WaterSurface, shore_distances,
 };
 use crate::core::jobs::Handoff;
 use crate::core::math::{Rect, Size};
 use crate::core::render::sample::UploadedBytes;
-use crate::core::render::world::cover::SHORE_REACH;
+use crate::core::render::world::water::SHORE_REACH;
 use crate::core::units::{GROUND_ORIGIN, Meters};
 
 /// The values along a slot's side: a tile's samples, and one more all round.
@@ -90,6 +90,8 @@ pub struct AtlasLayout {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AtlasTexture {
     Heights,
+    /// What lies at each pixel: the terrain painting it, then the water of the area's that lies
+    /// there wherever any does.
     Paint,
     /// The surface a sheet on water lies on, a texel a sample: its level as the heights are held,
     /// how it falls toward east and south as levels of [`SURFACE_FALL_UNIT`] over the midpoint,
@@ -135,20 +137,22 @@ impl CanopyMap {
 }
 
 impl TerrainAtlas {
-    /// Holds the ground of `heights`, `paint` and `water`, with `slots` tiles in detail at once:
-    /// laid anew for a ground of another size or range, else each tile filled again as its values
-    /// changed.
+    /// Holds the ground of `heights`, `paint`, `water` and `waters`, with `slots` tiles in detail
+    /// at once: laid anew for a ground of another size or range, else each tile filled again as
+    /// its values changed.
     pub fn lay(
         &mut self,
         heights: &Heightfield,
         paint: &PaintMap,
         water: &WaterSurface,
+        waters: &WaterMap,
         slots: u32,
     ) {
         let ground = AtlasGround {
             heights: heights.clone(),
             paint: paint.clone(),
             water: water.clone(),
+            waters: waters.clone(),
         };
         let layout = AtlasLayout::of(heights, paint, slots);
         match &mut self.laid {
@@ -228,6 +232,13 @@ impl TerrainAtlas {
     /// The paint of the ground laid.
     pub fn paint(&self) -> Option<&PaintMap> {
         self.laid.as_ref().map(|laid| &laid.ground.paint)
+    }
+
+    /// The water of the ground laid: its surface, and which water lies where.
+    pub fn water(&self) -> Option<(&WaterSurface, &WaterMap)> {
+        self.laid
+            .as_ref()
+            .map(|laid| (&laid.ground.water, &laid.ground.waters))
     }
 
     /// Lays `canopy` over the ground laid, if it was worked out for its layout: written after
@@ -353,7 +364,7 @@ const CANOPY_STRIDE: u32 = 4;
 const CANOPY_ROWS_PER_WRITE: u32 = 64;
 
 /// The bytes a slot's heights, paint and surface take.
-const SLOT_BYTES: usize = (SLOT_SIDE * SLOT_SIDE) as usize * 11;
+const SLOT_BYTES: usize = (SLOT_SIDE * SLOT_SIDE) as usize * 12;
 
 /// The samples past a slot that its surface is read across, so a slot's surface meets its
 /// neighbours': as far as the shore reaches, farther than the fall is read.
@@ -378,6 +389,7 @@ struct AtlasGround {
     heights: Heightfield,
     paint: PaintMap,
     water: WaterSurface,
+    waters: WaterMap,
 }
 
 /// A ground laid in the atlas, and what is under way to keep the GPU's in step with it.
@@ -385,8 +397,9 @@ struct Laid {
     ground: AtlasGround,
     layout: AtlasLayout,
     residency: Residency<TileAt, TileStamp>,
-    /// The versions of each tile's heights, paint and water the overview was read from.
-    versions: Vec<[TileVersion; 3]>,
+    /// The versions of each tile's heights, paint, water and water map the overview was read
+    /// from.
+    versions: Vec<[TileVersion; 4]>,
     /// The overview's texels being read, the whole first, in the order they are to be written.
     overview: VecDeque<Job<Vec<AtlasWrite>>>,
     /// The overview's writes read and waiting for the frame's budget, tile by tile.
@@ -448,19 +461,23 @@ type SlotBytes = [Vec<u8>; 3];
 
 /// The versions of the values of `tile` and of every tile round it, which its slot holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TileStamp([[TileVersion; 3]; 9]);
+struct TileStamp([[TileVersion; 4]; 9]);
 
 impl AtlasGround {
-    fn versions(&self, tile: TileAt) -> [TileVersion; 3] {
+    fn versions(&self, tile: TileAt) -> [TileVersion; 4] {
         [
             self.heights.version(tile),
             self.paint.version(tile),
             self.water.version(tile),
+            self.waters.version(tile),
         ]
     }
 
     fn is_loaded(&self, tile: TileAt) -> bool {
-        self.heights.is_loaded(tile) && self.paint.is_loaded(tile) && self.water.is_loaded(tile)
+        self.heights.is_loaded(tile)
+            && self.paint.is_loaded(tile)
+            && self.water.is_loaded(tile)
+            && self.waters.is_loaded(tile)
     }
 
     /// The tile at `at` and every tile round it on a ground of `tiles` across and down, where
@@ -517,7 +534,10 @@ impl AtlasGround {
         };
         [
             inner(&levels(&heights), 2),
-            self.paint.block(first, SLOT_SIDE, SLOT_SIDE),
+            paired(
+                &self.paint.block(first, SLOT_SIDE, SLOT_SIDE),
+                &self.waters.block(first, SLOT_SIDE, SLOT_SIDE),
+            ),
             inner(&surface, 8),
         ]
     }
@@ -535,16 +555,31 @@ impl AtlasGround {
                 step,
                 levels,
             ));
-            writes.extend(overview_write(
-                AtlasTexture::OverviewPaint,
-                &self.paint,
-                tile,
-                step,
-                <[u8]>::to_vec,
-            ));
+            writes.extend(self.overview_paint(tile, step));
             writes.extend(self.overview_surface(tile, step));
         }
         writes
+    }
+
+    /// The write of the overview's paint under `tile` at one texel every `step` overview values
+    /// each way: the terrain and the water at each.
+    fn overview_paint(&self, tile: TileAt, step: u32) -> Option<AtlasWrite> {
+        let values = self.paint.overview_dims();
+        let (low, high) = overview_bounds(&self.paint, tile);
+        let (first_column, columns) = sources(low.0, high.0, values.0, step);
+        let (first_row, rows) = sources(low.1, high.1, values.1, step);
+        if columns.is_empty() || rows.is_empty() {
+            return None;
+        }
+        Some(AtlasWrite::Texels {
+            texture: AtlasTexture::OverviewPaint,
+            origin: UVec3::new(first_column, first_row, 0),
+            size: UVec2::new(columns.len() as u32, rows.len() as u32),
+            bytes: paired(
+                &self.paint.overview_at(&columns, &rows),
+                &self.waters.overview_at(&columns, &rows),
+            ),
+        })
     }
 
     /// The write of the overview's surface under `tile` at one texel every `step` overview values
@@ -664,6 +699,15 @@ fn surface_bytes(
         }
     }
     bytes
+}
+
+/// The texels of the paint: the terrain at each pixel, then the water.
+fn paired(terrains: &[u8], waters: &[u8]) -> Vec<u8> {
+    terrains
+        .iter()
+        .zip(waters)
+        .flat_map(|(terrain, water)| [*terrain, *water])
+        .collect()
 }
 
 /// The overview values under `tile`, or all of them: from the first, and past the last, each way.
@@ -869,6 +913,7 @@ impl AtlasGround {
             self.heights.load(tile).err(),
             self.paint.load(tile).err(),
             self.water.load(tile).err(),
+            self.waters.load(tile).err(),
         ]
         .into_iter()
         .flatten()
@@ -1009,7 +1054,7 @@ impl GpuTerrainAtlas {
 impl AtlasTexture {
     fn format(self) -> TextureFormat {
         match self {
-            AtlasTexture::Paint | AtlasTexture::OverviewPaint => TextureFormat::R8Uint,
+            AtlasTexture::Paint | AtlasTexture::OverviewPaint => TextureFormat::Rg8Uint,
             AtlasTexture::Surface | AtlasTexture::OverviewSurface => TextureFormat::Rgba16Uint,
             AtlasTexture::OverviewCanopy => TextureFormat::Rgba8UnormSrgb,
             AtlasTexture::OverviewCanopyExtent => TextureFormat::R16Unorm,
@@ -1020,7 +1065,6 @@ impl AtlasTexture {
 
     fn texel_bytes(self) -> u32 {
         match self.format() {
-            TextureFormat::R8Uint => 1,
             TextureFormat::R32Uint | TextureFormat::Rgba8UnormSrgb => 4,
             TextureFormat::Rgba16Uint => 8,
             _ => 2,

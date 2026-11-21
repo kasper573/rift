@@ -13,6 +13,7 @@ use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::units::{Degrees, Meters};
 use crate::core::vfx::VfxId;
 use crate::systems::area::prop_material::PropMaterialId;
+use crate::systems::water::ripples::Ripples;
 
 pub type PropId = ContentId<PropDef>;
 
@@ -68,6 +69,10 @@ pub struct PropDef {
     /// ground or held in a hand: the flame of a lantern, the glow of a crystal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<VfxId>,
+    /// The rings it sends over the water it stands in, as a shoal of fish or a spring does.
+    /// Without them it leaves the water as it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripples: Option<Ripples>,
 }
 
 /// The ground a prop takes up, in its own metres around its origin; nobody walks there.
@@ -145,11 +150,15 @@ impl ContentFile for PropDef {
             shelter: false,
             materials: BTreeMap::new(),
             effects: Vec::new(),
+            ripples: None,
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
         cx.count("/effects", self.effects.len(), 0, MAX_EFFECTS, "vfx");
+        if let Some(ripples) = &self.ripples {
+            ripples.check("/ripples", cx);
+        }
         match &self.footprint {
             Footprint::None => {}
             Footprint::Circle { radius } => {

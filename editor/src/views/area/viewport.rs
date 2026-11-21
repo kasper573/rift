@@ -15,7 +15,7 @@ use bevy::render::render_resource::TextureFormat;
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
-use engine::core::ground::{Heightfield, PaintMap};
+use engine::core::ground::{Heightfield, PaintMap, WaterMap, WaterSurface};
 use engine::core::math::Pos;
 use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::body::{self, Body, Figure};
@@ -36,11 +36,13 @@ use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::{HandIndex, StanceId};
 use engine::systems::area::render::view_reach;
+use engine::systems::area::scenery::ShapedGround;
 use engine::systems::area::scenery::{self, Eyes, Sight};
 use engine::systems::area::sky;
 use engine::systems::area::sky::Sky;
 use engine::systems::area::{Area, Picture, Weather};
 use engine::systems::item::PropHold;
+use engine::systems::water::{WaterDef, WaterId};
 use ui::egui;
 
 use super::camera::OrbitCamera;
@@ -66,6 +68,8 @@ pub struct Request {
     pub content: Content,
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
+    /// Whether the ground is shown without its water.
+    pub bare_bed: bool,
     pub ghost: Option<Ghost>,
     pub cast: Arc<[StandingActor]>,
     /// The models standing beside the scenery: the resources of a spawner's preview.
@@ -82,6 +86,10 @@ pub struct StrokeTerrain {
     pub revision: u64,
     pub heights: Arc<Heightfield>,
     pub paint: Arc<PaintMap>,
+    pub water: Arc<WaterSurface>,
+    pub water_map: Arc<WaterMap>,
+    /// The files of the waters the water map names, by their place in it.
+    pub waters: Vec<String>,
 }
 
 /// A model shown where nothing of the scene stands: a prop following the pointer before it is
@@ -201,7 +209,8 @@ struct RenderedView {
     size: [u32; 2],
     rendered: OrbitCamera,
     scene: StandingScene,
-    stroke: Option<u64>,
+    /// The stroke whose terrain is laid, and whether it is laid bare of water.
+    shaped: (Option<u64>, bool),
     ghost: Option<(String, Entity)>,
     stood: Option<(Arc<[Ghost]>, Vec<Entity>)>,
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
@@ -333,7 +342,7 @@ impl RenderedView {
             size,
             rendered: OrbitCamera::default(),
             scene: StandingScene::new(root, layer, camera),
-            stroke: None,
+            shaped: (None, false),
             ghost: None,
             stood: None,
             cast: None,
@@ -370,7 +379,7 @@ impl RenderedView {
             .area()
             .is_none_or(|stood| !Arc::ptr_eq(stood, &area));
         if self.scene.stand(world, &area, &request.content) && anew {
-            self.stroke = None;
+            self.shaped = (None, false);
         }
         let daylight = request.hour.map_or(Daylight::Fixed, Daylight::Hour);
         self.scene
@@ -386,7 +395,7 @@ impl RenderedView {
             );
             sky::answer(world);
         }
-        world.insert_resource(scenery::shown_weather(&request.weather, 0.0));
+        world.insert_resource(scenery::shown_weather(&area.climate, &request.weather, 0.0));
         let ground = area.heights.height_at(request.camera.target);
         {
             let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);
@@ -433,23 +442,49 @@ impl RenderedView {
         self.picked = self.scene.pick(world, request.pointer);
     }
 
-    /// Lays the terrain as the stroke shapes it, once per step of the stroke.
+    /// Lays the terrain as the stroke shapes it, once per step of the stroke, and without its
+    /// water while the bare bed is asked for.
     fn shape(&mut self, world: &mut World, request: &Request) {
         let Some(area) = self.scene.area().cloned() else {
             return;
         };
-        match &request.stroke {
-            Some(stroke) if self.stroke != Some(stroke.revision) => {
-                self.scene.lay_ground(world, &stroke.heights, &stroke.paint);
-                self.stroke = Some(stroke.revision);
-            }
-            Some(_) => {}
-            None => {
-                if self.stroke.take().is_some() {
-                    self.scene.lay_ground(world, &area.heights, &area.paint);
-                }
-            }
+        let shaped = (
+            request.stroke.as_ref().map(|stroke| stroke.revision),
+            request.bare_bed,
+        );
+        if self.shaped == shaped {
+            return;
         }
+        self.shaped = shaped;
+        let listed: Option<Vec<WaterId>> = request.stroke.as_ref().and_then(|stroke| {
+            stroke
+                .waters
+                .iter()
+                .map(|water| request.content.by_path::<WaterDef>(water))
+                .collect()
+        });
+        let ground = match &request.stroke {
+            Some(stroke) => ShapedGround {
+                heights: &stroke.heights,
+                paint: &stroke.paint,
+                water: &stroke.water,
+                water_map: &stroke.water_map,
+                waters: listed.as_deref().unwrap_or(&area.waters),
+            },
+            None => ShapedGround::of(&area),
+        };
+        let dry = WaterSurface::dry(area.heights.size(), area.water.range());
+        self.scene.lay_ground(
+            world,
+            if request.bare_bed {
+                ShapedGround {
+                    water: &dry,
+                    ..ground
+                }
+            } else {
+                ground
+            },
+        );
     }
 
     /// Keeps the ghost of what is being placed under the pointer.

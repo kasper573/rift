@@ -21,10 +21,13 @@ use crate::systems::area::AreaId;
 use crate::systems::area::heavens::NEAREST_SHELL;
 use crate::systems::area::sky::{self, Sky};
 use crate::systems::launch::{ServerDay, ServerDaylight};
+use crate::systems::water::ripples::Ripples;
 use crate::systems::{GameSettings, WorldArea};
 
 /// How many shells rain is drawn on round the eye at most, each over the whole picture.
 pub const MAX_RAIN_SHELLS: usize = 6;
+/// The narrowest patch of water a raindrop's ring is laid on.
+pub const LEAST_STRUCK: Meters = Meters(0.05);
 
 /// The weather of a spell: its wind, how much cloud covers the sky, how much water the cloud
 /// holds, how hard it rains under the cloud that holds water and how often lightning strikes. What
@@ -72,7 +75,9 @@ pub struct Climate {
 /// every metre it falls in a full wind, so it lands downwind of the cloud it falls from; drawn
 /// round the eye by a shader of the rain stage, filled with `params`, on a shell at each distance
 /// of `shells`; the ground soaking through over `wets` of a cloudburst and drying over `dries` once
-/// the rain stops; and sounding as `sounds` say.
+/// the rain stops; sending `ripples` over water where it strikes, a strike `every` so often on
+/// each patch of water `scatter` wide in a cloudburst and fewer in lighter rain, or none without
+/// them; and sounding as `sounds` say.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rainfall {
@@ -84,6 +89,8 @@ pub struct Rainfall {
     pub slant: f32,
     pub wets: Seconds,
     pub dries: Seconds,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripples: Option<Ripples>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sounds: Vec<RainSound>,
 }
@@ -900,6 +907,15 @@ impl Rainfall {
                 NEAREST_SHELL.0,
                 200.0,
                 "metres from the eye",
+            );
+        }
+        if let Some(ripples) = &self.ripples {
+            ripples.check(&format!("{pointer}/ripples"), cx);
+            cx.at_least(
+                format!("{pointer}/ripples/scatter"),
+                ripples.scatter.0,
+                ripples.reach.0.max(LEAST_STRUCK.0),
+                "meters, the width of a patch of water a drop strikes, no narrower than `reach`",
             );
         }
         cx.at_least(format!("{pointer}/wets"), self.wets.0, 0.0, "seconds");

@@ -11,6 +11,7 @@ use engine::systems::actor::ModelDef;
 use engine::systems::area::stages::PROP;
 use engine::systems::npc::NpcDef;
 use engine::systems::registry;
+use engine::systems::water::stage::WATER;
 use serde_json::{Value, json};
 use testkit::{Game, path, png};
 
@@ -46,6 +47,7 @@ fn camp() -> Game {
         )
         .item("cap", json!({ "kind": { "type": "resource" } }))
         .shader_on("bark", PROP)
+        .shader_on("ripple", WATER)
         .script(
             "roll_call",
             "command",

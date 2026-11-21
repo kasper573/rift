@@ -44,14 +44,18 @@ pub struct Body {
     limbs: Vec<Limb>,
 }
 
-/// The flesh a body's skins hang on one joint of its rig: the joint's bone, from the joint to
-/// `tail` in the joint's own space, and how far round it the skin lies on average, `girth`, in the
-/// same space.
+/// Flesh a body's skins hang on one joint of its rig, as a bone with the skin round it: the bone
+/// from `head` to `tail` in the joint's own space, and how far round it the skin lies at its head,
+/// `girth`, and at its tail, `tail_girth`, in the same space. A joint another hangs on has the
+/// rig's bone, from itself to that joint. Where the rig ends or branches a joint has none (a hull,
+/// a head, a pelvis), and its flesh is told by bones laid end to end the way it is longest.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Limb {
     pub joint: Entity,
+    pub head: Vec3,
     pub tail: Vec3,
     pub girth: f32,
+    pub tail_girth: f32,
 }
 
 /// Triggered on a body once its rig stands, its joints known and its player ready to play.
@@ -89,7 +93,8 @@ impl Body {
         Some(self.rig)
     }
 
-    /// The limbs of every skin bound to the rig, one for each joint some skin hangs flesh on.
+    /// The limbs of every skin bound to the rig: for each joint some skin hangs flesh on, the
+    /// flesh of the skin that hangs the thickest there.
     pub fn limbs(&self) -> &[Limb] {
         &self.limbs
     }
@@ -100,14 +105,26 @@ impl Body {
     }
 
     fn gather_limbs(&mut self) {
-        let mut thickest: HashMap<Entity, Limb> = HashMap::new();
-        for limb in self.worn.values().flatten() {
-            thickest
-                .entry(limb.joint)
-                .and_modify(|kept| kept.girth = kept.girth.max(limb.girth))
-                .or_insert(*limb);
+        let mut thickest: HashMap<Entity, (f32, Vec<Limb>)> = HashMap::new();
+        for worn in self.worn.values() {
+            let mut hung: HashMap<Entity, Vec<Limb>> = HashMap::new();
+            for limb in worn {
+                hung.entry(limb.joint).or_default().push(*limb);
+            }
+            for (joint, limbs) in hung {
+                let girth = limbs
+                    .iter()
+                    .map(|limb| limb.girth.max(limb.tail_girth))
+                    .fold(0.0, f32::max);
+                if thickest.get(&joint).is_none_or(|(kept, _)| *kept < girth) {
+                    thickest.insert(joint, (girth, limbs));
+                }
+            }
         }
-        self.limbs = thickest.into_values().collect();
+        self.limbs = thickest
+            .into_values()
+            .flat_map(|(_, limbs)| limbs)
+            .collect();
     }
 }
 
@@ -350,8 +367,8 @@ fn tail(tree: &NodeTree, node: usize) -> Vec3 {
 }
 
 /// The limbs a skinned `mesh` hangs on the `joints` it is bound to, by the inverse `binds` of its
-/// skin: for each joint that weighs some vertex most, how far from the joint's bone those vertices
-/// lie on average.
+/// skin: the flesh of each joint that weighs some vertex most, told by where those vertices lie
+/// round it.
 fn limbs_of(
     mesh: &Mesh,
     binds: &[Mat4],
@@ -370,29 +387,119 @@ fn limbs_of(
     else {
         return Vec::new();
     };
-    let tail_of = |slot: usize| tails.get(&joints[slot]).copied().unwrap_or(Vec3::ZERO);
-    let mut around = vec![(0.0f32, 0u32); joints.len().min(binds.len())];
+    let mut hung = vec![Vec::new(); joints.len().min(binds.len())];
     for ((position, index), weight) in positions.iter().zip(indices).zip(weights) {
         let heaviest = (0..4)
             .max_by(|&a, &b| weight[a].total_cmp(&weight[b]))
             .map_or(0, |at| index[at] as usize);
-        let Some((sum, count)) = around.get_mut(heaviest) else {
-            continue;
-        };
-        let at = binds[heaviest].transform_point3(Vec3::from_array(*position));
-        *sum += from_bone(at, tail_of(heaviest));
-        *count += 1;
+        if let Some(flesh) = hung.get_mut(heaviest) {
+            flesh.push(binds[heaviest].transform_point3(Vec3::from_array(*position)));
+        }
     }
-    around
-        .into_iter()
+    hung.into_iter()
         .enumerate()
-        .filter(|(_, (_, count))| *count > 0)
-        .map(|(slot, (sum, count))| Limb {
-            joint: joints[slot],
-            tail: tail_of(slot),
-            girth: sum / count as f32,
+        .filter(|(_, flesh)| !flesh.is_empty())
+        .flat_map(|(slot, flesh)| {
+            let joint = joints[slot];
+            match tails
+                .get(&joint)
+                .copied()
+                .filter(|tail| *tail != Vec3::ZERO)
+            {
+                Some(tail) => vec![on_bone(joint, tail, &flesh)],
+                None => along_flesh(joint, &flesh),
+            }
         })
         .collect()
+}
+
+/// The `flesh` of a joint whose bone runs to `tail`: how far from the bone it lies on average.
+fn on_bone(joint: Entity, tail: Vec3, flesh: &[Vec3]) -> Limb {
+    let girth = flesh.iter().map(|&at| from_bone(at, tail)).sum::<f32>() / flesh.len() as f32;
+    Limb {
+        joint,
+        head: Vec3::ZERO,
+        tail,
+        girth,
+        tail_girth: girth,
+    }
+}
+
+/// The `flesh` of a joint with no bone of its own, as bones laid end to end the way the flesh is
+/// longest, each as thick at its ends as the flesh there: a hull comes out long, full amidships
+/// and narrow at its bow, a head or a slime as one short bone in a ball of flesh.
+fn along_flesh(joint: Entity, flesh: &[Vec3]) -> Vec<Limb> {
+    let middle = flesh.iter().sum::<Vec3>() / flesh.len() as f32;
+    let way = longest_way(flesh, middle);
+    let laid: Vec<(f32, f32)> = flesh
+        .iter()
+        .map(|&at| {
+            let along = (at - middle).dot(way);
+            (along, (at - middle - way * along).length())
+        })
+        .collect();
+    let (from, to) = laid
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(from, to), (along, _)| {
+            (from.min(*along), to.max(*along))
+        });
+    let whole = girth_between(&laid, from, to).unwrap_or(0.0);
+    let length = to - from;
+    let bones = if whole > 0.0 {
+        ((length / (whole * 2.0)).ceil() as usize).clamp(1, FLESH_BONES)
+    } else {
+        1
+    };
+    let span = length / bones as f32;
+    let mut ends: Vec<(f32, f32)> = (0..=bones)
+        .map(|end| {
+            let along = from + span * end as f32;
+            let girth = girth_between(&laid, along - span / 2.0, along + span / 2.0);
+            (along, girth.unwrap_or(whole))
+        })
+        .collect();
+    // The flesh ends where the round end of its outermost bone does.
+    ends[0].0 += ends[0].1.min(span / 2.0);
+    ends[bones].0 -= ends[bones].1.min(span / 2.0);
+    ends.windows(2)
+        .map(|bone| Limb {
+            joint,
+            head: middle + way * bone[0].0,
+            tail: middle + way * bone[1].0,
+            girth: bone[0].1,
+            tail_girth: bone[1].1,
+        })
+        .collect()
+}
+
+/// How many bones the flesh of a joint with none of its own is told by at most.
+const FLESH_BONES: usize = 4;
+
+/// The way `flesh` lying round `middle` is longest.
+fn longest_way(flesh: &[Vec3], middle: Vec3) -> Vec3 {
+    let spread = flesh.iter().fold(Mat3::ZERO, |spread, &at| {
+        let off = at - middle;
+        spread + Mat3::from_cols(off * off.x, off * off.y, off * off.z)
+    });
+    let widest = [Vec3::X, Vec3::Y, Vec3::Z]
+        .into_iter()
+        .max_by(|a, b| a.dot(spread * *a).total_cmp(&b.dot(spread * *b)))
+        .unwrap_or(Vec3::X);
+    (0..16).fold(widest, |way, _| (spread * way).normalize_or(way))
+}
+
+/// How far round its way the flesh `laid` along it lies between `from` and `to`, each point told
+/// by how far along the way and how far from it: the mean of its outer half, so what a hull
+/// holds within it (thwarts, a mast's foot) leaves it no thinner. None where no flesh lies.
+fn girth_between(laid: &[(f32, f32)], from: f32, to: f32) -> Option<f32> {
+    let mut around: Vec<f32> = laid
+        .iter()
+        .filter(|(along, _)| (from..=to).contains(along))
+        .map(|(_, around)| *around)
+        .collect();
+    around.sort_by(f32::total_cmp);
+    let outer = &around[around.len() / 2..];
+    (!outer.is_empty()).then(|| outer.iter().sum::<f32>() / outer.len() as f32)
 }
 
 /// How far `at` lies from the bone running from its joint to `tail`, all in the joint's space.

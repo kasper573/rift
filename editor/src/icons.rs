@@ -42,6 +42,7 @@ use engine::systems::resource::ResourceDef;
 use engine::systems::shop::ShopDef;
 use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
+use engine::systems::water::WaterDef;
 use ui::egui;
 use ui::egui::{Color32, Painter, Rect, TextureId, Vec2};
 use ui::glyph::{Icon, Mark, phosphor};
@@ -169,6 +170,7 @@ impl KindFamily {
             | PropMaterialDef::TABLE
             | TerrainDef::TABLE
             | SurfaceDef::TABLE
+            | WaterDef::TABLE
             | ResourceDef::TABLE
             | SpawnableDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
@@ -231,6 +233,7 @@ pub fn of_table(table: &str) -> KindIcon {
         PropMaterialDef::TABLE => KindIcon::plain(phosphor::PAINT_BRUSH),
         TerrainDef::TABLE => KindIcon::plain(phosphor::SQUARES_FOUR).unpictured(),
         SurfaceDef::TABLE => KindIcon::plain(phosphor::FOOTPRINTS),
+        WaterDef::TABLE => KindIcon::plain(phosphor::WAVES).unpictured(),
         WorldMapDef::TABLE => KindIcon::plain(phosphor::GLOBE_HEMISPHERE_WEST),
         NpcDef::TABLE => KindIcon::plain(phosphor::ROBOT).unpictured(),
         CharacterDef::TABLE => KindIcon::plain(phosphor::USER).unpictured(),

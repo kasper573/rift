@@ -22,7 +22,10 @@ use engine::systems::area::TerrainDef;
 use engine::systems::area::prop::PropDef;
 use strum::VariantArray;
 
-use super::brush::{Brush, LARGEST_RADIUS, SMALLEST_RADIUS, SculptMode};
+use super::brush::{Brush, LARGEST_RADIUS, PaintMask, SMALLEST_RADIUS, SculptMode};
+use super::tools::{flood_said, refusal_said};
+use super::water::WaterMode;
+use engine::core::render::world::haze::MAX_HAZE_BOXES;
 use engine::core::script::ScriptModule;
 use engine::core::script::VarValue;
 use engine::core::script::Variable;
@@ -31,8 +34,9 @@ use engine::systems::area::blueprint;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::object::ObjectDef;
 use engine::systems::area::scene::{self, ModuleNode, SceneNode, scene_file};
-use engine::systems::area::{AreaDef, AreaModule, SoundscapeDef};
+use engine::systems::area::{AreaDef, AreaModule, FogBank, SoundscapeDef};
 use engine::systems::spawner::Spawner;
+use engine::systems::water::WaterDef;
 
 use super::clipboard::clipboard_panel;
 use super::nodes::SceneBundle;
@@ -98,6 +102,7 @@ fn tool(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super::Area
     match editor.views.area.view(view_key).tool {
         AreaTool::Sculpt => sculpt_card(editor, ui, view_key),
         AreaTool::Paint => paint_card(editor, ui, view_key, snapshot),
+        AreaTool::Water => water_card(editor, ui, view_key, snapshot),
         AreaTool::Place => match editor.views.area.view(view_key).placeable.clone() {
             Some(super::Placeable::Prop(prop)) => prop_card(editor, ui, view_key, &prop),
             _ => stamp_card(editor, ui, view_key, &content),
@@ -204,6 +209,15 @@ fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super
                 if blocks {
                     form::hint(ui, "Nobody walks where this terrain is painted.");
                 }
+                if terrain.silt > 0.0 {
+                    form::hint(
+                        ui,
+                        &format!(
+                            "Silts {}: it clouds shallow water over it in its own colour.",
+                            terrain.silt
+                        ),
+                    );
+                }
             }
             None => form::hint(
                 ui,
@@ -222,6 +236,24 @@ fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super
             controls::slider(ui, &mut view.brush.falloff, 0.0..=1.0)
                 .on_hover_text("how far in from the rim the edge dithers");
         });
+        form::kv(ui, "where", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for mask in PaintMask::VARIANTS {
+                    if chip::mode(ui, mask.as_ref(), view.paint_mask == *mask).clicked() {
+                        view.paint_mask = *mask;
+                    }
+                }
+            });
+        });
+        form::kv(ui, "water", |ui| {
+            let mut shown = !view.bare_bed;
+            if controls::tick(ui, &mut shown)
+                .on_hover_text("off, the picture leaves the water out and shows the bare bed")
+                .changed()
+            {
+                view.bare_bed = !shown;
+            }
+        });
     });
     for action in actions {
         row_form::act(editor, action, AreaDef::TABLE, "");
@@ -230,6 +262,142 @@ fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super
         editor.views.area.view_mut(view_key).paint_terrain = Some(picked);
     }
 }
+/// The Water tool's card: the water it lays, what it does where it is used, and for a flood the
+/// level it fills to and what it would lay.
+fn water_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super::AreaSnapshot) {
+    let viewed = snapshot.bundle.clone();
+    let mut picked = editor
+        .views
+        .area
+        .view(view_key)
+        .water
+        .file
+        .clone()
+        .unwrap_or_default();
+    let mut actions = Vec::new();
+    let mut changed = false;
+    let mut make = false;
+    tool_card(ui, "Water", |ui| {
+        {
+            let Editor {
+                project,
+                form,
+                shapes,
+                ..
+            } = editor;
+            let project = project.as_ref().expect("a project");
+            let mut cx = FormCx::schemaless(project, shapes, form, &mut actions)
+                .editing(table_of(&viewed).unwrap_or_default(), Some(&viewed));
+            form::kv(ui, "water", |ui| {
+                changed = picker::row(ui, &mut cx, WaterDef::TABLE, &mut picked, "/water/file");
+            });
+        }
+        let view = editor.views.area.view_mut(view_key);
+        let tool = &mut view.water;
+        if picked.is_empty() {
+            form::hint(ui, "Water lies over the ground you sculpt and paint.");
+            make = controls::marked_primary(ui, Mark::Plus, "New water").clicked();
+            return;
+        }
+        form::kv(ui, "", |ui| {
+            make = controls::marked(ui, Mark::Plus, "New").clicked();
+        });
+        form::kv(ui, "mode", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                for mode in WaterMode::VARIANTS {
+                    if chip::mode(ui, mode.as_ref(), tool.mode == *mode)
+                        .on_hover_text(mode.hint())
+                        .clicked()
+                    {
+                        tool.cancel();
+                        tool.mode = *mode;
+                    }
+                }
+            });
+        });
+        form::hint(ui, tool.mode.hint());
+        if tool.mode != WaterMode::Flood {
+            brush_fields(ui, &mut view.brush);
+            return;
+        }
+        form::kv(ui, "level", |ui| {
+            let shown = tool.level.or(tool.flood.as_ref().map(|flood| flood.level));
+            let mut level = shown.map_or(0.0, |level| level.0);
+            let field = ui::egui::DragValue::new(&mut level)
+                .speed(0.05)
+                .max_decimals(2)
+                .suffix(" m");
+            if ui.add_enabled(!tool.laying, field).changed() {
+                tool.level = Some(Meters(level));
+            }
+            if chip::mode(ui, "pick", tool.picking_level)
+                .on_hover_text("click water in the picture to take its level and lay more of it")
+                .clicked()
+            {
+                tool.picking_level = !tool.picking_level;
+            }
+            if tool.level.is_some()
+                && controls::button(ui, "Follow the ground")
+                    .on_hover_text("a metre over whatever lies under the pointer")
+                    .clicked()
+            {
+                tool.level = None;
+            }
+        });
+        form::hint(ui, "The wheel moves the level while a flood shows.");
+        controls::key_hint_text(ui, &EditorKey::Zoom.cap(), "and the wheel zoom");
+        controls::key_hint_sentence(
+            ui,
+            &EditorKey::Unsnapped.cap(),
+            "and a click take the level and the water under the pointer",
+        );
+        ui.add_space(4.0);
+        match (&tool.flood, tool.refused) {
+            (Some(flood), _) if tool.laying => {
+                let (done, reached) = flood.tiles();
+                ui.label(theme::muted(format!("Flooding… {done} of {reached} tiles")).size(12.5));
+                ui::paint::progress_line(
+                    ui,
+                    ui::egui::Vec2::new(ui.available_width(), 4.0),
+                    done as f32 / reached.max(1) as f32,
+                    theme::ACCENT,
+                );
+                controls::key_hint_text(ui, &EditorKey::Cancel.cap(), "leaves it dry");
+            }
+            (Some(flood), _) => {
+                ui.label(format!("Would flood {}.", flood_said(flood)));
+                if let Some((last, rest)) = flood.open.names().split_last() {
+                    let sides = match rest {
+                        [] => (*last).to_owned(),
+                        rest => format!("{} and {last}", rest.join(", ")),
+                    };
+                    controls::notice(ui, "Runs off the area");
+                    form::hint(ui, &format!("The basin has no rim to the {sides}."));
+                }
+                form::hint(ui, "Click the ground to flood it, as one step to undo.");
+            }
+            (None, Some(refused)) => form::hint(ui, &refusal_said(refused, tool.level)),
+            (None, None) => form::hint(ui, "Point at the ground to see what a flood would fill."),
+        }
+    });
+    for action in actions {
+        row_form::act(editor, action, AreaDef::TABLE, "");
+    }
+    if make {
+        let folder = engine::core::content::parent_of(&viewed).to_owned();
+        match rows::new_file(editor, &folder, WaterDef::TABLE) {
+            Ok(path) => picked = path,
+            Err(error) => editor.toast(format!("No new water: {error}")),
+        }
+        changed = !picked.is_empty();
+    }
+    if changed && !picked.is_empty() {
+        let tool = &mut editor.views.area.view_mut(view_key).water;
+        tool.cancel();
+        tool.file = Some(picked);
+    }
+}
+
 fn prop_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, prop: &str) {
     let def = editor.read::<PropDef>(prop).and_then(Result::ok);
     let view = editor.views.area.view_mut(view_key);
@@ -749,7 +917,12 @@ fn module_inspector(
         });
         ui.add_space(4.0);
         let bounded = matches!(&module.module, AreaModule::Spawner(s) if s.within.is_some());
-        changed |= module_fields(ui, cx, &mut module.module, &path);
+        let area = cx.project.read::<AreaDef>(bundle).ok();
+        let under_air = area.as_ref().is_some_and(|area| area.lighting.sky.is_air());
+        changed |= module_fields(ui, cx, &mut module.module, &path, under_air);
+        if let (AreaModule::Fog(bank), Some(area)) = (&module.module, &area) {
+            fog_extras(ui, area, bank);
+        }
         if let AreaModule::Spawner(spawner) = &mut module.module
             && !bounded
             && let Some(within) = &mut spawner.within
@@ -833,14 +1006,63 @@ fn module_inspector(
     changed
 }
 
+/// What a fog bank's fields leave unsaid: how high its top stands over the ground it lies on,
+/// what lights it, and how many banks the picture draws of those the area lays.
+fn fog_extras(ui: &mut Ui, area: &AreaDef, bank: &FogBank) {
+    let floor = bank.clone().laid(&area.heights, &area.water).floor;
+    form::hint(
+        ui,
+        &format!(
+            "Its top stands at {} m, over the lowest ground or water in it at {} m: whatever is \
+             higher rises out of it.",
+            forms::metres(floor.0 + bank.depth.0),
+            forms::metres(floor.0),
+        ),
+    );
+    if area.lighting.sky.is_air() {
+        form::hint(
+            ui,
+            "Under the air the sky lights the fog; a glow of its own shows only under a dark sky.",
+        );
+    }
+    let mut banks = 0;
+    nodes::walk(&area.scene, &mut |_, node| {
+        if let SceneNode::Module(module) = node
+            && matches!(module.module, AreaModule::Fog(_))
+        {
+            banks += 1;
+        }
+    });
+    if banks + NEARLY_TOO_MANY >= MAX_HAZE_BOXES {
+        controls::notice(
+            ui,
+            &format!(
+                "{banks} fog banks lie here; the picture draws the {MAX_HAZE_BOXES} nearest the eye"
+            ),
+        );
+    }
+}
+
+/// How many banks short of all the picture draws an area's count is warned of.
+const NEARLY_TOO_MANY: usize = 4;
+
 /// The fields of `module` as the game reads them, without those its kind's own parts of the card
-/// edit.
-fn module_fields(ui: &mut Ui, cx: &mut FormCx, module: &mut AreaModule, path: &str) -> bool {
+/// edit; `under_air` when the area's sky is the air, which leaves a fog bank's glow unused.
+fn module_fields(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    module: &mut AreaModule,
+    path: &str,
+    under_air: bool,
+) -> bool {
     match module {
         AreaModule::Object(object) => {
             forms::of_type_without(ui, cx, object, path, &[field!(ObjectDef, scripts)])
         }
         AreaModule::SafeZone(zone) => forms::of_type(ui, cx, zone, path),
+        AreaModule::Fog(bank) if under_air && bank.glow.is_none() => {
+            forms::of_type_without(ui, cx, bank, path, &[field!(FogBank, glow)])
+        }
         AreaModule::Fog(bank) => forms::of_type(ui, cx, bank, path),
         AreaModule::Soundscape(soundscape) => {
             forms::of_type_without(ui, cx, soundscape, path, &[field!(SoundscapeDef, channels)])

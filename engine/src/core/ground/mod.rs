@@ -263,6 +263,12 @@ pub type PaintMap = GroundGrid<u8>;
 /// it doesn't. With no tile, the whole area is dry.
 pub type WaterSurface = GroundGrid<WaterLevel>;
 
+/// Which of an area's waters lies at every half metre of it, as its `waters/` tiles hold it: a
+/// byte per pixel, the index of the water in the area's list, as the paint names its terrains. It
+/// says which water, never whether any: water lies wherever the [`WaterSurface`] stands above the
+/// ground. With no tile, all of it is the area's first water.
+pub type WaterMap = GroundGrid<u8>;
+
 impl GroundGrid<u16> {
     pub fn flat(size: GroundSize, range: HeightRange) -> Heightfield {
         GroundGrid::blank(TileGrid::samples(size), range)

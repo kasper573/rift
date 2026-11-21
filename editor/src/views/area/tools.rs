@@ -3,8 +3,11 @@
 
 use engine::core::math::{Offset, Rect};
 use engine::core::units::{MeterSize, Meters};
+use std::time::{Duration, Instant};
+
 use engine::systems::area::TerrainDef;
-use engine::systems::area::{AreaModule, AreaModuleKind};
+use engine::systems::area::{AreaDef, AreaModule, AreaModuleKind};
+use engine::systems::water::WaterDef;
 use strum::VariantArray;
 use ui::egui;
 use ui::egui::{Color32, Pos2, Stroke as EStroke, Ui, Vec2};
@@ -19,6 +22,7 @@ use super::select::{
     copy_selection, delete_selection, duplicate_selection, move_selection, paste_anchor,
     paste_in_place, select_input, selected_nodes, snapped_delta, start_paste,
 };
+use super::water::{Flood, FloodRefused, OVER_THE_GROUND, WaterMode};
 use super::{
     AreaDrag, AreaFrame, AreaTool, Placeable, blueprint, nodes, pins, place, placement, scatter,
     shapes, stamp,
@@ -126,6 +130,20 @@ fn tool_icon(painter: &egui::Painter, tool: AreaTool, c: Pos2, ink: Color32) {
                 EStroke::NONE,
             ));
         }
+        AreaTool::Water => {
+            for y in [-4.0, 1.0, 6.0] {
+                painter.add(egui::Shape::line(
+                    vec![
+                        p(-8.0, y),
+                        p(-4.0, y - 2.5),
+                        p(0.0, y),
+                        p(4.0, y - 2.5),
+                        p(8.0, y),
+                    ],
+                    stroke,
+                ));
+            }
+        }
         AreaTool::Place => {
             painter.circle_stroke(p(0.0, -3.0), 4.5, stroke);
             painter.line_segment([p(0.0, 1.5), p(0.0, 7.0)], stroke);
@@ -158,6 +176,7 @@ pub fn input(
 ) {
     let response = frame.response;
     let modifiers = ui.input(|i| i.modifiers);
+    level_by_wheel(editor, ui, view_key, frame);
     if navigate(editor, ui, view_key, frame) {
         return;
     }
@@ -187,6 +206,7 @@ pub fn input(
     match tool {
         AreaTool::Select => select_input(editor, ui, view_key, frame, modifiers),
         AreaTool::Sculpt | AreaTool::Paint => brush_input(editor, ui, view_key, frame, tool),
+        AreaTool::Water => water_input(editor, ui, view_key, frame),
         AreaTool::Place => place::input(editor, ui, view_key, frame),
         AreaTool::Scatter => scatter::input(editor, ui, view_key, frame),
         AreaTool::Module => {
@@ -224,7 +244,147 @@ pub(crate) fn navigate(
     )
 }
 
-/// A sculpt or paint stroke: begun where the button goes down on the ground, applied every frame
+/// How long a frame lets a flood spread for.
+const FLOOD_A_FRAME: Duration = Duration::from_millis(6);
+/// Metres of level a notch of the wheel moves a flood by.
+const LEVEL_A_NOTCH: f32 = 0.25;
+
+/// While the Water tool shows a flood, the wheel moves its level in place of the camera, which
+/// the zoom key still gives the wheel to.
+fn level_by_wheel(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) {
+    let view = editor.views.area.view_mut(view_key);
+    if view.tool != AreaTool::Water
+        || view.water.mode != WaterMode::Flood
+        || view.water.laying
+        || view.water.flood.is_none()
+        || !frame.response.hovered()
+        || ui.input(|i| EditorKey::Zoom.held(i))
+    {
+        return;
+    }
+    let scrolled = ui.input_mut(|i| std::mem::take(&mut i.smooth_scroll_delta).y);
+    if scrolled == 0.0 {
+        return;
+    }
+    let from = view
+        .water
+        .level
+        .or(view.water.flood.as_ref().map(|flood| flood.level));
+    if let Some(from) = from {
+        view.water.level = Some(Meters(from.0 + scrolled / 50.0 * LEVEL_A_NOTCH));
+    }
+}
+
+/// The Water tool at work: a level picked off water that lies, the flood shown from under the
+/// pointer and laid at a click, or a stroke of the brush over water.
+fn water_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) {
+    let response = frame.response;
+    let Some(nodes::SceneBundle::Area(area)) = nodes::bundle_of(editor, &frame.bundle) else {
+        if response.clicked() || response.drag_started() {
+            editor.toast("A blueprint has no ground to lay water on; lay it in an area");
+        }
+        return;
+    };
+    let view = editor.views.area.view_mut(view_key);
+    let picking = view.water.picking_level || ui.input(|i| EditorKey::Unsnapped.held(i));
+    if picking && response.clicked() {
+        let Some(ground) = frame.pointer_ground else {
+            return;
+        };
+        if area.water.depth_at(&area.heights, ground).0 > 0.0 {
+            let lying = area
+                .waters
+                .get(usize::from(area.water_map.at(ground)))
+                .and_then(|&water| frame.reader.path_of(water));
+            view.water.cancel();
+            view.water.level = Some(area.water.height_at(ground));
+            if let Some(lying) = lying {
+                view.water.file = Some(lying.to_owned());
+            }
+        } else {
+            editor.toast("No water lies there to take a level from");
+        }
+        return;
+    }
+    if view.water.picking_level {
+        return;
+    }
+    match view.water.mode {
+        WaterMode::Flood => flood_input(editor, ui, view_key, frame, &area),
+        _ => brush_input(editor, ui, view_key, frame, AreaTool::Water),
+    }
+}
+
+/// A flood: shown from the ground under the pointer as far as it has spread, a little farther
+/// every frame, and laid as one step by a click once it stands whole.
+fn flood_input(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    view_key: &str,
+    frame: &AreaFrame,
+    area: &AreaDef,
+) {
+    let response = frame.response;
+    let view = editor.views.area.view_mut(view_key);
+    let picked = view
+        .water
+        .file
+        .as_deref()
+        .and_then(|path| frame.reader.id_of::<WaterDef>(path));
+    let Some(water) = picked else {
+        view.water.cancel();
+        if response.clicked() {
+            editor.toast("Pick a water to lay in the inspector, or make a new one there");
+        }
+        return;
+    };
+    let tool = &mut view.water;
+    if !tool.laying {
+        let at = frame
+            .pointer_ground
+            .or(tool.flood.as_ref().map(|flood| flood.from));
+        if let Some(at) = at {
+            let stands = Meters(area.heights.height_at(at).0.max(area.water.height_at(at).0));
+            let shown = tool.flood.as_ref().is_some_and(|flood| {
+                flood.water == water
+                    && tool.level.is_none_or(|level| level == flood.level)
+                    && (frame.pointer_ground.is_none() || flood.floods(at))
+            });
+            if !shown {
+                let level = tool.level.unwrap_or(stands + OVER_THE_GROUND);
+                match Flood::begin(area, at, water, level) {
+                    Ok(flood) => {
+                        tool.flood = Some(flood);
+                        tool.refused = None;
+                    }
+                    Err(refused) => {
+                        tool.flood = None;
+                        tool.refused = Some(refused);
+                    }
+                }
+            }
+        }
+        if response.clicked() && tool.flood.is_some() {
+            tool.laying = true;
+        }
+    }
+    let Some(flood) = &mut tool.flood else {
+        return;
+    };
+    if !flood.is_whole() {
+        let until = Instant::now() + FLOOD_A_FRAME;
+        flood.spread(|| Instant::now() < until);
+        ui.ctx().request_repaint();
+    }
+    if tool.laying && flood.is_whole() {
+        tool.laying = false;
+        if let Some(flood) = tool.flood.take() {
+            super::brush::commit(editor, &frame.bundle, &flood.stroke);
+        }
+    }
+}
+
+/// A stroke of the brush: begun where the button goes down on the ground, applied every frame
 /// the pointer is dragged, written as one step when it comes up.
 fn brush_input(
     editor: &mut Editor,
@@ -256,13 +416,31 @@ fn brush_input(
                     editor.toast("Pick a terrain to paint with in the inspector");
                     return;
                 };
-                StrokeKind::Paint { terrain }
+                StrokeKind::Paint {
+                    terrain,
+                    mask: view.paint_mask,
+                }
+            }
+            AreaTool::Water => {
+                let picked = view
+                    .water
+                    .file
+                    .as_deref()
+                    .and_then(|path| frame.reader.id_of::<WaterDef>(path));
+                let Some(water) = picked else {
+                    editor.toast("Pick a water to lay in the inspector, or make a new one there");
+                    return;
+                };
+                StrokeKind::Water {
+                    water,
+                    mode: view.water.mode,
+                }
             }
             _ => StrokeKind::Sculpt(sculpt_mode(view.sculpt, modifiers)),
         };
         let Some(mut stroke) = Stroke::begin(&area, ground, what) else {
             editor.toast(format!(
-                "{} already names every terrain a paint can; pick one it has",
+                "{} already names every terrain or water it can; pick one it has",
                 frame.bundle
             ));
             return;
@@ -369,6 +547,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
         }
         _ => {}
     }
+    fog_overlay(editor, painter, frame);
     if let Some(listener) = view.listener {
         let at = canvas.to_screen(listener);
         painter.circle_stroke(at, 8.0, EStroke::new(2.0, Color32::from_rgb(170, 110, 255)));
@@ -475,7 +654,121 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
         AreaTool::Place => place::overlay(editor, painter, view_key, frame),
         AreaTool::Scatter => scatter::overlay(editor, painter, view_key, frame),
         AreaTool::Sculpt | AreaTool::Paint => brush_overlay(editor, painter, view_key, frame),
+        AreaTool::Water => match view.water.mode {
+            WaterMode::Flood => flood_overlay(editor, view_key, frame),
+            _ => brush_overlay(editor, painter, view_key, frame),
+        },
         AreaTool::Select => {}
+    }
+}
+
+/// A fog bank selected alone, shown where its numbers apply: its sight as a ring on the ground
+/// round the pointer, and its level top as the outline of the bank lifted to it.
+fn fog_overlay(editor: &Editor, painter: &egui::Painter, frame: &AreaFrame) {
+    let selected = selected_nodes(editor, frame);
+    let [node] = selected.as_slice() else {
+        return;
+    };
+    let Some(AreaModule::Fog(bank)) = frame.module(node) else {
+        return;
+    };
+    let canvas = &frame.canvas;
+    let ink = super::overlays::module_color(AreaModuleKind::Fog);
+    let area = frame.area();
+    let top = bank.clone().laid(&area.heights, &area.water).floor + bank.depth;
+    let corners = engine::core::geometry::corners(bank.rect)
+        .map(|corner| canvas.point(engine::core::render::world_point(corner, top)));
+    painter.add(egui::Shape::dashed_line(
+        &[corners.as_slice(), &corners[..1]].concat(),
+        EStroke::new(1.0, ink),
+        6.0,
+        4.0,
+    ));
+    frame.labels.chip(
+        corners[0],
+        format!("top {} m", crate::forms::metres(top.0)),
+        ink,
+    );
+    if let Some(pointer) = frame.pointer_ground {
+        painter.add(egui::Shape::closed_line(
+            canvas.circle(pointer, bank.sight.0),
+            EStroke::new(1.5, ink),
+        ));
+        frame.labels.chip(
+            canvas.to_screen(pointer) + Vec2::new(12.0, 10.0),
+            format!("sight {} m", crate::forms::metres(bank.sight.0)),
+            ink,
+        );
+    }
+}
+
+/// What a flood would lay, or why it lays nothing, said at the pointer.
+fn flood_overlay(editor: &Editor, view_key: &str, frame: &AreaFrame) {
+    let tool = &editor.views.area.view(view_key).water;
+    let Some(pointer) = frame.pointer_ground else {
+        return;
+    };
+    let ink = Color32::from_rgb(120, 190, 255);
+    let said = if tool.picking_level {
+        "click water to take its level".to_owned()
+    } else {
+        match (&tool.flood, tool.refused) {
+            (Some(flood), _) => flood_said(flood),
+            (None, Some(refused)) => refusal_said(refused, tool.level),
+            (None, None) => return,
+        }
+    };
+    frame.labels.chip(
+        frame.canvas.to_screen(pointer) + Vec2::new(12.0, -8.0),
+        said,
+        ink,
+    );
+}
+
+/// How much a flood lays and how deep, as far as it has spread.
+pub(super) fn flood_said(flood: &Flood) -> String {
+    format!(
+        "{} · deepest {} m{}",
+        area_said(flood.flooded),
+        crate::forms::metres(flood.deepest.0),
+        if flood.is_whole() {
+            ""
+        } else {
+            " · spreading"
+        }
+    )
+}
+
+/// Why a flood lays nothing where it would start, against the level `set` or the one it took.
+pub(super) fn refusal_said(refused: FloodRefused, set: Option<Meters>) -> String {
+    let level = |stands: Meters| match set {
+        Some(level) => format!("the level of {} m", crate::forms::metres(level.0)),
+        None => format!("{} m", crate::forms::metres(stands.0 + OVER_THE_GROUND.0)),
+    };
+    match refused {
+        FloodRefused::AboveTheLevel { ground } => format!(
+            "The ground here stands at {} m, above {}.",
+            crate::forms::metres(ground.0),
+            level(ground)
+        ),
+        FloodRefused::AlreadyUnder { surface } => format!(
+            "Water already stands here at {} m, above {}.",
+            crate::forms::metres(surface.0),
+            level(surface)
+        ),
+        FloodRefused::NoRoomForAWater => {
+            "This area already names every water it can; pick one it has.".to_owned()
+        }
+    }
+}
+
+/// A stretch of ground of `square_metres` as a designer reads it: in hectares once it is one
+/// tenth of one.
+fn area_said(square_metres: f32) -> String {
+    if square_metres >= 1000.0 {
+        format!("{:.1} ha", square_metres / 10_000.0)
+    } else {
+        format!("{} m²", square_metres.round())
     }
 }
 
@@ -502,6 +795,10 @@ fn brush_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame
                 None => (Color32::GRAY, "no terrain picked".to_owned()),
             }
         }
+        AreaTool::Water => (
+            Color32::from_rgb(120, 190, 255),
+            view.water.mode.as_ref().to_owned(),
+        ),
         _ => {
             let modifiers = painter.ctx().input(|i| i.modifiers);
             let mode = sculpt_mode(view.sculpt, modifiers);
@@ -528,6 +825,7 @@ fn brush_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame
             crate::forms::metres(view.brush.radius.0),
             match view.tool {
                 AreaTool::Paint => format!("{}% fray", (view.brush.falloff * 100.0).round()),
+                AreaTool::Water => format!("{}% soft", (view.brush.falloff * 100.0).round()),
                 _ => format!(
                     "{} inverts · {} smooths",
                     EditorKey::ExtendSelection.name(),

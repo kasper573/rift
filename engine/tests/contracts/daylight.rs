@@ -1,9 +1,11 @@
 use bevy::prelude::*;
 use engine::core::content::ImageRef;
 use engine::core::math::Rgb;
-use engine::core::render::world::sky::{Daylight, ambient_at, night, shining, sun_at};
+use engine::core::render::world::sky::{
+    Daylight, Sky, SkyAir, SkyLights, ambient_at, night, sun_at,
+};
 use engine::core::time::UnixMillis;
-use engine::core::units::{DayHours, Degrees, HourOfDay, Seconds};
+use engine::core::units::{DayHours, Degrees, HourOfDay, Meters, Seconds};
 use engine::systems::area::{DayCycle, TimeOfDay, TimeOfDayName};
 use engine::systems::hud::day_clock;
 use engine::systems::launch::{ServerDay, ServerDaylight};
@@ -11,15 +13,23 @@ use ui::egui;
 
 const NOON: (Degrees, Degrees) = (Degrees(52.0), Degrees(215.0));
 
-fn luminance(color: Color) -> f32 {
-    let linear = color.to_linear();
-    0.2126 * linear.red + 0.7152 * linear.green + 0.0722 * linear.blue
-}
-
 #[test]
 fn the_sun_the_moon_and_ambient_light_turn_with_the_hour_and_dim_under_cloud() {
     let white = Color::WHITE;
     let look = testkit::look();
+    let air = SkyAir::new(Sky::Air, 1.0, &look.sky);
+    let lights = |hour: f32| {
+        SkyLights::at(
+            Daylight::Hour(HourOfDay(hour)),
+            NOON.0,
+            NOON.1,
+            white,
+            0.0,
+            0.0,
+            &look,
+        )
+    };
+    let landed = |hour: f32| lights(hour).landed(&air, Meters(0.0), &look.sky);
     let fixed = sun_at(Daylight::Fixed, NOON.0, NOON.1, white, 0.0, 0.0, &look);
     assert_eq!(
         (fixed.elevation, fixed.azimuth, fixed.color),
@@ -63,9 +73,18 @@ fn the_sun_the_moon_and_ambient_light_turn_with_the_hour_and_dim_under_cloud() {
         0.0,
         &look,
     );
+    let reddened = |color: Color| {
+        let linear = color.to_linear();
+        linear.red / linear.blue.max(f32::EPSILON)
+    };
+    let (high, low) = (landed(12.0).sun, landed(17.5).sun);
     assert!(
-        dusk.elevation.0 < 2.0 && luminance(dusk.color) < luminance(white),
-        "at dusk the sun sits on the horizon, reddened: {dusk:?}"
+        dusk.elevation.0 < 2.0
+            && dusk.color == white
+            && low.illuminance < high.illuminance
+            && reddened(low.color) > reddened(high.color),
+        "at dusk the sun sits on the horizon, and the air it shines through has dimmed and \
+         reddened what reaches the ground: {dusk:?}, {low:?} after {high:?}"
     );
     let midnight = sun_at(
         Daylight::Hour(HourOfDay(0.0)),
@@ -77,8 +96,17 @@ fn the_sun_the_moon_and_ambient_light_turn_with_the_hour_and_dim_under_cloud() {
         &look,
     );
     assert!(
-        midnight.elevation.0 < 0.0 && midnight.illuminance == 0.0,
-        "at midnight the sun is below the horizon and gives no light: {midnight:?}"
+        midnight.elevation.0 < 0.0 && landed(0.0).sun.illuminance == 0.0,
+        "at midnight the sun is below the horizon and none of its light reaches the ground: \
+         {midnight:?}"
+    );
+    let twilight = lights(18.4);
+    assert!(
+        twilight.sun.elevation.0 < -3.0
+            && twilight.sun.illuminance == noon.illuminance
+            && landed(18.4).sun.illuminance == 0.0,
+        "a sun just under the horizon lights the ground no more and the air above it still: \
+         {twilight:?}"
     );
     assert!(
         ambient_at(
@@ -97,20 +125,29 @@ fn the_sun_the_moon_and_ambient_light_turn_with_the_hour_and_dim_under_cloud() {
         "the ambient light dims by night"
     );
 
-    assert_eq!(
-        shining(noon, 0.0, 0.0, &look),
-        noon,
-        "by day the sun lights the world"
+    assert!(
+        landed(12.0).sun_stronger() && lights(12.0).caster(true).0 == noon,
+        "by day the sun casts the world's shadows"
     );
-    let moon = shining(midnight, 0.0, 0.0, &look);
+    assert_eq!(
+        SkyLights::at(Daylight::Fixed, NOON.0, NOON.1, white, 0.0, 0.0, &look).moon,
+        None,
+        "no moon stands under a light that never turns"
+    );
+    let night_lights = landed(0.0);
+    let Some(moon) = night_lights.moon else {
+        panic!("a day that turns has a moon: {night_lights:?}");
+    };
     assert!(
         (moon.elevation.0 + midnight.elevation.0).abs() < 0.01
             && ((moon.azimuth.0 - midnight.azimuth.0).rem_euclid(360.0) - 180.0).abs() < 0.01,
-        "by night the full moon stands opposite the sun: {moon:?} to {midnight:?}"
+        "the full moon stands opposite the sun: {moon:?} to {midnight:?}"
     );
     assert!(
-        moon.illuminance > 0.0 && moon.illuminance < noon.illuminance / 2.0,
-        "the moon lights the night, far dimmer than the sun: {moon:?}"
+        !night_lights.sun_stronger()
+            && moon.illuminance > 0.0
+            && moon.illuminance < high.illuminance / 2.0,
+        "by night the moon casts the shadows, far dimmer than the sun: {moon:?}"
     );
     assert_eq!(
         (

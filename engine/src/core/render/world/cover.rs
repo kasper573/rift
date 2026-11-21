@@ -192,18 +192,6 @@ pub struct Place {
     pub seed: f32,
 }
 
-/// What a cover's sheet lies on: the ground, a hair over it, or the area's water, wherever it
-/// stands over the ground.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SheetOn {
-    Ground,
-    Water,
-}
-
-/// How far from the shore a sheet on water tells its points they lie at most: past it, every
-/// point lies this far out.
-pub const SHORE_REACH: Meters = Meters(16.0);
-
 /// Where the patch's strewn copies stand, each cell holding its share of the spread, turned any
 /// way, each at its own size and tint, scattered the same way for the same `seed`, with how
 /// heavily its cell is painted and a seed of its own. Empty when nothing is strewn.

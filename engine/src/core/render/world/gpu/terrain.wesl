@@ -53,10 +53,16 @@ struct TerrainGround {
 // The slot each tile is held in, one past it, or none.
 @group(2) @binding(105) var table: texture_2d<u32>;
 
-// What the ground is painted with: the paint of the tiles held in detail, a layer a slot, and the
+// What lies at each pixel of the ground: the terrain painting it, then the water of the area's
+// that lies there wherever any does, of the tiles held in detail, a layer a slot, and the
 // overview's.
 @group(2) @binding(106) var paints: texture_2d_array<u32>;
 @group(2) @binding(107) var overview_paint: texture_2d<u32>;
+// The water's surface, held as the heights are: its level, its fall toward east and south as
+// levels over the midpoint, and how far it lies from the nearest dry ground, up to the shore's
+// reach at the texel's most. Away from any water it lies under the ground.
+@group(2) @binding(108) var surfaces: texture_2d_array<u32>;
+@group(2) @binding(109) var overview_surface: texture_2d<u32>;
 
 // Where a point of the shared grid lies on the patch a view shows: its sample, the patch's
 // stride, and, where it lies on an edge the patch shares with a coarser one, the way along that
@@ -205,12 +211,26 @@ fn texels_in(details: texture_2d_array<u32>, overview: texture_2d<u32>, sample: 
 // The terrain painting the pixel `pixel`: from the slot of the tile it lies in where one holds it,
 // else the overview's nearest.
 fn paint_of(pixel: vec2<u32>) -> u32 {
+    return lying_at(pixel).r;
+}
+
+// Which of the area's waters the pixel `pixel` belongs to, read as `paint_of` reads its terrain.
+fn water_of(pixel: vec2<u32>) -> u32 {
+    return lying_at(pixel).g;
+}
+
+// How high the water's surface stands at `sample`, in metres: under the ground away from water.
+fn water_level(sample: vec2<u32>) -> f32 {
+    return metres_of(level_in(surfaces, overview_surface, sample));
+}
+
+fn lying_at(pixel: vec2<u32>) -> vec4<u32> {
     let tile = min(pixel / ground.tile_pixels, ground.tiles - 1u);
     let slot = i32(textureLoad(table, tile, 0).r) - 1;
     if slot >= 0 {
         let local = pixel - tile * ground.tile_pixels + 1u;
-        return textureLoad(paints, local, slot, 0).r;
+        return textureLoad(paints, local, slot, 0);
     }
     let texel = pixel / ground.overview_span;
-    return textureLoad(overview_paint, min(texel, ground.paint_overview - 1u), 0).r;
+    return textureLoad(overview_paint, min(texel, ground.paint_overview - 1u), 0);
 }

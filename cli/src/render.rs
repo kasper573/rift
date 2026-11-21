@@ -57,6 +57,7 @@ use engine::systems::actor::stance::{self, HandIndex, StanceId};
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
 use engine::systems::area::rain::{RainField, Shelter};
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
+use engine::systems::area::sky::{self, Sky};
 use engine::systems::area::{self, Area, AreaDef, AreaId, Kept, Pictured, Weather, rain};
 use engine::systems::item::{ItemDef, PropHold, Wear};
 use serde::{Deserialize, Serialize};
@@ -858,10 +859,25 @@ fn jump(world: &mut World, shot: &Shot, stood: &Stood) {
     see(world, stood.scenery, &stood.area.heights, framed, shot);
 }
 
-/// Lights the stood area under its weather at the moment and lets its rain fall, as the client
-/// does every frame; lightning striking close by this frame when `flashing`.
+/// Tells the world its sky at the shot's hour, so what follows the hour or the weather stands as
+/// a player finds it then, lights the stood area under its weather at the moment and lets its
+/// rain fall, as the client does every frame; lightning striking close by this frame when
+/// `flashing`.
 fn shine(world: &mut World, stood: &Stood, flashing: bool) {
     let daylight = *world.resource::<Daylight>();
+    let hour = match daylight {
+        Daylight::Hour(hour) => Some(hour),
+        Daylight::Fixed => None,
+    };
+    sky::turn(
+        world,
+        Sky {
+            hour,
+            weather: stood.weather,
+            rain: 0.0,
+        },
+    );
+    sky::answer(world);
     scenery::light(
         world,
         &stood.area,
@@ -885,7 +901,11 @@ fn shine(world: &mut World, stood: &Stood, flashing: bool) {
             ambient.brightness += lightning.flash * day;
         }
     }
-    world.insert_resource(scenery::shown_weather(&stood.weather, flash));
+    world.insert_resource(scenery::shown_weather(
+        &stood.area.climate,
+        &stood.weather,
+        flash,
+    ));
 }
 
 fn loaded(content: &Content, model: ModelId) -> &ActorModel {

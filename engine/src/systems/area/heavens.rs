@@ -1,6 +1,7 @@
 //! An area's heavens as shader stages: the sky, a dome round the camera at the far end of every ray,
-//! blended over the air, painted by a content shader the area names with what lies beyond the air
-//! (the weather's clouds, from the field of cloud drifting over the area, the moon and the stars),
+//! laid over the air, painted by a content shader the area names with what lies beyond the air
+//! and in it (the weather's clouds, from the field of cloud drifting over the area, the moon and
+//! the stars),
 //! told where the sun or the moon stands, how deep the night is and the weather the covers read;
 //! and the rain, shells round the eye, each a sphere the rain is drawn on, blended over the world
 //! in front of which it falls, painted by a content shader the area's climate names.
@@ -17,18 +18,23 @@ use bevy::render::render_resource::{
 use bevy::shader::Shader;
 
 use crate::core::render::world::clouds::{self, CLOUD_TILE, CloudLook, SECOND_SHIFT};
+use crate::core::render::world::sky::AIR_WAYS;
 
 use crate::core::render::camera::NEAR_PLANE;
 use crate::core::units::Meters;
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
 
+/// The def a sky's shader is compiled under to be drawn into the sky's picture.
+pub const SKY_PICTURE: &str = "SKY_PICTURE";
+
 /// A sort distance past any the view holds: a blended mesh biased by it draws before every other.
 const BEHIND_EVERYTHING: f32 = 1.0e9;
 
-/// A shader painting the sky's dome, with the parameters it is filled with, the weather it reads,
-/// the sky's lights, and the field of cloud drifting over the area.
+/// A shader painting the sky, with the parameters it is filled with, the weather it reads, the
+/// sky's lights, and the field of cloud drifting over the area: on the dome round the camera,
+/// or, as `picture`, spread over the face the sky's picture is drawn on.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
-#[bind_group_data(VfxShaderKey)]
+#[bind_group_data(SkyShaderKey)]
 pub struct SkyMaterial {
     #[uniform(100)]
     pub site: SiteUniform,
@@ -42,12 +48,23 @@ pub struct SkyMaterial {
     #[sampler(105)]
     pub clouds: Handle<Image>,
     pub shader: Handle<Shader>,
+    pub picture: bool,
+}
+
+/// Which compiled shader a sky draws with, and which of its two ways it is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SkyShaderKey {
+    shader: VfxShaderKey,
+    picture: bool,
 }
 
 /// The sky's lights as the sky header reads them: the unit way toward the light the world is lit
 /// by (the sun, or by night the full moon), how much of it shines (none below the horizon), its
-/// colour, the unit way toward the moon, how far into the night the sky is, 0 day to 1 full night,
-/// and the field of cloud: the height it lies at, the ground a tile of it covers, how far the
+/// colour as it reaches the ground, the unit way toward the moon, how far into the night the sky
+/// is, 0 day to 1 full night, the unit way toward the sun and its colour as it reaches the
+/// clouds, how the sky has turned with its sun (what carries a way of the world to the way of
+/// the sky's own it looks along), whether the stars twinkle, 1 or 0, how much air a light from
+/// beyond it crosses along each of the air's ways up from the horizon, and the field of cloud: the height it lies at, the ground a tile of it covers, how far the
 /// wind has carried it, where in its noise cloud begins and how far past that it is thick, and how
 /// its second read is carried, turned and scaled from its first; where in the noise cloud holds
 /// water, and how far the wind carries the rain sideways for every metre it falls.
@@ -58,6 +75,11 @@ pub struct Heavens {
     pub color: Vec4,
     pub moon: Vec3,
     pub night: f32,
+    pub sun: Vec3,
+    pub sun_color: Vec4,
+    pub turned: Mat3,
+    pub twinkling: f32,
+    pub air: [Vec4; AIR_WAYS],
     pub cloud_base: f32,
     pub cloud_tile: f32,
     pub drift: Vec2,
@@ -71,24 +93,46 @@ pub struct Heavens {
 
 impl Heavens {
     /// The world lit from `toward` in `color`, `strength` times as strong as the full sun, shining
-    /// fully once the light clears the horizon; the moon standing toward `moon`, and `night` of
-    /// the way into the night, under clouds that look as `look` says.
+    /// fully once the light clears the horizon; the sun standing toward `sun` and reaching the
+    /// clouds in `sun_color`, `sun_strength` times as strong as at its fullest, the moon standing
+    /// opposite it, and `night` of the way into the night, under clouds that look as `look` says.
     pub fn new(
-        toward: Vec3,
-        color: Color,
-        strength: f32,
-        moon: Vec3,
+        (toward, color, strength): (Vec3, Color, f32),
+        (sun, sun_color, sun_strength): (Vec3, Color, f32),
         night: f32,
         look: &CloudLook,
     ) -> Heavens {
-        let linear = color.to_linear() * strength;
+        let shed = |color: Color, strength: f32| {
+            let linear = color.to_linear() * strength;
+            Vec4::new(linear.red, linear.green, linear.blue, 1.0)
+        };
         Heavens {
             toward,
             shining: (toward.y * 10.0 + 0.5).clamp(0.0, 1.0),
-            color: Vec4::new(linear.red, linear.green, linear.blue, 1.0),
-            moon,
+            color: shed(color, strength),
+            moon: -sun,
             night,
+            sun,
+            sun_color: shed(sun_color, sun_strength),
             ..Heavens::clear(look)
+        }
+    }
+
+    /// These heavens turned as `turned` has their sky, their stars twinkling or held still.
+    pub fn turned(self, turned: Mat3, twinkling: bool) -> Heavens {
+        Heavens {
+            turned,
+            twinkling: f32::from(u8::from(twinkling)),
+            ..self
+        }
+    }
+
+    /// These heavens seen through air a light from beyond it crosses `crossed` of along each of
+    /// the air's ways up from the horizon.
+    pub fn through(self, crossed: [Vec3; AIR_WAYS]) -> Heavens {
+        Heavens {
+            air: crossed.map(|crossed| crossed.extend(0.0)),
+            ..self
         }
     }
 
@@ -112,6 +156,11 @@ impl Heavens {
             color: Vec4::ZERO,
             moon: Vec3::NEG_Y,
             night: 0.0,
+            sun: Vec3::Y,
+            sun_color: Vec4::ZERO,
+            turned: Mat3::IDENTITY,
+            twinkling: 1.0,
+            air: [Vec4::ZERO; AIR_WAYS],
             cloud_base: look.height.0,
             cloud_tile: CLOUD_TILE.0,
             drift: Vec2::ZERO,
@@ -134,15 +183,18 @@ pub struct SkyWeather {
     pub rain_lean: Vec2,
 }
 
-impl From<&SkyMaterial> for VfxShaderKey {
-    fn from(sky: &SkyMaterial) -> VfxShaderKey {
-        VfxShaderKey::of(&sky.shader)
+impl From<&SkyMaterial> for SkyShaderKey {
+    fn from(sky: &SkyMaterial) -> SkyShaderKey {
+        SkyShaderKey {
+            shader: VfxShaderKey::of(&sky.shader),
+            picture: sky.picture,
+        }
     }
 }
 
 impl Material for SkyMaterial {
     fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
+        AlphaMode::Premultiplied
     }
 
     /// The dome and the rain's shells both stand round the eye, so by distance alone their order
@@ -166,10 +218,17 @@ impl Material for SkyMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let shader = key.bind_group_data.handle();
+        let SkyShaderKey { shader, picture } = key.bind_group_data;
+        let shader = shader.handle();
         descriptor.vertex.shader = shader.clone();
+        if picture {
+            descriptor.vertex.shader_defs.push(SKY_PICTURE.into());
+        }
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = shader;
+            if picture {
+                fragment.shader_defs.push(SKY_PICTURE.into());
+            }
         }
         descriptor.primitive.cull_mode = None;
         if let Some(depth) = descriptor.depth_stencil.as_mut() {

@@ -14,7 +14,7 @@ use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::video::VideoPreferences;
-use crate::core::render::world::sky::{Daylight, shining, sun_at};
+use crate::core::render::world::sky::{Daylight, SkyAir, SkyLights};
 use crate::core::render::{CameraFraming, CameraRig, Look, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::stage::{SkyLampLight, StageSkyLight};
@@ -26,6 +26,7 @@ use crate::systems::area::sky::{self, Sky};
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
+use crate::systems::water::ripples::RippleSpot;
 
 pub struct AreaRenderPlugin;
 
@@ -94,7 +95,7 @@ fn show_area(world: &mut World) {
     });
     world.insert_resource(scenery::grade(&area.lighting));
     let weather = super::weather::weather_now(world, area_id, &area.climate);
-    world.insert_resource(scenery::shown_weather(&weather, 0.0));
+    world.insert_resource(scenery::shown_weather(&area.climate, &weather, 0.0));
     let stood = scenery::spawn(world, &content, &area, RenderLayers::default());
     world.resource_mut::<ShownArea>().0 = Some(Standing {
         area: area_id,
@@ -176,7 +177,7 @@ fn follow_daylight(world: &mut World) {
     );
     sky::answer(world);
     let flash = light_area(world, area_id, &area, &weather);
-    let shown = scenery::shown_weather(&weather, flash);
+    let shown = scenery::shown_weather(&area.climate, &weather, flash);
     match world.get_resource_mut::<ShownWeather>() {
         Some(mut was) => {
             was.set_if_neq(shown);
@@ -222,13 +223,14 @@ fn light_area(
     super::rain::fall(world, area_id, area, weather, stood.rain, camera)
 }
 
-/// Tells the cards the light of `area`'s sky at `daylight` as a clear sky sheds it, its sun or by
-/// night its moon, and tells them again only once it has changed to the eye: the day moves it
-/// every frame, and a card lit by it is drawn anew whenever it is told.
+/// Tells the cards the light of `area`'s sky at `daylight` as a clear sky sheds it on the ground,
+/// its sun or by night its moon, and tells them again only once it has changed to the eye: the
+/// day moves it every frame, and a card lit by it is drawn anew whenever it is told.
 fn light_cards(world: &mut World, area: &super::Area, daylight: Daylight) {
     let look = *world.resource::<Look>();
     let light = area.lighting.sun.map(|noon| {
-        let sun = sun_at(
+        let air = SkyAir::new(area.lighting.sky, area.lighting.scattering(0.0), &look.sky);
+        let landed = SkyLights::at(
             daylight,
             noon.elevation,
             noon.azimuth,
@@ -236,9 +238,10 @@ fn light_cards(world: &mut World, area: &super::Area, daylight: Daylight) {
             0.0,
             0.0,
             &look,
-        );
+        )
+        .landed(&air, Meters(0.0), &look.sky);
         SkyLampLight {
-            shining: shining(sun, 0.0, 0.0, &look),
+            shining: landed.caster(landed.sun_stronger()).0,
             noon: noon.azimuth,
         }
     });
@@ -292,9 +295,9 @@ fn place_objects(world: &mut World) {
 #[derive(Component)]
 struct EffectsSought;
 
-/// Has every model newly shown play the vfx of the prop it is the model of, wherever it is
-/// shown: as an object's look, lying on the ground or held in a hand. A model no one gave an
-/// extent takes that of its mesh.
+/// Has every model newly shown play the vfx of the prop it is the model of, and send its
+/// ripples over the water, wherever it is shown: as an object's look, lying on the ground or
+/// held in a hand. A model no one gave an extent takes that of its mesh.
 fn play_prop_effects(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let fresh: Vec<(Entity, String)> = world
@@ -311,11 +314,16 @@ fn play_prop_effects(world: &mut World) {
         let prop = std::path::Path::new(&model)
             .parent()
             .and_then(|bundle| content.by_path::<PropDef>(bundle.to_str()?))
-            .map(|prop| prop.get(&content))
-            .filter(|prop| !prop.effects.is_empty());
+            .map(|prop| prop.get(&content));
         let Some(prop) = prop else {
             continue;
         };
+        if let Some(ripples) = prop.ripples {
+            shown.insert(RippleSpot(ripples));
+        }
+        if prop.effects.is_empty() {
+            continue;
+        }
         if !shown.contains::<SiteExtent>()
             && let Some(info) = content.built::<GltfInfos>().0.get(&model)
         {

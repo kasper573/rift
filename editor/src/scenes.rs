@@ -43,7 +43,8 @@ pub enum SceneStep {
     Area(String),
     Blueprint(String),
     Prop(String),
-    /// Takes a tool in the open area view, with a prop or blueprint in hand when one is named.
+    /// Takes a tool in the open area view, with a prop or blueprint in hand, a terrain to paint
+    /// or a water to lay when one is named.
     Tool {
         tool: area_view::AreaTool,
         #[serde(default)]
@@ -52,6 +53,8 @@ pub enum SceneStep {
         blueprint: Option<String>,
         #[serde(default)]
         terrain: Option<String>,
+        #[serde(default)]
+        water: Option<String>,
     },
     Overlay(area_view::AreaOverlay),
     /// Shows a page of the open area's view.
@@ -355,12 +358,16 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
             prop,
             blueprint,
             terrain,
+            water,
         } => {
             if let Some(bundle) = last_opened_bundle(editor) {
                 let view = editor.views.area.ensure_view(&bundle);
                 view.set_tool(*tool);
                 if let Some(terrain) = terrain {
                     view.paint_terrain = Some(terrain.clone());
+                }
+                if let Some(water) = water {
+                    view.water.file = Some(water.clone());
                 }
                 view.placeable = match (prop, blueprint) {
                     (Some(prop), _) => Some(area_view::Placeable::Prop(prop.clone())),

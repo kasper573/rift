@@ -106,7 +106,7 @@ pub(super) fn keep(world: &mut World, shown: &[(AreaId, Rect<Meters>)]) {
             }
         }
     }
-    let mut colors: HashMap<AreaId, Vec<Color32>> = HashMap::new();
+    let mut inks: HashMap<AreaId, Inks> = HashMap::new();
     for (area_id, tile) in stale {
         if free == 0 {
             return;
@@ -115,11 +115,11 @@ pub(super) fn keep(world: &mut World, shown: &[(AreaId, Rect<Meters>)]) {
         let Some(area) = area::loaded(&content, area_id).cloned() else {
             continue;
         };
-        let colors = colors
+        let inks = inks
             .entry(area_id)
-            .or_insert_with(|| terrain_colors(&content, &area))
+            .or_insert_with(|| Inks::of(&content, &area))
             .clone();
-        let task = AsyncComputeTaskPool::get().spawn(async move { picture(&area, &colors, tile) });
+        let task = AsyncComputeTaskPool::get().spawn(async move { picture(&area, &inks, tile) });
         ground.making.push(Making {
             area: area_id,
             tile,
@@ -147,6 +147,7 @@ struct Drawn {
     paint: TileVersion,
     heights: TileVersion,
     water: TileVersion,
+    water_map: TileVersion,
 }
 
 impl Drawn {
@@ -155,29 +156,50 @@ impl Drawn {
             paint: area.paint.version(tile),
             heights: area.heights.version(tile),
             water: area.water.version(tile),
+            water_map: area.water_map.version(tile),
         }
     }
 }
 
 const NO_GROUND: Color32 = ink::FRAME;
-const WATER: Color32 = Color32::from_rgb(0x86, 0xAE, 0xC6);
 const BUILT: Color32 = Color32::from_rgb(0x8C, 0x7A, 0x68);
 const BUILT_EDGE: Color32 = Color32::from_rgb(0x4E, 0x40, 0x34);
 const HIDES_THE_GROUND: Meters = Meters(1.0);
 const SHALLOW_SHARE: f32 = 0.55;
 const SHADE: (f32, f32) = (0.7, 1.2);
 
-fn terrain_colors(content: &Content, area: &Area) -> Vec<Color32> {
-    area.terrains
-        .iter()
-        .map(|terrain| {
-            let [r, g, b, _] = terrain.get(content).color.0.to_be_bytes();
-            Color32::from_rgb(r, g, b)
-        })
-        .collect()
+/// What an area's ground is pictured in: the colour of each of its terrains, and of the depths
+/// of each of its waters.
+#[derive(Clone)]
+struct Inks {
+    terrains: Vec<Color32>,
+    waters: Vec<Color32>,
 }
 
-fn picture(area: &Area, colors: &[Color32], tile: TileAt) -> Picture {
+impl Inks {
+    fn of(content: &Content, area: &Area) -> Inks {
+        Inks {
+            terrains: area
+                .terrains
+                .iter()
+                .map(|terrain| {
+                    let [r, g, b, _] = terrain.get(content).color.0.to_be_bytes();
+                    Color32::from_rgb(r, g, b)
+                })
+                .collect(),
+            waters: area
+                .waters
+                .iter()
+                .map(|water| {
+                    let [r, g, b] = water.get(content).depths.0;
+                    Color32::from_rgb(r, g, b)
+                })
+                .collect(),
+        }
+    }
+}
+
+fn picture(area: &Area, inks: &Inks, tile: TileAt) -> Picture {
     let of = Drawn::of(area, tile);
     let rect = tile.rect(area.ground_size());
     let per_meter = SAMPLES_PER_METER as f32;
@@ -187,11 +209,12 @@ fn picture(area: &Area, colors: &[Color32], tile: TileAt) -> Picture {
     let mut paint = area.paint.reader();
     let mut heights = area.heights.reader();
     let mut water = area.water.reader();
+    let mut waters = area.water_map.reader();
     let mut pixels = Vec::with_capacity((columns * rows) as usize);
     for row in first.1..first.1 + rows {
         for column in first.0..first.0 + columns {
             let terrain = paint.index(column, row);
-            let Some(&base) = colors.get(terrain as usize) else {
+            let Some(&base) = inks.terrains.get(terrain as usize) else {
                 pixels.push(NO_GROUND);
                 continue;
             };
@@ -203,12 +226,17 @@ fn picture(area: &Area, colors: &[Color32], tile: TileAt) -> Picture {
             let south = (corners[2] + corners[3] - corners[0] - corners[1]) * per_meter / 2.0;
             let lit = lit_from_north_west(base, east, south);
             let depth = water.sample(column, row).0 - ground;
-            pixels.push(if depth > 0.0 {
-                let share =
-                    SHALLOW_SHARE + (1.0 - SHALLOW_SHARE) * (depth / HIDES_THE_GROUND.0).min(1.0);
-                ink::on(lit, WATER, share)
-            } else {
-                lit
+            let lying = inks
+                .waters
+                .get(waters.index(column, row) as usize)
+                .filter(|_| depth > 0.0);
+            pixels.push(match lying {
+                Some(&water) => {
+                    let share = SHALLOW_SHARE
+                        + (1.0 - SHALLOW_SHARE) * (depth / HIDES_THE_GROUND.0).min(1.0);
+                    ink::on(lit, water, share)
+                }
+                None => lit,
             });
         }
     }

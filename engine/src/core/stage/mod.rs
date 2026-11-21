@@ -31,8 +31,8 @@ pub mod still;
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct StageSkyLight(pub Option<SkyLampLight>);
 
-/// A sky's light for the stage: its sun, or by night its moon, as it shines under a clear sky,
-/// and the bearing its sun stands at at noon.
+/// A sky's light for the stage: its sun, or by night its moon, as it reaches the ground under a
+/// clear sky, and the bearing its sun stands at at noon.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkyLampLight {
     pub shining: SunLight,
@@ -100,7 +100,7 @@ impl Lamp {
             .get_resource::<Daylight>()
             .copied()
             .unwrap_or_default();
-        let opened = adaptation(daylight, light, look);
+        let opened = adaptation(daylight, std::iter::once(light), look);
         let shines = light.illuminance / look.light.sun_lux * 2f32.powf(opened.0);
         let toward = lights::toward(light.elevation, light.azimuth);
         let ahead = lights::toward(Degrees(0.0), sky.noon);

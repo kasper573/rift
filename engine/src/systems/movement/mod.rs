@@ -459,12 +459,14 @@ pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {
 }
 
 /// How water slows whoever wades through it: not at all at its edge, easing to `slowest` of their
-/// pace where it stands `deepest`, and no slower past it.
+/// pace where it stands `deepest`, and no slower past it, until it stands `too_deep` and carries
+/// nobody on foot.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Wading {
     pub deepest: Meters,
     pub slowest: f32,
+    pub too_deep: Meters,
 }
 
 impl Wading {
@@ -488,6 +490,12 @@ impl Wading {
             0.01,
             1.0,
             "of a wader's pace",
+        );
+        cx.at_least(
+            format!("{pointer}/too_deep"),
+            self.too_deep.0,
+            self.deepest.0,
+            "meters, no shallower than `deepest`",
         );
     }
 }

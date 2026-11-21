@@ -2,12 +2,14 @@
 //! the cover a terrain grows or lies under, a prop's material, an area's whole sky and the rain
 //! falling round the eye. Every one reads the weather the scenery publishes.
 
+use super::heavens::SKY_PICTURE;
 use super::rain::{LEANING, OPEN_TOP, SHELTER_DEPTH, SHELTER_STEP, SHELTER_STEPS};
-use super::shown_weather::{LIMBS_PER_TREAD, TRAIL_EVERY, TRAIL_POINTS, TREADS};
-use crate::core::render::world::cover::SHORE_REACH;
+use super::shown_weather::{LIMBS_PER_TREAD, TRAIL_POINTS, TREADS, WAKE_SPREAD, WETTED_PER_TREAD};
+use crate::core::render::world::sky::AIR_WAYS;
 use crate::core::vfx::shader::CLOCK_CHECK;
 use crate::core::vfx::stage::{BLANK_VFX, main_defs, main_pass, prepass_defs, with_defs};
 use crate::core::vfx::{ShaderPass, Stage, StageKind, StageSpec, Stages};
+use crate::systems::water::ripples::MOST_RINGS;
 
 /// A shader the cover a terrain grows or lies under runs in.
 pub const COVER: Stage = Stage::registered(&StageSpec {
@@ -30,7 +32,6 @@ pub const COVER: Stage = Stage::registered(&StageSpec {
         "sway",
         "weight",
         "tip",
-        "depth",
         "seed",
         "piece",
         "mark",
@@ -38,7 +39,6 @@ pub const COVER: Stage = Stage::registered(&StageSpec {
         "position",
         "light",
         "albedo",
-        "eye",
     ],
     passes: cover_passes,
 });
@@ -81,14 +81,20 @@ pub const SKY: Stage = Stage::registered(&StageSpec {
         "look",
         "light_way",
         "light_color",
+        "sun_way",
+        "sun_color",
         "moon_way",
         "night",
+        "through_air",
+        "sky_turned",
+        "pixel_angle",
+        "twinkles",
         "cloud_base",
         "cloud_drift",
         "cloud_at",
         "sky_light",
     ],
-    passes: main_pass,
+    passes: sky_passes,
 });
 
 /// A shader painting the rain falling round the eye.
@@ -114,6 +120,18 @@ pub fn weather_helpers() -> String {
     format!(
         "{WEATHER_HELPERS}\n// How far under a roof's or a canopy's top a point lies wholly sheltered, in metres.\nconst SHELTER_DEPTH: f32 = {SHELTER_DEPTH:?};\n// The top of a cell of the shelter where nothing stands over the ground.\nconst OPEN_TOP: f32 = {OPEN_TOP:?};\n// How the rain's way down to a point is followed for what shelters it.\nconst SHELTER_STEPS: i32 = {SHELTER_STEPS};\nconst SHELTER_STEP: f32 = {SHELTER_STEP:?};\nconst LEANING: f32 = {LEANING:?};",
     )
+}
+
+/// `helpers`, which read who treads the ground from the weather, told how the weather lays
+/// them out.
+pub fn treading(helpers: &str) -> String {
+    helpers
+        .replace("WETTED_PER_TREAD", &format!("{WETTED_PER_TREAD}u"))
+        .replace("LIMBS_PER_TREAD", &format!("{LIMBS_PER_TREAD}u"))
+        .replace("TRAIL_POINTS", &format!("{TRAIL_POINTS}u"))
+        .replace("WAKE_SPREAD", &format!("{WAKE_SPREAD:?}"))
+        .replace("MOST_RINGS", &format!("{MOST_RINGS}u"))
+        .replace("TREADS", &format!("{TREADS}u"))
 }
 
 const COVER_HEADER: &str = include_str!("shaders/cover.wesl");
@@ -150,43 +168,42 @@ fn prop_check_header() -> String {
 
 fn sky_header() -> String {
     format!(
-        "{SKY_HEADER}\n{SKY_LIGHT}\n{HEAVENS}\n{}",
+        "{SKY_HEADER}\n{SKY_LIGHT}\n{}\n{}",
+        heavens(),
         weather_helpers()
     )
 }
 
 fn sky_check_header() -> String {
     format!(
-        "{SKY_CHECK_HEADER}\n{HEAVENS}\n{CLOCK_CHECK}\n{}",
+        "{SKY_CHECK_HEADER}\n{}\n{CLOCK_CHECK}\n{}",
+        heavens(),
         weather_helpers()
     )
 }
 
 fn rain_header() -> String {
     format!(
-        "{RAIN_HEADER}\n{SKY_LIGHT}\n{HEAVENS}\n{}",
+        "{RAIN_HEADER}\n{SKY_LIGHT}\n{}\n{}",
+        heavens(),
         weather_helpers()
     )
 }
 
 fn rain_check_header() -> String {
     format!(
-        "{RAIN_CHECK_HEADER}\n{HEAVENS}\n{CLOCK_CHECK}\n{}",
+        "{RAIN_CHECK_HEADER}\n{}\n{CLOCK_CHECK}\n{}",
+        heavens(),
         weather_helpers()
     )
 }
 
+fn heavens() -> String {
+    format!("const AIR_WAYS: u32 = {AIR_WAYS}u;\n{HEAVENS}")
+}
+
 fn cover_helpers() -> String {
-    let treads = TREAD_HELPERS
-        .replace("LIMBS_PER_TREAD", &format!("{LIMBS_PER_TREAD}u"))
-        .replace("TRAIL_POINTS", &format!("{TRAIL_POINTS}u"))
-        .replace("TRAIL_EVERY", &format!("{TRAIL_EVERY:?}"))
-        .replace("TREADS", &format!("{TREADS}u"));
-    let shore = format!(
-        "// How far from the shore `shore` tells a point lies at most, in metres.\nconst SHORE_REACH: f32 = {:?};",
-        SHORE_REACH.0
-    );
-    format!("{}\n{treads}\n{shore}", weather_helpers())
+    format!("{}\n{}", weather_helpers(), treading(TREAD_HELPERS))
 }
 
 /// A cover draws as a mesh a copy of a prop at a time, and as the blades of its grass and the sheet
@@ -215,6 +232,19 @@ fn cover_passes() -> Vec<ShaderPass> {
 
 /// A prop's shader bakes its model's impostor as well as drawing it, and writes depth and normals
 /// ahead of the main pass.
+fn sky_passes() -> Vec<ShaderPass> {
+    vec![
+        ShaderPass {
+            name: "main",
+            defs: main_defs(),
+        },
+        ShaderPass {
+            name: "picture",
+            defs: with_defs(main_defs(), &[SKY_PICTURE]),
+        },
+    ]
+}
+
 fn prop_passes() -> Vec<ShaderPass> {
     vec![
         ShaderPass {

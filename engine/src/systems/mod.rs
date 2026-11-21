@@ -61,6 +61,7 @@ pub mod terminal;
 pub mod trade;
 pub mod view;
 pub mod visibility;
+pub mod water;
 pub mod window;
 pub mod worlds;
 
@@ -263,6 +264,11 @@ pub struct GameSettings {
     /// Without it, water slows no one who wades through it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wading: Option<movement::Wading>,
+    /// The rings that whatever stands or floats in water sends out from where the surface cuts
+    /// through it while it rests there, each starting on that outline, so with no `scatter`.
+    /// Without them, it sends none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripples: Option<water::ripples::Ripples>,
     /// How long a fallen npc that never comes back lies before it is gone.
     pub corpses_linger: Seconds,
     /// How long a character's claim on a foe holds after their last hit: whoever holds it when the
@@ -914,6 +920,7 @@ pub fn tables() -> ContentRegistry {
     messages::content(&mut registry);
     actor::content(&mut registry);
     area::content(&mut registry);
+    water::content(&mut registry);
     crate::core::vfx::content(&mut registry);
     crate::core::script::bind::content(&mut registry);
     registry
@@ -964,6 +971,16 @@ fn check_settings(loading: &mut Loading) {
     settings.map_reaches.check("/map_reaches", &mut check);
     if let Some(wading) = &settings.wading {
         wading.check("/wading", &mut check);
+    }
+    if let Some(ripples) = &settings.ripples {
+        ripples.check("/ripples", &mut check);
+        check.range(
+            "/ripples/scatter",
+            ripples.scatter.0,
+            0.0,
+            0.0,
+            "meters, for rings that start on an outline,",
+        );
     }
     check.at_least("/corpses_linger", settings.corpses_linger.0, 0.0, "seconds");
     check.at_least("/claims_last", settings.claims_last.0, 0.0, "seconds");
@@ -1321,7 +1338,10 @@ fn install_spans() {
 }
 
 fn install_stages() {
-    Stages::install(area::stages::register);
+    Stages::install(|stages| {
+        area::stages::register(stages);
+        water::stage::register(stages);
+    });
 }
 
 fn install_vocabulary() {

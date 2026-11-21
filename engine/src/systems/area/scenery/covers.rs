@@ -13,7 +13,7 @@ use crate::core::content::media::GltfInfos;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::Pos;
 use crate::core::render::world::cover::{self, CoverMaterial, StrewnPiece};
-use crate::core::render::world::gpu::draw::GroundSheet;
+use crate::core::render::world::gpu::draw::{GroundSheet, SheetOver};
 use crate::core::render::world::gpu::grass::{BladeShape, GrassPiece};
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
@@ -23,19 +23,19 @@ use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
 use crate::core::vfx::uniform::ParamsUniform;
 use crate::systems::area::Area;
 use crate::systems::area::prop::PropId;
-use crate::systems::area::terrain::{CoverSheet, PieceShape};
+use crate::systems::area::terrain::PieceShape;
 
 /// The covers of an area's terrains as its scenery stands them: each terrain's that has one.
 pub(super) struct Covers {
     layers: Vec<CoverLayer>,
 }
 
-/// A cover a terrain grows, ready to stand: its slot among the area's terrains, what its sheet lies
-/// on if it has one and the terrain's colour it is drawn in, its pieces strewing props and growing
+/// A cover a terrain grows, ready to stand: its slot among the area's terrains, whether it lays a
+/// sheet and the terrain's colour that is drawn in, its pieces strewing props and growing
 /// blades, and the material its sheet and blades are drawn with.
 struct CoverLayer {
     slot: usize,
-    sheet: Option<CoverSheet>,
+    sheet: bool,
     ground_color: LinearRgba,
     copies: Vec<CopyPiece>,
     grass: Vec<GrassPiece>,
@@ -88,15 +88,12 @@ impl Covers {
     pub(super) fn sheets(&self) -> Vec<GroundSheet> {
         self.layers
             .iter()
+            .filter(|layer| layer.sheet)
             .filter_map(|layer| {
                 Some(GroundSheet {
-                    terrain: u8::try_from(layer.slot).ok()?,
-                    on: match layer.sheet? {
-                        CoverSheet::Ground => cover::SheetOn::Ground,
-                        CoverSheet::Water => cover::SheetOn::Water,
-                    },
+                    over: SheetOver::Terrain(u8::try_from(layer.slot).ok()?),
                     color: layer.ground_color,
-                    material: layer.blended.clone(),
+                    material: layer.blended.clone().untyped(),
                 })
             })
             .collect()

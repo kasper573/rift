@@ -22,6 +22,10 @@ fn sky_light(way: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(0.5) / SKY_NITS;
 }
 
+fn pixel_angle() -> f32 {
+    return 0.001;
+}
+
 @fragment
 fn fragment(@location(0) way: vec3<f32>, @location(1) uv: vec2<f32>) -> @location(0) vec4<f32> {
     looking = normalize(way);

@@ -913,11 +913,11 @@ impl TileGround {
     }
 }
 
-/// The patches of ground blocked on tile `at`, computed once: terrain that doesn't walk, and
-/// ground steeper than the area allows. A cell's steepness reads the samples on its far edges,
-/// which on the tile's last row and column lie on the next tiles, so those are loaded first: a
-/// patch must come out the same whenever it is asked for, as the tiles meeting at a seam each
-/// triangulate the patches reaching across it.
+/// The patches of ground blocked on tile `at`, computed once: terrain that doesn't walk, ground
+/// steeper than the area allows, and ground under water too deep to wade. A cell's steepness and
+/// its water read the samples on its far edges, which on the tile's last row and column lie on the
+/// next tiles, so those are loaded first: a patch must come out the same whenever it is asked
+/// for, as the tiles meeting at a seam each triangulate the patches reaching across it.
 fn blocked(area: &Area, at: TileAt) -> Arc<[Rect<Meters>]> {
     if let Some(patches) = area
         .meshes
@@ -934,12 +934,12 @@ fn blocked(area: &Area, at: TileAt) -> Arc<[Rect<Meters>]> {
         if let Err(problem) = area.heights.load(near) {
             bevy::log::warn!("ground tile {} doesn't load: {problem}", near.key());
         }
+        if let Err(problem) = area.water.load(near) {
+            bevy::log::warn!("water tile {} doesn't load: {problem}", near.key());
+        }
     }
     if let Err(problem) = area.paint.load(at) {
         bevy::log::warn!("paint tile {} doesn't load: {problem}", at.key());
-    }
-    if let Err(problem) = area.water.load(at) {
-        bevy::log::warn!("water tile {} doesn't load: {problem}", at.key());
     }
     let grid = area.size.grid();
     let side = TILE_SIDE.0 as u32;
@@ -948,12 +948,22 @@ fn blocked(area: &Area, at: TileAt) -> Arc<[Rect<Meters>]> {
         side.min(grid.width.saturating_sub(at.column * side)),
         side.min(grid.height.saturating_sub(at.row * side)),
     );
+    let too_deep = |index: usize| {
+        area.too_deep.is_some_and(|too_deep| {
+            let (x, y) = (index as u32 % dims.width, index as u32 / dims.width);
+            let cell = origin + CellPos::new(x as i32, y as i32).to_vector();
+            area.water.depth_at(&area.heights, cell.bounds().center()) > too_deep
+        })
+    };
     let cells: Vec<bool> = area
         .paint
         .dominant_in(origin, dims)
         .into_iter()
         .zip(area.heights.steepest_in(origin, dims))
-        .map(|(terrain, slope)| !area.underfoot_of(terrain).walkable || slope > area.max_slope)
+        .enumerate()
+        .map(|(index, (terrain, slope))| {
+            !area.underfoot_of(terrain).walkable || slope > area.max_slope || too_deep(index)
+        })
         .collect();
     let patches: Arc<[Rect<Meters>]> = patches(origin, dims, &cells).into();
     area.meshes

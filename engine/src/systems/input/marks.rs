@@ -1,6 +1,6 @@
 //! The marks on the ground that show what the pointer and the player are about: a ring under what
-//! the pointer would take, a ring that fades where a walk was asked for, a ring under the player
-//! and one under whoever they are engaged with.
+//! the pointer would take, a ring that fades where a walk was asked for, and a ring under
+//! whoever the player is engaged with.
 
 use bevy::prelude::*;
 
@@ -18,7 +18,6 @@ use crate::systems::screen::ClientScreen;
 
 pub const FRIENDLY: Color = Color::srgba(1.0, 0.85, 0.4, 0.9);
 pub const HOSTILE: Color = Color::srgba(1.0, 0.3, 0.25, 0.9);
-const SELF: Color = Color::srgba(0.55, 0.8, 1.0, 0.7);
 const HOVER: Color = Color::srgba(1.0, 1.0, 1.0, 0.75);
 const WALK: Color = Color::srgba(1.0, 1.0, 1.0, 0.9);
 const HOVER_SIZE: Meters = Meters(0.7);
@@ -31,7 +30,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<HoverMark>()
         .add_systems(
             PostUpdate,
-            (show_hover, fade_walks, ring_me, ring_engaged)
+            (show_hover, fade_walks, ring_engaged)
                 .in_set(WorldViewSystems)
                 .run_if(in_state(ClientScreen::Area)),
         )
@@ -102,9 +101,6 @@ struct WalkMark {
 }
 
 #[derive(Component)]
-struct MeRing;
-
-#[derive(Component)]
 struct EngagedRing;
 
 fn show_hover(world: &mut World) {
@@ -128,13 +124,6 @@ fn fade_walks(
             color.set_alpha(WALK.alpha() * (1.0 - age));
         }
     }
-}
-
-fn ring_me(world: &mut World) {
-    let decal = session::my_character(world)
-        .map(|me| me.id())
-        .and_then(|me| under(world, me, SELF));
-    keep::<MeRing>(world, decal, MeRing);
 }
 
 fn ring_engaged(world: &mut World) {
@@ -174,10 +163,7 @@ fn keep<Tag: Component>(world: &mut World, decal: Option<GroundDecal>, tag: Tag)
 
 fn clear(world: &mut World) {
     let marks: Vec<Entity> = world
-        .query_filtered::<
-            Entity,
-            Or<(With<Hover>, With<WalkMark>, With<MeRing>, With<EngagedRing>)>,
-        >()
+        .query_filtered::<Entity, Or<(With<Hover>, With<WalkMark>, With<EngagedRing>)>>()
         .iter(world)
         .collect();
     for entity in marks {

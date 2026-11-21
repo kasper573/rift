@@ -520,10 +520,12 @@ pub fn key_hint(ui: &mut Ui, cap: &KeyCap) -> Response {
 
 /// `text` after the `keys` that do it.
 pub fn key_hint_text(ui: &mut Ui, keys: &KeyCap, text: &str) {
-    ui.horizontal(|ui| {
-        key_hint(ui, keys);
-        ui.label(TextRole::Body.rich(text).color(ink::INK2));
-    });
+    ui.horizontal(|ui| key_hint_said(ui, keys, text));
+}
+
+/// A sentence after the `keys` that do what it says, on as many lines as it takes.
+pub fn key_hint_sentence(ui: &mut Ui, keys: &KeyCap, text: &str) {
+    ui.horizontal_wrapped(|ui| key_hint_said(ui, keys, text));
 }
 
 #[derive(Clone, Copy)]
@@ -1511,4 +1513,9 @@ fn list_rows(
 /// it never draws over the border.
 fn inside_stroke(rect: Rect, visuals: &egui::style::WidgetVisuals) -> Rect {
     rect.shrink(visuals.bg_stroke.width.max(1.0))
+}
+
+fn key_hint_said(ui: &mut Ui, keys: &KeyCap, text: &str) {
+    key_hint(ui, keys);
+    ui.label(TextRole::Body.rich(text).color(ink::INK2));
 }

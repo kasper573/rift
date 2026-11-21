@@ -1,38 +1,52 @@
-//! Height contours of an area's terrain: a line wherever the ground crosses a whole metre, found
-//! by marching the squares between height samples, kept until the terrain changes.
+//! Contours of an area's terrain: a line wherever the ground crosses a whole metre of height, and
+//! under water one wherever the bed drops to one, two, four metres of depth and on, each found by
+//! marching the squares between samples, kept until the terrain changes.
 
 use std::sync::Arc;
 
-use engine::core::ground::Heightfield;
+use engine::core::ground::{Heightfield, WaterSurface};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::Area;
 
 /// Metres of height between contour lines.
 const INTERVAL: f32 = 1.0;
+/// The shallowest depth a line is drawn at; each line after it runs twice as deep.
+const FIRST_DEPTH: f32 = 1.0;
 
-/// A contour: the height it runs at and the line segments that make it.
+/// A contour: the height it runs at, or the depth under water, and the line segments that make
+/// it.
 pub struct Contour {
     pub height: Meters,
     pub segments: Vec<[Pos<Meters>; 2]>,
+}
+
+/// The contours of an area's ground: those of its heights, and those of the depths of its water.
+#[derive(Default)]
+pub struct Contours {
+    pub heights: Vec<Contour>,
+    pub depths: Vec<Contour>,
 }
 
 /// The contours last traced, with the snapshot they were traced from.
 #[derive(Default)]
 pub struct ContourCache {
     traced: Option<Arc<Area>>,
-    contours: Arc<Vec<Contour>>,
+    contours: Arc<Contours>,
 }
 
 impl ContourCache {
     /// The contours of `area`'s ground, traced anew when they were traced for another area.
-    pub fn of(&mut self, area: &Arc<Area>) -> Arc<Vec<Contour>> {
+    pub fn of(&mut self, area: &Arc<Area>) -> Arc<Contours> {
         if !self
             .traced
             .as_ref()
             .is_some_and(|traced| Arc::ptr_eq(traced, area))
         {
-            self.contours = Arc::new(trace(&area.heights));
+            self.contours = Arc::new(Contours {
+                heights: trace(&area.heights),
+                depths: trace_depths(&area.heights, &area.water),
+            });
             self.traced = Some(area.clone());
         }
         self.contours.clone()
@@ -61,15 +75,45 @@ pub fn trace(heights: &Heightfield) -> Vec<Contour> {
             let level = step as f32 * INTERVAL;
             Contour {
                 height: Meters(level),
-                segments: at_level(heights, level),
+                segments: at_level(heights.samples(), level, |column, row| {
+                    heights.sample(column, row).0
+                }),
             }
         })
         .filter(|contour| !contour.segments.is_empty())
         .collect()
 }
 
-fn at_level(heights: &Heightfield, level: f32) -> Vec<[Pos<Meters>; 2]> {
+/// A contour wherever `water` stands a metre deep over `heights`, and at every doubling of that
+/// down to its deepest.
+pub fn trace_depths(heights: &Heightfield, water: &WaterSurface) -> Vec<Contour> {
     let (columns, rows) = heights.samples();
+    if columns < 2 || rows < 2 {
+        return Vec::new();
+    }
+    let depth = |column: u32, row: u32| water.sample(column, row).0 - heights.sample(column, row).0;
+    let mut deepest = 0.0_f32;
+    for row in 0..rows {
+        for column in 0..columns {
+            deepest = deepest.max(depth(column, row));
+        }
+    }
+    std::iter::successors(Some(FIRST_DEPTH), |depth| Some(depth * 2.0))
+        .take_while(|&level| level <= deepest)
+        .map(|level| Contour {
+            height: Meters(level),
+            segments: at_level((columns, rows), level, depth),
+        })
+        .filter(|contour| !contour.segments.is_empty())
+        .collect()
+}
+
+/// The segments along which `value`, sampled over a grid of `samples`, crosses `level`.
+fn at_level(
+    (columns, rows): (u32, u32),
+    level: f32,
+    value: impl Fn(u32, u32) -> f32,
+) -> Vec<[Pos<Meters>; 2]> {
     let mut segments = Vec::new();
     for row in 0..rows - 1 {
         for column in 0..columns - 1 {
@@ -79,7 +123,7 @@ fn at_level(heights: &Heightfield, level: f32) -> Vec<[Pos<Meters>; 2]> {
                 (column + 1, row + 1),
                 (column, row + 1),
             ];
-            let values = corners.map(|(c, r)| heights.sample(c, r).0 - level);
+            let values = corners.map(|(c, r)| value(c, r) - level);
             let points = corners.map(|(c, r)| Heightfield::sample_pos(c, r));
             let mut crossings: Vec<Pos<Meters>> = Vec::new();
             for edge in 0..4 {

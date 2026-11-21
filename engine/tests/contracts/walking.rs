@@ -5,7 +5,6 @@ use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{Degrees, MeterPos, Meters};
 use engine::systems::actor::{Action, Actor};
-use engine::systems::area;
 use engine::systems::area::prop::{Footprint, ModelHash};
 use engine::systems::movement::{self, Bodies, HeardMove, MoveRequest, MoveSeq, position};
 use engine::systems::player::CommandLock;
@@ -479,12 +478,27 @@ fn a_walker_covers_ground_in_the_gait_whose_clip_covers_nearest_its_speed() {
 }
 
 #[test]
-fn a_wader_slows_as_the_water_deepens_and_keeps_pace_where_water_slows_no_one() {
-    let deep = 0.5;
-    for (wading, kept) in [
-        (Some(json!({ "deepest": 1.0, "slowest": 0.5 })), 0.75),
-        (Some(json!({ "deepest": 0.25, "slowest": 0.4 })), 0.4),
-        (None, 1.0),
+fn a_wader_slows_as_the_water_deepens_keeps_pace_where_water_slows_no_one_and_stops_where_it_is_too_deep()
+ {
+    let (start, shore) = (2.0, 10.0);
+    for (wading, deep, kept) in [
+        (
+            Some(json!({ "deepest": 1.0, "slowest": 0.5, "too_deep": 1.4 })),
+            0.5,
+            Some(0.75),
+        ),
+        (
+            Some(json!({ "deepest": 0.25, "slowest": 0.4, "too_deep": 1.4 })),
+            0.5,
+            Some(0.4),
+        ),
+        (None, 0.5, Some(1.0)),
+        (None, 2.0, Some(1.0)),
+        (
+            Some(json!({ "deepest": 1.0, "slowest": 0.5, "too_deep": 1.4 })),
+            2.0,
+            None,
+        ),
     ] {
         let water = WaterSurface::from_fn(
             GroundSize {
@@ -492,21 +506,32 @@ fn a_wader_slows_as_the_water_deepens_and_keeps_pace_where_water_slows_no_one() 
                 height: 19,
             },
             HEIGHTS,
-            |column, _| Meters(if column >= 20 { deep } else { 0.0 }),
+            |column, _| {
+                Meters(if column as f32 >= shore * 2.0 {
+                    deep
+                } else {
+                    0.0
+                })
+            },
         );
-        let game = water_parts(
-            Game::new()
-                .area("field", &Map::open(19, 19), json!([]))
-                .hero("field", 2.0, 9.0),
-            "field",
-            &water,
-        );
+        let game = Game::new()
+            .area("field", &Map::open(19, 19), json!([]))
+            .hero("field", start, 9.0)
+            .water("field", &water);
         let game = match &wading {
             Some(wading) => game.edit_settings(|settings| settings["wading"] = wading.clone()),
             None => game,
         };
         let mut walk = Walk::on(game).toward(Offset::new(15.0, 0.0));
         let trail = walk.trail();
+        let Some(kept) = kept else {
+            let furthest = trail.iter().map(|at| start + at.x).fold(0.0, f32::max);
+            assert!(
+                furthest < shore + 1.0,
+                "{wading:?}: {deep} m of water carries nobody on foot, yet a walker got to {furthest}",
+            );
+            continue;
+        };
         let steps: Vec<f32> = trail
             .windows(2)
             .map(|pair| (pair[1] - pair[0]).length())
@@ -524,29 +549,6 @@ fn a_wader_slows_as_the_water_deepens_and_keeps_pace_where_water_slows_no_one() 
             wet / dry
         );
     }
-}
-
-/// `game` with `water` lying on its area `area`.
-fn water_parts(game: Game, area: &str, water: &WaterSurface) -> Game {
-    let game = water
-        .size()
-        .each_tile()
-        .filter_map(|at| Some((at, water.encode_tile(at)?)))
-        .fold(game, |game, (at, bytes)| {
-            game.part(
-                "area",
-                area,
-                &area::WATER.named(&at.key(), "png"),
-                bytes.to_vec(),
-            )
-        });
-    let overview = water.encode_overview().expect("water to lie somewhere");
-    game.part(
-        "area",
-        area,
-        &area::WATER_OVERVIEW.named("", "png"),
-        overview,
-    )
 }
 
 struct Walk {

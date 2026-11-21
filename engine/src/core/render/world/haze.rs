@@ -1,7 +1,10 @@
-//! Haze that lies in boxes standing on the ground, drawn over everything the camera sees once the
-//! world is drawn: each pixel hazes by how far the way from the eye to what it shows runs through
-//! each box, the sky behind none of them.
+//! Fog that lies in banks standing on the ground, drawn over everything the camera sees once
+//! the world is drawn, the sky included: thicker air, thickest at each bank's floor and thinning
+//! upward, each pixel fogged by how much of it the way from the eye to what it shows crosses,
+//! and lit by the sky it lies under.
 
+use super::sky_picture;
+use crate::core::units::Meters;
 use bevy::core_pipeline::core_3d::main_transparent_pass_3d;
 use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
 use bevy::platform::collections::HashMap;
@@ -12,14 +15,18 @@ use bevy::render::extract_component::{
     ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
     UniformComponentPlugin,
 };
-use bevy::render::render_resource::binding_types::{texture_depth_2d, uniform_buffer};
+use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_resource::binding_types::{
+    sampler, texture_2d, texture_depth_2d, uniform_buffer,
+};
 use bevy::render::render_resource::{
     BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent,
     BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState,
-    PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages, ShaderType,
-    TextureFormat,
+    PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, SamplerBindingType,
+    ShaderStages, ShaderType, TextureFormat, TextureSampleType,
 };
 use bevy::render::renderer::{RenderContext, ViewQuery};
+use bevy::render::texture::{FallbackImage, GpuImage};
 use bevy::render::view::{
     ExtractedView, ViewDepthStencilTexture, ViewTarget, ViewUniform, ViewUniformOffset,
     ViewUniforms,
@@ -29,38 +36,61 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 /// The most boxes of haze a camera looks through at once: the nearest of them.
 pub const MAX_HAZE_BOXES: usize = 32;
 
-/// The haze a camera sees the world through: `color`, lying in `boxes` (the first `count` of
-/// them), with the ground `ground` high under the eye.
+/// The fog a camera sees the world through: lying in `boxes` (the first `count` of them), lit by
+/// `lights`, and by the sky's picture the camera holds as its [`HazeSky`] where it stands
+/// `under_sky`, 1 or 0.
 #[derive(Component, ExtractComponent, ShaderType, Clone, Copy, Debug, Default, PartialEq)]
 #[extract_app(RenderApp)]
 pub struct Haze {
-    pub color: Vec3,
-    pub ground: f32,
+    pub lights: [HazeLight; 2],
     pub boxes: [HazeBox; MAX_HAZE_BOXES],
     pub count: u32,
+    pub under_sky: u32,
 }
 
-/// A box of haze standing on the ground over the rect from `low` to `high` (x east, y south),
-/// `height` deep: what is seen through `clear` metres of it or less stays clear, and the haze
-/// thickens evenly to `thickest` of the way to its colour through `thick` metres of it.
+/// A light the fog throws onward: the unit way toward it, and what it sheds on the fog round
+/// the eye, in lux for each colour.
+#[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
+pub struct HazeLight {
+    pub toward: Vec3,
+    pub shed: Vec3,
+}
+
+/// The picture of the sky the fog a camera sees is lit by.
+#[derive(Component, ExtractComponent, Clone, Debug, PartialEq)]
+#[extract_app(RenderApp)]
+pub struct HazeSky(pub Handle<Image>);
+
+/// A bank of fog over the rect from `low` to `high` (x east, y south): `thickest` at `floor`,
+/// for every metre looked through it there, falling to a third of that (by e) every `fall`
+/// metres up, thinning out over `edge` metres at its sides, and shedding `glow` of its own, in
+/// candela per square metre.
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
 pub struct HazeBox {
     pub low: Vec2,
     pub high: Vec2,
-    pub height: f32,
-    pub clear: f32,
-    pub thick: f32,
+    pub floor: f32,
+    pub fall: f32,
     pub thickest: f32,
+    pub edge: f32,
+    pub glow: Vec3,
 }
 
+/// How many lengths of fog leave a twentieth of a thing's contrast: what counts as the farthest
+/// it is seen, as weather services measure visibility.
+pub const SIGHT_LENGTHS: f32 = 3.0;
+
 impl Haze {
-    /// Haze in `color` lying in `boxes`, the nearest [`MAX_HAZE_BOXES`] of them taken, over
-    /// ground `ground` high under the eye.
-    pub fn new(color: Color, ground: f32, boxes: impl IntoIterator<Item = HazeBox>) -> Haze {
-        let linear = color.to_linear();
+    /// Fog lying in `boxes`, the first [`MAX_HAZE_BOXES`] of them taken, lit by `lights` and,
+    /// when `under_sky`, by the sky's picture.
+    pub fn new(
+        lights: [HazeLight; 2],
+        under_sky: bool,
+        boxes: impl IntoIterator<Item = HazeBox>,
+    ) -> Haze {
         let mut haze = Haze {
-            color: Vec3::new(linear.red, linear.green, linear.blue),
-            ground,
+            lights,
+            under_sky: u32::from(under_sky),
             ..Haze::default()
         };
         for (slot, haze_box) in haze.boxes.iter_mut().zip(boxes) {
@@ -69,7 +99,80 @@ impl Haze {
         }
         haze
     }
+
+    /// How far a thing still shows through the fog standing at `at`, looking level: nothing
+    /// where no bank lies over `at`.
+    pub fn sight_at(&self, at: Vec3) -> Option<Meters> {
+        let thick: f32 = self.boxes[..self.count as usize]
+            .iter()
+            .map(|bank| bank.thick_at(at))
+            .sum();
+        (thick > 0.0).then(|| Meters(SIGHT_LENGTHS / thick))
+    }
 }
+
+impl HazeBox {
+    /// How much of the bank's fog a line of sight from `eye` to `point` crosses: lengths of it,
+    /// each of which leaves 1/e of what is seen through it.
+    pub fn crossed(&self, eye: Vec3, point: Vec3) -> f32 {
+        let way = point - eye;
+        let across = span(eye.x, way.x, self.low.x, self.high.x);
+        let along = span(eye.z, way.z, self.low.y, self.high.y);
+        let enter = across.0.max(along.0).max(0.0);
+        let leave = across.1.min(along.1).min(1.0);
+        if leave <= enter {
+            return 0.0;
+        }
+        let run = way.length() * (leave - enter);
+        let from = (eye.y + way.y * enter - self.floor).max(0.0) / self.fall;
+        let to = (eye.y + way.y * leave - self.floor).max(0.0) / self.fall;
+        let rise = to - from;
+        let thick = if rise.abs() > 1.0e-3 {
+            ((-from).exp() - (-to).exp()) / rise
+        } else {
+            (-(from + to) / 2.0).exp()
+        };
+        let sides: f32 = WEIGHED_AT
+            .iter()
+            .zip(WEIGHS)
+            .map(|(at, weighs)| {
+                let at = eye.xz() + way.xz() * (enter + (leave - enter) * at);
+                weighs * self.sides_at(at)
+            })
+            .sum();
+        self.thickest * thick * run * sides
+    }
+
+    /// How thick the bank's fog stands at `at`: lengths of it to the metre.
+    pub fn thick_at(&self, at: Vec3) -> f32 {
+        let up = (at.y - self.floor).max(0.0) / self.fall;
+        self.thickest * (-up).exp() * self.sides_at(at.xz())
+    }
+
+    fn sides_at(&self, at: Vec2) -> f32 {
+        let inside = (at - self.low).min(self.high - at) / self.edge.max(1.0e-3);
+        inside.x.clamp(0.0, 1.0) * inside.y.clamp(0.0, 1.0)
+    }
+}
+
+/// The shares of the way from `start`, going `step` along, at which it enters and leaves the
+/// stretch from `low` to `high`.
+fn span(start: f32, step: f32, low: f32, high: f32) -> (f32, f32) {
+    if step.abs() < 1e-6 {
+        return if start >= low && start <= high {
+            (0.0, 1.0)
+        } else {
+            (1.0, 0.0)
+        };
+    }
+    let (a, b) = ((low - start) / step, (high - start) / step);
+    (a.min(b), a.max(b))
+}
+
+/// Where along a stretch a bank's sides are weighed, and how much each place counts: Gauss's
+/// four points.
+const WEIGHED_AT: [f32; 4] = [0.069_431_8, 0.330_009_5, 0.669_990_5, 0.930_568_2];
+const WEIGHS: [f32; 4] = [0.173_927_4, 0.326_072_6, 0.326_072_6, 0.173_927_4];
 
 /// Where a camera's rays run over the ground before they meet it: from under its eye, between
 /// the two ways its outermost rays run, or every way when it looks straight down or up, and as
@@ -164,6 +267,7 @@ impl Plugin for HazePlugin {
         bevy::asset::embedded_asset!(app, "haze.wesl");
         app.add_plugins((
             ExtractComponentPlugin::<Haze>::default(),
+            ExtractComponentPlugin::<HazeSky>::default(),
             UniformComponentPlugin::<Haze>::default(),
         ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -201,6 +305,7 @@ type HazedView = (
     &'static DynamicUniformIndex<Haze>,
     &'static HazePipelineId,
     &'static ViewDepthStencilTexture,
+    Option<&'static HazeSky>,
 );
 
 fn start_pipeline(mut commands: Commands, assets: Res<AssetServer>) {
@@ -213,6 +318,8 @@ fn start_pipeline(mut commands: Commands, assets: Res<AssetServer>) {
                     uniform_buffer::<ViewUniform>(true),
                     uniform_buffer::<Haze>(true),
                     texture_depth_2d(),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
                 ),
             ),
         ),
@@ -257,11 +364,12 @@ fn draw_haze(
     view: ViewQuery<HazedView>,
     pipeline: Option<Res<HazePipeline>>,
     cache: Res<PipelineCache>,
-    view_uniforms: Res<ViewUniforms>,
-    hazes: Res<ComponentUniforms<Haze>>,
+    (view_uniforms, hazes): (Res<ViewUniforms>, Res<ComponentUniforms<Haze>>),
+    (images, fallback): (Res<RenderAssets<GpuImage>>, Res<FallbackImage>),
     mut ctx: RenderContext,
 ) {
-    let (camera, target, view_offset, haze, haze_index, pipeline_id, depth) = view.into_inner();
+    let (camera, target, view_offset, haze, haze_index, pipeline_id, depth, sky) =
+        view.into_inner();
     if haze.count == 0 {
         return;
     }
@@ -278,10 +386,21 @@ fn draw_haze(
     let Some(render_pipeline) = cache.get_render_pipeline(pipeline_id.0) else {
         return;
     };
+    let sky = sky.and_then(|sky| images.get(&sky.0));
+    let (sky_view, sky_sampler) = match sky {
+        Some(picture) => (sky_picture::every_size(picture), &picture.sampler),
+        None => (fallback.d2.texture_view.clone(), &fallback.d2.sampler),
+    };
     let bind_group = ctx.render_device().create_bind_group(
         "haze_bind_group",
         &cache.get_bind_group_layout(&pipeline.layout),
-        &BindGroupEntries::sequential((view_binding, haze_binding, depth_view)),
+        &BindGroupEntries::sequential((
+            view_binding,
+            haze_binding,
+            depth_view,
+            &sky_view,
+            sky_sampler,
+        )),
     );
     let recorder = ctx.diagnostic_recorder();
     let recorder = recorder.as_deref();

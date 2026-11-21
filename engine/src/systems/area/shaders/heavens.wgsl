@@ -11,6 +11,11 @@ struct Heavens {
     color: vec4<f32>,
     moon: vec3<f32>,
     night: f32,
+    sun: vec3<f32>,
+    sun_color: vec4<f32>,
+    turned: mat3x3<f32>,
+    twinkling: f32,
+    air: array<vec4<f32>, AIR_WAYS>,
     cloud_base: f32,
     cloud_tile: f32,
     drift: vec2<f32>,
@@ -32,6 +37,35 @@ fn light_color() -> vec3<f32> {
 
 fn moon_way() -> vec3<f32> {
     return heavens.moon;
+}
+
+fn sun_way() -> vec3<f32> {
+    return heavens.sun;
+}
+
+fn sun_color() -> vec3<f32> {
+    return heavens.sun_color.rgb;
+}
+
+fn sky_turned(way: vec3<f32>) -> vec3<f32> {
+    return heavens.turned * way;
+}
+
+fn twinkles() -> f32 {
+    return heavens.twinkling;
+}
+
+// How far under the horizon the air's dimming is eased out over, as a share of straight up.
+const HORIZON_EASE: f32 = 0.01;
+
+// The air is told as how much of itself a light crosses along `AIR_WAYS` ways, each climbing
+// the square of its share of the way from the horizon to straight up.
+fn through_air(way: vec3<f32>) -> vec3<f32> {
+    let rise = normalize(way).y;
+    let at = sqrt(max(rise, 0.0)) * f32(AIR_WAYS - 1u);
+    let low = min(u32(at), AIR_WAYS - 2u);
+    let crossed = mix(heavens.air[low].rgb, heavens.air[low + 1u].rgb, at - f32(low));
+    return exp(-crossed) * smoothstep(-HORIZON_EASE, 0.0, rise);
 }
 
 fn night() -> f32 {

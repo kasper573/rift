@@ -29,7 +29,7 @@ use crate::core::render::world::clouds::{CLOUD_TILE, CloudDrift, CloudReading, C
 use crate::core::render::{CameraRig, Look};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::Meters;
-use crate::systems::area::scenery::{prop_transform, shown_weather};
+use crate::systems::area::scenery::prop_transform;
 use crate::systems::{GameSettings, WorldArea};
 
 /// How many cells of the rain field lie each way round the camera's subject, and how wide each
@@ -300,7 +300,7 @@ pub fn fall(
         Some(rainfall) => {
             falling.lay_field(world, area, weather, rainfall, subject, now);
             falling.lay_shelter(world, subject);
-            let lean = rainfall.lean(shown_weather(weather, 0.0).wind);
+            let lean = rainfall.lean(weather.wind.blowing());
             let mut shelter = world.resource_mut::<Shelter>();
             if shelter.lean != lean {
                 shelter.lean = lean;
@@ -402,7 +402,7 @@ struct LaidRain {
 
 impl RainJob {
     fn lay(self) -> LaidRain {
-        let lean = self.rainfall.lean(shown_weather(&self.weather, 0.0).wind);
+        let lean = self.rainfall.lean(self.weather.wind.blowing());
         let mut field = HashMap::with_capacity(RAIN_SIDE * RAIN_SIDE);
         let mut cells = Vec::with_capacity(RAIN_SIDE * RAIN_SIDE);
         for row in 0..RAIN_SIDE as i32 {

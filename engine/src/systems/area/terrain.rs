@@ -31,9 +31,14 @@ pub struct TerrainDef {
     pub picture: Option<GroundPicture>,
     pub surface: SurfaceId,
     pub walk: Walk,
+    /// How much of itself the terrain gives the water over it, 0 clean sand or rock to 1 a mud
+    /// that clouds shallow water in its own colour.
+    #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
+    pub silt: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Cover>,
-    /// How the ground looks soaked through where rain wets it; rain leaves it as it is without.
+    /// How the ground looks soaked through where rain or a waterline wets it; they leave it as
+    /// it is without.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wet: Option<WetLook>,
 }
@@ -53,7 +58,7 @@ pub const LARGEST_TILE: Meters = Meters(64.0);
 
 /// What a ground grows or lies under where it is painted, from heavily to not at all as the
 /// material blends into others: a shader of the cover stage, with the parameters the ground fills
-/// it with, drawing a sheet over the painted cells if the cover has one, and the pieces it is
+/// it with, drawing a sheet a hair over the painted cells if the cover has one, and the pieces it is
 /// populated with, each a kind of thing scattered at its own ratio, size and colour, all of them
 /// laid out from `seed`, so a designer can turn the seed until the scatter pleases.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -65,20 +70,10 @@ pub struct Cover {
     pub params: BTreeMap<String, ParamFill>,
     #[serde(default, skip_serializing_if = "serial::is_zero_u64")]
     pub seed: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sheet: Option<CoverSheet>,
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub sheet: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pieces: Vec<CoverPiece>,
-}
-
-/// What a sheet over the painted cells lies on: the ground, as a sheen of gravel or moss does, or
-/// the area's water, wherever it stands over the ground, telling the shader how deep the water is
-/// at each point, how far it lies from the shore and how its surface falls.
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CoverSheet {
-    Ground,
-    Water,
 }
 
 /// One kind of thing a cover is populated with: its `shape`, the `ratio` of the ground it covers
@@ -177,6 +172,7 @@ impl ContentFile for TerrainDef {
             picture: None,
             surface: near.file()?,
             walk: Walk::Walkable,
+            silt: 0.0,
             cover: None,
             wet: None,
         })
@@ -184,6 +180,7 @@ impl ContentFile for TerrainDef {
 
     fn check(&self, cx: &mut RowCheck) {
         cx.text("/name", &self.name, 1, 60);
+        cx.range("/silt", self.silt, 0.0, 1.0, "of itself given to the water");
         if let Some(wet) = &self.wet {
             cx.range(
                 "/wet/darkening",

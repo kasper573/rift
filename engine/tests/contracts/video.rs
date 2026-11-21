@@ -130,6 +130,8 @@ fn a_preset_picks_every_part_at_once_and_a_part_picked_by_hand_leaves_the_rest_a
     let window = VideoPreferences {
         fullscreen: true,
         vsync: true,
+        twinkling: false,
+        water_bends: false,
         ..VideoPreferences::default()
     };
     assert_eq!(
@@ -143,6 +145,10 @@ fn a_preset_picks_every_part_at_once_and_a_part_picked_by_hand_leaves_the_rest_a
         assert!(
             picked.fullscreen && picked.vsync,
             "{quality:?} leaves the window as it was"
+        );
+        assert!(
+            !picked.twinkling && !picked.water_bends,
+            "{quality:?} leaves the stars held still and what lies under water unbent"
         );
         let by_hand = VideoPreferences {
             bloom: !picked.bloom,

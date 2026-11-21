@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use engine::core::render::world::haze::HazeSight;
+use engine::core::render::world::haze::{HazeBox, HazeSight, SIGHT_LENGTHS};
 
 const FOV: f32 = std::f32::consts::FRAC_PI_3;
 const ASPECT: f32 = 16.0 / 9.0;
@@ -69,4 +69,53 @@ fn a_camera_looks_through_the_haze_its_rays_cross_and_no_other() {
             "a bank {what}"
         );
     }
+
+    // A bank a hundred metres across each way from its middle, seen a hundred metres through
+    // its thickest air, a third of it left ten metres up.
+    let bank = HazeBox {
+        low: Vec2::splat(-100.0),
+        high: Vec2::splat(100.0),
+        floor: 0.0,
+        fall: 10.0,
+        thickest: SIGHT_LENGTHS / 100.0,
+        edge: 0.0,
+        glow: Vec3::ZERO,
+    };
+    let level = bank.crossed(Vec3::ZERO, Vec3::X * 100.0);
+    assert!(
+        (level - SIGHT_LENGTHS).abs() < 0.01,
+        "an eye inside sees its sight, level through the thickest air: {level}"
+    );
+    let climbing = bank.crossed(Vec3::ZERO, Vec3::new(80.0, 60.0, 0.0));
+    assert!(
+        climbing < level / 3.0,
+        "and farther along a line that climbs: {climbing}"
+    );
+    let above = Vec3::Y * 80.0;
+    let across = bank.crossed(above, above + Vec3::X * 100.0);
+    let down = bank.crossed(above, Vec3::X * 60.0);
+    assert!(
+        across < 0.01 && down > 0.3 && down < level,
+        "an eye above looks through none of it at a hilltop across, and through all of it \
+         down onto its floor: {across}, {down}"
+    );
+    let beside = Vec3::X * 150.0;
+    assert_eq!(
+        (
+            bank.crossed(beside, beside + Vec3::Z * 100.0),
+            bank.crossed(beside, beside + Vec3::X * 100.0)
+        ),
+        (0.0, 0.0),
+        "an eye beside it looks through none of it past it"
+    );
+    let into = bank.crossed(beside, Vec3::ZERO);
+    assert!(
+        (into - SIGHT_LENGTHS).abs() < 0.01,
+        "and through what lies between it and what it looks at inside: {into}"
+    );
+    let soft = HazeBox { edge: 50.0, ..bank };
+    assert!(
+        soft.crossed(beside, Vec3::X * 90.0) < bank.crossed(beside, Vec3::X * 90.0) / 5.0,
+        "a bank thins out toward its sides"
+    );
 }

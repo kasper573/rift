@@ -1,8 +1,10 @@
 //! The ground of every terrain drawn from one shared grid, a patch an instance, its heights and
 //! paint read from the terrain's atlas, in every view's opaque pass, prepass and shadow maps.
 //! Each view draws the patches that lie in its frustum, among the terrains its layers show. Over
-//! the ground, each cover's sheet is drawn from the same patches, blended in the view's
-//! transparent pass with its cover's material: on those of them whose ground its terrain paints.
+//! the ground, sheets are drawn from the same patches, each with a material of its own: a cover's
+//! a hair over the ground its terrain paints, blended in the view's transparent pass, and a
+//! water's on the water wherever it lies, drawn solid after everything solid, over a copy of
+//! the picture behind it.
 
 use std::any::TypeId;
 use std::ops::Range;
@@ -12,6 +14,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::asset::uuid::Uuid;
 use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::camera::visibility::RenderLayers;
+use bevy::core_pipeline::Core3d;
 use bevy::core_pipeline::core_3d::{
     CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey, Transparent3d,
     TransparentSortingInfo3d,
@@ -21,6 +24,7 @@ use bevy::core_pipeline::prepass::{
     prepass_target_descriptors,
 };
 use bevy::ecs::query::{QueryItem, ROQueryItem};
+use bevy::ecs::schedule::InternedSystemSet;
 use bevy::ecs::system::SystemParamItem;
 use bevy::ecs::system::lifetimeless::{Read, SRes};
 use bevy::material::MaterialProperties;
@@ -34,7 +38,8 @@ use bevy::pbr::{
     MaterialPipeline, MaterialVertexShader, MeshPipeline, MeshPipelineKey, PreparedMaterial,
     PrepassPipeline, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
     SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup, Shadow, ShadowBatchSetKey, ShadowBinKey,
-    ViewKeyCache, ViewKeyPrepassCache, alpha_mode_pipeline_key, init_prepass_pipeline,
+    Transmissive3d, ViewKeyCache, ViewKeyPrepassCache, alpha_mode_pipeline_key,
+    init_prepass_pipeline, main_transmissive_pass_3d,
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -63,7 +68,7 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_component::SyncComponent;
 use bevy::render::sync_world::MainEntity;
-use bevy::render::texture::GpuImage;
+use bevy::render::texture::{FallbackImage, GpuImage};
 use bevy::render::view::{ExtractedView, RetainedViewEntity};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
@@ -75,10 +80,11 @@ use super::cull;
 use crate::core::ground::{
     OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
 };
-use crate::core::render::video::VideoPreferences;
+use crate::core::render::video::{VideoPreferences, WaterMirrors};
 use crate::core::render::world::RenderProgress;
-use crate::core::render::world::cover::{CoverMaterial, SHORE_REACH, SheetOn};
 use crate::core::render::world::lod::{GRAIN_PIXELS, horizon_band};
+use crate::core::render::world::sky_picture;
+use crate::core::render::world::water::SHORE_REACH;
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::shader::hash_helpers;
 
@@ -86,7 +92,7 @@ use crate::core::vfx::shader::hash_helpers;
 pub const PATCH_CELLS: u32 = 128;
 
 /// The ground a terrain draws: the patches standing, what its ground is painted with, and the
-/// sheets its covers lay over it.
+/// sheets laid over it.
 #[derive(Component, Clone)]
 #[require(TerrainAtlas, SheetPatches)]
 pub struct GroundDraw {
@@ -95,24 +101,51 @@ pub struct GroundDraw {
     pub sheets: Arc<[GroundSheet]>,
 }
 
-/// A cover's sheet over the ground, where `terrain`, the terrain's place among the area's, paints
-/// it: lying on what `on` says, in the terrain's `color`, drawn with its cover's `material`.
+/// A sheet over the ground: lying over what `over` says, in `color`, drawn with `material`, a
+/// material whose shader draws the points of a sheet (`sheet_point` in `sheet.wesl`).
 #[derive(Clone, Debug)]
 pub struct GroundSheet {
-    pub terrain: u8,
-    pub on: SheetOn,
+    pub over: SheetOver,
     pub color: LinearRgba,
-    pub material: Handle<CoverMaterial>,
+    pub material: UntypedHandle,
+}
+
+/// What a sheet lies over: a hair over the ground wherever the terrain at this place among the
+/// area's paints it, blended over it; or on the water wherever the water at this place among the
+/// area's lies, drawn solid over a copy of the picture behind it, with the sky's picture, if the
+/// area has one, to mirror.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SheetOver {
+    Terrain(u8),
+    Water {
+        water: u8,
+        sky: Option<Handle<Image>>,
+    },
+}
+
+impl SheetOver {
+    fn index(&self) -> u8 {
+        match self {
+            SheetOver::Terrain(index) | SheetOver::Water { water: index, .. } => *index,
+        }
+    }
+
+    fn is_water(&self) -> bool {
+        matches!(self, SheetOver::Water { .. })
+    }
 }
 
 /// What a terrain's ground is painted with: the terrains' pictures as one stack, white at the
 /// bottom for a terrain that has none; for each terrain its colour and tile in the first row of
-/// `layers`, its picture's place in the stack in the second and how it looks soaked in the third;
-/// the shader board its lit shader reads; and how rough and how reflective it lies dry.
+/// `layers`, its picture's place in the stack and its silt in the second and how it looks soaked
+/// in the third; for each water how fast it fades each colour and its murk in the first row of
+/// `waters`, and the colour of its depths in the second; the shader board its lit shader reads;
+/// and how rough and how reflective it lies dry.
 #[derive(Clone, Debug)]
 pub struct GroundPaint {
     pub pictures: Handle<Image>,
     pub layers: Handle<Image>,
+    pub waters: Handle<Image>,
     pub board: Handle<Image>,
     pub roughness: f32,
     pub reflectance: f32,
@@ -191,7 +224,8 @@ impl Plugin for GroundDrawPlugin {
             .add_render_command::<Opaque3d, DrawLitGround>()
             .add_render_command::<Opaque3dPrepass, DrawGroundDepth>()
             .add_render_command::<Shadow, DrawGroundDepth>()
-            .add_render_command::<Transparent3d, DrawGroundSheets>()
+            .add_render_command::<Transparent3d, DrawGroundSheets<false>>()
+            .add_render_command::<Transmissive3d, DrawGroundSheets<true>>()
             .add_systems(RenderStartup, start.after(init_prepass_pipeline))
             .add_systems(
                 Render,
@@ -203,6 +237,35 @@ impl Plugin for GroundDrawPlugin {
                         .in_set(RenderSystems::Queue),
                 ),
             );
+    }
+
+    /// Holds the pass that lays bevy's air over the picture until the waters are drawn. That
+    /// pass lays the air on by the depth it finds, and the waters write theirs so that it lies
+    /// on their surface, but bevy orders it only after the solid pass and before the blended
+    /// one, as it orders the pass the waters are drawn in: nothing says which of the two comes
+    /// first. Bevy keeps the air's system to itself, so it is found in the schedule by name,
+    /// once every plugin has added its own.
+    fn finish(&self, app: &mut App) {
+        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+            return;
+        };
+        render_app.edit_schedule(Core3d, |schedule| {
+            let air: Vec<InternedSystemSet> = schedule
+                .graph()
+                .systems
+                .iter()
+                .filter(|(_, system, _)| &*system.name() == AIR_PASS)
+                .flat_map(|(_, system, _)| system.default_system_sets())
+                .collect();
+            let [air] = air[..] else {
+                panic!(
+                    "the water is drawn before bevy's air is laid on, which takes ordering \
+                     against exactly one system named {AIR_PASS}: found {}",
+                    air.len()
+                );
+            };
+            schedule.add_systems(waters_drawn.after(main_transmissive_pass_3d).before(air));
+        });
     }
 }
 
@@ -258,12 +321,13 @@ impl ExtractComponent<RenderApp> for GroundDraw {
 }
 
 /// The patches each of a terrain's sheets is drawn over, found for the patches `over`, and which
-/// terrains paint each tile under them, as its paint was read at its version.
+/// terrains paint and which waters lie on each tile under them, as its paint and its water were
+/// read at their versions.
 #[derive(Component)]
 pub struct SheetPatches {
     over: Arc<[GroundPatch]>,
     lists: Arc<[Vec<u32>]>,
-    tiles: HashMap<TileAt, (TileVersion, Terrains)>,
+    tiles: HashMap<TileAt, ([TileVersion; 3], Named, Named)>,
 }
 
 impl Default for SheetPatches {
@@ -276,35 +340,36 @@ impl Default for SheetPatches {
     }
 }
 
-/// Which of the area's terrains paint somewhere, a bit each.
+/// Which of the area's terrains, or of its waters, a stretch of a map names, a bit each.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-struct Terrains([u64; 4]);
+struct Named([u64; 4]);
 
-impl Terrains {
-    fn of(paint: &[u8]) -> Terrains {
-        let mut terrains = Terrains::default();
-        for &terrain in paint {
-            terrains.0[usize::from(terrain / 64)] |= 1 << (terrain % 64);
+impl Named {
+    fn of(pixels: &[u8]) -> Named {
+        let mut named = Named::default();
+        for &index in pixels {
+            named.0[usize::from(index / 64)] |= 1 << (index % 64);
         }
-        terrains
+        named
     }
 
-    fn with(self, other: Terrains) -> Terrains {
-        Terrains(std::array::from_fn(|word| self.0[word] | other.0[word]))
+    fn with(self, other: Named) -> Named {
+        Named(std::array::from_fn(|word| self.0[word] | other.0[word]))
     }
 
-    fn contains(self, terrain: u8) -> bool {
-        self.0[usize::from(terrain / 64)] & (1 << (terrain % 64)) != 0
+    fn contains(self, index: u8) -> bool {
+        self.0[usize::from(index / 64)] & (1 << (index % 64)) != 0
     }
 }
 
-/// Finds the patches each terrain's sheets are drawn over: those over a tile its terrain paints,
-/// as the tile's paint is read now: from the tile where it has loaded, else from the overview,
-/// which holds no terrain the tile doesn't. Found again whenever the patches or the paint under
-/// them change.
+/// Finds the patches each of a terrain's sheets is drawn over: those over a tile its terrain
+/// paints, or its water lies on, as the tile's maps are read now: from the tile where it has
+/// loaded, else from the overview, which names nothing the tile doesn't. A tile that keeps no
+/// water has none of the waters on it, whatever the water map says there. Found again whenever
+/// the patches or the maps under them change.
 fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut SheetPatches)>) {
     for (draw, atlas, mut found) in &mut grounds {
-        let Some(paint) = atlas.paint() else {
+        let (Some(paint), Some((surface, waters))) = (atlas.paint(), atlas.water()) else {
             continue;
         };
         let found = found.bypass_change_detection();
@@ -319,15 +384,26 @@ fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut Sheet
             for row in first_row..past_row {
                 for column in first_column..past_column {
                     let tile = TileAt { column, row };
-                    let version = paint.version(tile);
+                    let versions = [
+                        paint.version(tile),
+                        surface.version(tile),
+                        waters.version(tile),
+                    ];
                     if found
                         .tiles
                         .get(&tile)
-                        .is_some_and(|(held, _)| *held == version)
+                        .is_some_and(|(held, _, _)| *held == versions)
                     {
                         continue;
                     }
-                    found.tiles.insert(tile, (version, painted_in(paint, tile)));
+                    let lying = if surface.is_blank_at(tile) {
+                        Named::default()
+                    } else {
+                        named_in(waters, tile)
+                    };
+                    found
+                        .tiles
+                        .insert(tile, (versions, named_in(paint, tile), lying));
                     changed = true;
                 }
             }
@@ -335,15 +411,20 @@ fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut Sheet
         if !changed {
             continue;
         }
-        let under: Vec<Terrains> = tiles
+        let under: Vec<(Named, Named)> = tiles
             .iter()
             .map(|&(first_column, first_row, past_column, past_row)| {
                 (first_row..past_row)
                     .flat_map(|row| {
                         (first_column..past_column).map(move |column| TileAt { column, row })
                     })
-                    .filter_map(|tile| found.tiles.get(&tile).map(|(_, terrains)| *terrains))
-                    .fold(Terrains::default(), Terrains::with)
+                    .filter_map(|tile| found.tiles.get(&tile))
+                    .fold(
+                        (Named::default(), Named::default()),
+                        |(terrains, waters), (_, painted, lying)| {
+                            (terrains.with(*painted), waters.with(*lying))
+                        },
+                    )
             })
             .collect();
         found.lists = draw
@@ -351,7 +432,13 @@ fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut Sheet
             .iter()
             .map(|sheet| {
                 (0..under.len() as u32)
-                    .filter(|&patch| under[patch as usize].contains(sheet.terrain))
+                    .filter(|&patch| {
+                        let (terrains, waters) = under[patch as usize];
+                        match sheet.over {
+                            SheetOver::Terrain(terrain) => terrains.contains(terrain),
+                            SheetOver::Water { water, .. } => waters.contains(water),
+                        }
+                    })
                     .collect()
             })
             .collect();
@@ -380,19 +467,19 @@ fn tiles_under(patch: &GroundPatch, paint: &PaintMap) -> (u32, u32, u32, u32) {
     )
 }
 
-/// The terrains painting `tile`, as its paint is read now.
-fn painted_in(paint: &PaintMap, tile: TileAt) -> Terrains {
-    if paint.is_loaded(tile) {
-        let (columns, rows) = paint.pixels();
+/// What `map`, the paint or the water map, names on `tile`, as it is read now.
+fn named_in(map: &PaintMap, tile: TileAt) -> Named {
+    if map.is_loaded(tile) {
+        let (columns, rows) = map.pixels();
         let first = (tile.column * TILE_PIXELS, tile.row * TILE_PIXELS);
         let across = TILE_PIXELS.min(columns - first.0);
         let down = TILE_PIXELS.min(rows - first.1);
-        return Terrains::of(&paint.block((i64::from(first.0), i64::from(first.1)), across, down));
+        return Named::of(&map.block((i64::from(first.0), i64::from(first.1)), across, down));
     }
-    let ((first_column, first_row), columns, rows) = paint.overview_span(tile);
+    let ((first_column, first_row), columns, rows) = map.overview_span(tile);
     let columns: Vec<u32> = (first_column..first_column + columns).collect();
     let rows: Vec<u32> = (first_row..first_row + rows).collect();
-    Terrains::of(&paint.overview_at(&columns, &rows))
+    Named::of(&map.overview_at(&columns, &rows))
 }
 
 /// Lights the ground in the main pass, with the view's lights, shadows, ambient occlusion and fog.
@@ -412,12 +499,13 @@ type DrawGroundDepth = (
     DrawGround<false>,
 );
 
-/// Draws each of a terrain's sheets over its patches in the main pass, lit as the view's lights,
-/// shadows, ambient occlusion and fog light them, each with its cover's material.
-type DrawGroundSheets = (
+/// Draws each of a terrain's sheets of a pass over its patches, lit as the view's lights,
+/// shadows, ambient occlusion and fog light them, each with its own material: those drawn solid
+/// over the picture behind them when `THROUGH`, else those blended.
+type DrawGroundSheets<const THROUGH: bool> = (
     SetMeshViewBindGroup<0>,
     SetMeshViewBindingArrayBindGroup<1>,
-    DrawSheets,
+    DrawSheets<THROUGH>,
 );
 
 /// The bind group of the ground's patches and atlas, after the view's two, and of its paint; a
@@ -498,25 +586,32 @@ struct GroundBuffers {
     sheet_views: HashMap<RetainedViewEntity, Vec<Range<u32>>>,
 }
 
-/// What a sheet tells its shader of itself.
+/// What a sheet tells its shader of itself: its colour, which of the area's terrains it lies
+/// over, or which of its waters when it lies on water, and how the surface's texels are read.
 #[derive(ShaderType, Clone, Copy, Debug, Default)]
 struct SheetUniform {
     color: Vec4,
-    terrain: u32,
+    index: u32,
     on_water: u32,
     shore_reach: f32,
     fall_unit: f32,
+    under_sky: u32,
+    mirrors_land: u32,
+    bends: f32,
 }
 
-/// A terrain's sheets as they are bound to draw, each once its cover's material is on the GPU.
+/// A terrain's sheets as they are bound to draw, each once its material is on the GPU.
 #[derive(Component)]
 struct SheetBindings(Vec<Option<BoundSheet>>);
 
-/// A sheet's bind group, its cover's material's, and how its material is drawn.
+/// A sheet's bind group, its material's, how its material is drawn, and whether it is drawn
+/// solid over the picture behind it rather than blended.
 struct BoundSheet {
     sheet: BindGroup,
     material: BindGroup,
     properties: Arc<MaterialProperties>,
+    kind: TypeId,
+    through: bool,
 }
 
 /// How the sheets are drawn: bevy's mesh pipeline, as a material draws a mesh, with the sheets'
@@ -527,7 +622,7 @@ struct SheetPipeline {
     material: MaterialPipeline,
     sheets: BindGroupLayoutDescriptor,
     layout: MeshVertexBufferLayoutRef,
-    built: HashMap<(MeshPipelineKey, ErasedMaterialKey), CachedRenderPipelineId>,
+    built: HashMap<(MeshPipelineKey, TypeId, ErasedMaterialKey), CachedRenderPipelineId>,
     /// The pipeline of each sheet of each terrain each view draws, this frame.
     drawn: HashMap<(RetainedViewEntity, Entity), Vec<Option<CachedRenderPipelineId>>>,
 }
@@ -756,6 +851,8 @@ fn start(
                 (105, texture_2d(TextureSampleType::Uint)),
                 (106, texture_2d_array(TextureSampleType::Uint)),
                 (107, texture_2d(TextureSampleType::Uint)),
+                (108, texture_2d_array(TextureSampleType::Uint)),
+                (109, texture_2d(TextureSampleType::Uint)),
             ),
         ),
     );
@@ -787,6 +884,10 @@ fn start(
                     texture_2d_array(TextureSampleType::Float { filterable: true }),
                 ),
                 (107, sampler(SamplerBindingType::Filtering)),
+                (
+                    108,
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                ),
             ),
         ),
     );
@@ -806,6 +907,19 @@ fn start(
                 (108, texture_2d_array(TextureSampleType::Uint)),
                 (109, texture_2d(TextureSampleType::Uint)),
                 (110, uniform_buffer::<SheetUniform>(false)),
+                (
+                    111,
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                ),
+                (
+                    112,
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                ),
+                (
+                    113,
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                ),
+                (114, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
@@ -1040,6 +1154,8 @@ fn bind_grounds(
                 (105, atlas.view(AtlasTexture::Table)),
                 (106, atlas.view(AtlasTexture::Paint)),
                 (107, atlas.view(AtlasTexture::OverviewPaint)),
+                (108, atlas.view(AtlasTexture::Surface)),
+                (109, atlas.view(AtlasTexture::OverviewSurface)),
             )),
         );
         let paint = &ground.paint;
@@ -1050,9 +1166,10 @@ fn bind_grounds(
             images.get(&paint.pictures),
             images.get(&paint.board),
             images.get(&paint.layers),
+            images.get(&paint.waters),
             finish.binding(),
         ) {
-            (Some(pictures), Some(board), Some(layers), Some(finish)) => {
+            (Some(pictures), Some(board), Some(layers), Some(waters), Some(finish)) => {
                 Some(device.create_bind_group(
                     "ground_paint",
                     &cache.get_bind_group_layout(&pipeline.paint),
@@ -1065,6 +1182,7 @@ fn bind_grounds(
                         (105, atlas.view(AtlasTexture::OverviewCanopy)),
                         (106, atlas.view(AtlasTexture::OverviewCanopyExtent)),
                         (107, &pipeline.canopy_sampler),
+                        (108, &waters.texture_view),
                     )),
                 ))
             }
@@ -1272,7 +1390,8 @@ fn queue_shadows(
 }
 
 /// Binds each terrain's sheets for their draws: the ground's patches and atlas with what each
-/// sheet tells its shader of itself, and its cover's material once that is on the GPU.
+/// sheet tells its shader of itself, the terrains' and the waters' looks, the sky's picture a
+/// sheet on water mirrors, and its material once that is on the GPU.
 #[allow(clippy::too_many_arguments)]
 fn bind_sheets(
     mut commands: Commands,
@@ -1282,6 +1401,9 @@ fn bind_sheets(
     pipeline: Option<Res<SheetPipeline>>,
     materials: Res<ErasedRenderAssets<PreparedMaterial>>,
     allocators: Res<MaterialBindGroupAllocators>,
+    images: Res<RenderAssets<GpuImage>>,
+    fallback: Res<FallbackImage>,
+    video: Res<VideoPreferences>,
     grounds: Query<(Entity, &ExtractedGround, &GpuTerrainAtlas, &GroundBuffers)>,
     mut uniforms: Local<HashMap<Entity, Vec<UniformBuffer<SheetUniform>>>>,
 ) {
@@ -1290,7 +1412,6 @@ fn bind_sheets(
     };
     uniforms.retain(|entity, _| grounds.contains(*entity));
     let layout = cache.get_bind_group_layout(&pipeline.sheets);
-    let allocator = allocators.get(&TypeId::of::<CoverMaterial>());
     for (entity, ground, atlas, buffers) in &grounds {
         let (Some(terrain), Some(patches), Some(shown)) = (
             buffers.ground.binding(),
@@ -1299,6 +1420,10 @@ fn bind_sheets(
         ) else {
             continue;
         };
+        let looks = (
+            images.get(&ground.paint.layers),
+            images.get(&ground.paint.waters),
+        );
         let held = uniforms.entry(entity).or_default();
         held.resize_with(ground.sheets.len(), UniformBuffer::default);
         let bound = ground
@@ -1308,18 +1433,37 @@ fn bind_sheets(
             .map(|(sheet, uniform)| {
                 uniform.set(SheetUniform {
                     color: sheet.color.to_vec4(),
-                    terrain: u32::from(sheet.terrain),
-                    on_water: u32::from(sheet.on == SheetOn::Water),
+                    index: u32::from(sheet.over.index()),
+                    on_water: u32::from(sheet.over.is_water()),
                     shore_reach: SHORE_REACH.0,
                     fall_unit: SURFACE_FALL_UNIT,
+                    under_sky: u32::from(matches!(
+                        sheet.over,
+                        SheetOver::Water { sky: Some(_), .. }
+                    )),
+                    mirrors_land: u32::from(video.water_mirrors == WaterMirrors::LandAndSky),
+                    bends: f32::from(u8::from(video.water_bends)),
                 });
                 uniform.write_buffer(&device, &queue);
+                let (Some(layers), Some(waters)) = looks else {
+                    return None;
+                };
+                let kind = sheet.material.type_id();
                 let prepared = materials.get(sheet.material.id())?;
-                let material = allocator?
+                let material = allocators
+                    .get(&kind)?
                     .get(prepared.binding.group)?
                     .bind_group()?
                     .clone();
-                let sheet = device.create_bind_group(
+                let sky = match &sheet.over {
+                    SheetOver::Water { sky: Some(sky), .. } => images.get(sky),
+                    _ => None,
+                };
+                let (sky_view, sky_sampler) = match sky {
+                    Some(picture) => (sky_picture::every_size(picture), &picture.sampler),
+                    None => (fallback.d2.texture_view.clone(), &fallback.d2.sampler),
+                };
+                let bound = device.create_bind_group(
                     "ground_sheet",
                     &layout,
                     &BindGroupEntries::with_indices((
@@ -1334,12 +1478,18 @@ fn bind_sheets(
                         (108, atlas.view(AtlasTexture::Surface)),
                         (109, atlas.view(AtlasTexture::OverviewSurface)),
                         (110, uniform.binding()?),
+                        (111, &layers.texture_view),
+                        (112, &waters.texture_view),
+                        (113, &sky_view),
+                        (114, sky_sampler),
                     )),
                 );
                 Some(BoundSheet {
-                    sheet,
+                    sheet: bound,
                     material,
                     properties: prepared.properties.clone(),
+                    kind,
+                    through: sheet.over.is_water(),
                 })
             })
             .collect();
@@ -1347,15 +1497,19 @@ fn bind_sheets(
     }
 }
 
-/// Queues each terrain's sheets into the transparent pass of every view that shows any of them,
-/// on its material's pipeline for the view. A sheet lies under whatever blended stands on it, so
-/// the sheets are drawn before everything else the pass blends.
+/// Queues each terrain's sheets into the passes of every view that shows any of them, each on
+/// its material's pipeline for the view: those blended into the transparent pass, where a sheet
+/// lies under whatever blended stands on it, so they are drawn before everything else the pass
+/// blends; and the waters into the pass that draws over a copy of everything solid, after
+/// everything else in it, so whatever keeps the water out has written its depth by then.
 #[allow(clippy::too_many_arguments)]
 fn queue_sheets(
     cache: Res<PipelineCache>,
     pipeline: Option<ResMut<SheetPipeline>>,
-    draws: Res<DrawFunctions<Transparent3d>>,
-    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    blended_draws: Res<DrawFunctions<Transparent3d>>,
+    through_draws: Res<DrawFunctions<Transmissive3d>>,
+    mut blended: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    mut through: ResMut<ViewSortedRenderPhases<Transmissive3d>>,
     keys: Res<ViewKeyCache>,
     views: Query<&ExtractedView>,
     grounds: Query<(Entity, &MainEntity, &GroundBuffers, &SheetBindings)>,
@@ -1365,12 +1519,15 @@ fn queue_sheets(
     };
     let pipeline = &mut *pipeline;
     pipeline.drawn.clear();
-    let draw_function = draws.read().id::<DrawGroundSheets>();
+    let draw_blended = blended_draws.read().id::<DrawGroundSheets<false>>();
+    let draw_through = through_draws.read().id::<DrawGroundSheets<true>>();
+    let [first_of_all, last_of_all] =
+        [f32::NEG_INFINITY, f32::INFINITY].map(|depth_bias| TransparentSortingInfo3d::Sorted {
+            mesh_center: Vec3::ZERO,
+            depth_bias,
+        });
     for view in &views {
-        let (Some(phase), Some(&key)) = (
-            phases.get_mut(&view.retained_view_entity),
-            keys.get(&view.retained_view_entity),
-        ) else {
+        let Some(&key) = keys.get(&view.retained_view_entity) else {
             continue;
         };
         for (entity, &main, buffers, bindings) in &grounds {
@@ -1383,46 +1540,63 @@ fn queue_sheets(
                 .zip(ranges)
                 .map(|(bound, range)| {
                     let bound = bound.as_ref().filter(|_| !range.is_empty())?;
-                    pipeline.specialize(&cache, key, &bound.properties)
+                    pipeline.specialize(&cache, key, bound)
                 })
                 .collect();
-            let Some(first) = ids.iter().flatten().next().copied() else {
-                continue;
+            let first = |through: bool| {
+                bindings.0.iter().zip(&ids).find_map(|(bound, id)| {
+                    id.filter(|_| bound.as_ref().is_some_and(|sheet| sheet.through == through))
+                })
             };
+            if let (Some(id), Some(phase)) =
+                (first(false), blended.get_mut(&view.retained_view_entity))
+            {
+                phase.add_transient(Transparent3d {
+                    sorting_info: first_of_all,
+                    distance: 0.0,
+                    pipeline: id,
+                    entity: (entity, main),
+                    draw_function: draw_blended,
+                    batch_range: 0..1,
+                    extra_index: PhaseItemExtraIndex::None,
+                    indexed: true,
+                });
+            }
+            if let (Some(id), Some(phase)) =
+                (first(true), through.get_mut(&view.retained_view_entity))
+            {
+                phase.add_transient(Transmissive3d {
+                    sorting_info: last_of_all,
+                    distance: 0.0,
+                    pipeline: id,
+                    entity: (entity, main),
+                    draw_function: draw_through,
+                    batch_range: 0..1,
+                    extra_index: PhaseItemExtraIndex::None,
+                    indexed: true,
+                });
+            }
             pipeline
                 .drawn
                 .insert((view.retained_view_entity, entity), ids);
-            phase.add_transient(Transparent3d {
-                sorting_info: TransparentSortingInfo3d::Sorted {
-                    mesh_center: Vec3::ZERO,
-                    depth_bias: f32::NEG_INFINITY,
-                },
-                distance: 0.0,
-                pipeline: first,
-                entity: (entity, main),
-                draw_function,
-                batch_range: 0..1,
-                extra_index: PhaseItemExtraIndex::None,
-                indexed: true,
-            });
         }
     }
 }
 
 impl SheetPipeline {
-    /// The pipeline drawing a sheet of the material `properties` describes in a view of `view`'s
-    /// key, queued the first time it is asked for.
+    /// The pipeline drawing the sheet `bound` in a view of `view`'s key, queued the first time
+    /// it is asked for.
     fn specialize(
         &mut self,
         cache: &PipelineCache,
         view: MeshPipelineKey,
-        properties: &MaterialProperties,
+        bound: &BoundSheet,
     ) -> Option<CachedRenderPipelineId> {
-        let key = (view, properties.material_key.clone());
+        let key = (view, bound.kind, bound.properties.material_key.clone());
         if let Some(&id) = self.built.get(&key) {
             return Some(id);
         }
-        let descriptor = self.descriptor(view, properties)?;
+        let descriptor = self.descriptor(view, &bound.properties, bound.kind)?;
         let id = cache.queue_render_pipeline(descriptor);
         self.built.insert(key, id);
         Some(id)
@@ -1435,6 +1609,7 @@ impl SheetPipeline {
         &self,
         view: MeshPipelineKey,
         properties: &MaterialProperties,
+        kind: TypeId,
     ) -> Option<RenderPipelineDescriptor> {
         let mesh_key =
             view | MeshPipelineKey::from_primitive_topology_and_strip_index(
@@ -1475,7 +1650,7 @@ impl SheetPipeline {
             let key = ErasedMaterialPipelineKey {
                 mesh_key: ErasedMeshPipelineKey::new(mesh_key),
                 material_key: properties.material_key.clone(),
-                type_id: TypeId::of::<CoverMaterial>(),
+                type_id: kind,
             };
             specialize(&self.material, &mut descriptor, &self.layout, key).ok()?;
         }
@@ -1488,11 +1663,11 @@ impl SheetPipeline {
     }
 }
 
-/// Draws a terrain's sheets over the patches the view shows each on, each on its material's
-/// pipeline with its own bindings and its material's.
-struct DrawSheets;
+/// Draws a terrain's sheets of a pass over the patches the view shows each on, each on its
+/// material's pipeline with its own bindings and its material's.
+struct DrawSheets<const THROUGH: bool>;
 
-impl<P: PhaseItem> RenderCommand<P> for DrawSheets {
+impl<P: PhaseItem, const THROUGH: bool> RenderCommand<P> for DrawSheets<THROUGH> {
     type Param = (
         SRes<GroundGrid>,
         SRes<SheetPipeline>,
@@ -1533,6 +1708,9 @@ impl<P: PhaseItem> RenderCommand<P> for DrawSheets {
             let (Some(bound), Some(id)) = (bound, id) else {
                 continue;
             };
+            if bound.through != THROUGH {
+                continue;
+            }
             let Some(drawn) = cache.get_render_pipeline(*id) else {
                 progress.awaiting(cache.get_render_pipeline_state(*id));
                 continue;
@@ -1545,3 +1723,9 @@ impl<P: PhaseItem> RenderCommand<P> for DrawSheets {
         RenderCommandResult::Success
     }
 }
+
+const AIR_PASS: &str = "bevy_pbr::atmosphere::node::render_sky";
+
+/// Does nothing: stands in a camera's frame between the pass the waters are drawn in and the
+/// pass that lays the air on, for the one to be ordered before it and the other after.
+fn waters_drawn() {}

@@ -19,7 +19,7 @@ use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::render::video::{
     AmbientOcclusionQuality, AntiAliasingQuality, GrassQuality, PropDetail, Quality, ShadowQuality,
-    VideoPreferences, ViewDistance,
+    VideoPreferences, ViewDistance, WaterMirrors,
 };
 use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{CharactersPerSecond, Typing};
@@ -548,6 +548,18 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, words: &SettingsMes
         controls::toggle(ui, words.light_shafts(), &mut video.light_shafts)
             .hinted(words.light_shafts_hint());
         ui.end_row();
+        controls::toggle(ui, words.twinkling(), &mut video.twinkling)
+            .hinted(words.twinkling_hint());
+        ui.end_row();
+        controls::toggle(ui, words.water_bends(), &mut video.water_bends)
+            .hinted(words.water_bends_hint());
+        ui.end_row();
+        let label = ui.label(words.water_mirrors());
+        let name = |mirrors| mirrors_name(mirrors, words);
+        if let Some(mirrors) = picker(ui, "water mirrors", video.water_mirrors, name, label.id) {
+            video.water_mirrors = mirrors;
+        }
+        ui.end_row();
         let label = ui.label(words.shadows());
         let name = |shadows| shadow_name(shadows, words);
         if let Some(shadows) = picker(ui, "shadows", video.shadows, name, label.id) {
@@ -864,6 +876,13 @@ fn distance_name(distance: ViewDistance, words: &SettingsMessages) -> &str {
         ViewDistance::Near => words.level_near(),
         ViewDistance::Middle => words.level_middle(),
         ViewDistance::Far => words.level_far(),
+    }
+}
+
+fn mirrors_name(mirrors: WaterMirrors, words: &SettingsMessages) -> &str {
+    match mirrors {
+        WaterMirrors::SkyOnly => words.water_mirrors_sky(),
+        WaterMirrors::LandAndSky => words.water_mirrors_land(),
     }
 }
 
@@ -1500,6 +1519,20 @@ messages! {
         light_shafts,
         /// What the tooltip of the settings row for light shafts says.
         light_shafts_hint,
+        /// The label of the settings row for twinkling stars.
+        twinkling,
+        /// What the tooltip of the settings row for twinkling stars says.
+        twinkling_hint,
+        /// The label of the settings row for the bending of what lies under water.
+        water_bends,
+        /// What the tooltip of the settings row for the bending of what lies under water says.
+        water_bends_hint,
+        /// The label of the settings row for what water's mirror shows.
+        water_mirrors,
+        /// The name of water's mirror showing the land as well as the sky.
+        water_mirrors_land,
+        /// The name of water's mirror showing the sky alone.
+        water_mirrors_sky,
         /// The label of the settings row for the quality of shadows.
         shadows,
         /// The label of the settings row for the quality of ambient occlusion.

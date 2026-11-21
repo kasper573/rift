@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use super::gpu::draw::{GroundDraw, GroundPaint};
 use super::material::SurfaceFinish;
+use super::water::{self, WaterLook};
 use crate::core::ground::SAMPLES_PER_METER;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
@@ -31,13 +32,14 @@ pub const GROUND_PICTURE: u32 = 512;
 const SHARPNESS: u16 = 16;
 
 /// How one terrain paints the ground: its colour, the picture laid over it, if any, repeating
-/// every `tile` metres, its shades multiplied into the colour, and how it looks soaked, if rain
-/// wets it.
+/// every `tile` metres, its shades multiplied into the colour, how it looks soaked, if rain or a
+/// waterline wets it, and how much of itself it gives the water over it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroundLayer {
     pub color: LinearRgba,
     pub picture: Option<(String, Meters)>,
     pub wet: Option<WetLook>,
+    pub silt: f32,
 }
 
 /// How a surface looks soaked through: `darkening` of its colour left, 0 to 1, as wet earth
@@ -63,6 +65,7 @@ pub struct GroundPictures {
 /// for them to.
 pub fn ground_paint(
     layers: &[GroundLayer],
+    waters: &[WaterLook],
     finish: &SurfaceFinish,
     board: Handle<Image>,
     assets: &AssetServer,
@@ -75,6 +78,7 @@ pub fn ground_paint(
     let paint = GroundPaint {
         pictures: images.add(stack(1, &[])),
         layers: images.add(layers_image(layers, &vec![0; layers.len()])),
+        waters: images.add(water::looks_image(waters)),
         board,
         roughness: finish.roughness,
         reflectance: finish.reflectance,
@@ -153,14 +157,17 @@ fn stacked(layers: &[GroundLayer], loaded: Vec<Option<Image>>) -> (Image, Image)
     )
 }
 
-/// Each layer's colour and tile in the first row, and the place of its picture in the stack in
-/// the second.
+/// Each layer's colour and tile in the first row, the place of its picture in the stack and its
+/// silt in the second, and how it looks soaked in the third.
 fn layers_image(layers: &[GroundLayer], places: &[u32]) -> Image {
     let looks = layers.iter().map(|layer| {
         let tile = layer.picture.as_ref().map_or(1.0, |(_, tile)| tile.0);
         [layer.color.red, layer.color.green, layer.color.blue, tile]
     });
-    let places = places.iter().map(|&place| [place as f32, 0.0, 0.0, 0.0]);
+    let places = places
+        .iter()
+        .zip(layers)
+        .map(|(&place, layer)| [place as f32, layer.silt, 0.0, 0.0]);
     let soaked = layers.iter().map(|layer| match layer.wet {
         Some(wet) => [wet.darkening, wet.roughness, 1.0, 0.0],
         None => [1.0, 1.0, 0.0, 0.0],

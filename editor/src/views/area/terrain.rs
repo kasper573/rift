@@ -60,6 +60,15 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
                     if picker::content(ui, &mut cx, terrain, &path) {
                         changed = FormChange::at(&path);
                     }
+                    if let Some(silt) = def
+                        .as_deref()
+                        .map(|def| def.silt)
+                        .filter(|&silt| silt > 0.0)
+                    {
+                        ui::chip::plain(ui, format!("silts {silt}")).on_hover_text(
+                            "how much of itself this terrain gives the water over it",
+                        );
+                    }
                 });
             }
         });

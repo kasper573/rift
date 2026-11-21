@@ -86,7 +86,8 @@ pub(super) fn overlay_navmesh(painter: &egui::Painter, frame: &AreaFrame) {
     }
 }
 
-/// Lines where the ground crosses each whole metre of height, every fifth one stronger.
+/// Lines where the ground crosses each whole metre of height, every fifth one stronger, and where
+/// the bed under water drops to each depth traced.
 pub(super) fn overlay_contours(
     editor: &mut Editor,
     painter: &egui::Painter,
@@ -100,7 +101,26 @@ pub(super) fn overlay_contours(
         .view_mut(view_key)
         .contours
         .of(&frame.picture.area);
-    for contour in contours.iter() {
+    let deep = Color32::from_rgba_unmultiplied(120, 190, 255, 170);
+    for contour in &contours.depths {
+        for [from, to] in &contour.segments {
+            if !canvas.sees(Rect::from_points([*from, *to])) {
+                continue;
+            }
+            painter.line_segment(
+                [canvas.to_screen(*from), canvas.to_screen(*to)],
+                EStroke::new(1.0, deep),
+            );
+        }
+        if let Some([from, _]) = contour.segments.first() {
+            frame.labels.chip(
+                canvas.to_screen(*from),
+                format!("{} m deep", contour.height.0),
+                deep,
+            );
+        }
+    }
+    for contour in &contours.heights {
         let major = (contour.height.0 / 5.0).fract().abs() < 0.01;
         let color = if major {
             Color32::from_rgba_unmultiplied(255, 255, 255, 150)

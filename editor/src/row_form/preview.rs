@@ -4,7 +4,7 @@ use engine::core::card::CardStyleDef;
 use engine::core::content::{Content, ContentFile, MODULES, NamedContent};
 use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::area::prop::Footprint;
-use engine::systems::area::{AreaModuleKind, Pictured};
+use engine::systems::area::{AreaModuleKind, Pictured, TerrainDef};
 use engine::systems::movement::Bodies;
 use engine::systems::resource::{self, ResourceDef};
 use engine::systems::{GameSettings, messages};
@@ -30,6 +30,7 @@ use engine::systems::quest::card::{QuestCardLook, QuestMoment};
 use engine::systems::quest::{self, Parties, QuestDef};
 use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
+use engine::systems::water::WaterDef;
 use strum::VariantArray;
 use ui::egui::{self, Ui, Vec2};
 use ui::face;
@@ -39,6 +40,7 @@ use ui::theme;
 use ui::words;
 use ui::{chip, controls};
 
+use super::grounds::{self, PreviewLight};
 use super::quests::quest_parties_sections;
 use super::styles;
 use crate::app::Editor;
@@ -65,6 +67,10 @@ pub struct RowPreviewState {
     pub status_applied: bool,
     /// The turntable of each actor row shown, by the row.
     pub stages: HashMap<String, StageState>,
+    /// The light a water's and a terrain's previews are drawn under.
+    pub light: PreviewLight,
+    /// The water file a terrain is previewed under, once one is picked.
+    pub under: Option<String>,
 }
 
 impl Default for RowPreviewState {
@@ -76,6 +82,8 @@ impl Default for RowPreviewState {
             status_model: None,
             status_applied: false,
             stages: HashMap::new(),
+            light: PreviewLight::default(),
+            under: None,
         }
     }
 }
@@ -106,7 +114,9 @@ pub(crate) fn preview_place(table: &str) -> Option<PreviewPlace> {
         | ResourceDef::TABLE
         | ItemRarityDef::TABLE
         | CardStyleDef::TABLE
-        | MaterialDef::TABLE => Some(PreviewPlace::Beside),
+        | MaterialDef::TABLE
+        | WaterDef::TABLE
+        | TerrainDef::TABLE => Some(PreviewPlace::Beside),
         SfxDef::TABLE | BabbleDef::TABLE | BabbleBankDef::TABLE => Some(PreviewPlace::Below),
         _ => None,
     }
@@ -125,6 +135,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
         ResourceDef::TABLE => return show_resource(editor, ui, key),
         ItemRarityDef::TABLE => return styles::show_rarity(editor, ui, key),
         CardStyleDef::TABLE => return styles::show_card_style(editor, ui, key),
+        WaterDef::TABLE => return grounds::show_water(editor, ui, key),
+        TerrainDef::TABLE => return grounds::show_terrain(editor, ui, key),
         _ => {}
     }
     let now = ui.input(|i| i.time);

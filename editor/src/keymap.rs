@@ -46,6 +46,7 @@ pub enum EditorKey {
     SelectTool,
     SculptTool,
     PaintTool,
+    WaterTool,
     PlaceTool,
     ScatterTool,
     ModuleTool,
@@ -244,8 +245,8 @@ impl EditorKey {
             | Cancel | Move | Pick | Copy | Paste | SelectAll | ToggleSelection
             | ExtendSelection | FineStep | Unsnapped | Pan | Zoom | ContextMenu | FirstLine
             | LastLine => KeyScope::Everywhere,
-            SelectTool | SculptTool | PaintTool | PlaceTool | ScatterTool | ModuleTool
-            | TurnClockwise | TurnCounter | NavmeshOverlay | ContoursOverlay
+            SelectTool | SculptTool | PaintTool | WaterTool | PlaceTool | ScatterTool
+            | ModuleTool | TurnClockwise | TurnCounter | NavmeshOverlay | ContoursOverlay
             | FootprintsOverlay | BrushSmaller | BrushLarger | FrameSelection | TopDown
             | SelectAtCursor | PasteInPlace | MakeBlueprint | Listen | HourEarlier | HourLater
             | TurnEarlier | TurnLater | AsAuthored | PlayDay => KeyScope::Area,
@@ -301,6 +302,7 @@ impl EditorKey {
             SelectTool => "select",
             SculptTool => "sculpt the ground",
             PaintTool => "paint the ground",
+            WaterTool => "lay water",
             PlaceTool => "place a prop or blueprint",
             ScatterTool => "scatter props",
             ModuleTool => "module",
@@ -407,6 +409,7 @@ impl EditorKey {
             SelectTool => press(plain, Key::V),
             SculptTool => press(plain, Key::S),
             PaintTool => press(plain, Key::B),
+            WaterTool => press(plain, Key::W),
             PlaceTool => press(plain, Key::P),
             ScatterTool => press(plain, Key::G),
             ModuleTool => press(plain, Key::M),

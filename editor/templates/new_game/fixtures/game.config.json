@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "6e29aef4",
+  "content_version": "4c71baf5",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -207,46 +207,17 @@
     },
     "sky": {
       "air_per_metre": 10.0,
-      "day_haze": [
-        184,
-        212,
-        245
-      ],
-      "dusk_haze": [
-        242,
-        168,
-        107
-      ],
-      "night_haze": [
-        115,
-        128,
-        217
-      ],
-      "sunless_haze": [
-        41,
-        46,
-        76
-      ],
-      "moist_haze": [
-        219,
-        230,
-        237
-      ],
-      "rain_haze": [
-        150,
-        158,
-        166
+      "dust": 1.0,
+      "far_ground": [
+        104,
+        112,
+        92
       ],
       "moisture_of_cloud": 0.3,
       "sky_share": 0.25,
       "sky_light": 0.3,
-      "setting_sun": [
-        255,
-        153,
-        82
-      ],
-      "reddens_below": 25.0,
-      "reddening": 0.8,
+      "sun_size": 0.53,
+      "moon_size": 3.0,
       "moonlight": [
         158,
         184,
@@ -257,8 +228,6 @@
       "most_adapted": 1.0,
       "dusk_begins": 6.0,
       "night_falls": -10.0,
-      "sun_gone": -3.0,
-      "sun_full": 8.0,
       "night_ambient": 0.12,
       "cloud_dimming": 0.45
     },

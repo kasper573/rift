@@ -1,13 +1,13 @@
-//! The sky over the world and the daylight it stands in: an atmosphere scattering the sun's light,
-//! which paints the sky, blues the distance and lights everything from above, as moist as the
-//! weather makes the air, or the dark of a cave or a stage; the air the sun's shafts show in, and
-//! how an area's authored sun and ambient light turn with the hour of a day cycle and dim under
-//! cloud, the full moon lighting the night and the eye opening to the dark.
+//! The sky over the world and the daylight it stands in: an atmosphere scattering the sun's and
+//! the moon's light, which paints the sky, blues the distance, reddens a low sun and lights
+//! everything from above, as moist as the weather makes the air, or the dark of a cave or a
+//! stage; the air the sun's shafts show in, and how an area's authored sun and ambient light
+//! turn with the hour of a day cycle and dim under cloud, the full moon standing opposite the
+//! sun and the eye opening to the dark.
 
 use std::f32::consts::PI;
 
-use bevy::color::Mix;
-use bevy::light::atmosphere::{PhaseFunction, ScatteringMedium};
+use bevy::light::atmosphere::{Falloff, PhaseFunction, ScatteringMedium, ScatteringTerm};
 use bevy::light::{
     Atmosphere, AtmosphereEnvironmentMapLight, EnvironmentMapLight, FogVolume,
     GeneratedEnvironmentMapLight,
@@ -17,18 +17,44 @@ use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::haze::HazeBox;
 use super::{DRAWN_FRAMES_AFTER, RenderProgress, clouds, lights};
 use crate::core::math::{Rect, Rgb, smoothstep};
 use crate::core::render::Look;
 use crate::core::units::{Degrees, HourOfDay, Meters, Stops};
 
-/// How far into the air the haze is worked out, in metres of the world.
-const HAZE_REACH: f32 = 600.0;
-/// How many points of each slice of that reach the haze is summed over. The slices are a few
-/// metres deep, across which the air is all but the same, and each ray sums its points one after
-/// the other, so the GPU's time on the haze is the points' count however few the rays.
-const HAZE_SAMPLES: u32 = 2;
+/// How many points of each slice of the air between the eye and the farthest it sees the air's
+/// light is summed over: each ray sums its points one after the other, so the GPU's time on the
+/// air is the points' count however few the rays.
+const AIR_SAMPLES: u32 = 4;
+/// How high the air stands over the ground, which every height below is a share of.
+const AIR_HEIGHT: f32 = 100_000.0;
+/// What the gas of the air scatters of each colour a metre, thinning by a factor of e every
+/// `GAS_THINS` metres up: the blue of the sky and of the distance (Hillaire 2020, as below).
+const GAS_SCATTERS: Vec3 = Vec3::new(5.802e-6, 13.558e-6, 33.1e-6);
+const GAS_THINS: f32 = 8_000.0;
+/// What the dust and droplets of a clear day scatter and swallow a metre, alike of every
+/// colour and mostly onward the way the light was going: the white of the horizon and the glow
+/// round the sun.
+const DUST_SCATTERS: f32 = 3.996e-6;
+const DUST_SWALLOWS: f32 = 0.444e-6;
+const DUST_THINS: f32 = 1_200.0;
+const DUST_ONWARD: f32 = 0.8;
+/// What the ozone swallows of each colour a metre where it lies thickest, `OZONE_HIGH` up, in a
+/// layer `OZONE_DEEP` deep: the blue the zenith keeps through twilight.
+const OZONE_SWALLOWS: Vec3 = Vec3::new(0.650e-6, 1.881e-6, 0.085e-6);
+const OZONE_HIGH: f32 = 25_000.0;
+const OZONE_DEEP: f32 = 30_000.0;
+/// How many steps the air's moisture is told apart by: the GPU makes the air's medium anew
+/// whenever it changes, so it follows the weather in steps, each too small to see.
+const MOISTURE_STEPS: f32 = 16.0;
+/// How many stretches a light's way down through the air is summed over.
+const AIR_STEPS: u32 = 48;
+/// How many ways up from the horizon the air tells a shader how much of itself a light from
+/// beyond it crosses, each climbing the square of its share of the way to straight up, so they
+/// crowd toward the horizon, where the air it crosses changes fastest.
+pub const AIR_WAYS: usize = 16;
+/// How bright the eye takes each colour of a light for.
+const LUMINANCE: Vec3 = Vec3::new(0.2126, 0.7152, 0.0722);
 /// How many pixels across each face of the map of the sky's light is: the sky is a smooth
 /// gradient, and the light it sheds on a matte face smoother still.
 const SKY_MAP: u32 = 32;
@@ -54,28 +80,20 @@ pub struct SkyLook {
     /// shows its haze band from the heights the camera stands at, and no more, so what stands
     /// near keeps its own colour.
     pub air_per_metre: f32,
-    /// The haze's colours under the noon light: by day, glowing toward dusk, and by night, which
-    /// the dark of the night dims as it dims everything else.
-    pub day_haze: Rgb,
-    pub dusk_haze: Rgb,
-    pub night_haze: Rgb,
-    /// The haze of an air no sun ever lights.
-    pub sunless_haze: Rgb,
-    /// The haze of saturated air by day, and the haze of falling rain, which the air turns toward
-    /// as it rains round the eye.
-    pub moist_haze: Rgb,
-    pub rain_haze: Rgb,
+    /// How much dust dry air holds, of an Earth's on a clear day: the haze that whitens the
+    /// horizon and glows round the sun.
+    pub dust: f32,
+    /// The colour of the land past the world's edge, which the far air stands over.
+    pub far_ground: Rgb,
     /// How moist cloud of no water at all leaves the air, of saturated.
     pub moisture_of_cloud: f32,
     /// How much of the light a face under a clear sky gets comes from the sky rather than the sun.
     pub sky_share: f32,
     /// How much the sky lights everything from above, of the atmosphere's own brightness.
     pub sky_light: f32,
-    /// The colour a sun reddens toward as it nears the horizon, the elevation below which it
-    /// begins to, and how far toward it a sun on the horizon has gone, from 0 to 1.
-    pub setting_sun: Rgb,
-    pub reddens_below: Degrees,
-    pub reddening: f32,
+    /// How many degrees across the sun's and the moon's discs are.
+    pub sun_size: Degrees,
+    pub moon_size: Degrees,
     /// The full moon's light, and how much of the sun's it sheds.
     pub moonlight: Rgb,
     pub moon_share: f32,
@@ -86,9 +104,6 @@ pub struct SkyLook {
     /// full.
     pub dusk_begins: Degrees,
     pub night_falls: Degrees,
-    /// The sun's elevation below which its light is gone, and above which it is full.
-    pub sun_gone: Degrees,
-    pub sun_full: Degrees,
     /// How much of an area's ambient light the night leaves it, and how much of it the thickest
     /// cloud takes, each from 0 to 1.
     pub night_ambient: f32,
@@ -112,14 +127,18 @@ impl Sky {
 }
 
 /// Lets `camera` see `sky` and be lit by it: the air drawn
-/// behind the world, hazing the distance and shedding its light from above, or none from the dark.
+/// behind the world, hazing the distance as far as `farthest`, the farthest the camera sees
+/// anything, and shedding its light from above, or none from the dark.
 /// The camera keeps the means to draw the air for as long as it lives and only their strength
-/// changes from sky to sky, since making them anew fills the GPU's command memory with the work
-/// of making them, which it keeps for good.
-pub fn show(world: &mut World, camera: Entity, sky: Sky) {
-    let Some(sky_light) = world.get_resource::<Look>().map(|look| look.sky.sky_light) else {
+/// and reach change from sky to sky, since making them anew fills the GPU's command memory with
+/// the work of making them, which it keeps for good.
+pub fn show(world: &mut World, camera: Entity, sky: Sky, farthest: Meters) {
+    let Some(look) = world.get_resource::<Look>().map(|look| look.sky) else {
         return;
     };
+    let sky_light = look.sky_light;
+    // The air is told its distances in its own metres.
+    let reach = farthest.0 * look.air_per_metre;
     let intensity = match sky {
         Sky::Air => sky_light,
         Sky::Dark => 0.0,
@@ -130,8 +149,8 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
     if !camera.contains::<AtmosphereEnvironmentMapLight>() {
         camera.insert((
             AtmosphereSettings {
-                aerial_view_lut_max_distance: HAZE_REACH,
-                aerial_view_lut_samples: HAZE_SAMPLES,
+                aerial_view_lut_max_distance: reach,
+                aerial_view_lut_samples: AIR_SAMPLES,
                 ..default()
             },
             AtmosphereEnvironmentMapLight {
@@ -141,6 +160,11 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
             },
             SkyLight::default(),
         ));
+    }
+    if let Some(mut settings) = camera.get_mut::<AtmosphereSettings>()
+        && settings.aerial_view_lut_max_distance != reach
+    {
+        settings.aerial_view_lut_max_distance = reach;
     }
     if let Some(mut light) = camera.get_mut::<EnvironmentMapLight>()
         && light.intensity != intensity
@@ -233,7 +257,7 @@ impl Daylight {
     }
 }
 
-/// A sun as it shines at some hour: where it stands and how.
+/// A sun or a moon as it shines at some hour: where it stands and how.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SunLight {
     pub elevation: Degrees,
@@ -257,32 +281,21 @@ impl SunLight {
     }
 }
 
-/// The air over the world under `sky`: an Earth's atmosphere whose haze scatters the light
-/// `scattering` times as much as dry air's dust, the water in moist air scattering it white and
-/// hazing the horizon the more it holds, scaled down so the
-/// world's few hundred metres stretch over enough air to haze, over a ground the colour of the
-/// haze, so that past the world's edge the eye meets the same haze the far distance sinks into;
-/// or over the dark, an air that scatters nothing over a black ground.
+/// The air over the world under `sky`: an Earth's atmosphere whose dust scatters the light
+/// `scattering` times as much as dry air's, the water in moist air scattering it white and
+/// hazing the horizon the more it holds, scaled down so the world's few kilometres stretch over
+/// enough air to haze, over a far ground of the look's colour; or over the dark, an air that
+/// scatters nothing over a black ground.
 pub fn atmosphere(
     media: &mut Assets<ScatteringMedium>,
     sky: Sky,
     scattering: f32,
     look: &SkyLook,
 ) -> impl Bundle {
-    let mut medium = ScatteringMedium::default();
-    match sky {
-        Sky::Air => {
-            for term in &mut medium.terms {
-                if matches!(term.phase, PhaseFunction::Mie { .. }) {
-                    term.scattering *= scattering;
-                }
-            }
-        }
-        Sky::Dark => medium.terms.clear(),
-    }
-    let mut atmosphere = Atmosphere::earth(media.add(medium));
+    let mut atmosphere = Atmosphere::earth(media.add(medium(sky, scattering, look)));
+    atmosphere.outer_radius = atmosphere.inner_radius + AIR_HEIGHT;
     atmosphere.ground_albedo = match sky {
-        Sky::Air => look.day_haze.color().to_linear().to_vec3(),
+        Sky::Air => look.far_ground.color().to_linear().to_vec3(),
         Sky::Dark => Vec3::ZERO,
     };
     let scale = 1.0 / look.air_per_metre;
@@ -293,7 +306,185 @@ pub fn atmosphere(
             ..default()
         },
         atmosphere,
+        Moistened(scattering),
     )
+}
+
+/// The lights of a sky as they shine at some hour: its sun, and where the day turns the full
+/// moon, which always stands opposite it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyLights {
+    pub sun: SunLight,
+    pub moon: Option<SunLight>,
+}
+
+impl SkyLights {
+    /// The lights of an area whose authored sun stands `noon_elevation` high at `noon_azimuth`
+    /// in `color`, as they shine above the air at `daylight` under `clouds` holding `water`.
+    pub fn at(
+        daylight: Daylight,
+        noon_elevation: Degrees,
+        noon_azimuth: Degrees,
+        color: Color,
+        clouds: f32,
+        water: f32,
+        look: &Look,
+    ) -> SkyLights {
+        let sun = sun_at(
+            daylight,
+            noon_elevation,
+            noon_azimuth,
+            color,
+            clouds,
+            water,
+            look,
+        );
+        SkyLights {
+            sun,
+            moon: match daylight {
+                Daylight::Fixed => None,
+                Daylight::Hour(_) => Some(moon_of(sun, clouds, water, look)),
+            },
+        }
+    }
+
+    /// These lights as they reach a point `height` over the air's floor through `air`.
+    pub fn landed(&self, air: &SkyAir, height: Meters, look: &SkyLook) -> SkyLights {
+        SkyLights {
+            sun: air.landed(self.sun, look.sun_size, height),
+            moon: self
+                .moon
+                .map(|moon| air.landed(moon, look.moon_size, height)),
+        }
+    }
+
+    /// Whether the sun is the stronger of these lights: of the lights as they have landed, the
+    /// stronger casts the world's shadows.
+    pub fn sun_stronger(&self) -> bool {
+        self.moon
+            .is_none_or(|moon| self.sun.illuminance >= moon.illuminance)
+    }
+
+    /// The sun when `sun_casts`, or else the moon, and the other of the two.
+    pub fn caster(&self, sun_casts: bool) -> (SunLight, Option<SunLight>) {
+        match (sun_casts, self.moon) {
+            (false, Some(moon)) => (moon, Some(self.sun)),
+            _ => (self.sun, self.moon),
+        }
+    }
+
+    /// Every one of these lights.
+    pub fn all(&self) -> impl Iterator<Item = SunLight> {
+        std::iter::once(self.sun).chain(self.moon)
+    }
+}
+
+/// The air as a light crosses it on its way down to the world.
+pub struct SkyAir {
+    medium: ScatteringMedium,
+    floor: f32,
+    per_metre: f32,
+}
+
+impl SkyAir {
+    /// The air under `sky`, scattering the light `scattering` times as much as dry air's dust.
+    pub fn new(sky: Sky, scattering: f32, look: &SkyLook) -> SkyAir {
+        SkyAir {
+            medium: medium(sky, scattering, look),
+            floor: Atmosphere::earth(Handle::default()).inner_radius,
+            per_metre: look.air_per_metre,
+        }
+    }
+
+    /// `light` as it reaches a point `height` over the air's floor, its disc `disc` across:
+    /// dimmed and reddened by the air it crossed, the more the lower it stands, and gone once
+    /// the ground has hidden all of its disc.
+    pub fn landed(&self, light: SunLight, disc: Degrees, height: Meters) -> SunLight {
+        let from = self.from(height);
+        let horizon = -(self.floor / from).clamp(-1.0, 1.0).acos();
+        let elevation = light.elevation.radians().0;
+        let across = disc.radians().0.max(f32::EPSILON);
+        let showing = ((elevation - horizon) / across + 0.5).clamp(0.0, 1.0);
+        let through = self.through(from, elevation.max(horizon + 1e-4));
+        let kept = through.dot(LUMINANCE);
+        let color = light.color.to_linear().to_vec3() * through / kept.max(f32::EPSILON);
+        SunLight {
+            color: Color::linear_rgb(color.x, color.y, color.z),
+            illuminance: light.illuminance * kept * showing,
+            ..light
+        }
+    }
+
+    /// How much air a light from beyond it crosses down to a point `height` over the air's
+    /// floor, for each colour, along each of `AIR_WAYS` ways up from the horizon.
+    pub fn crossed_to(&self, height: Meters) -> [Vec3; AIR_WAYS] {
+        let from = self.from(height);
+        std::array::from_fn(|way| {
+            let up = (way as f32 / (AIR_WAYS - 1) as f32).powi(2);
+            self.crossed(from, up.asin())
+        })
+    }
+
+    fn from(&self, height: Meters) -> f32 {
+        self.floor + (height.0 * self.per_metre).max(1.0)
+    }
+
+    /// How much of each colour of a light standing `elevation` radians over the horizon
+    /// crosses the air down to `from` metres from the middle of the world it lies round.
+    fn through(&self, from: f32, elevation: f32) -> Vec3 {
+        (-self.crossed(from, elevation)).exp()
+    }
+
+    fn crossed(&self, from: f32, elevation: f32) -> Vec3 {
+        let up = elevation.sin();
+        let top = self.floor + AIR_HEIGHT;
+        let way = -from * up + (from * from * (up * up - 1.0) + top * top).max(0.0).sqrt();
+        let mut crossed = Vec3::ZERO;
+        for step in 0..AIR_STEPS {
+            // Finer steps near the ground, where the air is thick.
+            let (near, far) = (
+                (step as f32 / AIR_STEPS as f32).powi(2) * way,
+                ((step + 1) as f32 / AIR_STEPS as f32).powi(2) * way,
+            );
+            let along = (near + far) / 2.0;
+            let high = (from * from + along * along + 2.0 * from * along * up).sqrt() - self.floor;
+            let share = 1.0 - high / AIR_HEIGHT;
+            for term in &self.medium.terms {
+                crossed +=
+                    (term.absorption + term.scattering) * term.falloff.sample(share) * (far - near);
+            }
+        }
+        crossed
+    }
+}
+
+/// How moist the air's medium is made for air as moist as `humidity`.
+pub fn stepped_humidity(humidity: f32) -> f32 {
+    (humidity.clamp(0.0, 1.0) * MOISTURE_STEPS).round() / MOISTURE_STEPS
+}
+
+/// Has the air of `atmosphere` scatter the light `scattering` times as much as dry air's dust,
+/// when it doesn't already.
+pub fn moisten(world: &mut World, atmosphere: Entity, sky: Sky, scattering: f32, look: &SkyLook) {
+    let Some(mut moistened) = world.get_mut::<Moistened>(atmosphere) else {
+        return;
+    };
+    if moistened.0 == scattering {
+        return;
+    }
+    moistened.0 = scattering;
+    let Some(handle) = world
+        .get::<Atmosphere>(atmosphere)
+        .map(|air| air.medium.clone())
+    else {
+        return;
+    };
+    if let Some(mut held) = world
+        .resource_mut::<Assets<ScatteringMedium>>()
+        .get_mut(&handle)
+    {
+        *held = medium(sky, scattering, look);
+    }
 }
 
 /// The low air the sun's light shafts show in, as thick as `density`, standing `height` deep over
@@ -323,85 +514,6 @@ pub fn air(
     )
 }
 
-/// How thick fog hazes what is seen through it, dry and moist: through how much of it what is
-/// seen stays clear, through how much the haze lies as thick as it gets, and how thick that is,
-/// never so thick that what stands in it loses its shape; how much nearer saturated air and a
-/// cloudburst round the eye close it in, each a share of the way; and how thick the low air the
-/// sun's shafts show in stands in it round the eye, dry and saturated, dry air thin so the shafts
-/// show only where the light breaks through.
-#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Fog {
-    pub clear: Meters,
-    pub thick: Meters,
-    pub thickest: f32,
-    pub moist_closer: f32,
-    pub rain_closer: f32,
-    pub dry_air: f32,
-    pub moist_air: f32,
-}
-
-impl Fog {
-    /// This fog lying from `low` to `high` over the ground, `height` deep, as it hazes what is
-    /// seen through it in air as moist as `humidity` while it `rains` round the eye (0 none to 1
-    /// a cloudburst): the moister and the harder it rains, the nearer it closes in.
-    pub fn lying(
-        &self,
-        low: Vec2,
-        high: Vec2,
-        height: Meters,
-        humidity: f32,
-        rains: f32,
-    ) -> HazeBox {
-        let closer =
-            (1.0 - self.moist_closer * humidity) * (1.0 - self.rain_closer * rains.clamp(0.0, 1.0));
-        HazeBox {
-            low,
-            high,
-            height: height.0,
-            clear: self.clear.0 * closer,
-            thick: self.thick.0 * closer,
-            thickest: self.thickest,
-        }
-    }
-
-    /// How thick the low air the sun's shafts show in stands in this fog, as moist as `humidity`.
-    pub fn air(&self, humidity: f32) -> f32 {
-        self.dry_air + (self.moist_air - self.dry_air) * humidity.clamp(0.0, 1.0)
-    }
-}
-
-/// The colour of the haze under a `sun` and a `sky`: the colour of the sky at the horizon, pale
-/// blue by day, glowing at dusk and blue by night, greying as the air moistens to `humidity` and
-/// as it `rains` round the eye (0 none to 1 a cloudburst), as bright as the world is `lit` of its
-/// noon light, or black under a dark sky, so what stands far off in it sinks toward the sky.
-pub fn haze(
-    sun: Option<SunLight>,
-    lit: f32,
-    sky: Sky,
-    humidity: f32,
-    rains: f32,
-    look: &SkyLook,
-) -> Color {
-    match (sky, sun) {
-        (Sky::Dark, _) => Color::BLACK,
-        (Sky::Air, None) => look.sunless_haze.color(),
-        (Sky::Air, Some(sun)) => {
-            let day = smoothstep(look.sun_gone.0, look.sun_full.0, sun.elevation.0);
-            let glow = (1.0 - sun.elevation.0.abs() / 15.0).clamp(0.0, 1.0);
-            let moist = mix(look.day_haze.color(), look.moist_haze.color(), humidity);
-            let clear = mix(moist, look.rain_haze.color(), rains.clamp(0.0, 1.0));
-            let hue = mix(
-                mix(look.night_haze.color(), clear, day),
-                look.dusk_haze.color(),
-                glow,
-            )
-            .to_linear();
-            Color::LinearRgba(hue * lit)
-        }
-    }
-}
-
 /// How moist the air of an area is under `clouds` holding `water`, 0 dry to 1 saturated: the
 /// more water the sky holds, the more the air does, and cloud of any kind means some.
 pub fn humidity(clouds: f32, water: f32, look: &SkyLook) -> f32 {
@@ -409,10 +521,10 @@ pub fn humidity(clouds: f32, water: f32, look: &SkyLook) -> f32 {
     (clouds * (dry + (1.0 - dry) * water)).clamp(0.0, 1.0)
 }
 
-/// An area's authored sun as it shines at `daylight` under `clouds` holding `water`: fixed, as
-/// written; at an hour, climbing from the east over the morning to its authored noon height and
-/// bearing and setting over the evening, reddening as it nears the horizon and going out beneath
-/// it.
+/// An area's authored sun as it shines above the air at `daylight`, under `clouds` holding
+/// `water`: fixed, as written; at an hour, climbing from the east over the morning to its
+/// authored noon height and bearing, setting over the evening and going on round under the
+/// world. The air it shines through dims and reddens it on the way down ([`SkyAir::landed`]).
 pub fn sun_at(
     daylight: Daylight,
     noon_elevation: Degrees,
@@ -433,18 +545,11 @@ pub fn sun_at(
         },
         Daylight::Hour(hour) => {
             let (elevation, azimuth) = orbit(noon_elevation, noon_azimuth, hour);
-            let warmth = 1.0 - smoothstep(0.0, look.sky.reddens_below.0, elevation.0);
             SunLight {
                 elevation,
                 azimuth,
-                color: mix(
-                    color,
-                    look.sky.setting_sun.color(),
-                    warmth * look.sky.reddening,
-                ),
-                illuminance: sun_lux
-                    * smoothstep(look.sky.sun_gone.0, look.sky.sun_full.0, elevation.0)
-                    * clouded,
+                color,
+                illuminance: sun_lux * clouded,
             }
         }
     }
@@ -467,24 +572,32 @@ fn orbit(noon_elevation: Degrees, noon_azimuth: Degrees, hour: HourOfDay) -> (De
     )
 }
 
-/// The light the world is lit by under `sun`, with `clouds` holding `water`: the sun's until its
-/// light is gone below the horizon, then the light of the moon, always full, standing opposite
-/// it, brightening from nothing as the sun sinks on, so the one hands over to the other in the
-/// dark.
-pub fn shining(sun: SunLight, clouds: f32, water: f32, look: &Look) -> SunLight {
-    let (gone, full) = (look.sky.sun_gone.0, look.sky.sun_full.0);
-    if sun.elevation.0 >= gone {
-        return sun;
+/// How the sky has turned at `daylight` over an area whose sun stands `noon_elevation` high at
+/// `noon_azimuth` at noon: what carries a way of the world to the way of the sky's own it looks
+/// along. The sky turns with its sun, about the pole of the sun's orbit, and stands as at noon
+/// where the light stands fixed.
+pub fn sky_turn(daylight: Daylight, noon_elevation: Degrees, noon_azimuth: Degrees) -> Mat3 {
+    match daylight {
+        Daylight::Fixed => Mat3::IDENTITY,
+        Daylight::Hour(hour) => {
+            let noon = lights::toward(noon_elevation, noon_azimuth);
+            let setting = lights::toward(Degrees(0.0), Degrees(noon_azimuth.0 + 90.0));
+            Mat3::from_axis_angle(
+                noon.cross(setting).normalize(),
+                -(hour.0 - 12.0) / 12.0 * PI,
+            )
+        }
     }
-    let elevation = Degrees(-sun.elevation.0);
+}
+
+/// The moon as it shines above the air while `sun` shines, under `clouds` holding `water`:
+/// always full, standing opposite the sun.
+pub fn moon_of(sun: SunLight, clouds: f32, water: f32, look: &Look) -> SunLight {
     SunLight {
-        elevation,
+        elevation: Degrees(-sun.elevation.0),
         azimuth: Degrees((sun.azimuth.0 + 180.0).rem_euclid(360.0)),
         color: look.sky.moonlight.color(),
-        illuminance: look.light.sun_lux
-            * look.sky.moon_share
-            * smoothstep(-gone, full - 2.0 * gone, elevation.0)
-            * clouded(clouds, water, look),
+        illuminance: look.light.sun_lux * look.sky.moon_share * clouded(clouds, water, look),
     }
 }
 
@@ -497,15 +610,24 @@ pub fn night(daylight: Daylight, sun: SunLight, look: &SkyLook) -> f32 {
     }
 }
 
-/// How much wider the eye opens under `shining` at `daylight`, as an eye opens to the dusk and
-/// the night: by `adapting` for every stop the light falls, the sky dimming too as the light stands
-/// lower, up to `most_adapted`; never under a fixed light, which stands as authored.
-pub fn adaptation(daylight: Daylight, shining: SunLight, look: &Look) -> Stops {
+/// How much wider the eye opens at `daylight` under the lights `landed` on the ground, as an eye
+/// opens to the dusk and the night: by `adapting` for every stop the light falls, the sky dimming
+/// too as the lights stand lower, up to `most_adapted`; never under a fixed light, which stands
+/// as authored.
+pub fn adaptation(
+    daylight: Daylight,
+    landed: impl Iterator<Item = SunLight>,
+    look: &Look,
+) -> Stops {
     match daylight {
         Daylight::Fixed => Stops(0.0),
         Daylight::Hour(_) => {
-            let height = shining.elevation.radians().0.sin().max(0.0).sqrt();
-            let strength = shining.illuminance / look.light.sun_lux * (0.3 + 0.7 * height);
+            let strength: f32 = landed
+                .map(|light| {
+                    let height = light.elevation.radians().0.sin().max(0.0).sqrt();
+                    light.illuminance / look.light.sun_lux * (0.3 + 0.7 * height)
+                })
+                .sum();
             let opened = -strength.max(1e-3).log2() * look.sky.adapting;
             Stops(opened.clamp(0.0, look.sky.most_adapted.0))
         }
@@ -515,18 +637,6 @@ pub fn adaptation(daylight: Daylight, shining: SunLight, look: &Look) -> Stops {
 /// How much of the sun's light reaches the ground through `clouds` holding `water`.
 pub fn clouded(clouds: f32, water: f32, look: &Look) -> f32 {
     1.0 - clouds::shade(water, &look.clouds) * clouds
-}
-
-/// How brightly the world shows lit by `shining` and by `ambient` of its sky's full light, through
-/// an eye opened `opened`, of how it shows lit by its `noon` sun and its full sky light.
-pub fn lit(shining: SunLight, ambient: f32, opened: Stops, noon: SunLight, look: &Look) -> f32 {
-    let share = look.sky.sky_share;
-    let shown = |light: SunLight, ambient: f32| {
-        let sun =
-            light.illuminance / look.light.sun_lux * light.elevation.radians().0.sin().max(0.0);
-        (1.0 - share) * sun + share * ambient
-    };
-    shown(shining, ambient) * 2f32.powf(opened.0) / shown(noon, 1.0).max(1e-3)
 }
 
 /// How much of its authored brightness an area's ambient light keeps with its sun at
@@ -557,9 +667,49 @@ fn daytime(daylight: Daylight, elevation: Option<Degrees>, look: &SkyLook) -> Op
     }
 }
 
-fn mix(from: Color, to: Color, by: f32) -> Color {
-    Color::LinearRgba(from.to_linear().mix(&to.to_linear(), by))
+/// What the air under `sky` is made of: the gas, the dust with the droplets of air scattering
+/// `scattering` times as much as dry air's, and the ozone, each thinning with height as it does
+/// over an Earth; nothing under the dark.
+fn medium(sky: Sky, scattering: f32, look: &SkyLook) -> ScatteringMedium {
+    let terms = match sky {
+        Sky::Dark => Vec::new(),
+        Sky::Air => vec![
+            ScatteringTerm {
+                absorption: Vec3::ZERO,
+                scattering: GAS_SCATTERS,
+                falloff: Falloff::Exponential {
+                    scale: GAS_THINS / AIR_HEIGHT,
+                },
+                phase: PhaseFunction::Rayleigh,
+            },
+            ScatteringTerm {
+                absorption: Vec3::splat(DUST_SWALLOWS * look.dust),
+                scattering: Vec3::splat(DUST_SCATTERS * look.dust * scattering),
+                falloff: Falloff::Exponential {
+                    scale: DUST_THINS / AIR_HEIGHT,
+                },
+                phase: PhaseFunction::Mie {
+                    asymmetry: DUST_ONWARD,
+                },
+            },
+            ScatteringTerm {
+                absorption: OZONE_SWALLOWS,
+                scattering: Vec3::ZERO,
+                falloff: Falloff::Tent {
+                    center: 1.0 - OZONE_HIGH / AIR_HEIGHT,
+                    width: OZONE_DEEP / AIR_HEIGHT,
+                },
+                phase: PhaseFunction::Isotropic,
+            },
+        ],
+    };
+    let earth = ScatteringMedium::default();
+    ScatteringMedium::new(earth.falloff_resolution, earth.phase_resolution, terms)
 }
+
+/// How many times dry air's dust the air of an atmosphere scatters the light.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+struct Moistened(f32);
 
 /// A camera the sky lights: where its eye stands, how it sees the air, and whether its light is
 /// being filtered.

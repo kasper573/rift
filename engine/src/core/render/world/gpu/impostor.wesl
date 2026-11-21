@@ -20,7 +20,7 @@ import bevy_pbr::render::{
     pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT},
 };
 @if(!PREPASS_PIPELINE)
-import engine::core::render::world::shade::lighting;
+import engine::core::render::world::shade::{caster_way, lighting};
 @if(!PREPASS_PIPELINE)
 import bevy_pbr::render::mesh_view_bindings::lights;
 import bevy_pbr::render::mesh_view_bindings::view;
@@ -292,7 +292,7 @@ fn clear_of_its_shadow(world: vec3<f32>, radius: f32) -> vec3<f32> {
         return world;
     }
     let texel = 2.0 * radius * CELLS / f32(textureDimensions(albedo).x);
-    return world + lights.directional_lights[0].direction_to_light * UNSURE_TEXELS * texel;
+    return world + caster_way() * UNSURE_TEXELS * texel;
 }
 
 @if(!PREPASS_PIPELINE)

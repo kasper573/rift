@@ -6,16 +6,10 @@
 // in colours of its own), `albedo` the cover's own colour unlit, as its texture paints it without
 // its vertices' colours, `weight` how heavily the material is painted there, `tip` how far up a
 // blade or a strewn prop the point stands, 0 at its root and 1 at its top, `position` where it
-// stands in the world, `depth` how many metres of water stand over the ground under a sheet on
-// water, `shore` how far it lies from the nearest dry ground, up to `SHORE_REACH` metres, `fall`
-// how the water's surface falls there in metres a metre toward east and south (x and y: the way
-// the water flows, and how steeply), `light_facing(normal)` the light falling on a white face
-// turned to `normal` (for a shader that shapes its own faces, such as waves), `sun_way` the way
-// toward the light the world is lit by and `eye` where the camera looks from (for the glints off
-// such faces), `piece` which of the
+// stands in the world, `piece` which of the
 // cover's pieces the point belongs to (0 on a sheet), `seed` a number of the blade's or the copy's
 // own, 0 on a sheet, and, as a vertex moves, `root`, where its blade or copy stands on the ground
-// (a sheet's vertex is its own root). Off water, `depth`, `shore` and `fall` are 0. The cover's colours come from
+// (a sheet's vertex is its own root). The cover's colours come from
 // its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A copy is
 // an instance of its prop's model the scenery's arena holds, standing at its instance's origin,
 // its tint and seed riding on the instance. A sheet is drawn over the ground's patches, its points
@@ -35,8 +29,6 @@ import engine::core::render::world::shade::lighting;
 @if(!PREPASS_PIPELINE)
 import bevy_pbr::render::pbr_types::PbrInput;
 import bevy_pbr::render::mesh_view_bindings::view;
-@if(!PREPASS_PIPELINE)
-import bevy_pbr::render::mesh_view_bindings::lights;
 @if(SHEET_PATCH)
 import engine::core::render::world::gpu::sheet::{drawn_sheet, sheet_point};
 @if(GRASS_BLADE)
@@ -85,37 +77,6 @@ var<private> salt: f32;
 var<private> part: u32;
 var<private> spot: vec3<f32>;
 var<private> stem: vec3<f32>;
-var<private> ashore: f32;
-var<private> falling: vec2<f32>;
-@if(!PREPASS_PIPELINE)
-var<private> facing_input: PbrInput;
-
-// The vertex's output as the main pass hands it on: bevy's, with the water a sheet on water
-// carries, how far from the shore and how the surface falls.
-@if(!PREPASS_PIPELINE)
-struct CoverOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) world_position: vec4<f32>,
-    @location(1) world_normal: vec3<f32>,
-    @if(VERTEX_UVS_A)
-    @location(2) uv: vec2<f32>,
-    @if(VERTEX_UVS_B)
-    @location(3) uv_b: vec2<f32>,
-    @if(VERTEX_TANGENTS)
-    @location(4) world_tangent: vec4<f32>,
-    @if(VERTEX_COLORS)
-    @location(5) color: vec4<f32>,
-    @if(VERTEX_OUTPUT_INSTANCE_INDEX)
-    @location(6) @interpolate(flat) instance_index: u32,
-    @if(VISIBILITY_RANGE_DITHER)
-    @location(7) @interpolate(flat) visibility_range_dither: i32,
-    @location(8) water: vec3<f32>,
-}
-
-@if(!PREPASS_PIPELINE)
-alias Output = CoverOutput;
-@else
-alias Output = VertexOutput;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
@@ -137,10 +98,6 @@ fn tip() -> f32 {
     return up;
 }
 
-fn depth() -> f32 {
-    return up;
-}
-
 fn seed() -> f32 {
     return salt;
 }
@@ -157,43 +114,6 @@ fn root() -> vec3<f32> {
     return stem;
 }
 
-fn shore() -> f32 {
-    return ashore;
-}
-
-fn fall() -> vec2<f32> {
-    return falling;
-}
-
-@if(!PREPASS_PIPELINE)
-fn light_facing(normal: vec3<f32>) -> vec3<f32> {
-    var input = facing_input;
-    let facing = normalize(normal);
-    input.N = facing;
-    input.world_normal = facing;
-    return lighting(input).rgb;
-}
-@else
-fn light_facing(normal: vec3<f32>) -> vec3<f32> {
-    return shine;
-}
-
-@if(!PREPASS_PIPELINE)
-fn sun_way() -> vec3<f32> {
-    if lights.n_directional_lights == 0u {
-        return vec3<f32>(0.0, 1.0, 0.0);
-    }
-    return lights.directional_lights[0].direction_to_light;
-}
-@else
-fn sun_way() -> vec3<f32> {
-    return vec3<f32>(0.0, 1.0, 0.0);
-}
-
-fn eye() -> vec3<f32> {
-    return view.world_position;
-}
-
 fn mark(uv_b: vec2<f32>) {
     up = uv_b.x;
     painted = fract(uv_b.y);
@@ -204,13 +124,11 @@ fn mark(uv_b: vec2<f32>) {
 
 @if(SHEET_PATCH)
 @vertex
-fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) -> Output {
+fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) -> VertexOutput {
     let point = sheet_point(grid, instance);
-    ashore = point.shore;
-    falling = point.fall;
     stem = point.world;
     spot = point.world;
-    let marks = vec2<f32>(point.depth, min(point.weight, 255.0 / 256.0));
+    let marks = vec2<f32>(0.0, min(point.weight, 255.0 / 256.0));
     mark(marks);
     read_weather();
     var out: VertexOutput;
@@ -224,15 +142,13 @@ fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) 
     @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
         out.instance_index = instance;
     }
-    return handed_on(out);
+    return out;
 }
 
 @if(GRASS_BLADE)
 @vertex
-fn vertex(@builtin(vertex_index) index: u32) -> Output {
+fn vertex(@builtin(vertex_index) index: u32) -> VertexOutput {
     let point = blade_point(index);
-    ashore = 0.0;
-    falling = vec2<f32>(0.0);
     stem = point.root;
     spot = point.world;
     let weight = clamp(point.weight, 0.0, 255.0 / 256.0);
@@ -251,7 +167,7 @@ fn vertex(@builtin(vertex_index) index: u32) -> Output {
     @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
         out.instance_index = 0u;
     }
-    return handed_on(out);
+    return out;
 }
 
 // A strewn copy, standing where the culling kernel drew its instance and swayed about its origin:
@@ -282,12 +198,10 @@ struct CopyVertex {
 
 @if(!SHEET_PATCH && !GRASS_BLADE)
 @vertex
-fn vertex(in: CopyVertex) -> Output {
+fn vertex(in: CopyVertex) -> VertexOutput {
     let placed = placement(in.instance_index);
     let drawn = seed_of(in.instance_index);
     let at = world_of(placed, in.position);
-    ashore = 0.0;
-    falling = vec2<f32>(0.0);
     stem = placed.at;
     spot = at;
     let measure = clamp(in.position.y / strewn.height, 0.0, 1.0);
@@ -322,39 +236,6 @@ fn vertex(in: CopyVertex) -> Output {
     @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
         out.instance_index = 0u;
     }
-    return handed_on(out);
-}
-
-// The vertex's output as its pass takes it: in the main pass with the water it lies on.
-@if(!PREPASS_PIPELINE)
-fn handed_on(out: VertexOutput) -> CoverOutput {
-    var on: CoverOutput;
-    on.position = out.position;
-    on.world_position = out.world_position;
-    on.world_normal = out.world_normal;
-    @if(VERTEX_UVS_A) {
-        on.uv = out.uv;
-    }
-    @if(VERTEX_UVS_B) {
-        on.uv_b = out.uv_b;
-    }
-    @if(VERTEX_TANGENTS) {
-        on.world_tangent = out.world_tangent;
-    }
-    @if(VERTEX_COLORS) {
-        on.color = out.color;
-    }
-    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
-        on.instance_index = out.instance_index;
-    }
-    @if(VISIBILITY_RANGE_DITHER) {
-        on.visibility_range_dither = out.visibility_range_dither;
-    }
-    on.water = vec3<f32>(ashore, falling);
-    return on;
-}
-@else
-fn handed_on(out: VertexOutput) -> VertexOutput {
     return out;
 }
 
@@ -392,34 +273,6 @@ fn material_input(in: VertexOutput, is_front: bool) -> PbrInput {
     return pbr_input_from_standard_material(in, is_front);
 }
 
-// The fragment's input as bevy's lighting reads it.
-@if(!PREPASS_PIPELINE)
-fn taken_in(on: CoverOutput) -> VertexOutput {
-    var out: VertexOutput;
-    out.position = on.position;
-    out.world_position = on.world_position;
-    out.world_normal = on.world_normal;
-    @if(VERTEX_UVS_A) {
-        out.uv = on.uv;
-    }
-    @if(VERTEX_UVS_B) {
-        out.uv_b = on.uv_b;
-    }
-    @if(VERTEX_TANGENTS) {
-        out.world_tangent = on.world_tangent;
-    }
-    @if(VERTEX_COLORS) {
-        out.color = on.color;
-    }
-    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
-        out.instance_index = on.instance_index;
-    }
-    @if(VISIBILITY_RANGE_DITHER) {
-        out.visibility_range_dither = on.visibility_range_dither;
-    }
-    return out;
-}
-
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -430,10 +283,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 fn fragment(in: VertexOutput) {}
 @else
 @fragment
-fn fragment(on: CoverOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    let in = taken_in(on);
-    ashore = on.water.x;
-    falling = on.water.yz;
+fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     painted = 1.0;
     up = 0.0;
     salt = 0.0;
@@ -459,7 +309,6 @@ fn fragment(on: CoverOutput, @builtin(front_facing) is_front: bool) -> FragmentO
     }
     own = vec4<f32>(base.rgb / max(tinted.rgb, vec3<f32>(0.001)), base.a);
     pbr_input.material.base_color = vec4<f32>(1.0, 1.0, 1.0, base.a);
-    facing_input = pbr_input;
     shine = lighting(pbr_input).rgb;
     lit = vec4<f32>(shine * base.rgb, base.a);
     var uv = vec2<f32>(0.5);

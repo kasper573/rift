@@ -31,6 +31,7 @@ use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
 use engine::systems::item;
+use engine::systems::water::WATER;
 use serde_json::{Value, json};
 use strum::VariantArray;
 
@@ -122,6 +123,8 @@ const PLAIN: &str = "plain";
 /// The terrains and the footstep of every area a test declares.
 pub const TURF: &str = "turf";
 pub const ROCK: &str = "rock";
+/// The water [`Game::water`] lays.
+pub const POND: &str = "pond";
 const STEP: &str = "step";
 
 /// The path of the file of type `table` a test declares as `name`: the fixture of that name where
@@ -815,13 +818,16 @@ impl Game {
         }
     }
 
-    /// Lays `water` on the area `area`.
+    /// Lays `water` on the area `area`, as the one water the area names: the pond.
     pub fn water(self, area: &str, water: &WaterSurface) -> Game {
+        let game = self.pond().edit("area", area, |row| {
+            row["waters"] = json!([path("water", POND)]);
+        });
         let game = water
             .size()
             .each_tile()
             .filter_map(|at| Some((at, water.encode_tile(at)?)))
-            .fold(self, |game, (at, bytes)| {
+            .fold(game, |game, (at, bytes)| {
                 game.part(
                     "area",
                     area,
@@ -836,6 +842,30 @@ impl Game {
             &area::WATER_OVERVIEW.named("", "png"),
             overview,
         )
+    }
+
+    /// The pond: a water drawn by a shader that draws nothing, which sounds like nothing else to
+    /// wade.
+    pub fn pond(self) -> Game {
+        self.shader_on(POND, WATER)
+            .sfx(POND)
+            .row(
+                "surface",
+                POND,
+                json!({ "name": "Pond", "footstep": path("sfx", POND) }),
+            )
+            .row(
+                "water",
+                POND,
+                json!({
+                    "name": "Pond",
+                    "clarity": 4.0,
+                    "depths": [22, 74, 112],
+                    "murk": 0.2,
+                    "surface": path("surface", POND),
+                    "shader": path("vfx_shader", POND),
+                }),
+            )
     }
 
     /// The two terrains every declared area is painted with: turf to walk on and rock that
@@ -1097,26 +1127,19 @@ pub fn look() -> Look {
         },
         sky: SkyLook {
             air_per_metre: 10.0,
-            day_haze: Rgb([184, 212, 245]),
-            dusk_haze: Rgb([242, 168, 107]),
-            night_haze: Rgb([115, 128, 217]),
-            sunless_haze: Rgb([41, 46, 76]),
-            moist_haze: Rgb([219, 230, 237]),
-            rain_haze: Rgb([150, 158, 166]),
+            dust: 1.0,
+            far_ground: Rgb([104, 112, 92]),
             moisture_of_cloud: 0.3,
             sky_share: 0.25,
             sky_light: 0.3,
-            setting_sun: Rgb([255, 153, 82]),
-            reddens_below: Degrees(25.0),
-            reddening: 0.8,
+            sun_size: Degrees(0.53),
+            moon_size: Degrees(3.0),
             moonlight: Rgb([158, 184, 255]),
             moon_share: 0.06,
             adapting: 0.5,
             most_adapted: Stops(1.0),
             dusk_begins: Degrees(6.0),
             night_falls: Degrees(-10.0),
-            sun_gone: Degrees(-3.0),
-            sun_full: Degrees(8.0),
             night_ambient: 0.12,
             cloud_dimming: 0.45,
         },

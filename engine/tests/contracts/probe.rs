@@ -2,17 +2,18 @@ use bevy::math::Vec3;
 use bevy::math::proj::perspective_infinite_reverse;
 use bevy::transform::components::Transform;
 use engine::core::content::{Content, ContentScope, with_content};
+use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::sample::{GpuReport, RenderReport};
 use engine::core::units::{Bytes, Meters, Millis, Radians};
 use engine::systems::area::AreaDef;
 use engine::systems::probe::{
     FrameSample, FrameSamples, HITCH, MissingParts, ProbeFrames, ProbeGame, ProbeGameQuestion,
-    ProbeSystem, ProbeView, answer,
+    ProbeSystem, ProbeView, ProbeWater, answer,
 };
 use serde::de::DeserializeOwned;
 use serde_json::json;
-use testkit::{Game, Map, path};
+use testkit::{Game, HEIGHTS, Map, POND, path};
 
 #[test]
 fn a_driver_finds_the_games_things_through_the_probe() {
@@ -34,6 +35,17 @@ fn a_driver_finds_the_games_things_through_the_probe() {
         .hero("yard", 8.0, 1.0)
         .sword()
         .npc("keeper", 40.0, json!([]))
+        .water(
+            "yard",
+            &WaterSurface::from_fn(
+                GroundSize {
+                    width: 10,
+                    height: 8,
+                },
+                HEIGHTS,
+                |column, _| Meters(if column >= 18 { 0.5 } else { 0.0 }),
+            ),
+        )
         .engine_rows()
         .load();
     let area = content
@@ -93,6 +105,19 @@ fn a_driver_finds_the_games_things_through_the_probe() {
     let corners = route.expect("a way around the wall");
     assert_eq!(corners.last(), Some(&Pos::new(8.0, 3.0)));
     assert!(corners.len() > 1, "the way bends around the wall");
+
+    let [dry, wet]: [ProbeWater; 2] = [Pos::new(1.5, 1.5), Pos::new(9.5, 3.0)]
+        .map(|at| ask(&content, &ProbeGameQuestion::Water { area, at }));
+    assert_eq!(
+        (dry.water, dry.surface, dry.depth),
+        (None, None, Meters(0.0))
+    );
+    assert_eq!(
+        wet.water.map(|water| water.path(&content).to_owned()),
+        Some(path("water", POND))
+    );
+    let surface = wet.surface.expect("a surface where the pond lies");
+    assert!((surface.0 - wet.ground.0 - 0.5).abs() < 0.01 && (wet.depth.0 - 0.5).abs() < 0.01);
 }
 
 fn ask<Answer: DeserializeOwned>(content: &Content, question: &ProbeGameQuestion) -> Answer {

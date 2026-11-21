@@ -989,7 +989,12 @@ impl Loading {
     }
 
     /// Something the game loads with but should know it pays for, at `pointer` in `file`.
-    fn json_warning(&mut self, file: impl Into<String>, pointer: &str, problem: ContentProblem) {
+    pub fn json_warning(
+        &mut self,
+        file: impl Into<String>,
+        pointer: &str,
+        problem: ContentProblem,
+    ) {
         let file = file.into();
         let at = self.place(&file, pointer);
         self.warnings.push(LoadError { file, at, problem });

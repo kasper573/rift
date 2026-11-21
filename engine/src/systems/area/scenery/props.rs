@@ -15,6 +15,7 @@ use crate::core::vfx::standing::StandingVfx;
 use crate::core::vfx::uniform::ParamsUniform;
 use crate::systems::area::PropPlacement;
 use crate::systems::area::prop::PropDef;
+use crate::systems::water::ripples::RippleSpot;
 
 /// The transform a prop placed at `placed` stands with on `heights`.
 pub fn prop_transform(heights: &Heightfield, placed: &PropPlacement) -> Transform {
@@ -35,7 +36,8 @@ pub fn extent_of(info: &GltfInfo, scale: f32) -> SiteExtent {
 }
 
 /// Stands, under `root`, what the vfx a placed prop plays of its own accord play on: the prop's
-/// place and size, and each point of its model its vfx name, where the model has it.
+/// place and size, and each point of its model its vfx name, where the model has it. A prop
+/// that sends ripples over the water sends them from there.
 pub(super) fn stand_playing(
     world: &mut World,
     content: &Content,
@@ -63,6 +65,9 @@ pub(super) fn stand_playing(
             ChildOf(root),
         ))
         .id();
+    if let Some(ripples) = def.ripples {
+        world.entity_mut(stood).insert(RippleSpot(ripples));
+    }
     let sockets = def
         .effects
         .iter()

@@ -24,7 +24,7 @@ pub mod weather;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
-pub use fog::FogBank;
+pub use fog::{FogBank, LaidFog, Shafts};
 
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
@@ -66,7 +66,7 @@ use crate::core::content::{
 };
 use crate::core::ground::{
     GroundGrid, GroundSize, GroundValue, HeightRange, Heightfield, MAX_TERRAINS, MIN_SIDE,
-    PaintMap, ShareMap, TILE_SIDE, TileAt, WaterSurface,
+    PaintMap, SAMPLES_PER_METER, ShareMap, TILE_SIDE, TileAt, WaterMap, WaterSurface,
 };
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::script::{Expr, OwnerRow, ScriptModule, Scripts};
@@ -81,6 +81,7 @@ use crate::systems::mount::MountKind;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
 use crate::systems::spawner::{SpawnSurface, Spawner};
+use crate::systems::water::{MAX_WATERS, WaterDef, WaterId};
 use blueprint::{FlattenAt, FlattenError};
 use lighting::MAX_LIGHTS;
 use prop::MAX_PROPS;
@@ -120,7 +121,8 @@ pub fn content(registry: &mut ContentRegistry) {
         .hook(LoadStep::Across, lighting::check_area_shaders)
         .hook(LoadStep::Expand, flatten_all)
         .hook(LoadStep::Assemble, build_all)
-        .hook(LoadStep::Across, world_map::check_all);
+        .hook(LoadStep::Across, world_map::check_all)
+        .hook(LoadStep::Settings, fog::check_all);
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -142,6 +144,8 @@ pub fn same_area(world: &World, a: Entity, b: Entity) -> bool {
 
 /// Ground can lean no further than upright.
 const UPRIGHT: Degrees = Degrees(90.0);
+/// Metres a pictured water's shore rises for each metre back from the waterline.
+const SHORE_RISE: f32 = 0.15;
 
 /// The ground's heights, paint and water, a tile of each to a file named by the tile's place, and
 /// an overview of each over the whole ground, which answers for the tiles not loaded.
@@ -169,6 +173,14 @@ pub const WATER_OVERVIEW: PartSpec = PartSpec::File {
     name: "water_overview",
     exts: AssetKind::Image.extensions(),
 };
+pub const WATERS: PartSpec = PartSpec::Keyed {
+    folder: "waters",
+    exts: AssetKind::Image.extensions(),
+};
+pub const WATERS_OVERVIEW: PartSpec = PartSpec::File {
+    name: "waters_overview",
+    exts: AssetKind::Image.extensions(),
+};
 /// The share of the downpour each stretch of the area gets, as coarse as its maker likes: where
 /// the bundle has none, rain falls alike everywhere.
 pub const RAIN: PartSpec = PartSpec::File {
@@ -191,6 +203,10 @@ pub struct AreaDef {
     /// The terrains the paint names by their index here: the first is the ground where nothing is
     /// painted. The editor adds a terrain as it is first painted.
     pub terrains: Vec<TerrainId>,
+    /// The waters the water map names by their index here. The editor adds a water as it is
+    /// first laid.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub waters: Vec<WaterId>,
     pub lighting: Lighting,
     #[serde(default, skip_serializing_if = "Climate::is_still")]
     pub climate: Climate,
@@ -210,6 +226,8 @@ pub struct AreaDef {
     pub paint: PaintMap,
     #[serde(skip)]
     pub water: WaterSurface,
+    #[serde(skip)]
+    pub water_map: WaterMap,
     #[serde(skip)]
     pub rain: Option<ShareMap>,
 }
@@ -233,6 +251,7 @@ impl ContentFile for AreaDef {
             height_range,
             max_slope: Degrees(38.0),
             terrains: vec![near.file()?],
+            waters: Vec::new(),
             lighting: Lighting::day(),
             climate: Climate::always(Weather::breezy()),
             bars_mounts: Vec::new(),
@@ -243,6 +262,7 @@ impl ContentFile for AreaDef {
             heights: Heightfield::flat(size, height_range),
             paint: PaintMap::plain(size),
             water: WaterSurface::dry(size, height_range),
+            water_map: WaterMap::plain(size),
             rain: None,
         })
     }
@@ -265,6 +285,7 @@ impl ContentFile for AreaDef {
             MAX_TERRAINS,
             "terrains",
         );
+        cx.range("/waters", self.waters.len(), 0, MAX_WATERS, "waters");
         self.lighting.check("/lighting", cx);
         self.climate.check("/climate", cx);
         if let Some(rules) = &self.instance {
@@ -285,19 +306,22 @@ impl Bundle for AreaDef {
         HEIGHT,
         PAINT,
         WATER,
+        WATERS,
         HEIGHT_OVERVIEW,
         PAINT_OVERVIEW,
         WATER_OVERVIEW,
+        WATERS_OVERVIEW,
         RAIN,
     ];
     const WRITTEN: &'static [PartSpec] = Self::PARTS;
-    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT, WATER];
+    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT, WATER, WATERS];
 
     fn read_parts(&mut self, parts: &mut Parts) {
         scene::read(&mut self.scene, &BTreeMap::new(), parts);
         self.heights = Heightfield::flat(self.size, self.height_range);
         self.paint = PaintMap::plain(self.size);
         self.water = WaterSurface::dry(self.size, self.height_range);
+        self.water_map = WaterMap::plain(self.size);
         read_ground(
             parts,
             GroundParts {
@@ -322,6 +346,14 @@ impl Bundle for AreaDef {
             },
             &mut self.water,
         );
+        read_ground(
+            parts,
+            GroundParts {
+                tiles: WATERS,
+                overview: WATERS_OVERVIEW,
+            },
+            &mut self.water_map,
+        );
         self.rain = read_share_map(parts, RAIN);
     }
 
@@ -338,6 +370,9 @@ impl Bundle for AreaDef {
             put(writer, part(WATER, &at.key()), || {
                 self.water.encode_tile(at)
             })?;
+            put(writer, part(WATERS, &at.key()), || {
+                self.water_map.encode_tile(at)
+            })?;
         }
         put(writer, part(HEIGHT_OVERVIEW, ""), || {
             self.heights.encode_overview()
@@ -348,6 +383,9 @@ impl Bundle for AreaDef {
         put(writer, part(WATER_OVERVIEW, ""), || {
             self.water.encode_overview()
         })?;
+        put(writer, part(WATERS_OVERVIEW, ""), || {
+            self.water_map.encode_overview()
+        })?;
         put(writer, part(RAIN, ""), || {
             self.rain.as_ref().map(ShareMap::encode)
         })?;
@@ -357,7 +395,8 @@ impl Bundle for AreaDef {
 
 impl AreaDef {
     /// The files of the area at `bundle` its ground keeps that differ from `before`'s: each tile
-    /// of its heights, paint or water whose values changed, and the overview of each that did.
+    /// of its heights, paint, water or water map whose values changed, and the overview of each
+    /// that did.
     pub fn ground_files_changed(&self, before: &AreaDef, bundle: &str) -> BTreeSet<String> {
         let part = |spec: PartSpec, key: &str| format!("{bundle}/{}", spec.named(key, "png"));
         let resized = self.size != before.size;
@@ -366,12 +405,14 @@ impl AreaDef {
             (HEIGHT, HEIGHT_OVERVIEW, false),
             (PAINT, PAINT_OVERVIEW, false),
             (WATER, WATER_OVERVIEW, false),
+            (WATERS, WATERS_OVERVIEW, false),
         ];
         for at in self.size.each_tile() {
             let changed = [
                 self.heights.version(at) != before.heights.version(at),
                 self.paint.version(at) != before.paint.version(at),
                 self.water.version(at) != before.water.version(at),
+                self.water_map.version(at) != before.water_map.version(at),
             ];
             for ((tiles, _, any), changed) in grounds.iter_mut().zip(changed) {
                 if resized || changed {
@@ -395,6 +436,7 @@ impl AreaDef {
         area.heights = self.heights.resized(size);
         area.paint = self.paint.resized(size);
         area.water = self.water.resized(size);
+        area.water_map = self.water_map.resized(size);
         area.rain = self
             .rain
             .as_ref()
@@ -418,14 +460,28 @@ impl AreaDef {
         u8::try_from(self.terrains.len() - 1).ok()
     }
 
+    /// The index the water map names `water` by, listing it when it is new.
+    pub fn water_index(&mut self, water: WaterId) -> Option<u8> {
+        if let Some(index) = self.waters.iter().position(|known| *known == water) {
+            return u8::try_from(index).ok();
+        }
+        if self.waters.len() >= MAX_WATERS {
+            return None;
+        }
+        self.waters.push(water);
+        u8::try_from(self.waters.len() - 1).ok()
+    }
+
     fn ground(&self) -> Ground {
         Ground {
             size: self.size,
             max_slope: self.max_slope,
             terrains: self.terrains.clone(),
+            waters: self.waters.clone(),
             heights: self.heights.clone(),
             paint: self.paint.clone(),
             water: self.water.clone(),
+            water_map: self.water_map.clone(),
             rain: self.rain.clone(),
             lighting: self.lighting.clone(),
             climate: self.climate.clone(),
@@ -918,15 +974,19 @@ pub struct Area {
     /// The bodies its walk meshes keep clear of what blocks.
     pub bodies: Bodies,
     pub terrains: Vec<TerrainId>,
+    pub waters: Vec<WaterId>,
     pub heights: Heightfield,
     pub paint: PaintMap,
     pub water: WaterSurface,
+    pub water_map: WaterMap,
+    /// How deep water carries nobody on foot, in a game whose water stops anyone.
+    pub too_deep: Option<Meters>,
     /// The share of the downpour each stretch of the area gets; alike everywhere without one.
     pub rain: Option<ShareMap>,
     pub lighting: Lighting,
     pub climate: Climate,
     pub safe_zones: Vec<Rect<Meters>>,
-    pub fogs: Vec<FogBank>,
+    pub fogs: Vec<LaidFog>,
     pub soundscapes: Vec<SoundscapeDef>,
     /// Every prop standing in the area, scattered ones expanded.
     pub props: Vec<PropPlacement>,
@@ -940,9 +1000,12 @@ pub struct Area {
     /// the module or brings it.
     pub prop_origins: Vec<String>,
     pub lights: Vec<PointLightDef>,
-    /// The props among `props` that play vfx of their own, by their place there.
+    /// The props among `props` that play vfx of their own or send ripples over the water, by
+    /// their place there.
     pub playing: Vec<usize>,
     underfoot: Vec<walk::Underfoot>,
+    /// What a step in each of `waters` sounds like.
+    wading: Vec<SfxId>,
     footprints: Vec<Vec<Pos<Meters>>>,
     /// The footprints by the ground they cover, so a tile's mesh takes in only those reaching it.
     footprint_index: SpatialIndex,
@@ -1059,9 +1122,15 @@ impl Area {
         self.placements_by_tile.get(&at).map_or(&[], Vec::as_slice)
     }
 
+    /// What a foot put down at `at` sounds like: the water's surface where water stands over
+    /// the ground there, and else the terrain painting most of the cell.
     pub fn footstep_at(&self, at: Pos<Meters>) -> Option<&SfxId> {
         let cell = self.size.grid().cell_under(at)?;
-        Some(&self.underfoot_of(self.paint.dominant(cell)).footstep)
+        let wading = self
+            .wading
+            .get(usize::from(self.water_map.at(at)))
+            .filter(|_| self.water.depth_at(&self.heights, at).0 > 0.0);
+        Some(wading.unwrap_or_else(|| &self.underfoot_of(self.paint.dominant(cell)).footstep))
     }
 
     pub fn fallback_spawn(&self) -> Pos<Meters> {
@@ -1103,14 +1172,69 @@ pub fn shared(content: &Content, area: AreaId) -> &Arc<Area> {
     loaded(content, area).unwrap_or_else(|| panic!("area {} failed to load", area.path(content)))
 }
 
-/// A bundle the editor pictures: an area, a blueprint on its own canvas, a prop standing in the
-/// middle of a stage, or the bare stage for a rig the editor stands on it.
+/// What the editor pictures: an area, a blueprint on its own canvas, a prop standing in the
+/// middle of a stage, the bare stage for a rig the editor stands on it, a water over each bed it
+/// lies on, or a patch of a terrain, dry or under a metre of a water.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Pictured {
     Area(AreaId),
     Blueprint(blueprint::BlueprintId),
     Prop(prop::PropId),
     Stage,
+    Water(WaterId),
+    Terrain(TerrainId, Option<WaterId>),
+}
+
+/// How wide the dry shore of a pictured water is, how far out from it the water's bed runs, and
+/// how wide the band of each bed it is pictured over is.
+pub const PICTURED_SHORE: Meters = Meters(4.0);
+pub const PICTURED_REACH: Meters = Meters(28.0);
+pub const PICTURED_BED: Meters = Meters(4.0);
+/// How deep a terrain pictured under a water lies.
+pub const PICTURED_UNDER: Meters = Meters(1.0);
+
+/// How deep a pictured water of `clarity` stands `out` from its shore: nothing at the shore and
+/// twice its clarity where its bed ends, deepening faster the farther out, so the shallows, where
+/// a water's colour turns, take most of the picture.
+pub fn pictured_depth(clarity: Meters, out: Meters) -> Meters {
+    let share = (out.0 / PICTURED_REACH.0).clamp(0.0, 1.0);
+    Meters(2.0 * clarity.0 * share * share)
+}
+
+/// How far out from its shore a pictured water of `clarity` stands `depth` deep.
+pub fn pictured_out(clarity: Meters, depth: Meters) -> Meters {
+    Meters(PICTURED_REACH.0 * (depth.0 / (2.0 * clarity.0)).clamp(0.0, 1.0).sqrt())
+}
+
+/// The areas that lay `water`.
+pub fn laying(content: &Content, water: WaterId) -> impl Iterator<Item = AreaId> + '_ {
+    content.ids::<AreaDef>().filter(move |&area| {
+        content
+            .table::<AreaDef>()
+            .get(area)
+            .is_some_and(|def| def.waters.contains(&water))
+    })
+}
+
+/// The beds `water` is pictured over: every terrain of the areas that lay it, the home terrain
+/// when none does.
+pub fn pictured_beds(content: &Content, water: WaterId) -> Vec<TerrainId> {
+    let mut beds = Vec::new();
+    for area in laying(content, water) {
+        let Some(def) = content.table::<AreaDef>().get(area) else {
+            continue;
+        };
+        for terrain in &def.terrains {
+            if !beds.contains(terrain) {
+                beds.push(*terrain);
+            }
+        }
+    }
+    if beds.is_empty() {
+        beds.extend(home_terrain(content));
+    }
+    beds.truncate(MAX_TERRAINS);
+    beds
 }
 
 /// The flat ground a prop or a rig is pictured on, of the game's home terrain.
@@ -1168,9 +1292,11 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 size: def.size,
                 max_slope: UPRIGHT,
                 terrains: vec![home_terrain(content)?],
+                waters: Vec::new(),
                 heights: Heightfield::flat(def.size, home_range(content)?),
                 paint: PaintMap::plain(def.size),
                 water: WaterSurface::dry(def.size, home_range(content)?),
+                water_map: WaterMap::plain(def.size),
                 rain: None,
                 lighting: Lighting::day(),
                 climate: Climate::always(Weather::breezy()),
@@ -1180,14 +1306,91 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 blueprint::flatten_blueprint(content, id, keep, &mut errors),
             )
         }
+        Pictured::Water(water) => {
+            let def = content.table::<WaterDef>().get(water)?;
+            let beds = pictured_beds(content, water);
+            let lit_as =
+                laying(content, water).find_map(|area| content.table::<AreaDef>().get(area));
+            let size = GroundSize {
+                width: (PICTURED_SHORE.0 + PICTURED_REACH.0) as u32,
+                height: (beds.len() as u32 * PICTURED_BED.0 as u32).max(MIN_SIDE),
+            };
+            let range = HeightRange {
+                lowest: Meters(-2.0 * def.clarity.0 - 1.0),
+                highest: Meters(8.0),
+            };
+            let clarity = def.clarity;
+            let band = PICTURED_BED.0 as u32 * SAMPLES_PER_METER;
+            let last = beds.len().saturating_sub(1) as u32;
+            let ground = Ground {
+                size,
+                max_slope: UPRIGHT,
+                terrains: beds,
+                waters: vec![water],
+                heights: Heightfield::from_fn(size, range, |column, _| {
+                    let out = column as f32 / SAMPLES_PER_METER as f32 - PICTURED_SHORE.0;
+                    if out < 0.0 {
+                        Meters(-out * SHORE_RISE)
+                    } else {
+                        Meters(-pictured_depth(clarity, Meters(out)).0)
+                    }
+                }),
+                paint: PaintMap::from_fn(size, |_, row| (row / band).min(last) as u8),
+                water: WaterSurface::from_fn(size, range, |_, _| Meters(0.0)),
+                water_map: WaterMap::plain(size),
+                rain: None,
+                lighting: lit_as.map_or_else(Lighting::day, |area| area.lighting.clone()),
+                climate: lit_as.map_or_else(
+                    || Climate::always(Weather::breezy()),
+                    |area| area.climate.clone(),
+                ),
+            };
+            (
+                ground,
+                blueprint::flatten_kept(content, &[], keep, &mut errors),
+            )
+        }
+        Pictured::Terrain(terrain, under) => {
+            let range = HeightRange {
+                lowest: Meters(-2.0 * PICTURED_UNDER.0),
+                highest: Meters(2.0 * PICTURED_UNDER.0),
+            };
+            let bed = Meters(if under.is_some() {
+                -PICTURED_UNDER.0
+            } else {
+                0.0
+            });
+            let ground = Ground {
+                size: PROP_STAGE,
+                max_slope: UPRIGHT,
+                terrains: vec![terrain],
+                waters: under.into_iter().collect(),
+                heights: Heightfield::from_fn(PROP_STAGE, range, |_, _| bed),
+                paint: PaintMap::plain(PROP_STAGE),
+                water: match under {
+                    Some(_) => WaterSurface::from_fn(PROP_STAGE, range, |_, _| Meters(0.0)),
+                    None => WaterSurface::dry(PROP_STAGE, range),
+                },
+                water_map: WaterMap::plain(PROP_STAGE),
+                rain: None,
+                lighting: Lighting::day(),
+                climate: Climate::always(Weather::breezy()),
+            };
+            (
+                ground,
+                blueprint::flatten_kept(content, &[], keep, &mut errors),
+            )
+        }
         Pictured::Prop(_) | Pictured::Stage => {
             let ground = Ground {
                 size: PROP_STAGE,
                 max_slope: UPRIGHT,
                 terrains: vec![home_terrain(content)?],
+                waters: Vec::new(),
                 heights: Heightfield::flat(PROP_STAGE, home_range(content)?),
                 paint: PaintMap::plain(PROP_STAGE),
                 water: WaterSurface::dry(PROP_STAGE, home_range(content)?),
+                water_map: WaterMap::plain(PROP_STAGE),
                 rain: None,
                 lighting: Lighting::day(),
                 climate: Climate::always(Weather::breezy()),
@@ -1343,6 +1546,7 @@ fn build_all(loading: &mut Loading) {
         check_placed(&content, id, modules, &mut check);
         if loading.rechecks(AreaDef::TABLE, id.path(&content)) {
             check_terrains(&content, id, def, loading);
+            check_waters(&content, id, def, loading);
             check_footing(&content, id, &area, modules, &mut check);
         }
         let scene = scene_file(id.path(&content));
@@ -1371,14 +1575,37 @@ fn check_terrains(content: &Content, id: AreaId, def: &AreaDef, loading: &mut Lo
     }
 }
 
+/// Every water the water map names must be listed, in an area that keeps any water: a check over
+/// every tile of the map. An area without water names none, and its map says nothing.
+fn check_waters(content: &Content, id: AreaId, def: &AreaDef, loading: &mut Loading) {
+    let highest = usize::from(def.water_map.highest());
+    let wet = def.size.each_tile().any(|at| !def.water.is_blank_at(at));
+    if (wet || highest > 0) && highest >= def.waters.len() {
+        loading.json_error(
+            fields_file(id.path(content)),
+            "/waters",
+            ContentProblem::new(
+                "the water map names a missing water",
+                format!("the water map names water {highest}"),
+                match def.waters.len() {
+                    0 => "a water listed for the area's water to be".to_string(),
+                    listed => format!("waters 0 to {} listed", listed - 1),
+                },
+            ),
+        );
+    }
+}
+
 /// The ground an area is built on: what its config and parts say before any module stands on it.
 pub(super) struct Ground {
     size: GroundSize,
     max_slope: Degrees,
     terrains: Vec<TerrainId>,
+    waters: Vec<WaterId>,
     heights: Heightfield,
     paint: PaintMap,
     water: WaterSurface,
+    water_map: WaterMap,
     rain: Option<ShareMap>,
     lighting: Lighting,
     climate: Climate,
@@ -1426,10 +1653,10 @@ fn build_area(
             _ => None,
         })
         .collect();
-    let fogs: Vec<FogBank> = modules
+    let fogs: Vec<LaidFog> = modules
         .iter()
         .filter_map(|placed| match &placed.module {
-            AreaModule::Fog(bank) => Some(bank.clone()),
+            AreaModule::Fog(bank) => Some(bank.clone().laid(&ground.heights, &ground.water)),
             _ => None,
         })
         .collect();
@@ -1492,16 +1719,25 @@ fn build_area(
             .map(|outline| Rect::from_points(outline.iter().copied())),
     );
     let playing = (0..props.len())
-        .filter(|&index| !props[index].prop.get(content).effects.is_empty())
+        .filter(|&index| {
+            let prop = props[index].prop.get(content);
+            !prop.effects.is_empty() || prop.ripples.is_some()
+        })
         .collect();
     let area = Area {
         size: ground.size.meters(),
         max_slope: ground.max_slope,
         bodies,
         terrains: ground.terrains.clone(),
+        waters: ground.waters.clone(),
         heights: ground.heights.clone(),
         paint: ground.paint.clone(),
         water: ground.water.clone(),
+        water_map: ground.water_map.clone(),
+        too_deep: content
+            .try_built::<GameSettings>()
+            .and_then(|settings| settings.wading)
+            .map(|wading| wading.too_deep),
         rain: ground.rain.clone(),
         lighting: ground.lighting.clone(),
         climate: ground.climate.clone(),
@@ -1515,6 +1751,11 @@ fn build_area(
             })
             .collect(),
         underfoot: walk::underfoot(content, &ground.terrains),
+        wading: ground
+            .waters
+            .iter()
+            .map(|water| water.get(content).surface.get(content).footstep)
+            .collect(),
         footprints,
         footprint_index,
         props,

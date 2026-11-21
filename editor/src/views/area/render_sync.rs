@@ -8,10 +8,9 @@ use std::sync::Arc;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 use engine::core::content::Content;
-use engine::core::ground::{Heightfield, PaintMap};
 use engine::core::render::world::gpu::pick::{self, Outline, Picking};
 use engine::core::render::world::sky::Daylight;
-use engine::systems::area::scenery::{self, Scenery, Sight};
+use engine::systems::area::scenery::{self, Scenery, ShapedGround, Sight};
 use engine::systems::area::{Area, Weather};
 
 use super::overlays::OutlineSet;
@@ -187,11 +186,11 @@ impl StandingScene {
         })
     }
 
-    /// Lays the ground anew as `heights` and `paint` shape it, standing anew only what stands
-    /// where they changed.
-    pub fn lay_ground(&mut self, world: &mut World, heights: &Heightfield, paint: &PaintMap) {
+    /// Lays the ground anew as `ground` shapes it, standing anew only what stands where it
+    /// changed.
+    pub fn lay_ground(&mut self, world: &mut World, ground: ShapedGround) {
         if let Some(stood) = &self.stood {
-            scenery::lay_ground(world, stood.scenery, heights, paint);
+            scenery::lay_ground(world, stood.scenery, ground);
         }
     }
 

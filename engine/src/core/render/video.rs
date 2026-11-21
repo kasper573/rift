@@ -42,6 +42,12 @@ pub struct VideoPreferences {
     pub grass: GrassQuality,
     /// How close a prop still draws its model rather than its picture.
     pub detail: PropDetail,
+    /// The stars flicker, each at its own pace; off, each holds its mean brightness.
+    pub twinkling: bool,
+    /// What water's mirror looks for.
+    pub water_mirrors: WaterMirrors,
+    /// What lies under water shows bent by the ripples over it; off, it shows where it lies.
+    pub water_bends: bool,
 }
 
 impl Default for VideoPreferences {
@@ -57,6 +63,9 @@ impl Default for VideoPreferences {
             view_distance: ViewDistance::default(),
             grass: GrassQuality::default(),
             detail: PropDetail::default(),
+            twinkling: true,
+            water_mirrors: WaterMirrors::default(),
+            water_bends: true,
         }
     }
 }
@@ -64,6 +73,11 @@ impl Default for VideoPreferences {
 impl VideoPreferences {
     /// These preferences with every part of the finish at `quality`, the window as it is.
     pub fn at(self, quality: Quality) -> VideoPreferences {
+        let water_mirrors = if quality >= Quality::Medium {
+            WaterMirrors::LandAndSky
+        } else {
+            WaterMirrors::SkyOnly
+        };
         let (shadows, ambient_occlusion, anti_aliasing, view_distance, grass, detail) =
             match quality {
                 Quality::Lowest => (
@@ -116,6 +130,7 @@ impl VideoPreferences {
             view_distance,
             grass,
             detail,
+            water_mirrors,
             ..self
         }
     }
@@ -320,6 +335,18 @@ impl ViewDistance {
             ViewDistance::Far => None,
         }
     }
+}
+
+/// What water's mirror looks for: the sky alone, or the land, the boats and whatever else
+/// stands over the water as well, found by following each mirrored line of sight across the
+/// picture, which is the dearest thing water draws.
+#[derive(
+    Serialize, Deserialize, VariantArray, AsRefStr, Clone, Copy, Debug, Default, PartialEq, Eq,
+)]
+pub enum WaterMirrors {
+    SkyOnly,
+    #[default]
+    LandAndSky,
 }
 
 /// How thickly the blades the ground's covers grow stand, and how far off, as shares of all a

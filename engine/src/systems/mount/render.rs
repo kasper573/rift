@@ -10,7 +10,7 @@ use super::{MountDef, Riding, Travels};
 use crate::core::content::Content;
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::render::world::afloat::Afloat;
+use crate::core::render::world::afloat::{Aboard, Afloat};
 use crate::core::render::world::body::Body;
 use crate::core::render::{CameraRigSystems, GroundHeights, facing_rotation};
 use crate::core::units::{Meters, PlaybackRate, Seconds};
@@ -45,8 +45,8 @@ impl Plugin for MountRenderPlugin {
 
 /// The body of the mount a rider rides, which stands where its rider does.
 #[derive(Component)]
-struct Steed {
-    rider: Entity,
+pub(crate) struct Steed {
+    pub(crate) rider: Entity,
 }
 
 /// Shows every rider as high as their mount travels: one that flies its height over the land or
@@ -86,9 +86,9 @@ fn carry(world: &mut World) {
             None => rider.remove::<Aloft>(),
         };
         if floats {
-            rider.insert(Afloat);
+            rider.insert((Afloat { level: surface }, Aboard));
         } else {
-            rider.remove::<Afloat>();
+            rider.remove::<(Afloat, Aboard)>();
         }
     }
     let landed: Vec<Entity> = world
@@ -96,7 +96,7 @@ fn carry(world: &mut World) {
         .iter(world)
         .collect();
     for landed in landed {
-        world.entity_mut(landed).remove::<(Aloft, Afloat)>();
+        world.entity_mut(landed).remove::<(Aloft, Afloat, Aboard)>();
     }
 }
 
@@ -181,9 +181,12 @@ fn lead(world: &mut World, steed: Entity, rider: Entity, def: &MountDef) {
         Some(aloft) => steed.insert(aloft),
         None => steed.remove::<Aloft>(),
     };
-    match def.travels {
-        Travels::Floating { .. } => steed.insert(Afloat),
-        Travels::Riding | Travels::Flying { .. } => steed.remove::<Afloat>(),
+    let afloat = aloft
+        .filter(|_| matches!(def.travels, Travels::Floating { .. }))
+        .map(|aloft| Afloat { level: aloft.0 });
+    match afloat {
+        Some(afloat) => steed.insert(afloat),
+        None => steed.remove::<Afloat>(),
     };
     if let Some(area) = area {
         steed.insert(area);

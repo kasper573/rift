@@ -3,6 +3,7 @@
 //! only knows how it is drawn.
 
 pub mod afloat;
+pub mod backdrop;
 pub mod billboard;
 pub mod body;
 pub mod clouds;
@@ -22,7 +23,9 @@ pub mod paint;
 pub mod plumb;
 pub mod rig_clip;
 pub mod sky;
+pub mod sky_picture;
 pub mod terrain;
+pub mod water;
 
 use std::fmt;
 use std::sync::Arc;
@@ -68,6 +71,8 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "material.wesl");
         bevy::asset::embedded_asset!(app, "material_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
+        bevy::asset::embedded_asset!(app, "backdrop.wesl");
+        bevy::asset::embedded_asset!(app, "afloat.wesl");
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             let progress = RenderProgress::default();
@@ -80,7 +85,13 @@ impl Plugin for WorldScenePlugin {
             );
             app.insert_resource(progress);
         }
-        app.add_plugins(MaterialPlugin::<cover::CoverMaterial>::default());
+        app.add_plugins((
+            MaterialPlugin::<cover::CoverMaterial>::default(),
+            MaterialPlugin::<backdrop::BackdropMaterial>::default(),
+            MaterialPlugin::<water::WaterMaterial>::default(),
+            MaterialPlugin::<afloat::WaterLidMaterial>::default(),
+            sky_picture::SkyPicturePlugin,
+        ));
         app.add_plugins((
             MaterialPlugin::<material::WorldMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),
@@ -105,7 +116,7 @@ impl Plugin for WorldScenePlugin {
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
-        .init_resource::<afloat::OverSheetMaterials>()
+        .init_resource::<afloat::LidMaterial>()
         .init_resource::<cover::CoverVariants>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)
@@ -143,7 +154,7 @@ impl Plugin for WorldScenePlugin {
             (
                 let_depth_be_read,
                 opacity::thin,
-                afloat::draw_over_sheets,
+                afloat::lid_the_floating,
                 plumb::hang
                     .after(layers::run)
                     .before(bevy::transform::TransformSystems::Propagate),

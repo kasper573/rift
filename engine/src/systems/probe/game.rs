@@ -30,6 +30,7 @@ use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
 use crate::systems::skill::{SkillDef, SkillId};
 use crate::systems::spawner::{SpawnSurface, Spawns};
+use crate::systems::water::WaterId;
 
 /// A question for the probe that only a frame of a running client answers, one JSON line each,
 /// answered with one JSON line before the next is asked.
@@ -130,12 +131,13 @@ pub enum ProbeGameQuestion {
     },
 }
 
-/// The water at a point of an area: the height of the ground, the height of the water's surface
-/// over it, or null where the ground lies dry, how deep the water lies there, and the share of
-/// their pace someone wading through keeps in it.
+/// The water at a point of an area: the height of the ground, which water lies over it and the
+/// height of its surface, or null for both where the ground lies dry, how deep the water lies
+/// there, and the share of their pace someone wading through keeps in it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ProbeWater {
     pub ground: Meters,
+    pub water: Option<WaterId>,
     pub surface: Option<Meters>,
     pub depth: Meters,
     pub pace: f32,
@@ -651,12 +653,19 @@ fn water(content: &Content, id: AreaId, at: Pos<Meters>) -> ProbeWater {
     area.heights
         .load(tile)
         .and(area.water.load(tile))
+        .and(area.water_map.load(tile))
         .expect("a game that loaded reads its ground");
     let depth = area.water.depth_at(&area.heights, at);
+    let wet = depth.0 > 0.0;
     let wading = content.built::<GameSettings>().wading;
     ProbeWater {
         ground: area.heights.height_at(at),
-        surface: (depth.0 > 0.0).then(|| area.water.height_at(at)),
+        water: area
+            .waters
+            .get(usize::from(area.water_map.at(at)))
+            .copied()
+            .filter(|_| wet),
+        surface: wet.then(|| area.water.height_at(at)),
         depth,
         pace: wading.map_or(1.0, |wading| wading.share_at(depth)),
     }

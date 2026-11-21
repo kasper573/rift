@@ -33,3 +33,32 @@ fn sky_light(way: vec3<f32>) -> vec3<f32> {
     }
     return light / SKY_NITS;
 }
+
+// The air's own sky as the eye sees it toward `way`, in candela per square metre: what the air's
+// light on the world is worked out from, before any of it is gathered over a face.
+fn sky_air(way: vec3<f32>) -> vec3<f32> {
+    var air = vec3<f32>(0.0);
+    var toward = way;
+    toward.z = -toward.z;
+    @if(ENVIRONMENT_MAP && MULTIPLE_LIGHT_PROBES_IN_ARRAY) {
+        if light_probes.view_cubemap_index >= 0 {
+            air = textureSampleLevel(
+                mesh_view_bindings::specular_environment_maps[light_probes.view_cubemap_index],
+                mesh_view_bindings::environment_map_sampler,
+                toward,
+                0.0
+            ).rgb;
+        }
+    }
+    @if(ENVIRONMENT_MAP && !MULTIPLE_LIGHT_PROBES_IN_ARRAY) {
+        if light_probes.view_cubemap_index >= 0 {
+            air = textureSampleLevel(
+                mesh_view_bindings::specular_environment_map,
+                mesh_view_bindings::environment_map_sampler,
+                toward,
+                0.0
+            ).rgb;
+        }
+    }
+    return air;
+}

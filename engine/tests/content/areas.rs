@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use engine::core::content::{
     Content, ContentFolder, FileHash, FolderEntry, FolderReader, LoadPurpose, LoadReport,
-    MemoryFolder, SETTINGS_FILE, load, version, write,
+    LoadWarnings, MemoryFolder, SETTINGS_FILE, load, version, write,
 };
 use engine::core::ground::{
-    self as ground, GroundSize, Heightfield, MIN_SIDE, PaintMap, ShareMap, TileAt, WaterSurface,
+    self as ground, GroundSize, Heightfield, MIN_SIDE, PaintMap, ShareMap, TileAt, WaterMap,
+    WaterSurface,
 };
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
@@ -205,43 +206,60 @@ fn an_area_is_held_to_its_budgets_of_lights_and_props() {
 }
 
 #[test]
-fn fog_lies_over_the_ground_where_it_is_placed_and_no_further_than_the_ground_reaches() {
-    let bank = |x: f32, w: f32, thickest: f32| {
+fn fog_lies_over_the_ground_where_it_is_placed_no_thicker_than_the_game_lets_a_player_see_through()
+{
+    let bank = |x: f32, w: f32, sight: f32, moist_closer: f32| {
         json!({
             "type": "fog",
             "rect": { "x": x, "y": 2.0, "w": w, "h": 4.0 },
-            "height": 12.0,
-            "haze": {
-                "clear": 5.0, "thick": 30.0, "thickest": thickest, "moist_closer": 0.2,
-                "rain_closer": 0.1, "dry_air": 0.001, "moist_air": 0.004,
-            },
+            "sight": sight,
+            "depth": 12.0,
+            "edge": 1.0,
+            "moist_closer": moist_closer,
+            "rain_closer": 0.1,
+            "shafts": { "dry": 0.001, "moist": 0.004 },
         })
     };
     let content = game()
-        .area("meadow", &Map::open(16, 16), json!([bank(1.0, 6.0, 0.5)]))
+        .area(
+            "meadow",
+            &Map::open(16, 16),
+            json!([bank(1.0, 6.0, 60.0, 0.2)]),
+        )
         .load();
     let meadow = area::load(&content, area_id(&content, "meadow"));
-    let lying: Vec<(Rect<Meters>, Meters, f32)> = meadow
+    let lying: Vec<(Rect<Meters>, Meters, Meters, Meters)> = meadow
         .fogs
         .iter()
-        .map(|fog| (fog.rect, fog.height, fog.haze.thickest))
+        .map(|laid| (laid.bank.rect, laid.bank.sight, laid.bank.depth, laid.floor))
         .collect();
     assert_eq!(
         lying,
         [(
             Rect::new(Pos::new(1.0, 2.0), Size::new(6.0, 4.0)),
+            Meters(60.0),
             Meters(12.0),
-            0.5
-        )]
+            meadow.heights.height_at(Pos::new(3.0, 4.0)),
+        )],
+        "a bank lies on the lowest ground under it"
+    );
+    assert!(
+        content.built::<LoadWarnings>().0.is_empty(),
+        "the sky lights a bank under the air"
     );
 
     for (rule, refused, told) in [
         (
             "outside the terrain",
-            bank(12.0, 8.0, 0.5),
+            bank(12.0, 8.0, 60.0, 0.2),
             "lands outside the terrain at 20, 6",
         ),
-        ("out of range", bank(1.0, 6.0, 1.5), ""),
+        ("out of range", bank(1.0, 6.0, 60.0, 1.5), ""),
+        (
+            "fog thicker than the game's sight",
+            bank(1.0, 6.0, 20.0, 0.2),
+            "at least the game's sight, 24 metres",
+        ),
     ] {
         let report = game()
             .area("meadow", &Map::open(16, 16), json!([refused.clone()]))
@@ -251,6 +269,31 @@ fn fog_lies_over_the_ground_where_it_is_placed_and_no_further_than_the_ground_re
         assert!(rules(&report).contains(&rule), "{refused}: {report}");
         assert!(report.to_string().contains(told), "{refused}: {report}");
     }
+
+    let under_dark = |bank: Value| {
+        game()
+            .area("vault", &Map::open(16, 16), json!([bank]))
+            .edit("area", "vault", |area| {
+                area["lighting"]["sky"] = json!("dark")
+            })
+            .load()
+    };
+    let warned = |content: &Content| {
+        content
+            .built::<LoadWarnings>()
+            .0
+            .iter()
+            .map(|warning| warning.problem.rule)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        warned(&under_dark(bank(1.0, 6.0, 60.0, 0.2))),
+        ["fog without light"],
+        "a dark sky has no light to give a bank that sheds none"
+    );
+    let mut glowing = bank(1.0, 6.0, 60.0, 0.2);
+    glowing["glow"] = json!([40, 60, 50]);
+    assert!(warned(&under_dark(glowing)).is_empty());
 }
 
 #[test]
@@ -348,7 +391,7 @@ fn ground_reads_in_blocks_and_overviews_that_follow_its_edits_each_tile_versione
 }
 
 #[test]
-fn an_areas_heights_paint_water_and_rain_write_back_as_they_were_read() {
+fn an_areas_heights_paint_waters_and_rain_write_back_as_they_were_read() {
     let size = GroundSize {
         width: 8,
         height: 8,
@@ -362,21 +405,44 @@ fn an_areas_heights_paint_water_and_rain_write_back_as_they_were_read() {
         .expect("water lies on the tile")
         .to_vec();
     let pond_overview = pond.encode_overview().expect("water lies somewhere");
+    let waters = WaterMap::from_fn(size, |column, _| u8::from(column >= 3));
     let rain = ShareMap::from_fn(3, 2, |across, down| across * (1.0 - down));
     let game = game()
         .area("hill", &Map::open(8, 8), json!([]))
+        .water("hill", &pond)
+        .row(
+            "water",
+            "brook",
+            json!({
+                "name": "Brook",
+                "clarity": 1.0,
+                "depths": [70, 50, 20],
+                "murk": 0.3,
+                "surface": path("surface", testkit::POND),
+                "shader": path("vfx_shader", testkit::POND),
+            }),
+        )
+        .edit("area", "hill", |hill| {
+            hill["waters"] = json!([path("water", testkit::POND), path("water", "brook")]);
+        })
         .part("area", "hill", "height/0_0.png", tile(&hill()))
         .part("area", "hill", "paint/0_0.png", tile_paint(&paint))
-        .part("area", "hill", "water/0_0.png", pond_tile.clone())
+        .part("area", "hill", "waters/0_0.png", tile_paint(&waters))
         .part("area", "hill", "height_overview.png", overview(&hill()))
         .part("area", "hill", "paint_overview.png", overview_paint(&paint))
-        .part("area", "hill", "water_overview.png", pond_overview.clone())
+        .part(
+            "area",
+            "hill",
+            "waters_overview.png",
+            overview_paint(&waters),
+        )
         .part("area", "hill", "rain.png", rain.encode());
     let out = tempfile::tempdir().expect("a folder");
     let registry = game.registry();
     let content = game.load();
     let read = area::load(&content, area_id(&content, "hill"));
     assert_eq!(read.water, pond);
+    assert_eq!(read.water_map, waters);
     assert_eq!(read.rain.as_ref(), Some(&rain));
 
     write(registry, content, out.path()).expect("written");
@@ -389,6 +455,14 @@ fn an_areas_heights_paint_water_and_rain_write_back_as_they_were_read() {
     assert_eq!(
         std::fs::read(hill_area.join("water_overview.png")).expect("the water overview"),
         pond_overview
+    );
+    assert_eq!(
+        std::fs::read(hill_area.join("waters/0_0.png")).expect("the water map"),
+        tile_paint(&waters)
+    );
+    assert_eq!(
+        std::fs::read(hill_area.join("waters_overview.png")).expect("the water map's overview"),
+        overview_paint(&waters)
     );
     assert_eq!(
         std::fs::read(hill_area.join("rain.png")).expect("the rain map"),
@@ -416,8 +490,10 @@ fn an_areas_heights_paint_water_and_rain_write_back_as_they_were_read() {
         "a flat area keeps no height tiles and no overview"
     );
     assert!(
-        !start.join("water").exists() && !start.join("rain.png").exists(),
-        "a dry area keeps no water tiles, and one where rain falls alike no rain map"
+        !start.join("water").exists()
+            && !start.join("waters").exists()
+            && !start.join("rain.png").exists(),
+        "a dry area keeps no water tiles or water map, and one where rain falls alike no rain map"
     );
     let played = crate::support::game()
         .area(
@@ -659,8 +735,7 @@ fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_gr
         assert!(rules(&report).contains(&rule), "{grown}: {report}");
     }
     for body in [
-        json!({ "sheet": "ground" }),
-        json!({ "sheet": "water" }),
+        json!({ "sheet": true }),
         json!({ "seed": 42, "pieces": [blade(0.1, 0.8), pebble(0.001)] }),
     ] {
         game()
@@ -672,6 +747,47 @@ fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_gr
                 )
             })
             .load();
+    }
+}
+
+#[test]
+fn a_water_is_drawn_by_a_water_stage_shader_and_an_area_lists_every_water_its_map_names() {
+    let size = GroundSize {
+        width: 8,
+        height: 8,
+    };
+    let pond = WaterSurface::from_fn(size, HEIGHTS, |_, _| Meters(0.5));
+    let second = WaterMap::from_fn(size, |_, _| 1);
+    let flooded = || {
+        game()
+            .area("hill", &Map::open(8, 8), json!([]))
+            .water("hill", &pond)
+    };
+    flooded().load();
+    let cases = [
+        (
+            "a shader of another stage",
+            flooded().shader_on(testkit::POND, COVER),
+        ),
+        (
+            "the water map names a missing water",
+            flooded().edit("area", "hill", |hill| hill["waters"] = json!([])),
+        ),
+        (
+            "the water map names a missing water",
+            flooded()
+                .part("area", "hill", "waters/0_0.png", tile_paint(&second))
+                .part(
+                    "area",
+                    "hill",
+                    "waters_overview.png",
+                    overview_paint(&second),
+                ),
+        ),
+    ];
+    for (rule, game) in cases {
+        let report = game.try_load().err().expect("refused");
+        assert!(rules(&report).contains(&rule), "{rule}: {report}");
     }
 }
 
