@@ -127,17 +127,45 @@ pub fn bag_view(ui: &mut Ui, world: &mut World, view: BagView) {
         .layout_job(TextRole::Section.job(&heading, ink::RUBRIC))
         .size()
         .x;
-    let sort = sheet::section_with(ui, &heading, |tools| {
-        controls_row(
-            tools,
-            &content,
-            &bag,
-            &mut filter,
-            &view,
-            heading_width,
-            sorting,
+    let open_heading = if view.counts {
+        words.heading_room(view.heading, bag.size(), bag.taken_slots())
+    } else {
+        view.heading.to_owned()
+    };
+    let open_width = ui
+        .painter()
+        .layout_job(TextRole::Section.job(&open_heading, ink::RUBRIC))
+        .size()
+        .x
+        .max(heading_width);
+    let remembered = ui.id().with(("bag tools", view.placement));
+    let tools_width = ui
+        .data(|data| data.get_temp::<f32>(remembered))
+        .unwrap_or(0.0);
+    // Whether the heading and its controls share a row hangs on the heading as the whole bag
+    // shows it, so the row never changes as the player types.
+    let one_row = ui.available_width() >= open_width + RULE_LEAST + SEARCH_LEAST + tools_width;
+    let mut row = ControlsRow {
+        content: &content,
+        bag: &bag,
+        filter: &mut filter,
+        view: &view,
+        sorting,
+        remembered,
+    };
+    let sort = if one_row {
+        sheet::section_with(ui, &heading, |tools| {
+            row.show(tools, heading_width + RULE_LEAST)
+        })
+    } else {
+        sheet::section(ui, &heading);
+        ui.allocate_ui_with_layout(
+            Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |tools| row.show(tools, 0.0),
         )
-    });
+        .inner
+    };
     if let Some(by) = sort {
         world.write_message(SortBagRequest { by });
         world.resource_mut::<Arranging>().sorting = Some(Asked {
@@ -345,33 +373,45 @@ fn forget_all(
 }
 
 /// The search, the type picker and the sort button, right to left at the end of the heading
-/// row. The rule gives way first, then the search, down to two slots wide.
-fn controls_row(
-    ui: &mut Ui,
-    content: &Content,
-    bag: &Inventory,
-    filter: &mut BagFilter,
-    view: &BagView,
-    heading_width: f32,
+/// row, or on a row of their own under a heading too long to share one with them.
+struct ControlsRow<'a> {
+    content: &'a Content,
+    bag: &'a Inventory,
+    filter: &'a mut BagFilter,
+    view: &'a BagView<'a>,
     sorting: bool,
-) -> Option<BagSort> {
-    let words = &messages::of(content).item;
-    ui.spacing_mut().item_spacing.x = 4.0;
-    let sort = sort_button(ui, words, sorting);
-    type_picker(ui, content, bag, filter, view.placement);
-    let room = ui.available_width() - heading_width - RULE_LEAST;
-    let width = room.clamp(SEARCH_LEAST, SEARCH_MOST);
-    ui.allocate_ui(Vec2::new(width, controls::CONTROL_HEIGHT), |ui| {
-        ui.set_width(width);
-        let field =
-            input::clearable_search(ui, &mut filter.words, words.search_bag(), words.clear());
-        let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
-        if field.lost_focus() && escaped && !filter.words.is_empty() {
-            filter.words.clear();
-            field.request_focus();
-        }
-    });
-    sort
+    /// Where the width the sort button and the type picker took is kept, for the next frame to
+    /// lay the heading out by.
+    remembered: egui::Id,
+}
+
+impl ControlsRow<'_> {
+    /// Lays the controls out right to left, leaving `kept` of the row's width to the heading and
+    /// its rule: the rule gives way first, then the search, down to two slots wide.
+    fn show(&mut self, ui: &mut Ui, kept: f32) -> Option<BagSort> {
+        let (content, bag, view) = (self.content, self.bag, self.view);
+        let filter = &mut *self.filter;
+        let words = &messages::of(content).item;
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let before = ui.available_width();
+        let sort = sort_button(ui, words, self.sorting);
+        type_picker(ui, content, bag, filter, view.placement);
+        let tools_width = before - ui.available_width();
+        ui.data_mut(|data| data.insert_temp(self.remembered, tools_width));
+        let room = ui.available_width() - kept;
+        let width = room.clamp(SEARCH_LEAST, SEARCH_MOST);
+        ui.allocate_ui(Vec2::new(width, controls::CONTROL_HEIGHT), |ui| {
+            ui.set_width(width);
+            let field =
+                input::clearable_search(ui, &mut filter.words, words.search_bag(), words.clear());
+            let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
+            if field.lost_focus() && escaped && !filter.words.is_empty() {
+                filter.words.clear();
+                field.request_focus();
+            }
+        });
+        sort
+    }
 }
 
 fn sort_button(ui: &mut Ui, words: &ItemMessages, sorting: bool) -> Option<BagSort> {
