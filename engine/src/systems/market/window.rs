@@ -706,7 +706,6 @@ fn new_listing(ui: &mut Ui, world: &mut World, settings: &MarketSettings) {
             ui.set_width(BAG_WIDTH);
             let view = BagView {
                 heading: words.interface.inventory(),
-                counts: false,
                 placement: Placed::Market,
             };
             bag_view(ui, world, view);

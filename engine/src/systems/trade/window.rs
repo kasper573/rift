@@ -139,7 +139,6 @@ fn body(
     ui.scope_builder(column(bag_at), |ui| {
         let view = BagView {
             heading: words.interface.inventory(),
-            counts: false,
             placement: Placed::Trade,
         };
         bag_view(ui, world, view);

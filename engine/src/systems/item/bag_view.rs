@@ -29,8 +29,6 @@ use crate::systems::settings::Placed;
 /// The bag as a window shows it.
 pub struct BagView<'a> {
     pub heading: &'a str,
-    /// Whether the heading counts the slots taken, where the window doesn't say so elsewhere.
-    pub counts: bool,
     /// The window the bag shows in, under which what narrows it is kept.
     pub placement: Placed,
 }
@@ -114,58 +112,23 @@ pub fn bag_view(ui: &mut Ui, world: &mut World, view: BagView) {
                     .is_some_and(|stack| filter.shows(stack.item.get(&content)))
         })
         .collect();
-    let heading = if !filter.is_open() {
-        words.heading_shown(view.heading, shown.len() as u32, bag.taken_slots())
-    } else if view.counts {
-        words.heading_room(view.heading, bag.size(), bag.taken_slots())
-    } else {
-        view.heading.to_owned()
-    };
     let sorting = world.resource::<Arranging>().sorting.is_some();
     let heading_width = ui
         .painter()
-        .layout_job(TextRole::Section.job(&heading, ink::RUBRIC))
+        .layout_job(TextRole::Section.job(view.heading, ink::RUBRIC))
         .size()
         .x;
-    let open_heading = if view.counts {
-        words.heading_room(view.heading, bag.size(), bag.taken_slots())
-    } else {
-        view.heading.to_owned()
-    };
-    let open_width = ui
-        .painter()
-        .layout_job(TextRole::Section.job(&open_heading, ink::RUBRIC))
-        .size()
-        .x
-        .max(heading_width);
-    let remembered = ui.id().with(("bag tools", view.placement));
-    let tools_width = ui
-        .data(|data| data.get_temp::<f32>(remembered))
-        .unwrap_or(0.0);
-    // Whether the heading and its controls share a row hangs on the heading as the whole bag
-    // shows it, so the row never changes as the player types.
-    let one_row = ui.available_width() >= open_width + RULE_LEAST + SEARCH_LEAST + tools_width;
-    let mut row = ControlsRow {
-        content: &content,
-        bag: &bag,
-        filter: &mut filter,
-        view: &view,
-        sorting,
-        remembered,
-    };
-    let sort = if one_row {
-        sheet::section_with(ui, &heading, |tools| {
-            row.show(tools, heading_width + RULE_LEAST)
-        })
-    } else {
-        sheet::section(ui, &heading);
-        ui.allocate_ui_with_layout(
-            Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT),
-            egui::Layout::right_to_left(egui::Align::Center),
-            |tools| row.show(tools, 0.0),
+    let sort = sheet::section_with(ui, view.heading, |tools| {
+        controls_row(
+            tools,
+            &content,
+            &bag,
+            &mut filter,
+            &view,
+            heading_width,
+            sorting,
         )
-        .inner
-    };
+    });
     if let Some(by) = sort {
         world.write_message(SortBagRequest { by });
         world.resource_mut::<Arranging>().sorting = Some(Asked {
@@ -198,7 +161,7 @@ pub fn bag_view(ui: &mut Ui, world: &mut World, view: BagView) {
         if hinted.is_none() && is_lifted(ui) {
             let does = words.place_lifted().to_owned();
             hud::drop_hint(world, does.clone());
-            hinted = Some((None, does));
+            hinted = Some((None, Some(does)));
         }
         if let Some(carried) = drag::carried::<Carried>(ui.ctx()) {
             let (over, does) = hinted.unzip();
@@ -208,7 +171,7 @@ pub fn bag_view(ui: &mut Ui, world: &mut World, view: BagView) {
                     _ => None,
                 },
                 over: over.flatten(),
-                does,
+                does: does.flatten(),
             });
         }
         if let Some(carried) = drag::dropped::<Carried>(&grid) {
@@ -373,45 +336,33 @@ fn forget_all(
 }
 
 /// The search, the type picker and the sort button, right to left at the end of the heading
-/// row, or on a row of their own under a heading too long to share one with them.
-struct ControlsRow<'a> {
-    content: &'a Content,
-    bag: &'a Inventory,
-    filter: &'a mut BagFilter,
-    view: &'a BagView<'a>,
+/// row. The rule gives way first, then the search, down to two slots wide.
+fn controls_row(
+    ui: &mut Ui,
+    content: &Content,
+    bag: &Inventory,
+    filter: &mut BagFilter,
+    view: &BagView,
+    heading_width: f32,
     sorting: bool,
-    /// Where the width the sort button and the type picker took is kept, for the next frame to
-    /// lay the heading out by.
-    remembered: egui::Id,
-}
-
-impl ControlsRow<'_> {
-    /// Lays the controls out right to left, leaving `kept` of the row's width to the heading and
-    /// its rule: the rule gives way first, then the search, down to two slots wide.
-    fn show(&mut self, ui: &mut Ui, kept: f32) -> Option<BagSort> {
-        let (content, bag, view) = (self.content, self.bag, self.view);
-        let filter = &mut *self.filter;
-        let words = &messages::of(content).item;
-        ui.spacing_mut().item_spacing.x = 4.0;
-        let before = ui.available_width();
-        let sort = sort_button(ui, words, self.sorting);
-        type_picker(ui, content, bag, filter, view.placement);
-        let tools_width = before - ui.available_width();
-        ui.data_mut(|data| data.insert_temp(self.remembered, tools_width));
-        let room = ui.available_width() - kept;
-        let width = room.clamp(SEARCH_LEAST, SEARCH_MOST);
-        ui.allocate_ui(Vec2::new(width, controls::CONTROL_HEIGHT), |ui| {
-            ui.set_width(width);
-            let field =
-                input::clearable_search(ui, &mut filter.words, words.search_bag(), words.clear());
-            let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
-            if field.lost_focus() && escaped && !filter.words.is_empty() {
-                filter.words.clear();
-                field.request_focus();
-            }
-        });
-        sort
-    }
+) -> Option<BagSort> {
+    let words = &messages::of(content).item;
+    ui.spacing_mut().item_spacing.x = 4.0;
+    let sort = sort_button(ui, words, sorting);
+    type_picker(ui, content, bag, filter, view.placement);
+    let room = ui.available_width() - heading_width - RULE_LEAST;
+    let width = room.clamp(SEARCH_LEAST, SEARCH_MOST);
+    ui.allocate_ui(Vec2::new(width, controls::CONTROL_HEIGHT), |ui| {
+        ui.set_width(width);
+        let field =
+            input::clearable_search(ui, &mut filter.words, words.search_bag(), words.clear());
+        let escaped = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        if field.lost_focus() && escaped && !filter.words.is_empty() {
+            filter.words.clear();
+            field.request_focus();
+        }
+    });
+    sort
 }
 
 fn sort_button(ui: &mut Ui, words: &ItemMessages, sorting: bool) -> Option<BagSort> {
@@ -514,8 +465,9 @@ fn nothing_found(ui: &mut Ui, words: &ItemMessages, filter: &mut BagFilter) {
     });
 }
 
-/// Answers what is carried over the bag's slot `to`: says what letting go there does, and does
-/// it once it is let go of. What it said.
+/// Answers what is carried over the bag's slot `to`: marks the slot when letting go there does
+/// something, says what where it isn't plain to see, and does it once it is let go of. Whether
+/// the slot takes what is carried, and what it said.
 fn dropping(
     ui: &Ui,
     world: &mut World,
@@ -523,7 +475,7 @@ fn dropping(
     response: &Response,
     to: u32,
     arranges: bool,
-) -> Option<String> {
+) -> Option<Option<String>> {
     let carried = drag::carried::<Carried>(ui.ctx())?;
     if !response.contains_pointer() {
         return None;
@@ -534,22 +486,24 @@ fn dropping(
         Carried::BagSlot(from) if *from == to => None,
         Carried::BagSlot(from) if arranges => bag
             .at(*from as usize)
-            .map(|moved| arrange_hint(&content, words, bag.at(to as usize), moved)),
-        Carried::BagSlot(_) => Some(words.clear_to_arrange().to_owned()),
+            .map(|moved| arrange_hint(words, bag.at(to as usize), moved, &content)),
+        Carried::BagSlot(_) => Some(Some(words.clear_to_arrange().to_owned())),
         Carried::Worn(_) if arranges && bag.at(to as usize).is_none() => {
-            Some(words.move_here().to_owned())
+            Some(Some(words.move_here().to_owned()))
         }
         _ => None,
     };
     let hinted = hint.clone();
-    if let Some(hint) = hint {
+    if let Some(said) = hint {
         ui.painter().rect_stroke(
             response.rect,
             3.0,
             Stroke::new(2.0, ink::OCHRE),
             StrokeKind::Inside,
         );
-        hud::drop_hint(world, hint);
+        if let Some(said) = said {
+            hud::drop_hint(world, said);
+        }
     }
     let Some(dropped) = drag::dropped::<Carried>(response) else {
         return hinted;
@@ -587,25 +541,24 @@ fn dropping(
 }
 
 /// What letting `moved` go over a slot holding `there` does, as the hint names it.
+/// What letting `moved` go over a slot holding `there` says: nothing for a swap, which the
+/// stacks trading places shows plainly.
 fn arrange_hint(
-    content: &Content,
     words: &ItemMessages,
     there: Option<ItemStack>,
     moved: ItemStack,
-) -> String {
+    content: &Content,
+) -> Option<String> {
     match there {
-        None => words.move_here().to_owned(),
-        Some(there) if there.item != moved.item => words.swap_with(&there.item.get(content).name),
+        None => Some(words.move_here().to_owned()),
+        Some(there) if there.item != moved.item => None,
         Some(there) => {
             let room = moved
                 .item
                 .get(content)
                 .stack_max()
                 .saturating_sub(there.count);
-            match room {
-                0 => words.swap().to_owned(),
-                room => words.join_some(moved.count.min(room)),
-            }
+            (room > 0).then(|| words.join_some(moved.count.min(room)))
         }
     }
 }

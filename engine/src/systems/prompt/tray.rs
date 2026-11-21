@@ -176,7 +176,6 @@ pub fn inventory(ui: &mut Ui, world: &mut World, locked: bool) {
     lockable(ui, locked, |ui| {
         let view = BagView {
             heading: messages.your_inventory(),
-            counts: true,
             placement: settings::Placed::Prompt,
         };
         bag_view(ui, world, view);

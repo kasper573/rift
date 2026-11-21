@@ -72,7 +72,6 @@ impl MenuTab for CharacterMenuTab {
         ui.scope_builder(bag, |ui| {
             let view = BagView {
                 heading: words.interface.inventory(),
-                counts: true,
                 placement: Placed::Menu,
             };
             bag_view(ui, world, view);

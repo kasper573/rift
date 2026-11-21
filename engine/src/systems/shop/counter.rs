@@ -295,7 +295,6 @@ fn bag_pane(ui: &mut Ui, world: &mut World) {
     let content = world.resource::<Content>().clone();
     let view = BagView {
         heading: messages::of(&content).interface.inventory(),
-        counts: false,
         placement: Placed::Shop,
     };
     bag_view(ui, world, view);

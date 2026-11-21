@@ -182,10 +182,6 @@ messages! {
         nothing_there,
         /// What a player is told whose stack changed in their bag before it could be moved.
         stack_changed,
-        /// The heading over the bag `{heading}` with how full it is: `{taken}` of its `{slots}` slots taken.
-        heading_room(heading: Text, slots: Number, taken: Number),
-        /// The heading over the bag `{heading}` while it is narrowed: `{shown}` of its `{of}` stacks shown.
-        heading_shown(heading: Text, shown: Number, of: Number),
         /// What the field that narrows the bag says while nothing is typed in it.
         search_bag,
         /// What clears what narrows the bag.
@@ -218,12 +214,8 @@ messages! {
         clear_to_arrange,
         /// What letting a carried stack go over an empty slot of the bag does.
         move_here,
-        /// What letting a carried stack go over a slot holding `{item}` does.
-        swap_with(item: Text),
         /// What letting a carried stack go over a stack of its item does: `{count}` of it join.
         join_some(count: Number),
-        /// What letting a carried stack go over a full stack of its item does.
-        swap,
         /// What the item card's action that lifts the stack it came from, to move it in the bag, is called.
         lift,
         /// What a lifted stack says over the bag: where it goes.

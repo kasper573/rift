@@ -152,7 +152,6 @@ pub(super) fn show(ui: &mut Ui, world: &mut World, view: &SocietyView) {
     ui.scope_builder(bag, |ui| {
         let view = BagView {
             heading: messages.interface.inventory(),
-            counts: true,
             placement: Placed::Menu,
         };
         bag_view(ui, world, view);
