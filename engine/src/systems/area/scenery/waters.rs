@@ -13,6 +13,7 @@ use crate::core::render::world::water::{self, WaterLook, WaterMaterial};
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::Stage;
 use crate::core::vfx::board::ShaderBoardImage;
+use crate::core::vfx::field::ShaderFieldImage;
 use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
 use crate::core::vfx::uniform::ParamsUniform;
 use crate::systems::area::Area;
@@ -72,6 +73,7 @@ pub(super) fn sheets(
             def.params.get(name).copied()
         });
         let board = world.resource::<ShaderBoardImage>().image.clone();
+        let field = world.resource::<ShaderFieldImage>().image.clone();
         let material = world
             .resource_mut::<Assets<WaterMaterial>>()
             .add(water::material(
@@ -79,6 +81,7 @@ pub(super) fn sheets(
                 params,
                 shader,
                 board,
+                field,
             ));
         sheets.push(GroundSheet {
             over: SheetOver::Water {

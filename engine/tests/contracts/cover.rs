@@ -3,7 +3,7 @@ use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, shore_dis
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{Patch, Place, Spread, strew_places};
 use engine::core::render::world::lod::GRAIN_PIXELS;
-use engine::core::render::world::water::SHORE_REACH;
+use engine::core::render::world::water::{SHORE_BACK, SHORE_REACH};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use testkit::HEIGHTS;
 
@@ -33,37 +33,48 @@ fn patch<'a>(heights: &'a Heightfield, share: &'a dyn Fn(u32, u32) -> f32) -> Pa
 }
 
 #[test]
-fn water_tells_how_far_it_lies_from_the_nearest_dry_ground_up_to_the_shore_reach() {
+fn water_tells_how_far_it_lies_from_the_waterline_where_the_ground_comes_through_it() {
     let spacing = Meters(1.0 / SAMPLES_PER_METER as f32);
     let (columns, rows) = (80, 4);
-    let lake: Vec<bool> = (0..columns * rows).map(|at| at % columns < 60).collect();
-    for (at, distance) in shore_distances(&lake, columns, spacing, SHORE_REACH)
+    // A bank three times as steep under the water as over it: the waterline lies three
+    // quarters of the way from the last wet point to the first dry one.
+    let lake: Vec<f32> = (0..columns * rows)
+        .map(|at| if at % columns < 60 { 0.3 } else { -0.1 })
+        .collect();
+    for (at, distance) in shore_distances(&lake, columns, spacing, SHORE_REACH, SHORE_BACK)
         .iter()
         .enumerate()
     {
         let column = at % columns;
-        let ashore = (60usize.saturating_sub(column)) as f32 * spacing.0;
+        let out = ((59.75 - column as f32) * spacing.0).clamp(-SHORE_BACK.0, SHORE_REACH.0);
         assert!(
-            (distance.0 - ashore.min(SHORE_REACH.0)).abs() < 1e-4,
-            "column {column} lies {ashore} m out, not {}",
+            (distance.0 - out).abs() < 1e-4,
+            "column {column} lies {out} m out, not {}",
             distance.0
         );
     }
     let side = 41;
-    let rock: Vec<bool> = (0..side * side).map(|at| at != side * side / 2).collect();
-    for (at, distance) in shore_distances(&rock, side, spacing, SHORE_REACH)
+    let rock: Vec<f32> = (0..side * side)
+        .map(|at| if at == side * side / 2 { -0.5 } else { 0.5 })
+        .collect();
+    for (at, distance) in shore_distances(&rock, side, spacing, SHORE_REACH, SHORE_BACK)
         .iter()
         .enumerate()
+        .filter(|(at, _)| *at != side * side / 2)
     {
         let (x, y) = ((at % side) as f32 - 20.0, (at / side) as f32 - 20.0);
         let straight = x.hypot(y) * spacing.0;
+        let (nearest, farthest) = (
+            straight - spacing.0 * std::f32::consts::FRAC_1_SQRT_2,
+            (straight - spacing.0 * 0.5) * 1.083,
+        );
         assert!(
-            (distance.0 - straight).abs() <= straight * 0.083,
-            "{x}, {y} from a rock lies {straight} m from it, not {}",
+            distance.0 >= nearest - 1e-4 && distance.0 <= farthest + 1e-4,
+            "{x}, {y} from a rock lies {straight} m from its middle, not {} from its edge",
             distance.0
         );
     }
-    let open = shore_distances(&[true; 64], 8, spacing, SHORE_REACH);
+    let open = shore_distances(&[1.0; 64], 8, spacing, SHORE_REACH, SHORE_BACK);
     assert!(
         open.iter().all(|distance| *distance == SHORE_REACH),
         "no dry ground in reach"

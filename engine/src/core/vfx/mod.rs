@@ -1,5 +1,6 @@
 pub mod board;
 pub mod compile;
+pub mod field;
 pub mod play;
 pub mod render;
 pub mod shader;

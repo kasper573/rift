@@ -42,6 +42,10 @@ struct TerrainGround {
     // 0 where they stand as far as the ground goes.
     horizon_start: f32,
     horizon: f32,
+    // How far the surface's texels tell a point lies from the waterline at their most, in
+    // metres, out on the water and back over dry ground.
+    shore_reach: f32,
+    shore_back: f32,
 }
 
 @group(2) @binding(100) var<uniform> ground: TerrainGround;
@@ -217,6 +221,39 @@ fn paint_of(pixel: vec2<u32>) -> u32 {
 // Which of the area's waters the pixel `pixel` belongs to, read as `paint_of` reads its terrain.
 fn water_of(pixel: vec2<u32>) -> u32 {
     return lying_at(pixel).g;
+}
+
+// The shore level of a surface at the shore's reach.
+const SHORE_MOST: f32 = 65535.0;
+
+// How far out from the waterline the point a surface texel is of lies, in metres, less than
+// nothing behind it.
+fn shore_of(surface: vec4<f32>) -> f32 {
+    return surface.w / SHORE_MOST * (ground.shore_reach + ground.shore_back) - ground.shore_back;
+}
+
+// How far out from the waterline the ground point `at` lies, in metres, less than nothing behind
+// it: read from the nine points of the ground round it, each weighing less the farther off, so
+// the waterline it tells runs smoothly between them, where a mesh's own points would have it
+// turn at every one.
+fn shore_at(at: vec2<f32>) -> f32 {
+    let sample = (at - ground.origin) * f32(ground.samples_per_metre);
+    let middle = floor(sample + 0.5);
+    let off = sample - middle;
+    let before = 0.5 * (0.5 - off) * (0.5 - off);
+    let after = 0.5 * (0.5 + off) * (0.5 + off);
+    let here = 0.75 - off * off;
+    let last = vec2<i32>(ground.samples) - 1;
+    var told = 0.0;
+    for (var down = -1; down <= 1; down++) {
+        for (var across = -1; across <= 1; across++) {
+            let there = vec2<u32>(clamp(vec2<i32>(middle) + vec2<i32>(across, down), vec2<i32>(0), last));
+            let weight = select(select(after.x, here.x, across == 0), before.x, across < 0)
+                * select(select(after.y, here.y, down == 0), before.y, down < 0);
+            told += weight * shore_of(texels_in(surfaces, overview_surface, there));
+        }
+    }
+    return told;
 }
 
 // How high the water's surface stands at `sample`, in metres: under the ground away from water.

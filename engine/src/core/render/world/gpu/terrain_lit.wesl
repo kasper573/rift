@@ -11,7 +11,7 @@ import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_text
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION)
 import bevy_pbr::ssao::utils::ssao_multibounce;
 import engine::core::render::world::gpu::terrain::{
-    ground, ground_point, paint_of, patch_point, water_level, water_of,
+    ground, ground_point, paint_of, patch_point, shore_at, water_level, water_of,
 };
 import engine::core::render::world::shade::{caster_way, lighting};
 
@@ -32,6 +32,13 @@ import engine::core::render::world::shade::{caster_way, lighting};
 // white bed shows through it in the second row's a.
 @group(3) @binding(108) var waters: texture_2d<f32>;
 
+// The deepest ground under the water's level that may yet lie behind the waterline, where the
+// water's map ends over it, in metres.
+const BESIDE: f32 = 1.0;
+// How far behind such a waterline the ground lies wet, in metres.
+const LAPPED_BACK: f32 = 0.3;
+// How deep under water wet ground has lost its gloss, in metres.
+const GLOSS_DROWNS: f32 = 0.03;
 // How high over a waterline the ground lies wet, in metres: a hand's height.
 const LAPPED: f32 = 0.12;
 // The light the water's surface gathers on a bed just under it, in times the light that falls
@@ -98,12 +105,25 @@ fn fragment(in: Placed) -> @location(0) vec4<f32> {
     }
     let laid = painted(in.world_position.xz, in.stride);
     let under = in.water - in.world_position.y;
-    let lapped = 1.0 - smoothstep(0.0, LAPPED, -under);
+    // Ground under the water's level is under water only out from the waterline, and ground
+    // lies wet only as far behind the waterline as the water laps: a point of the ground knows
+    // the water's level no farther from the water than that.
+    var sunk = under;
+    var lapped = 1.0 - smoothstep(0.0, LAPPED, -under);
+    if lapped > 0.0 && under < BESIDE {
+        let offshore = shore_at(in.world_position.xz);
+        if offshore <= 0.0 {
+            sunk = 0.0;
+            lapped *= 1.0 - smoothstep(0.0, LAPPED_BACK, -offshore);
+        }
+    }
     let soaked = max(wetness(in.world_position.xyz), lapped) * laid.wet.z;
     let over = canopied(in.world_position.xyz);
-    let color = mix(laid.color, over.rgb, over.a) * (1.0 + dancing(in.world_position.xyz, under));
+    let color = mix(laid.color, over.rgb, over.a) * (1.0 + dancing(in.world_position.xyz, sunk));
     input.material.base_color = vec4<f32>(color * mix(1.0, laid.wet.x, soaked), 1.0);
-    input.material.perceptual_roughness = mix(finish.x, laid.wet.y, soaked);
+    // The water over sunk ground is what mirrors: the ground under it shows no gloss of its own.
+    let glossy = soaked * (1.0 - smoothstep(0.0, GLOSS_DROWNS, sunk));
+    input.material.perceptual_roughness = mix(finish.x, laid.wet.y, glossy);
     return main_pass_post_lighting_processing(input, lighting(input));
 }
 

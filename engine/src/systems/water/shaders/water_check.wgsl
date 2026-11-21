@@ -29,6 +29,10 @@ fn shore() -> f32 {
     return ashore;
 }
 
+fn open() -> f32 {
+    return ashore;
+}
+
 fn fall() -> vec2<f32> {
     return falling;
 }

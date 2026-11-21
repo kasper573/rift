@@ -45,6 +45,7 @@ mod reach;
 mod region;
 mod requests;
 mod residency;
+mod ripples;
 mod safe_zone;
 mod satellite;
 mod saves;

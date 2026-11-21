@@ -31,6 +31,9 @@ pub struct WaterVfx {
     pub params: ParamsUniform,
     #[texture(102, sample_type = "float", filterable = false)]
     pub board: Handle<Image>,
+    #[texture(103)]
+    #[sampler(104)]
+    pub field: Handle<Image>,
     pub shader: Handle<Shader>,
 }
 
@@ -64,6 +67,7 @@ pub fn material(
     params: ParamsUniform,
     shader: Handle<Shader>,
     board: Handle<Image>,
+    field: Handle<Image>,
 ) -> WaterMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
@@ -79,6 +83,7 @@ pub fn material(
             site,
             params,
             board,
+            field,
             shader,
         },
     }
@@ -87,6 +92,14 @@ pub fn material(
 /// How far from the shore a sheet on water tells its points they lie at most: past it, every
 /// point lies this far out.
 pub const SHORE_REACH: Meters = Meters(16.0);
+
+/// How far behind the waterline dry ground beside the water is told to lie at most, so a sheet
+/// finds the waterline between the points of its mesh.
+pub const SHORE_BACK: Meters = Meters(4.0);
+
+/// How far round a point of the water its openness is sought: the farthest from dry ground the
+/// water lies within this of it.
+pub const OPEN_REACH: Meters = Meters(6.0);
 
 /// What a body of water is like from within: how deep a white bed still shows through it looking
 /// straight down, the colour of its depths under a white light, and how much light it sends

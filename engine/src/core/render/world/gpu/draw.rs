@@ -84,7 +84,7 @@ use crate::core::render::video::{VideoPreferences, WaterMirrors};
 use crate::core::render::world::RenderProgress;
 use crate::core::render::world::lod::{GRAIN_PIXELS, horizon_band};
 use crate::core::render::world::sky_picture;
-use crate::core::render::world::water::SHORE_REACH;
+use crate::core::render::world::water::{OPEN_REACH, SHORE_BACK, SHORE_REACH};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::shader::hash_helpers;
 
@@ -539,6 +539,10 @@ struct TerrainGround {
     /// and 0 where they stand as far as the ground goes.
     horizon_start: f32,
     horizon: f32,
+    /// How far the surface's texels tell a point lies from the waterline at their most, in
+    /// metres, out on the water and back over dry ground.
+    shore_reach: f32,
+    shore_back: f32,
 }
 
 impl TerrainGround {
@@ -562,6 +566,8 @@ impl TerrainGround {
             grain_pixels: GRAIN_PIXELS,
             horizon_start,
             horizon,
+            shore_reach: SHORE_REACH.0,
+            shore_back: SHORE_BACK.0,
         }
     }
 }
@@ -593,7 +599,7 @@ struct SheetUniform {
     color: Vec4,
     index: u32,
     on_water: u32,
-    shore_reach: f32,
+    open_samples: u32,
     fall_unit: f32,
     under_sky: u32,
     mirrors_land: u32,
@@ -1435,7 +1441,7 @@ fn bind_sheets(
                     color: sheet.color.to_vec4(),
                     index: u32::from(sheet.over.index()),
                     on_water: u32::from(sheet.over.is_water()),
-                    shore_reach: SHORE_REACH.0,
+                    open_samples: (OPEN_REACH.0 * SAMPLES_PER_METER as f32) as u32,
                     fall_unit: SURFACE_FALL_UNIT,
                     under_sky: u32::from(matches!(
                         sheet.over,

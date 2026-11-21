@@ -264,9 +264,8 @@ pub struct GameSettings {
     /// Without it, water slows no one who wades through it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wading: Option<movement::Wading>,
-    /// The rings that whatever stands or floats in water sends out from where the surface cuts
-    /// through it while it rests there, each starting on that outline, so with no `scatter`.
-    /// Without them, it sends none.
+    /// How ripples travel over water from where its surface is broken. Without them, water
+    /// shows nothing of what breaks it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ripples: Option<water::ripples::Ripples>,
     /// How long a fallen npc that never comes back lies before it is gone.
@@ -974,13 +973,6 @@ fn check_settings(loading: &mut Loading) {
     }
     if let Some(ripples) = &settings.ripples {
         ripples.check("/ripples", &mut check);
-        check.range(
-            "/ripples/scatter",
-            ripples.scatter.0,
-            0.0,
-            0.0,
-            "meters, for rings that start on an outline,",
-        );
     }
     check.at_least("/corpses_linger", settings.corpses_linger.0, 0.0, "seconds");
     check.at_least("/claims_last", settings.claims_last.0, 0.0, "seconds");

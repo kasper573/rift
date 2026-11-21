@@ -6,6 +6,7 @@ use crate::core::vfx::shader::CLOCK_CHECK;
 use crate::core::vfx::stage::{BLANK_VFX, main_defs, with_defs};
 use crate::core::vfx::{ShaderPass, Stage, StageKind, StageSpec, Stages};
 use crate::systems::area::stages::{treading, weather_helpers};
+use crate::systems::water::ripples::RIPPLE_CELL;
 
 /// A shader painting the surface of a body of water.
 pub const WATER: Stage = Stage::registered(&StageSpec {
@@ -29,15 +30,13 @@ pub const WATER: Stage = Stage::registered(&StageSpec {
         "bends",
         "depth",
         "shore",
+        "open",
         "fall",
         "position",
         "eye",
         "light",
         "waterline",
-        "wakes",
-        "wake",
-        "rings",
-        "rest_reach",
+        "ripple",
     ],
     passes,
 });
@@ -60,10 +59,11 @@ fn check_header() -> String {
 
 fn helpers() -> String {
     format!(
-        "{}\n{}\n// How far from the shore `shore` tells a point lies at most, in metres.\nconst SHORE_REACH: f32 = {:?};",
+        "{}\n{}\n// How far from the shore `shore` tells a point lies at most, in metres.\nconst SHORE_REACH: f32 = {:?};\n// How far apart the points of the water the ripples are followed at lie, in metres.\nconst RIPPLE_CELL: f32 = {:?};",
         weather_helpers(),
         treading(WADING),
-        SHORE_REACH.0
+        SHORE_REACH.0,
+        RIPPLE_CELL.0
     )
 }
 

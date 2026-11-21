@@ -3797,6 +3797,7 @@ dependencies = [
  "getrandom 0.4.3",
  "glam 0.32.1",
  "gltf",
+ "half",
  "i_overlay",
  "icu_collator",
  "icu_locale_core",

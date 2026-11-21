@@ -22,7 +22,9 @@
 // bending of what lies under water, 1 otherwise.
 //
 // As a sheet has them: `depth()` how many metres of water stand over the ground, `shore()` how
-// far the point lies from the nearest dry ground, up to `SHORE_REACH` metres, `fall()` how the
+// far the point lies out from the waterline, up to `SHORE_REACH` metres, `open()` how far from
+// the waterline the water round the point lies at its most, which tells a brook or a pool from
+// the edge of a lake: no farther than `shore()` far out on open water, `fall()` how the
 // surface falls there in metres a metre toward east and south, `position()` where the point lies
 // in the world, `eye()` where the camera looks from, `light()` what the hour lights a white,
 // level face to there, and the weather.
@@ -41,6 +43,7 @@ import bevy_pbr::render::mesh_view_bindings::depth_prepass_texture;
 @if(DEPTH_PREPASS)
 import bevy_pbr::ssr::raymarch::{depth_ray_march_from_cs, depth_ray_march_march, depth_ray_march_new_from_depth, depth_ray_march_to_ws_dir};
 import engine::core::render::world::gpu::sheet::{drawn_sheet, sheet_point, sky_picture, sky_picture_sampler};
+import engine::core::render::world::gpu::terrain::shore_at;
 import engine::core::render::world::shade::{caster_way, lighting};
 import engine::core::render::world::sky_picture::sky_round;
 
@@ -55,6 +58,8 @@ struct Water {
     murk: f32,
 }
 
+// How near the waterline, in metres, a pixel reads its place from it for itself.
+const SHORE_READ: f32 = 1.5;
 // How many lengths of a water's fading leave a twentieth of a thing's contrast.
 const SEEN_LENGTHS: f32 = 3.0;
 // How much faster a bed all silt fades the light through the water over it, a metre, and within
@@ -101,10 +106,12 @@ struct WaterOutput {
     @location(4) bed: vec4<f32>,
     @location(5) fading: vec4<f32>,
     @location(6) depths: vec4<f32>,
+    @location(7) open: f32,
 }
 
 var<private> deep: f32;
 var<private> ashore: f32;
+var<private> opens: f32;
 var<private> falling: vec2<f32>;
 var<private> spot: vec3<f32>;
 var<private> lay: vec3<f32>;
@@ -120,6 +127,10 @@ fn depth() -> f32 {
 
 fn shore() -> f32 {
     return ashore;
+}
+
+fn open() -> f32 {
+    return opens;
 }
 
 fn fall() -> vec2<f32> {
@@ -335,18 +346,26 @@ fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) 
     out.bed = point.bed;
     out.fading = point.fading;
     out.depths = vec4<f32>(point.depths, point.weight);
+    out.open = point.open;
     return out;
 }
 
 @fragment
 fn fragment(in: WaterOutput) -> FragmentOutput {
+    // Near the waterline its place is read for the pixel itself, so it runs smoothly where the
+    // sheet's own points would turn it at each of them.
+    var offshore = in.lies.y;
+    if abs(offshore) < SHORE_READ {
+        offshore = mix(shore_at(in.world_position.xz), offshore, smoothstep(0.6 * SHORE_READ, SHORE_READ, abs(offshore)));
+    }
     // A point belongs to the water most of the pixels round it name, and no water lies where
-    // none stands over the ground.
-    if in.depths.a < 0.5 || in.lies.x <= 0.0 {
+    // none stands over the ground, or behind the waterline.
+    if in.depths.a < 0.5 || in.lies.x <= 0.0 || offshore <= 0.0 {
         discard;
     }
     deep = in.lies.x;
-    ashore = in.lies.y;
+    ashore = offshore;
+    opens = max(in.open, ashore);
     falling = in.lies.zw;
     spot = in.world_position.xyz;
     lay = normalize(in.world_normal);

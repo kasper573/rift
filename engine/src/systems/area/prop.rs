@@ -13,7 +13,7 @@ use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::units::{Degrees, Meters};
 use crate::core::vfx::VfxId;
 use crate::systems::area::prop_material::PropMaterialId;
-use crate::systems::water::ripples::Ripples;
+use crate::systems::water::ripples::RippleSource;
 
 pub type PropId = ContentId<PropDef>;
 
@@ -69,10 +69,10 @@ pub struct PropDef {
     /// ground or held in a hand: the flame of a lantern, the glow of a crystal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<VfxId>,
-    /// The rings it sends over the water it stands in, as a shoal of fish or a spring does.
-    /// Without them it leaves the water as it is.
+    /// How it breaks the water it stands in, as a shoal of fish or a spring does. Without it,
+    /// it leaves the water as it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ripples: Option<Ripples>,
+    pub ripples: Option<RippleSource>,
 }
 
 /// The ground a prop takes up, in its own metres around its origin; nobody walks there.

@@ -4,12 +4,11 @@
 
 use super::heavens::SKY_PICTURE;
 use super::rain::{LEANING, OPEN_TOP, SHELTER_DEPTH, SHELTER_STEP, SHELTER_STEPS};
-use super::shown_weather::{LIMBS_PER_TREAD, TRAIL_POINTS, TREADS, WAKE_SPREAD, WETTED_PER_TREAD};
+use super::shown_weather::{LIMBS_PER_TREAD, RIPPLE_WINDOW, TREADS};
 use crate::core::render::world::sky::AIR_WAYS;
 use crate::core::vfx::shader::CLOCK_CHECK;
 use crate::core::vfx::stage::{BLANK_VFX, main_defs, main_pass, prepass_defs, with_defs};
 use crate::core::vfx::{ShaderPass, Stage, StageKind, StageSpec, Stages};
-use crate::systems::water::ripples::MOST_RINGS;
 
 /// A shader the cover a terrain grows or lies under runs in.
 pub const COVER: Stage = Stage::registered(&StageSpec {
@@ -126,11 +125,8 @@ pub fn weather_helpers() -> String {
 /// them out.
 pub fn treading(helpers: &str) -> String {
     helpers
-        .replace("WETTED_PER_TREAD", &format!("{WETTED_PER_TREAD}u"))
         .replace("LIMBS_PER_TREAD", &format!("{LIMBS_PER_TREAD}u"))
-        .replace("TRAIL_POINTS", &format!("{TRAIL_POINTS}u"))
-        .replace("WAKE_SPREAD", &format!("{WAKE_SPREAD:?}"))
-        .replace("MOST_RINGS", &format!("{MOST_RINGS}u"))
+        .replace("RIPPLE_WINDOW", &format!("{RIPPLE_WINDOW}"))
         .replace("TREADS", &format!("{TREADS}u"))
 }
 

@@ -4,8 +4,8 @@
 // patch borders a coarser one, its points along that edge lie between the coarser one's, as the
 // ground's do.
 import engine::core::render::world::gpu::terrain::{
-    ground, edge_ends, lie_at, metres_of, overview_surface, paint_of, patch_point, surfaces,
-    texels_in, water_of, world_at,
+    ground, edge_ends, lie_at, metres_of, overview_surface, paint_of, patch_point, shore_of,
+    surfaces, texels_in, water_of, world_at,
 };
 
 struct Sheet {
@@ -13,8 +13,8 @@ struct Sheet {
     // Which of the area's terrains the sheet lies over, or which of its waters on water.
     index: u32,
     on_water: u32,
-    // How far the shore's texels reach at their most, in metres.
-    shore_reach: f32,
+    // How many samples off a point its openness is sought.
+    open_samples: u32,
     // The fall a level of the surface's fall stands for, in metres a metre.
     fall_unit: f32,
     // For a sheet on water: whether a picture of the sky is bound for it to mirror, whether its
@@ -39,13 +39,16 @@ struct Sheet {
 const SHEET_LIFT: f32 = 0.02;
 // The fall level of a surface that doesn't fall.
 const FALL_MIDDLE: f32 = 32768.0;
-// The shore level of a surface at the shore's reach.
-const SHORE_MOST: f32 = 65535.0;
+// How far behind the waterline dry ground lies before no waterline runs near it, as a share of
+// how far back the shore's texels reach.
+const ASHORE: f32 = 0.95;
 
 // A point of a sheet: where it lies, its normal, its uv over the whole area, how much water stands
-// over the ground under it, how heavily the sheet's terrain is painted there or how much of the
-// water round it is the sheet's, how far it lies from the nearest dry ground and how the water's
-// surface falls there, in metres a metre toward east and south; and on water what the bed under
+// over the ground under it, less than nothing where the ground stands over the water's level,
+// how heavily the sheet's terrain is painted there or how much of the water round it is the
+// sheet's, how far it lies out from the waterline, less than nothing on dry ground behind it,
+// how far from the waterline the water round it lies at its most, and how the water's surface
+// falls there, in metres a metre toward east and south; and on water what the bed under
 // it gives the water (its colour, and its silt in a) and what the waters round it are like, the
 // waters meeting there blended: how fast they fade each colour with their murk in a, and the
 // colour of their depths. Off water, all of those are nothing.
@@ -56,6 +59,7 @@ struct SheetPoint {
     depth: f32,
     weight: f32,
     shore: f32,
+    open: f32,
     fall: vec2<f32>,
     bed: vec4<f32>,
     fading: vec4<f32>,
@@ -93,10 +97,21 @@ fn sheet_at(sample: vec2<u32>, stride: u32) -> SheetPoint {
     let surface = texels_in(surfaces, overview_surface, sample);
     let level = metres_of(surface.x);
     point.world = vec3<f32>(0.0, level, 0.0);
-    point.depth = max(level - lie.w, 0.0);
+    point.depth = level - lie.w;
     point.fall = (surface.yz - FALL_MIDDLE) * drawn_sheet.fall_unit;
     point.normal = normalize(vec3<f32>(point.fall.x, 1.0, point.fall.y));
-    point.shore = surface.w / SHORE_MOST * drawn_sheet.shore_reach;
+    point.shore = shore_of(surface);
+    point.open = point.shore;
+    // Only a point near a waterline has water round it that may lie no farther out than it.
+    if point.shore > -ground.shore_back * ASHORE && point.shore < f32(drawn_sheet.open_samples) / f32(ground.samples_per_metre) {
+        let last = vec2<i32>(ground.samples) - 1;
+        for (var way = 0; way < 8; way++) {
+            let turn = f32(way) * 0.7853982;
+            let off = vec2<i32>(round(vec2<f32>(cos(turn), sin(turn)) * f32(drawn_sheet.open_samples)));
+            let there = vec2<u32>(clamp(vec2<i32>(sample) + off, vec2<i32>(0), last));
+            point.open = max(point.open, shore_of(texels_in(surfaces, overview_surface, there)));
+        }
+    }
     return point;
 }
 
@@ -108,6 +123,7 @@ fn between(a: SheetPoint, b: SheetPoint, t: f32) -> SheetPoint {
     point.depth = mix(a.depth, b.depth, t);
     point.weight = mix(a.weight, b.weight, t);
     point.shore = mix(a.shore, b.shore, t);
+    point.open = mix(a.open, b.open, t);
     point.fall = mix(a.fall, b.fall, t);
     point.bed = mix(a.bed, b.bed, t);
     point.fading = mix(a.fading, b.fading, t);
