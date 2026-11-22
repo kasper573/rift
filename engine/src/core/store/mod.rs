@@ -1,6 +1,7 @@
 //! What a server saves: records in one table, held by whatever its address names.
 
 mod address;
+pub mod push;
 
 use std::fmt;
 
@@ -140,6 +141,22 @@ impl RecordStore {
         rows.iter().map(body).collect()
     }
 
+    /// Every record of `kind`, by its id.
+    pub async fn rows(
+        &self,
+        kind: &'static str,
+    ) -> Result<Vec<(RecordId, String)>, RecordStoreProblem> {
+        let rows = sqlx::query(ROWS).bind(kind).fetch_all(&self.pool).await?;
+        rows.iter()
+            .map(|row| {
+                Ok((
+                    RecordId(row.try_get::<String, _>(0)?),
+                    row.try_get::<String, _>(1)?,
+                ))
+            })
+            .collect()
+    }
+
     /// The bodies of every record of `kind`.
     pub async fn all(&self, kind: &'static str) -> Result<Vec<String>, RecordStoreProblem> {
         let rows = sqlx::query(ALL).bind(kind).fetch_all(&self.pool).await?;
@@ -184,3 +201,4 @@ const REMOVE: &str = "DELETE FROM records WHERE kind = $1 AND id = $2";
 const ONE: &str = "SELECT body FROM records WHERE kind = $1 AND id = $2";
 const OWNED: &str = "SELECT body FROM records WHERE kind = $1 AND owner = $2 ORDER BY id";
 const ALL: &str = "SELECT body FROM records WHERE kind = $1 ORDER BY id";
+const ROWS: &str = "SELECT id, body FROM records WHERE kind = $1 ORDER BY id";

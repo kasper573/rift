@@ -1,8 +1,10 @@
 use std::borrow::Cow;
+use std::fmt;
+use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 
 use schemars::{JsonSchema, Schema, SchemaGenerator};
-use serde::de::{self, DeserializeOwned, Deserializer};
+use serde::de::{self, DeserializeOwned, DeserializeSeed, Deserializer, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize, Serializer};
 
@@ -116,18 +118,50 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for SavedList<T> {
         if !id::sets_aside() {
             return Vec::<T>::deserialize(deserializer).map(SavedList::from);
         }
+        deserializer.deserialize_seq(Entries(PhantomData))
+    }
+}
+
+/// The entries of a saved list read one by one, each set aside or kept as it reads: an entry
+/// that doesn't read fails as the element it is, so the failure says which entry it was.
+struct Entries<T>(PhantomData<T>);
+
+impl<'de, T: DeserializeOwned> Visitor<'de> for Entries<T> {
+    type Value = SavedList<T>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a list")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut entries: A) -> Result<SavedList<T>, A::Error> {
         let mut list = SavedList::default();
-        for entry in Vec::<serde_json::Value>::deserialize(deserializer)? {
-            let met = id::references_met();
-            let read = T::deserialize(&entry).map_err(de::Error::custom)?;
-            let missing = id::forget_missing_since(met);
-            if missing.is_empty() {
-                list.here.push(read);
-            } else {
-                list.set_aside.push(SetAside { entry, missing });
+        while let Some(entry) = entries.next_element_seed(Entry(PhantomData))? {
+            match entry {
+                Ok(read) => list.here.push(read),
+                Err(aside) => list.set_aside.push(aside),
             }
         }
         Ok(list)
+    }
+}
+
+/// One entry of a saved list: read, or set aside for the files it names that the game no longer
+/// has.
+struct Entry<T>(PhantomData<T>);
+
+impl<'de, T: DeserializeOwned> DeserializeSeed<'de> for Entry<T> {
+    type Value = Result<T, SetAside>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let entry = serde_json::Value::deserialize(deserializer)?;
+        let met = id::references_met();
+        let read = T::deserialize(&entry).map_err(de::Error::custom)?;
+        let missing = id::forget_missing_since(met);
+        if missing.is_empty() {
+            Ok(Ok(read))
+        } else {
+            Ok(Err(SetAside { entry, missing }))
+        }
     }
 }
 

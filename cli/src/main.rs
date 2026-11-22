@@ -8,6 +8,7 @@ mod fit;
 mod folder;
 mod loadtest;
 mod profile;
+mod records;
 mod render;
 mod search;
 mod server;
@@ -113,6 +114,9 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// What a game server keeps.
+    #[command(subcommand)]
+    Records(records::Records),
     /// Prints the JSON Schema of a protocol the binaries speak.
     #[command(subcommand)]
     Schema(Schema),
@@ -242,6 +246,7 @@ fn main() {
             }
         }
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
+        Command::Records(records) => records::run(records),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),
         Command::Schema(Schema::Bench) => println!("{}", bench::schema()),

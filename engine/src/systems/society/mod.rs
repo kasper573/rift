@@ -13,6 +13,7 @@ use bevy_ecs::prelude::*;
 pub use view::{FriendRow, RequestCard, SocietyMember, SocietyView};
 
 use crate::core::content::{Content, ContentScope};
+use crate::core::store::push::PushedKind;
 use crate::core::store::{self, Record, RecordStore, RecordStoreProblem};
 use crate::core::text::LineText;
 use crate::core::time::UnixMillis;
@@ -29,7 +30,7 @@ use crate::systems::notification::{self, Notification};
 use crate::systems::party::{self, CharacterParties, CharacterParty, PartyRequest};
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
-use crate::systems::save::Unwritten;
+use crate::systems::save::{SavedCharacter, Unwritten};
 use crate::systems::social_request::{
     self, AcceptsRequestsFrom, Block, BlockAsk, BlockLists, RequestSettings, SocialRequest,
     SocialRequestAsk, SocialRequestKind, SocialRequestSource, SocialRequests,
@@ -68,6 +69,23 @@ impl Society {
             sources,
             ..Society::default()
         }
+    }
+
+    /// Every kind of record a server keeps, each as the server reads it in the game `content`
+    /// is: a saved character as a sign-in reads it, and the rest as `read` reads them.
+    pub fn record_kinds(content: &Content) -> Vec<PushedKind> {
+        let scope = ContentScope::of(content);
+        let aside = scope.clone().setting_aside();
+        vec![
+            PushedKind::of::<SavedCharacter>(aside.clone()),
+            PushedKind::of::<Letter>(aside.clone()),
+            PushedKind::of::<Listing>(aside),
+            PushedKind::of::<Account>(scope.clone()),
+            PushedKind::of::<Friendship>(scope.clone()),
+            PushedKind::of::<Block>(scope.clone()),
+            PushedKind::of::<SocialRequest>(scope.clone()),
+            PushedKind::of::<CharacterParty>(scope),
+        ]
     }
 
     /// Society as `store` holds it for the game `content` is: every record of the kinds it keeps

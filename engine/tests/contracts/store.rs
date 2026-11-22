@@ -1,4 +1,5 @@
-use engine::core::content::ContentScope;
+use engine::core::content::{ContentScope, SavedList};
+use engine::core::store::push::{self, PushedKind, PushedRecord};
 use engine::core::store::{
     self, Record, RecordChange, RecordId, RecordOwner, RecordRow, RecordStore, RecordStoreAddress,
 };
@@ -228,4 +229,135 @@ fn a_record_this_build_cannot_read_whole_is_refused() {
     let newer = r#"{"id":"1","to":"wren","text":"Hello.","sealed":true}"#;
     let refused = store::read::<Letter>(newer, &ContentScope::new());
     assert!(refused.is_err(), "a field this build does not know");
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct Satchel {
+    id: String,
+    owner: String,
+    #[serde(default)]
+    items: SavedList<Pocket>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct Pocket {
+    slot: u32,
+    item: String,
+}
+
+impl Record for Satchel {
+    const KIND: &'static str = "test_satchel";
+
+    fn id(&self) -> RecordId {
+        RecordId(self.id.clone())
+    }
+}
+
+/// A push brings what a store holds to the shapes this build reads: a record that reads whole is
+/// left alone; one an earlier build wrote loses only what doesn't read, a field this build has no
+/// more and an entry of a list without what this build needs of it; and one without what it can't
+/// be without goes. Nothing is written until the push is applied, and after it everything reads.
+#[test]
+fn a_push_keeps_what_still_reads_and_drops_the_rest() {
+    on_every_store(async |store, on| {
+        let raw = |id: &str, body: &str| {
+            RecordChange::Put(RecordRow {
+                kind: Satchel::KIND,
+                id: RecordId(id.to_owned()),
+                owner: None,
+                body: body.to_owned(),
+            })
+        };
+        store
+            .write(vec![
+                raw(
+                    "push-whole",
+                    r#"{"id":"push-whole","owner":"wren","items":[{"slot":0,"item":"rod"}]}"#,
+                ),
+                raw(
+                    "push-older",
+                    r#"{"id":"push-older","owner":"hale","max":20,"items":[{"item":"net"},{"slot":3,"item":"hook"}]}"#,
+                ),
+                raw("push-broken", r#"{"id":"push-broken","items":[]}"#),
+            ])
+            .await
+            .expect("a write");
+        let kinds = [PushedKind::of::<Satchel>(
+            ContentScope::new().setting_aside(),
+        )];
+
+        let (changes, whole) = push::plan(&store, &kinds).await.expect("a plan");
+        assert_eq!(whole, 1, "{on}: the satchel that reads whole is left alone");
+        let older = changes
+            .iter()
+            .find(|change| change.id.0 == "push-older")
+            .expect("the older satchel changes");
+        let PushedRecord::Kept { dropped, .. } = &older.pushed else {
+            panic!("{on}: the older satchel is kept: {:?}", older.pushed);
+        };
+        let at: Vec<&str> = dropped.iter().map(|dropped| dropped.at.as_str()).collect();
+        assert_eq!(
+            at,
+            ["max", "items[0]"],
+            "{on}: it loses the field and the entry that don't read, nothing more"
+        );
+        let broken = changes
+            .iter()
+            .find(|change| change.id.0 == "push-broken")
+            .expect("the broken satchel changes");
+        assert!(
+            matches!(broken.pushed, PushedRecord::Gone(_)),
+            "{on}: a satchel without its owner goes: {:?}",
+            broken.pushed
+        );
+        let untouched = store
+            .one(Satchel::KIND, &RecordId("push-older".to_owned()))
+            .await
+            .expect("a read");
+        assert!(
+            untouched.is_some_and(|body| body.contains("max")),
+            "{on}: planning writes nothing"
+        );
+
+        push::apply(&store, &changes)
+            .await
+            .expect("the push is written");
+        let kept = store
+            .one(Satchel::KIND, &RecordId("push-older".to_owned()))
+            .await
+            .expect("a read");
+        assert_eq!(
+            read_one::<Satchel>(kept),
+            Some(Satchel {
+                id: "push-older".to_owned(),
+                owner: "hale".to_owned(),
+                items: SavedList::from(vec![Pocket {
+                    slot: 3,
+                    item: "hook".to_owned(),
+                }]),
+            }),
+            "{on}"
+        );
+        let gone = store
+            .one(Satchel::KIND, &RecordId("push-broken".to_owned()))
+            .await
+            .expect("a read");
+        assert_eq!(gone, None, "{on}");
+        let (again, _) = push::plan(&store, &kinds).await.expect("a plan");
+        assert!(again.is_empty(), "{on}: after a push everything reads");
+
+        store
+            .write(
+                ["push-whole", "push-older"]
+                    .map(|id| RecordChange::Remove {
+                        kind: Satchel::KIND,
+                        id: RecordId(id.to_owned()),
+                    })
+                    .into(),
+            )
+            .await
+            .expect("a write");
+    });
 }

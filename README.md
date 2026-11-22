@@ -72,6 +72,7 @@ folder, and starts the other binaries from its own binaries folder when a comman
 | [`rift bench [game]`](#benching) | Measures the server's capacity, and on a game also the client's and the editor's frame rates and memory. |
 | [`rift loadtest --http <url> [count]`](#load-testing-a-server) | Connects simulated players to a running game server. |
 | [`rift profile --out <dir> [game]`](#profiling-the-server) | Samples the game server under load. |
+| [`rift records push <game> --store <address>`](#pushing-the-records) | Brings what a game server keeps to the shapes this build reads, dropping what no longer fits. |
 | [`rift schema <protocol>`](#schemas) | Prints the JSON Schema of a protocol the binaries speak. |
 
 `rift help <command>` lists every flag of a command.
@@ -302,6 +303,39 @@ seconds. Linux only. It writes into `<dir>`:
 | `cpu-by-system.txt` | The CPU time by engine system. |
 | `allocations.pb.gz` | What the server's heap holds, in pprof's format. |
 
+### Pushing the records
+
+```sh
+rift records push <game> --store <address> [--over <user@host>] [--write]
+```
+
+Saved data carries no compatibility promise: a build may change the shape of what a game server
+keeps, and a record an earlier build wrote may then not read. A saved character that doesn't read
+refuses its player's sign-in, and any other record that doesn't read keeps the server from
+starting. `rift records push` brings the store to the shapes this `rift`'s build reads, without
+migrating it, as a database tool's push does: it reads every record as the game server reads it, for
+`<game>`, and drops whatever of it doesn't read, the least it can: a field the build no longer has, a
+list entry without what the build needs of it, and the whole record only when it is without what it
+can't be without. Everything that still reads is kept as it is.
+
+It only tells what it would drop, record by record, until it is given `--write`, which writes all of
+it in one transaction. Run it with the `rift` of the release the game server runs, while no game
+server uses the store: a running server holds characters in memory and writes them back.
+
+`<address>` is the store's address as the game server's `STORE` names it (`postgres://…` or
+`sqlite://…`). It runs as well on a store on your own machine, during development, as on one on a
+server.
+
+Tip: a database that only its server's machine reaches needs no port opened to it. With
+`--over <user@host>`, the push reaches the store through a tunnel over `ssh` to that machine, with
+your own keys and `ssh` settings, and `<address>` names the store as that machine reaches it, port
+included:
+
+```sh
+rift records push <game> --store postgres://<user>:<password>@127.0.0.1:5432/<database> --over <user@host>
+rift records push <game> --store postgres://<user>:<password>@127.0.0.1:5432/<database> --over <user@host> --write
+```
+
 ### Schemas
 
 ```sh
@@ -347,7 +381,8 @@ required unless it says otherwise, and a binary refuses to start without one.
   file, in which it makes its one table when there is none), how many seconds it plays on between
   two saves (`CHECKPOINT_EVERY`) and, optionally, `RNG_SEED`. Started on port 0 it picks free
   ports, and prints them on stdout once players can connect. It does not start when it cannot
-  reach its store. It saves every account and character as they stand at each save, and once more
+  reach its store, and refuses a sign-in whose saved character it cannot read (see
+  [pushing the records](#pushing-the-records)). It saves every account and character as they stand at each save, and once more
   when it is told to stop, trying again for as long as its store refuses; told to stop a second
   time, it stops with what was not written named in its log.
 - **`game-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`),
