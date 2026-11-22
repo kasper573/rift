@@ -38,11 +38,14 @@ use bevy::light::cluster::GlobalClusterSettings;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, ScreenSpaceTransmission};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
+use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache, TextureUsages};
-use bevy::render::{Render, RenderApp, RenderSystems};
+use bevy::render::renderer::RenderAdapterInfo;
+use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use wgpu::Backend;
 
 use super::Look;
 use super::camera::{self, CameraRig};
@@ -76,13 +79,20 @@ impl Plugin for WorldScenePlugin {
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             let progress = RenderProgress::default();
-            render_app.insert_resource(progress.clone()).add_systems(
-                Render,
-                (
-                    begin_progress.in_set(RenderSystems::ExtractCommands),
-                    count_progress.in_set(RenderSystems::Cleanup),
-                ),
-            );
+            render_app
+                .insert_resource(progress.clone())
+                .add_systems(
+                    Render,
+                    (
+                        begin_progress.in_set(RenderSystems::ExtractCommands),
+                        count_progress.in_set(RenderSystems::Cleanup),
+                    ),
+                )
+                .add_systems(
+                    RenderStartup,
+                    draw_meshes_directly_on_lavapipe
+                        .after(bevy::render::init_gpu_resource::<GpuPreprocessingSupport>),
+                );
             app.insert_resource(progress);
         }
         app.add_plugins((
@@ -173,6 +183,24 @@ fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {
         if !usages.contains(TextureUsages::TEXTURE_BINDING) {
             camera.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
         }
+    }
+}
+
+/// Works around a bug in Mesa's lavapipe, its Vulkan driver over llvmpipe: a draw whose count is
+/// read from a buffer leaves that buffer set for every later indirect draw recorded with it, so a
+/// later multi-draw issues no more draws than that buffer held (`handle_draw_indirect` in
+/// `src/gallium/frontends/lavapipe/lvp_execute.c` sets no count buffer, and
+/// `handle_draw_indirect_count` leaves its own). Bevy draws its meshes with such counts, so any
+/// multi-draw recorded after them would issue as few draws as the count it finds. Capped at
+/// preprocessing only, bevy draws its meshes directly instead, as it does on drivers it knows are
+/// unfit for indirect culling. Remove this once a Mesa release clears the count buffer for a draw
+/// that has none: neither Mesa 26.0.8 nor Mesa's main branch does, as of November 2026.
+fn draw_meshes_directly_on_lavapipe(
+    adapter: Res<RenderAdapterInfo>,
+    mut support: ResMut<GpuPreprocessingSupport>,
+) {
+    if adapter.backend == Backend::Vulkan && adapter.driver == "llvmpipe" {
+        support.max_supported_mode = support.min(GpuPreprocessingMode::PreprocessingOnly);
     }
 }
 
