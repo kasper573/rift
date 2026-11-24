@@ -274,8 +274,9 @@ pub fn cancel_rebind(world: &mut World) -> bool {
     world.resource_mut::<BarState>().rebinding.take().is_some()
 }
 
-/// Uses what a slot holds: a skill is cast or aimed, an item is used from the bag. A slot drawn as
-/// cooling or blocked counts its press as denied whatever the use comes to.
+/// Uses what a slot holds: a skill is cast or aimed, an item is used from the bag. A skill that
+/// isn't ready is refused at once, and nothing is armed. A slot drawn as cooling or blocked counts
+/// its press as denied whatever the use comes to.
 pub fn fire(world: &mut World, entry: HotbarEntry) -> SlotPress {
     let view = SlotView::of(world, entry);
     let ready = matches!(view.fill, SlotFill::Ready) || view.ridden;
@@ -1009,7 +1010,9 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
     let Some(me) = session::me(world) else {
         return false;
     };
-    let refusal = super::unusable(world, me, skill).or_else(|| mount::shut(world, me, skill));
+    let refusal = super::unusable(world, me, skill)
+        .or_else(|| mount::shut(world, me, skill))
+        .or_else(|| unready(world, me, skill));
     if let Some(refusal) = refusal {
         notification::local_error(world, refusal);
         return false;
@@ -1045,6 +1048,16 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
             aim_or_cast(world, skill, rank)
         }
     }
+}
+
+/// Why `skill` can't be used yet, as the server would refuse it, so that nothing is armed or
+/// asked for that the server would turn down. Nothing for the skill of the mount ridden, which is
+/// how its rider leaves it whenever they like.
+fn unready(world: &World, me: Entity, skill: SkillId) -> Option<LineText> {
+    if mount::left_by(world, me, skill) {
+        return None;
+    }
+    casting::ready(world, me, skill, time::server_now(world)?).err()
 }
 
 fn aim_or_cast(world: &mut World, skill: SkillId, rank: Rank) -> bool {

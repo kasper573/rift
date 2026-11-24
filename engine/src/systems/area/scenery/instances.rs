@@ -23,8 +23,8 @@ use super::plan::{AHEAD, Detail, KEEP_SHARE, OFF_MIDDLE, Plan, Seen, Sight};
 use super::props;
 use super::{Shortfall, Shortfalls, Streaming, distance_to, ground_loaded, props_of};
 use crate::core::assets;
-use crate::core::content::Content;
 use crate::core::content::load::FileHashes;
+use crate::core::content::{Content, ImageRef};
 use crate::core::ground::{Heightfield, PaintMap};
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::os::Profile;
@@ -43,11 +43,10 @@ use crate::core::render::world::gpu::impostor::{
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
 use crate::core::render::world::material::{self, MaterialLook, WorldMaterial};
-use crate::core::render::world_point;
 use crate::core::units::{GROUND_ORIGIN, MeterSize, Meters};
 use crate::core::vfx::shader::CompiledVfxShaders;
 use crate::systems::area::prop::{PropDef, PropId, Scatter};
-use crate::systems::area::{Area, AreaModule, PropPlacement};
+use crate::systems::area::{Area, AreaModule, PropPlacement, SnapSurfaces};
 
 /// What a scenery holds in its arena: the lots standing there, by their keys, those being worked
 /// out and those worked out waiting for room in a frame's budget, the models of every prop they
@@ -1140,7 +1139,7 @@ fn props_expanded(
     chunk: SceneryChunk,
     key: u32,
 ) -> Expanded {
-    let placed = filed.sourced_props_in(&area.prop_sources, ground, chunk);
+    let placed = filed.sourced_props_in(&area.prop_sources, &area.scatter_clearing, ground, chunk);
     Expanded {
         drawn: placed
             .iter()
@@ -1148,7 +1147,7 @@ fn props_expanded(
             .collect(),
         records: placed
             .iter()
-            .map(|(_, placed)| prop_record(heights, placed, key))
+            .map(|(_, placed)| prop_record(heights, &area.snap_surfaces, placed, key))
             .collect(),
         sources: placed.iter().map(|(source, _)| *source).collect(),
     }
@@ -1172,7 +1171,9 @@ fn far_expanded(
         sources: Vec::new(),
     };
     let span = tile.chunks(ground);
-    for (source, chunk, placed) in filed.sourced_props_within(&area.prop_sources, ground, &span) {
+    for (source, chunk, placed) in
+        filed.sourced_props_within(&area.prop_sources, &area.scatter_clearing, ground, &span)
+    {
         let wide = extents
             .get(&placed.prop)
             .is_some_and(|size| size.extent.0 * placed.scale >= least);
@@ -1180,9 +1181,12 @@ fn far_expanded(
             continue;
         }
         expanded.drawn.insert(Drawn::Prop(placed.prop));
-        expanded
-            .records
-            .push(prop_record(heights, &placed, chunk_index(ground, chunk)));
+        expanded.records.push(prop_record(
+            heights,
+            &area.snap_surfaces,
+            &placed,
+            chunk_index(ground, chunk),
+        ));
         expanded.sources.push(source);
     }
     expanded
@@ -1521,10 +1525,23 @@ fn want_impostor(
                 })
                 .and_then(|handle| world.resource::<Assets<StandardMaterial>>().get(&handle));
             let look = look.and_then(|look| {
-                let shader = def.materials.get(&look.material)?.get(content).shader;
-                let source = content.built::<CompiledVfxShaders>().0.get(&shader)?;
+                let material = def.materials.get(&look.material)?.get(content);
+                let hashes = content.built::<FileHashes>();
+                let held = |picture: &Option<ImageRef>| {
+                    let hash = hashes.0.get(picture.as_ref()?.as_str())?;
+                    Some(hash.hash.clone())
+                };
+                let shader = match material.shader {
+                    Some(shader) => {
+                        let source = content.built::<CompiledVfxShaders>().0.get(&shader)?;
+                        Some(blake3::hash(source.as_bytes()).to_hex().to_string())
+                    }
+                    None => None,
+                };
                 Some(LookBakeKey {
-                    shader: blake3::hash(source.as_bytes()).to_hex().to_string(),
+                    color: held(&material.color),
+                    normal: held(&material.normal),
+                    shader,
                     params: look.params.bits(),
                     translucency: look.translucency,
                 })
@@ -1631,16 +1648,22 @@ fn changed(world: &mut World, root: Entity, changes: impl IntoIterator<Item = In
 }
 
 /// The instance of `placed`, standing as [`super::prop_transform`] stands its scene on the ground
-/// of `heights`, with a seed drawn from where it stands.
-fn prop_record(heights: &Heightfield, placed: &PropPlacement, chunk: u32) -> InstanceRecord {
-    let at = world_point(placed.at, heights.height_at(placed.at) - placed.sunk);
+/// of `heights` and the `surfaces` snapping props rest on, with a seed drawn from where it stands.
+fn prop_record(
+    heights: &Heightfield,
+    surfaces: &SnapSurfaces,
+    placed: &PropPlacement,
+    chunk: u32,
+) -> InstanceRecord {
+    let stands = surfaces.stand(heights, placed);
     InstanceRecord {
-        position: at.to_array(),
+        position: stands.translation.to_array(),
         yaw: -placed.yaw.radians().0,
         scale: placed.scale,
         prop: placed.prop.index() as u32,
         seed: placed.at.x.to_bits().rotate_left(16) ^ placed.at.y.to_bits(),
         chunk,
+        lean: (stands.rotation * Vec3::Y).xz().to_array(),
     }
 }
 
@@ -1656,6 +1679,7 @@ fn copy_record(place: &Place, prop: u32, chunk: u32) -> InstanceRecord {
         prop,
         seed: seed << 8 | tint,
         chunk,
+        lean: [0.0, 0.0],
     }
 }
 

@@ -32,8 +32,8 @@ pub fn aimed_all(world: &World, cx: &FlowCx, who: &Eval) -> Vec<Entity> {
     actors(world, cx, who)
 }
 
-/// Who an effect acts on: someone standing in this world, a player whose character stands in
-/// another, or nobody.
+/// Who an effect acts on: someone in this world, a player whose character stands in another, or
+/// nobody.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Aimed {
     Here(Entity),
@@ -47,21 +47,20 @@ pub fn aim_anywhere<'c>(cx: &mut Compiler<'c>, who: &'c Option<Expr>) -> Result<
 }
 
 pub fn aimed_anywhere(world: &World, cx: &FlowCx, who: &Eval) -> Aimed {
-    match who(world, cx) {
-        Value::GlobalPlayer(player) => located(world, player),
-        value => value
-            .as_actor()
-            .filter(|&who| stat::stands(world, who))
-            .map_or(Aimed::Nobody, Aimed::Here),
-    }
+    aimed_among(world, cx, who, stat::stands)
 }
 
 /// As `aimed_anywhere`, for an effect only a player's character takes.
 pub fn aimed_character_anywhere(world: &World, cx: &FlowCx, who: &Eval) -> Aimed {
-    match aimed_anywhere(world, cx, who) {
-        Aimed::Here(actor) if !is_character(world, actor) => Aimed::Nobody,
-        aimed => aimed,
-    }
+    only_characters(world, aimed_anywhere(world, cx, who))
+}
+
+/// As `aimed_character_anywhere`, for an effect that keeps a record of what befell a player (a
+/// quest's progress, a memory) rather than acting on their character: what a player did stays
+/// done though they fell doing it, so it reaches a fallen character as well.
+pub fn aimed_record_anywhere(world: &World, cx: &FlowCx, who: &Eval) -> Aimed {
+    let exists = |world: &World, who: Entity| world.get_entity(who).is_ok();
+    only_characters(world, aimed_among(world, cx, who, exists))
 }
 
 /// As `aim_all`, for an effect that also reaches a global player.
@@ -82,7 +81,7 @@ pub enum AimedAll {
 
 pub fn aimed_all_anywhere(world: &World, cx: &FlowCx, who: &Eval) -> AimedAll {
     match who(world, cx) {
-        Value::GlobalPlayer(player) => match located(world, player) {
+        Value::GlobalPlayer(player) => match located(world, player, stat::stands) {
             Aimed::Here(actor) => AimedAll::Here(vec![actor]),
             Aimed::Elsewhere(client) => AimedAll::Elsewhere(client),
             Aimed::Nobody => AimedAll::Here(Vec::new()),
@@ -270,13 +269,39 @@ impl Went {
     }
 }
 
-fn located(world: &World, player: Option<GlobalPlayerId>) -> Aimed {
+fn aimed_among(
+    world: &World,
+    cx: &FlowCx,
+    who: &Eval,
+    reached: fn(&World, Entity) -> bool,
+) -> Aimed {
+    match who(world, cx) {
+        Value::GlobalPlayer(player) => located(world, player, reached),
+        value => value
+            .as_actor()
+            .filter(|&who| reached(world, who))
+            .map_or(Aimed::Nobody, Aimed::Here),
+    }
+}
+
+fn only_characters(world: &World, aimed: Aimed) -> Aimed {
+    match aimed {
+        Aimed::Here(actor) if !is_character(world, actor) => Aimed::Nobody,
+        aimed => aimed,
+    }
+}
+
+fn located(
+    world: &World,
+    player: Option<GlobalPlayerId>,
+    reached: fn(&World, Entity) -> bool,
+) -> Aimed {
     let Some(player) = player else {
         return Aimed::Nobody;
     };
     let client = ClientId(player.0);
     match world.resource::<Players>().0.get(&client) {
-        Some(&character) if stat::stands(world, character) => Aimed::Here(character),
+        Some(&character) if reached(world, character) => Aimed::Here(character),
         Some(_) => Aimed::Nobody,
         None => Aimed::Elsewhere(client),
     }

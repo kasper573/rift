@@ -8,7 +8,7 @@ use std::ops::Range;
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::world::cover::{self, Place, Spread};
 use crate::core::units::{GROUND_ORIGIN, Meters};
-use crate::systems::area::prop::Scatter;
+use crate::systems::area::prop::{Scatter, ScatterClearing};
 use crate::systems::area::{AreaModule, PropPlacement};
 
 use super::PLACEMENT_CELL;
@@ -168,6 +168,7 @@ impl SourcesByChunk {
     pub fn sourced_props_in(
         &self,
         modules: &[AreaModule],
+        clearing: &ScatterClearing,
         ground: Rect<Meters>,
         chunk: SceneryChunk,
     ) -> Vec<(u32, PropPlacement)> {
@@ -175,7 +176,7 @@ impl SourcesByChunk {
             .reaching(chunk)
             .iter()
             .map(|&source| (source, &modules[source as usize]));
-        props_from(sources, ground, chunk)
+        props_from(sources, clearing, ground, chunk)
     }
 
     /// The props standing in every chunk of `span`, each with the place among `modules` of the
@@ -185,6 +186,7 @@ impl SourcesByChunk {
     pub fn sourced_props_within(
         &self,
         modules: &[AreaModule],
+        clearing: &ScatterClearing,
         ground: Rect<Meters>,
         span: &ChunkSpan,
     ) -> Vec<(u32, SceneryChunk, PropPlacement)> {
@@ -206,7 +208,7 @@ impl SourcesByChunk {
                     }
                 }
                 AreaModule::Scatter(scatter) => {
-                    props.extend(scatter.expand().filter_map(|placed| {
+                    props.extend(scatter.expand(clearing).filter_map(|placed| {
                         chunk_within(&placed).map(|chunk| (source, chunk, placed))
                     }))
                 }
@@ -231,6 +233,7 @@ impl SourcesByChunk {
 /// same order, as those of [`Scatter::expand`] that stand there.
 pub fn scattered_in(
     scatter: &Scatter,
+    clearing: &ScatterClearing,
     ground: Rect<Meters>,
     chunk: SceneryChunk,
 ) -> Vec<PropPlacement> {
@@ -245,7 +248,7 @@ pub fn scattered_in(
         return Vec::new();
     }
     scatter
-        .expand()
+        .expand(clearing)
         .filter(|placed| chunk.holds(ground, placed.at))
         .collect()
 }
@@ -357,6 +360,7 @@ pub(super) fn mixed_seed(seed: u64, parts: [u64; 4]) -> u64 {
 /// The props the `sources` stand in `chunk` of `ground`, each with its source's place.
 fn props_from<'a>(
     sources: impl Iterator<Item = (u32, &'a AreaModule)>,
+    clearing: &ScatterClearing,
     ground: Rect<Meters>,
     chunk: SceneryChunk,
 ) -> Vec<(u32, PropPlacement)> {
@@ -367,7 +371,7 @@ fn props_from<'a>(
                 props.push((source, prop.clone()));
             }
             AreaModule::Scatter(scatter) => props.extend(
-                scattered_in(scatter, ground, chunk)
+                scattered_in(scatter, clearing, ground, chunk)
                     .into_iter()
                     .map(|placed| (source, placed)),
             ),

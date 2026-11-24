@@ -4,6 +4,7 @@ use crate::core::script::EventDef;
 use crate::core::script::RunnerSpec;
 use crate::core::script::ValueType;
 use crate::core::script::Vocabulary;
+use crate::core::time;
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
@@ -334,13 +335,16 @@ struct Unhurt(u32);
 #[derive(Component, Clone, Copy)]
 struct Swing(ToolTypeId);
 
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
+#[derive(
+    JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq,
+)]
 pub struct GatherRequest {
     #[entities]
+    #[schemars(with = "u64")]
     pub target: Entity,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct StopGathering;
 
 /// Stands a resource of `def` at `at`, holding all it holds.
@@ -791,4 +795,16 @@ pub fn scripting(vocabulary: &mut Vocabulary) {
         .binder(|loading, content, bind| bind.bind_table::<ResourceDef>(loading, content))
         .event::<Extracted>("extracted")
         .event::<RanOut>("ran_out");
+}
+
+/// How far through the extraction under way a worker is, from none to all of it.
+pub fn progress(world: &World, working: &Working) -> Option<f32> {
+    let now = time::server_now(world)?;
+    let whole = working.until.since(working.since).0;
+    let done = now.since(working.since).0;
+    Some(if whole > 0.0 {
+        (done / whole).clamp(0.0, 1.0)
+    } else {
+        1.0
+    })
 }

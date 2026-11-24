@@ -453,7 +453,7 @@ pub(crate) fn prop_in_hand(
     StandingProp {
         hand: at,
         joint: hand.joint.0.clone(),
-        model: item.get(content).look.get(content).model.path(),
+        prop: item.get(content).look,
         transform: render::held_at(model, hand, grip),
         plumb: render::plumb_from(model, hand, grip),
         hold: grip.hold,

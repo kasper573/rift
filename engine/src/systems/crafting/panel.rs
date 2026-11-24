@@ -3,6 +3,8 @@
 //! materials come from. Nothing here is typed out: every recipe, result and verdict is read off
 //! the recipe books the prompt names.
 
+use super::{ListedRecipe, lacks_mastery, listed, progress, view};
+use crate::systems::prompt;
 use bevy::prelude::*;
 use ui::controls::{self, RowHover, RowLook};
 use ui::egui::{self, Align, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, Vec2};
@@ -10,17 +12,13 @@ use ui::face::{self, TextRole};
 use ui::glyph::Mark;
 use ui::{ink, paint, sheet};
 
-use super::{
-    Craftable, CraftingMessages, CraftingRequest, CraftingView, Recipe, RecipeKey, craftables,
-    locked, matches,
-};
+use super::{CraftingMessages, CraftingRequest, Recipe, RecipeKey, craftables, matches};
 use bevy_egui::EguiPrimaryContextPass;
 
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
-use crate::core::time;
 use crate::core::units::Percent;
 use crate::systems::dialogue::windows::{self, Opens};
 use crate::systems::hud::{self, Confirm, WindowKey};
@@ -33,8 +31,8 @@ use crate::systems::item::widget::{ItemSlotLook, ItemTile, SLOT, TileClicks, ite
 use crate::systems::item::{self, Inventory, ItemId, ItemStack};
 use crate::systems::messages;
 use crate::systems::player::session;
+use crate::systems::prompt::PromptView;
 use crate::systems::prompt::tray;
-use crate::systems::prompt::{PromptKind, PromptView};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::{Placed, UserSettings};
 use crate::systems::window::{AnswerCount, WindowStep};
@@ -82,22 +80,6 @@ pub struct CraftResult {
     pub locked: bool,
 }
 
-/// A recipe as the prompt lists it: which materials the bag lacks, whether it covers them all,
-/// and whether the recipe requires a mastery the player lacks.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ListedRecipe {
-    pub recipe: Recipe,
-    pub lacking: Vec<bool>,
-    pub can_make: bool,
-    pub locked: bool,
-}
-
-/// The crafting prompt before the player, if one is open.
-pub fn view(world: &World) -> Option<&CraftingView> {
-    tray::view(world).filter(|prompt| prompt.kind == PromptKind::Hosted)?;
-    world.get::<CraftingView>(session::me(world)?)
-}
-
 /// What the items placed make, by every recipe of the prompt they are a whole number of times;
 /// one result for each, and one for recipes that make the same.
 pub fn results(world: &World) -> Vec<CraftResult> {
@@ -136,18 +118,6 @@ pub fn choose(world: &mut World, recipe: RecipeKey) {
     world.resource_mut::<Crafting>().chosen = Some(recipe);
 }
 
-/// How far through the craft under way the prompt is, from none to all of it.
-pub fn progress(world: &World) -> Option<f32> {
-    let making = view(world)?.making.as_ref()?;
-    let whole = making.until.since(making.since).0;
-    let done = time::server_now(world)?.since(making.since).0;
-    Some(if whole > 0.0 {
-        (done / whole).clamp(0.0, 1.0)
-    } else {
-        1.0
-    })
-}
-
 pub fn making(world: &World) -> bool {
     view(world).is_some_and(|view| view.making.is_some())
 }
@@ -159,32 +129,6 @@ pub fn cancel(world: &mut World) -> bool {
         InterfaceSound::UiClose.play(world);
     }
     making
-}
-
-/// Every recipe the prompt makes, as it lists them.
-pub fn listed(world: &World) -> Vec<ListedRecipe> {
-    let Some(view) = view(world) else {
-        return Vec::new();
-    };
-    let bag = item::my_bag(world);
-    let held = |item: ItemId| bag.map_or(0, |bag| bag.count(item));
-    craftables(world.resource::<Content>(), &view.recipes)
-        .into_iter()
-        .map(|craftable| {
-            let lacking: Vec<bool> = craftable
-                .recipe
-                .from
-                .iter()
-                .map(|stack| held(stack.item) < stack.count)
-                .collect();
-            ListedRecipe {
-                recipe: craftable.recipe.clone(),
-                can_make: !lacking.contains(&true),
-                lacking,
-                locked: lacks_mastery(world, &craftable),
-            }
-        })
-        .collect()
 }
 
 /// What the Craft button says, and the result it makes when it can be pressed.
@@ -252,7 +196,7 @@ fn draw(world: &mut World) {
         size: SHEET,
         min: SHEET_LEAST,
     };
-    let open = view(world).and(tray::view(world)).cloned();
+    let open = view(world).and(prompt::view(world)).cloned();
     windows::window(
         world,
         &gui,
@@ -264,7 +208,7 @@ fn draw(world: &mut World) {
 }
 
 fn show(ui: &mut Ui, world: &mut World) {
-    let Some(prompt) = tray::view(world).cloned() else {
+    let Some(prompt) = prompt::view(world).cloned() else {
         return;
     };
     if view(world).is_none() {
@@ -608,10 +552,6 @@ fn made_names(content: &Content, makes: &[ItemStack]) -> String {
 
 fn made_items(makes: &[ItemStack]) -> Vec<ItemId> {
     makes.iter().map(|made| made.item).collect()
-}
-
-fn lacks_mastery(world: &World, craftable: &Craftable) -> bool {
-    session::me(world).is_some_and(|me| locked(world, me, craftable))
 }
 
 /// The words beside a result's tiles, painted over the rest of their line: the name of what they

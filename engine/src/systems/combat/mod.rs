@@ -129,9 +129,10 @@ pub fn attackable(world: &World, attacker: Entity, target: Entity) -> bool {
     skill::casting::fits(world, attacker, target, Targeting::SingleEnemy)
 }
 
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct AttackRequest {
     #[entities]
+    #[schemars(with = "u64")]
     pub target: Entity,
 }
 

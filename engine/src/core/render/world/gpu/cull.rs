@@ -700,6 +700,9 @@ pub struct ViewCull {
     kept: Buffer,
     occlusion: Option<UniformBuffer<Occlusion>>,
     occluding: Option<BindGroup>,
+    /// The props standing in the chunks the view sees, by their place in the table: no other's
+    /// listings draw anything in it.
+    props_seen: HashSet<u32>,
 }
 
 impl ViewCull {
@@ -716,7 +719,13 @@ impl ViewCull {
             kept: drawn_buffer(device, 1),
             occlusion: None,
             occluding: None,
+            props_seen: HashSet::new(),
         }
+    }
+
+    /// Whether the view sees any chunk the prop at `prop` in the table stands in.
+    pub fn sees(&self, prop: u32) -> bool {
+        self.props_seen.contains(&prop)
     }
 
     /// Keeps for the lit passes only the listings whose instances the depth the prepass drew,
@@ -840,6 +849,7 @@ impl ViewCull {
         }
         self.occluding = None;
         self.groups = seen.instances.div_ceil(THREADS);
+        self.props_seen = seen.props;
         let view = CullView {
             chunks_seen: seen.spans.len() as u32,
             ..view
@@ -1000,6 +1010,8 @@ pub struct ListedInstance {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SeenChunks {
     pub spans: Vec<UVec4>,
+    /// The props standing in the chunks, by their place in the table.
+    pub props: HashSet<u32>,
     /// How many instances the chunks hold together.
     pub instances: u32,
     pub listed: u32,
@@ -1013,6 +1025,7 @@ pub fn seen_chunks(
     view: &CullView,
 ) -> SeenChunks {
     let mut listed = 0;
+    let mut props = HashSet::new();
     let mut seen: Vec<(u32, UVec4)> = chunks
         .iter()
         .filter(|(_, chunk)| {
@@ -1032,6 +1045,7 @@ pub fn seen_chunks(
         .map(|(&key, chunk)| {
             for &(prop, _, instances) in &chunk.contents.props {
                 listed += instances * table.listings_of(prop);
+                props.insert(prop);
             }
             (
                 key,
@@ -1056,6 +1070,7 @@ pub fn seen_chunks(
         .collect();
     SeenChunks {
         spans,
+        props,
         instances,
         listed,
     }

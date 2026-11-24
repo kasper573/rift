@@ -6,10 +6,9 @@ use std::sync::Arc;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
+use super::scenery::{self, Eyes, Scenery, SceneryPlugin, ShowsProp, Sight};
 use super::shown_weather::ShownWeather;
-use super::{AreaId, AreaObject, AreaTag, PropDef};
-use crate::core::assets;
+use super::{AreaId, AreaObject, AreaTag, PropDef, PropId};
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::render::transition::WorldViewSystems;
@@ -267,13 +266,9 @@ fn place_objects(world: &mut World) {
     for (entity, object) in objects {
         let (center, bounds) = (object.shape.center(), object.shape.bounds());
         let ground = ground_height(world, center);
-        let model = object.look.and_then(|look| {
+        let look = object.look.and_then(|look| {
             let content = world.get_resource::<Content>()?;
-            let prop = content.by_path::<PropDef>(&look)?.get(content);
-            Some(assets::model_scene(
-                world.resource::<AssetServer>(),
-                prop.model.path(),
-            ))
+            content.by_path::<PropDef>(&look)
         });
         let mut placed = world.entity_mut(entity);
         placed.insert((
@@ -285,8 +280,8 @@ fn place_objects(world: &mut World) {
                 height: 1.0,
             },
         ));
-        if let Some(model) = model {
-            placed.insert(WorldAssetRoot(model));
+        if let Some(look) = look {
+            placed.insert(ShowsProp(look));
         }
     }
 }
@@ -300,24 +295,16 @@ struct EffectsSought;
 /// held in a hand. A model no one gave an extent takes that of its mesh.
 fn play_prop_effects(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    let fresh: Vec<(Entity, String)> = world
-        .query_filtered::<(Entity, &WorldAssetRoot), Without<EffectsSought>>()
+    let fresh: Vec<(Entity, PropId)> = world
+        .query_filtered::<(Entity, &ShowsProp), (With<WorldAssetRoot>, Without<EffectsSought>)>()
         .iter(world)
-        .filter_map(|(entity, root)| {
-            let model = root.0.path()?.path().to_str()?.to_owned();
-            Some((entity, model))
-        })
+        .map(|(entity, shown)| (entity, shown.0))
         .collect();
-    for (entity, model) in fresh {
+    for (entity, prop) in fresh {
         let mut shown = world.entity_mut(entity);
         shown.insert(EffectsSought);
-        let prop = std::path::Path::new(&model)
-            .parent()
-            .and_then(|bundle| content.by_path::<PropDef>(bundle.to_str()?))
-            .map(|prop| prop.get(&content));
-        let Some(prop) = prop else {
-            continue;
-        };
+        let prop = prop.get(&content);
+        let model = prop.model.as_str();
         if let Some(ripples) = prop.ripples {
             shown.insert(RippleSpot(ripples));
         }
@@ -325,7 +312,7 @@ fn play_prop_effects(world: &mut World) {
             continue;
         }
         if !shown.contains::<SiteExtent>()
-            && let Some(info) = content.built::<GltfInfos>().0.get(&model)
+            && let Some(info) = content.built::<GltfInfos>().0.get(model)
         {
             shown.insert(scenery::extent_of(info, 1.0));
         }

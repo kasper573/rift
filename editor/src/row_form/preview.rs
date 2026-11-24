@@ -18,7 +18,7 @@ use engine::systems::actor::skeleton::{Colours, EquipmentSlot, TintName};
 use engine::systems::actor::stance::{self, HandIndex};
 use engine::systems::actor::{Action, Appearance, Motion, Pose as BodyPose, appearance, held};
 use engine::systems::class::ClassDef;
-use engine::systems::equipment::{self, Equipment};
+use engine::systems::equipment::{self, Belongings, Equipment};
 use engine::systems::item::card::CardLook;
 use engine::systems::item::rarity::ItemRarityDef;
 use engine::systems::item::{ItemId, ItemStack};
@@ -671,7 +671,15 @@ pub(super) fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Cont
             look: CardLook::DOCKED,
         };
         quest::card::show(ui, images, content, quest, shown_as, |ui, images, plate| {
-            quest::card::offer(ui, images, content, &parties, quest, None, plate);
+            quest::card::offer(
+                ui,
+                images,
+                content,
+                &parties,
+                quest,
+                Belongings::default(),
+                plate,
+            );
         });
     });
 }

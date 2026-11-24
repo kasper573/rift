@@ -22,6 +22,7 @@ mod glass;
 mod gpu;
 mod grass;
 mod haze;
+mod headless;
 mod impostor;
 mod instances;
 mod interaction;

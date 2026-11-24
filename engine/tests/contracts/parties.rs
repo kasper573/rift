@@ -1,22 +1,26 @@
 use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
 use bevy_terminal::{LineKind, TerminalInput};
-use engine::core::units::{Meters, Seconds};
+use engine::core::script::run::FlowRunner;
+use engine::core::units::Seconds;
 use engine::systems::area::AreaDef;
 use engine::systems::area_map::{self, MapMarkKind};
 use engine::systems::chat::{ChatChannel, ChatChannels, ChatSpeaker};
 use engine::systems::combat::credit::KillCredited;
+use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{self, DropTaker, Reservation};
 use engine::systems::movement::position;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::party::share::shares;
 use engine::systems::party::{ExperienceSplit, PartyRequest, SharedExperience};
 use engine::systems::player::{ClientId, Xp};
+use engine::systems::quest::{self, QuestDef, QuestLog};
+use engine::systems::region;
 use engine::systems::reward;
 use engine::systems::social_request::RequestAnswer;
 use engine::systems::{GameSettings, combat, request_sources, stat};
 use serde_json::json;
-use testkit::{Game, Map};
+use testkit::{Game, Map, Sim, path};
 
 use crate::saves::{Saves, checkpoint};
 use crate::server::{ChatShown, Server, SpeakersShown};
@@ -310,11 +314,7 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
     );
 
     let split = |split, levels: &[u32]| {
-        let rules = SharedExperience {
-            split,
-            range: Meters(40.0),
-            bonus: 20.0,
-        };
+        let rules = SharedExperience { split, bonus: 20.0 };
         shares(&rules, 100, levels)
     };
     assert_eq!(split(ExperienceSplit::Even, &[1, 3]), [60, 60]);
@@ -324,6 +324,79 @@ fn a_party_shares_what_a_kill_is_worth_and_what_it_drops() {
         split(ExperienceSplit::Even, &[5]),
         [100],
         "alone, a kill is worth what it is"
+    );
+}
+
+#[test]
+fn a_task_a_member_does_is_done_for_the_party_members_who_share_a_kill() {
+    let mut server = Server::of(game(), request_sources());
+    server
+        .village
+        .accept::<InteractRequest>()
+        .add((interact::interact_request, interact::interactions).chain())
+        .plan(stat::SettleVitals::default())
+        .add((combat::defeats, npc::defeated).chain())
+        .plan(FlowRunner::default());
+    engine::systems::spawn_scripts(&mut server.village.world);
+    region::hold_whole(&mut server.village.world);
+    let wren = server.sign_in(1, "Wren", "village");
+    let hale = server.sign_in(2, "Hale", "village");
+    let marrow = server.sign_in(3, "Marrow", "forest");
+    let osric = server.sign_in(4, "Osric", "village");
+    for name in ["Hale", "Marrow"] {
+        invite(&mut server, 1, name);
+    }
+    server.answer(2, RequestAnswer::Accept);
+    server.answer(3, RequestAnswer::Accept);
+    server.step();
+    let vault = server.village.id::<QuestDef>("vault");
+    for character in [wren, hale, osric] {
+        quest::accept(&mut server.village.world, character, vault).expect("accepted");
+    }
+    quest::accept(&mut server.forest.world, marrow, vault).expect("accepted");
+
+    let lever = server.village.object("lever");
+    let conn = server.village.conn(1);
+    server.village.send(conn, InteractRequest { target: lever });
+    for _ in 0..10 {
+        server.step();
+    }
+    let quieted = |sim: &Sim, character: Entity| {
+        sim.world
+            .get::<QuestLog>(character)
+            .and_then(|log| log.active(vault).map(|on| on.counts[0]))
+    };
+    assert_eq!(
+        [
+            quieted(&server.village, wren),
+            quieted(&server.village, hale),
+            quieted(&server.forest, marrow),
+            quieted(&server.village, osric),
+        ],
+        [Some(1), Some(1), Some(0), Some(0)],
+        "it is done for the members standing by, and for nobody else"
+    );
+
+    let warden = server.village.id::<NpcDef>("warden");
+    let at = position(&server.village.world, hale).expect("a place to stand");
+    let area = server.village.id::<AreaDef>("village");
+    let warden = npc::spawn(&mut server.village.world, warden, at, area, None);
+    item::reserve(&mut server.village.world, warden, wren, Seconds(0.0));
+    combat::inflict(&mut server.village.world, wren, None, 1_000_000.0);
+    server.step();
+    combat::inflict(&mut server.village.world, warden, Some(hale), 1_000_000.0);
+    for _ in 0..10 {
+        server.step();
+    }
+    let laid = |sim: &Sim, character: Entity| {
+        sim.world
+            .get::<QuestLog>(character)
+            .and_then(|log| log.active(vault).map(|on| on.counts[1]))
+    };
+    assert_eq!(
+        [laid(&server.village, wren), laid(&server.village, hale)],
+        [Some(0), Some(1)],
+        "a foe's fall is done for the members standing by, though the one it counts for fell first"
     );
 }
 
@@ -507,10 +580,53 @@ fn brute(server: &mut Server, near: Entity) -> Entity {
 }
 
 /// A game of two areas with parties of three, whose kills are shared evenly with a fifth more
-/// for each further member, and a brute worth a hundred.
+/// for each further member, a brute worth a hundred, and a lever in the village that quiets a
+/// vault.
 fn game() -> Game {
     Game::new()
-        .area("village", &Map::open(9, 9), json!([]))
+        .area(
+            "village",
+            &Map::open(9, 9),
+            json!([{
+                "type": "object",
+                "name": "lever",
+                "title": "Lever",
+                "shape": { "type": "point", "x": 4.0, "y": 4.0 },
+                "look": path("prop", "lever"),
+                "scripts": [{ "script": "lever_pulled.script.json" }],
+            }]),
+        )
+        .prop("lever", json!({ "type": "none" }))
+        .script(
+            "lever_pulled",
+            "object",
+            json!({
+                "interacted": { "type": "on", "event": "interacted", "verb": "use", "reach": 1.5, "next": "quiet" },
+                "quiet": { "type": "complete_task", "quest": "vault.quest.json", "task": "quiet" },
+            }),
+        )
+        .sfx("quest_accepted")
+        .sfx("ui_chime")
+        .sfx("tally_tick")
+        .mark("quest_ready")
+        .mark("quest_offered")
+        .mark("repeatable_ready")
+        .mark("repeatable_offered")
+        .mark("quest_in_progress")
+        .mark("quest_locked")
+        .quest(
+            "vault",
+            json!({
+                "title": "Below the Harbor",
+                "category": "Errands",
+                "blurb": "Below the Harbor",
+                "modules": [
+                    { "type": "task", "task": "quiet", "label": "Quiet the vault" },
+                    { "type": "task", "task": "warden", "label": "Lay the Warden to rest" },
+                    { "type": "hand_over", "text": ["The vault is quiet now."] },
+                ],
+            }),
+        )
         .area("forest", &Map::open(9, 9), json!([]))
         .hero("village", 4.0, 4.0)
         .sfx("ui_refuse")
@@ -518,6 +634,19 @@ fn game() -> Game {
             "brute",
             25.0,
             json!([{ "type": "loot", "xp": 100, "items": [] }]),
+        )
+        .npc(
+            "warden",
+            25.0,
+            json!([{ "type": "script", "script": "warden_down.script.json" }]),
+        )
+        .script(
+            "warden_down",
+            "npc",
+            json!({
+                "defeated": { "type": "on", "event": "defeated", "next": "laid" },
+                "laid": { "type": "complete_task", "quest": "vault.quest.json", "task": "warden" },
+            }),
         )
         .vfx("damage_taken")
         .shader("damage_pop")
@@ -529,7 +658,8 @@ fn game() -> Game {
                 "invite_lasts": 60.0,
                 "call_lasts": 120.0,
                 "absent_for": 300.0,
-                "experience": { "split": "even", "range": 40.0, "bonus": 20.0 },
+                "range": 40.0,
+                "experience": { "split": "even", "bonus": 20.0 },
             });
         })
 }

@@ -25,6 +25,7 @@ use crate::systems::player::{self, PlayedBy, RequestNeeds};
 use crate::systems::society::{self, AccountNumber, Settling, Society, SocietyAsk, SocietyMember};
 use crate::systems::worlds::WorldName;
 use crate::systems::{GameSettings, stat};
+use schemars::JsonSchema;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -86,7 +87,7 @@ pub enum CallAnswer {
 }
 
 /// What a leader asks of their call.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallRequest {
     Pick(AccountNumber),
     Unpick(AccountNumber),
@@ -95,7 +96,7 @@ pub enum CallRequest {
 }
 
 /// What a member answers. They may answer again until the party enters.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallReply {
     Join,
     Decline,

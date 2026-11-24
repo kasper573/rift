@@ -6,14 +6,13 @@ use bevy_ecs::prelude::*;
 use super::Died;
 use crate::core::math::Pos;
 use crate::core::time;
-use crate::core::units::{MeterPos, Meters};
+use crate::core::units::Meters;
 use crate::systems::GameSettings;
 use crate::systems::item::Reservation;
 use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::party;
-use crate::systems::player::{Away, ClientId, Players};
-use crate::systems::stat;
+use crate::systems::player::{ClientId, Players};
 
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct KillCredited {
@@ -39,37 +38,12 @@ pub fn credited(world: &World, victim: Entity) -> Option<Entity> {
     world.resource::<Players>().0.get(&client).copied()
 }
 
-/// The characters a kill of `victim` counts for: the one credited with it alone, or with a party
-/// every member of it who stands in this world within the game's range of where the foe fell,
-/// alive and with their player at them. Whoever made the kill counts from however far they made
-/// it.
+/// The characters a kill of `victim` counts for: those who share in what the one credited with
+/// it did where the foe fell.
 pub fn sharers(world: &World, victim: Entity) -> Vec<Entity> {
-    let Some(credited) = credited(world, victim) else {
-        return Vec::new();
-    };
-    let Some(rules) = world.resource::<GameSettings>().party else {
-        return vec![credited];
-    };
-    let at = position(world, victim);
-    let players = world.resource::<Players>();
-    let members: Vec<Entity> = party::companions(world, credited)
-        .iter()
-        .filter_map(|client| players.0.get(client).copied())
-        .collect();
-    if members.is_empty() {
-        return vec![credited];
-    }
-    let counts = |member: Entity| {
-        let near = member == credited
-            || at
-                .zip(position(world, member))
-                .is_some_and(|(at, stands)| at.distance(stands) <= rules.experience.range);
-        near && !stat::is_dead(world, member) && world.get::<Away>(member).is_none()
-    };
-    members
-        .into_iter()
-        .filter(|&member| counts(member))
-        .collect()
+    credited(world, victim)
+        .map(|credited| party::sharers(world, credited, position(world, victim)))
+        .unwrap_or_default()
 }
 
 /// Tells every system that counts kills who each npc that fell counts for.

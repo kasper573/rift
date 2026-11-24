@@ -1,6 +1,7 @@
 //! Resources as a client shows them: each standing as the prop it looks like under a plate naming
 //! it and counting who works it, and a bar under every worker filling once an extraction.
 
+use super::progress;
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use ui::egui;
@@ -16,10 +17,10 @@ use crate::core::math::Pos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{ground_height, surface_height, window_point, world_point};
 use crate::core::text::{self, LineText, TextLook};
-use crate::core::time;
 use crate::core::units::Meters;
 use crate::systems::actor::plate::PlateLabel;
 use crate::systems::actor::{Aloft, Hitbox};
+use crate::systems::area::scenery::ShowsProp;
 use crate::systems::hud;
 use crate::systems::input::escape::{self, Dismissal};
 use crate::systems::input::map::InputAction;
@@ -72,18 +73,6 @@ pub fn stop(world: &mut World) -> bool {
     working
 }
 
-/// How far through the extraction under way a worker is, from none to all of it.
-pub fn progress(world: &World, working: &Working) -> Option<f32> {
-    let now = time::server_now(world)?;
-    let whole = working.until.since(working.since).0;
-    let done = now.since(working.since).0;
-    Some(if whole > 0.0 {
-        (done / whole).clamp(0.0, 1.0)
-    } else {
-        1.0
-    })
-}
-
 /// The plate over every standing resource: its name and who works it.
 pub fn plates(world: &mut World) -> Vec<(Entity, PlateLabel, Pos<Meters>, Hitbox)> {
     let content = world.resource::<Content>().clone();
@@ -113,16 +102,13 @@ fn dress(
     add: On<Add<Resource>>,
     resources: Query<&Resource>,
     content: Res<Content>,
-    assets: Res<AssetServer>,
     mut commands: Commands,
 ) {
     let Ok(resource) = resources.get(add.entity) else {
         return;
     };
-    let look = resource.def.get(&content).look.get(&content);
-    let scene = crate::core::assets::model_scene(&assets, look.model.path());
     commands.entity(add.entity).insert((
-        WorldAssetRoot(scene),
+        ShowsProp(resource.def.get(&content).look),
         Transform::default(),
         Visibility::default(),
     ));

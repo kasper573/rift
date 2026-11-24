@@ -94,7 +94,8 @@ impl Plugin for ClientIdentityPlugin {
             .add_systems(
                 PreUpdate,
                 (
-                    settle
+                    (settle, let_faded_go)
+                        .chain()
                         .after(ClientSystems::Receive)
                         .before(WorldViewSystems),
                     forget_lingering.run_if(resource_removed::<ServerLink>),
@@ -200,6 +201,26 @@ fn let_go(world: &mut World) {
         } else {
             world.despawn(entity);
         }
+    }
+}
+
+/// Lets every stand-in go that has faded out. Whoever draws the world thins it meanwhile; a
+/// client that draws nothing still sees it go.
+fn let_faded_go(
+    world: &mut World,
+    fading: &mut QueryState<(Entity, &PresenceFade), With<Lingering>>,
+) {
+    let Some(fades) = world.get_resource::<Look>().map(|look| look.presence_fades) else {
+        return;
+    };
+    let now = time::uptime(world);
+    let gone: Vec<Entity> = fading
+        .iter(world)
+        .filter(|(_, fade)| matches!(fade, PresenceFade::Out(_)) && fade.shown(now, fades) <= 0.0)
+        .map(|(entity, _)| entity)
+        .collect();
+    for entity in gone {
+        world.despawn(entity);
     }
 }
 

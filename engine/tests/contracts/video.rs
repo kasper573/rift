@@ -249,6 +249,34 @@ fn the_suns_shadows_reach_as_far_as_its_camera_sees_the_ground() {
     );
 }
 
+#[test]
+fn the_suns_shadows_hold_still_from_frame_to_frame_as_the_day_turns_it_and_follow_it_closely() {
+    let over = Vec2::new(1380.0, 7024.0);
+    let shadows_from = |elevation: f32, azimuth: f32| {
+        lights::sun_transform(Degrees(elevation), Degrees(azimuth), over).forward()
+    };
+    let noon = shadows_from(52.0, 215.0);
+    // A day of twenty minutes turns the sun about a hundredth of a degree from frame to frame.
+    for frame in 1..=5 {
+        let turned = frame as f32 * 0.01;
+        assert_eq!(
+            shadows_from(52.0 + turned, 215.0 + turned),
+            noon,
+            "the shadows hold still {frame} frames on"
+        );
+    }
+    for (elevation, azimuth) in [(53.0, 215.0), (52.0, 217.5), (12.3, 290.7)] {
+        let sun = -lights::toward(Degrees(elevation), Degrees(azimuth));
+        let behind = shadows_from(elevation, azimuth)
+            .angle_between(sun)
+            .to_degrees();
+        assert!(
+            behind < 0.25,
+            "the shadows follow a sun {elevation}° up at {azimuth}° to within {behind}°"
+        );
+    }
+}
+
 /// How high the eye stands over the ground the shadows fall on.
 const EYE_HEIGHT: f32 = 10.0;
 /// How much farther than a camera sees a reach may lie: it moves in steps, four to a doubling.

@@ -118,6 +118,27 @@ fn an_atlas_gives_its_slots_to_the_tiles_wanted_last_and_never_takes_one_wanted_
     );
     assert!(atlas.is_current(4, &1));
     assert_eq!(atlas.want(4), Some((1, &1)));
+
+    atlas.next_frame();
+    for tile in [2, 3, 4] {
+        atlas.want(tile);
+    }
+    assert_eq!(atlas.admit(5, 0), None, "every slot is wanted again");
+    atlas.grow(6);
+    assert_eq!(atlas.slots(), 6);
+    assert_eq!(
+        atlas.want(4),
+        Some((1, &1)),
+        "what held a slot keeps it as the atlas grows"
+    );
+    assert_eq!(
+        atlas.admit(5, 0),
+        Some(Admitted {
+            slot: 3,
+            evicted: None
+        }),
+        "the room it grew by is free"
+    );
 }
 
 #[test]

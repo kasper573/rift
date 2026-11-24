@@ -51,6 +51,7 @@ use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::credit::KillCredited;
 use crate::systems::dialogue::span::ScriptSpan;
 use crate::systems::dialogue::{self, Revealable};
+use crate::systems::equipment::{self, Belongings, Equipment};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::deliver::DeliveryReason;
@@ -522,9 +523,9 @@ impl QuestDef {
         content: &Content,
         parties: &Parties,
         active: &ActiveQuest,
-        inventory: Option<&Inventory>,
+        belongings: Belongings<'_>,
     ) -> Vec<ObjectiveProgress> {
-        let held = |item| inventory.map_or(0, |inventory| inventory.count(item));
+        let held = |item| belongings.count(item);
         self.objectives()
             .enumerate()
             .map(|(index, objective)| {
@@ -552,10 +553,10 @@ impl QuestDef {
         content: &Content,
         parties: &Parties,
         active: &ActiveQuest,
-        inventory: Option<&Inventory>,
+        belongings: Belongings<'_>,
     ) -> bool {
         self.objectives()
-            .zip(self.progress(content, parties, active, inventory))
+            .zip(self.progress(content, parties, active, belongings))
             .all(|(objective, progress)| {
                 matches!(objective, Objective::Decide { .. }) || progress.done()
             })
@@ -899,7 +900,7 @@ pub enum QuestResult {
     Failed,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum QuestRequest {
     Track { quest: QuestId, tracked: bool },
     Abandon { quest: QuestId },
@@ -911,15 +912,10 @@ impl ActiveQuest {
             .map(|deadline| Seconds(deadline.since(now).0.ceil()))
     }
 
-    pub fn ready(
-        &self,
-        content: &Content,
-        parties: &Parties,
-        inventory: Option<&Inventory>,
-    ) -> bool {
+    pub fn ready(&self, content: &Content, parties: &Parties, belongings: Belongings<'_>) -> bool {
         self.quest
             .get(content)
-            .complete(content, parties, self, inventory)
+            .complete(content, parties, self, belongings)
     }
 
     pub fn fresh(content: &Content, quest: QuestId) -> ActiveQuest {
@@ -1008,7 +1004,7 @@ pub fn ready_to_hand_in(world: &World, player: Entity, quest: QuestId) -> bool {
     let parties = world.resource::<Parties>();
     log_of(world, player)
         .and_then(|log| log.active(quest))
-        .is_some_and(|active| active.ready(content, parties, world.get::<Inventory>(player)))
+        .is_some_and(|active| active.ready(content, parties, Belongings::by(world, player)))
 }
 
 pub fn accept(world: &mut World, player: Entity, quest: QuestId) -> Result<(), LineText> {
@@ -1058,7 +1054,7 @@ pub fn turn_in(
     if !ready_to_hand_in(world, player, quest) {
         return Err(not_ready(&content, quest));
     }
-    item::effects::exchange(world, player, def.hand_in(), &[])?;
+    equipment::take_belongings(world, player, def.hand_in())?;
     finish_completed(world, player, quest, pick);
     Ok(())
 }
@@ -1113,7 +1109,7 @@ pub fn fail(world: &mut World, player: Entity, quest: QuestId) {
         return;
     }
     log.finish(quest, QuestResult::Failed, clock);
-    take_back(world, player, quest.get(&content).grants());
+    equipment::take_belongings_up_to(world, player, quest.get(&content).grants());
     let failed = Notification::feed(
         HistoryTopic::Quest,
         words(&content).failed_notice(&quest.get(&content).title),
@@ -1135,7 +1131,7 @@ pub fn abandon(world: &mut World, player: Entity, quest: QuestId) {
     }
     log.active.retain(|active| active.quest != quest);
     log.tracked.retain(|&tracked| tracked != quest);
-    take_back(world, player, quest.get(&content).grants());
+    equipment::take_belongings_up_to(world, player, quest.get(&content).grants());
     tell(
         world,
         player,
@@ -1305,13 +1301,13 @@ fn announcement(world: &World, player: Entity, clock: WallClock) -> Option<Annou
     }
     let content = world.resource::<Content>();
     let parties = world.resource::<Parties>();
-    let inventory = world.get::<Inventory>(player);
+    let belongings = Belongings::by(world, player);
     let mut log = log.clone();
     let mut told: Vec<(LineText, ImageRef, Option<SfxId>)> = Vec::new();
     let ready: Vec<QuestId> = log
         .active
         .iter()
-        .filter(|active| active.ready(content, parties, inventory))
+        .filter(|active| active.ready(content, parties, belongings))
         .map(|active| active.quest)
         .collect();
     for &quest in &ready {
@@ -1580,12 +1576,6 @@ fn shown_to(world: &World, player: Entity, quest: QuestId) -> bool {
         .is_none_or(|shown| condition::holds(world, player, shown))
 }
 
-fn take_back(world: &mut World, player: Entity, grants: &[ItemStack]) {
-    if let Some(mut inventory) = world.get_mut::<Inventory>(player) {
-        inventory.take_up_to(grants);
-    }
-}
-
 /// Time-driven and news-bearing changes to a character's quests: expiries, and the moment a quest
 /// becomes ready or a daily quest is open again. What the log shows is read from the state
 /// itself, so this only runs where something may have changed.
@@ -1611,7 +1601,6 @@ fn announce(world: &mut World, player: Entity, clock: WallClock) {
     for quest in expired {
         fail(world, player, quest);
     }
-    let inventory = world.get::<Inventory>(player).cloned();
     let Some(mut log) = log_of(world, player).cloned() else {
         return;
     };
@@ -1619,7 +1608,7 @@ fn announce(world: &mut World, player: Entity, clock: WallClock) {
     let ready: Vec<QuestId> = log
         .active
         .iter()
-        .filter(|active| active.ready(&content, &parties, inventory.as_ref()))
+        .filter(|active| active.ready(&content, &parties, Belongings::by(world, player)))
         .map(|active| active.quest)
         .collect();
     for &quest in &ready {
@@ -1668,7 +1657,9 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
     let Some(mut log) = log_of(world, player).cloned() else {
         return;
     };
-    let inventory = world.get::<Inventory>(player).cloned();
+    let bag = world.get::<Inventory>(player).cloned();
+    let worn = world.get::<Equipment>(player).cloned();
+    let belongings = Belongings::of(bag.as_ref(), worn.as_ref());
     let mut counted = Vec::new();
     let mut drops = Vec::new();
     world.resource_scope(|_, mut rng: Mut<Rng>| {
@@ -1693,7 +1684,7 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
                 }
             }
             for drop in def.drops().filter(|drop| drop.from == kill.npc) {
-                if !still_needs(def, drop.item, inventory.as_ref()) {
+                if !still_needs(def, drop.item, belongings) {
                     continue;
                 }
                 if drop
@@ -1730,8 +1721,8 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
     }
 }
 
-fn still_needs(def: &QuestDef, item: ItemId, inventory: Option<&Inventory>) -> bool {
-    let held = inventory.map_or(0, |inventory| inventory.count(item));
+fn still_needs(def: &QuestDef, item: ItemId, belongings: Belongings<'_>) -> bool {
+    let held = belongings.count(item);
     def.objectives().any(|objective| match objective {
         Objective::Hold(stack) => stack.item == item && held < stack.count,
         Objective::Deliver { item: wanted } => *wanted == item && held == 0,

@@ -10,6 +10,7 @@ authors = ["kasper573"]
 bevy_app = { workspace = true }
 bevy_ecs = { workspace = true }
 nucleo-matcher = { workspace = true }
+schemars = "1"
 serde = { workspace = true }
 
 [lints]

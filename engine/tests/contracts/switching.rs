@@ -91,7 +91,7 @@ fn what_doesnt_come_back_goes_with_the_switch_and_a_despawn_outside_one_goes_at_
 
 /// An area's world names its entities from its own pool, so the character a player arrives as
 /// is no entity of the world they left. What stood for them there fades where it stood, and
-/// is no longer theirs.
+/// is no longer theirs. Once it has faded it is gone, on a client that draws nothing as well.
 #[test]
 fn the_character_a_world_replicates_is_the_clients_own_while_the_one_it_left_fades() {
     let mut app = App::new();
@@ -131,6 +131,11 @@ fn the_character_a_world_replicates_is_the_clients_own_while_the_one_it_left_fad
         1,
         "what was left behind is still fading where it stood"
     );
+    app.world_mut()
+        .resource_mut::<Time<Virtual>>()
+        .advance_by(std::time::Duration::from_secs(2));
+    app.update();
+    assert_eq!(shown(app.world_mut()), 0, "what has faded out is gone");
 }
 
 const MINE: ClientId = ClientId(1);

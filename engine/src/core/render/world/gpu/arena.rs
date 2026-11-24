@@ -328,8 +328,9 @@ impl<K: Eq + Hash> ModelSlabs<K> {
 }
 
 /// A prop standing in the world as the arenas hold it: where it stands, its turn about the up axis
-/// and its size, the prop it is by its place among the content's props, a seed of its own, and
-/// the chunk of its scenery it stands in, by the scenery's own key for it.
+/// and its size, the prop it is by its place among the content's props, a seed of its own, the
+/// chunk of its scenery it stands in, by the scenery's own key for it, and how far its up axis
+/// leans east and south once turned, as a prop lying along a slope does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InstanceRecord {
     pub position: [f32; 3],
@@ -338,10 +339,11 @@ pub struct InstanceRecord {
     pub prop: u32,
     pub seed: u32,
     pub chunk: u32,
+    pub lean: [f32; 2],
 }
 
 impl InstanceRecord {
-    pub const BYTES: u64 = 32;
+    pub const BYTES: u64 = 36;
 
     /// The record as the slab holds it.
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -350,7 +352,10 @@ impl InstanceRecord {
             .into_iter()
             .chain([self.yaw, self.scale])
             .flat_map(f32::to_le_bytes);
-        let words = [self.prop, self.seed, self.chunk]
+        let lean = self
+            .lean
+            .map(|way| (way.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16 as u16 as u32);
+        let words = [self.prop, self.seed, self.chunk, lean[0] | lean[1] << 16]
             .into_iter()
             .flat_map(u32::to_le_bytes);
         floats.chain(words).collect()

@@ -441,27 +441,28 @@ pub fn tell_time(world: &mut World) {
     world.resource_mut::<Daylight>().set_if_neq(now);
 }
 
-/// Where the shown area's climate stands once it is known: the spell under way, and where along
-/// the course it stands, so each frame walks on from the last; nowhere along it where the server
-/// holds the weather at a spell.
+/// Where along its climate's course the shown area stands once it is known, so each frame walks on
+/// from the last; nowhere along it where the server holds the weather at a spell.
 #[derive(Resource, Default)]
 pub struct ShownCourse(Option<Shown>);
 
 #[derive(Clone, Copy)]
 struct Shown {
     area: AreaId,
-    spell: usize,
     along: Option<SpellCourse>,
 }
 
-impl ShownCourse {
-    /// The spell under way over `area`, by its place among its climate's spells, once the course
-    /// there is known.
-    pub fn spell(&self, area: AreaId) -> Option<usize> {
-        self.0
-            .filter(|shown| shown.area == area)
-            .map(|shown| shown.spell)
-    }
+/// The spell under way over an area of `climate` at the server's moment, by its place among the
+/// climate's spells, once the server has told the weather's course.
+pub fn spell_now(world: &World, climate: &Climate) -> Option<usize> {
+    let now = server_now(world)?;
+    let course = world.resource::<WeatherClock>().0?;
+    Some(match course {
+        TimeCourse::Held(spell) => spell,
+        TimeCourse::Since(_) => climate
+            .course_at(course, now, None)
+            .map_or(0, |along| along.spell()),
+    })
 }
 
 /// The weather over the area `area`, of `climate`, at the server's moment on the course the server
@@ -476,11 +477,7 @@ pub fn weather_now(world: &mut World, area: AreaId, climate: &Climate) -> Weathe
         .filter(|shown| shown.area == area)
         .and_then(|shown| shown.along);
     let along = climate.course_at(course, now, from);
-    let spell = match course {
-        TimeCourse::Held(spell) => spell,
-        TimeCourse::Since(_) => along.map_or(0, |along| along.spell()),
-    };
-    world.insert_resource(ShownCourse(Some(Shown { area, spell, along })));
+    world.insert_resource(ShownCourse(Some(Shown { area, along })));
     match course {
         TimeCourse::Held(spell) => climate.held(spell),
         TimeCourse::Since(_) => climate.weather_at(along, now),

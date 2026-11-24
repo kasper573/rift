@@ -7,6 +7,7 @@ mod dialogue;
 mod fit;
 mod folder;
 mod loadtest;
+mod play;
 mod profile;
 mod render;
 mod search;
@@ -106,6 +107,15 @@ enum Command {
         http: String,
         count: Option<usize>,
     },
+    /// Plays characters of GAME on a running game server with no window: does what each JSON line
+    /// of stdin tells one of them (sign in and join, send a request, say what it sees, leave),
+    /// until stdin closes.
+    Play {
+        game: PathBuf,
+        /// The game server's HTTP address.
+        #[arg(long)]
+        http: String,
+    },
     /// Samples game-server-profiling playing the crowd, or GAME, under load, with perf, into OUT:
     /// CPU by function, CPU by system, and the heap's allocations.
     Profile {
@@ -170,6 +180,9 @@ enum Schema {
     Server,
     /// What `rift bench` writes as its report.
     Bench,
+    /// What `rift play` takes on stdin, among it every request a game client sends, and what it
+    /// prints.
+    Play,
 }
 
 fn main() {
@@ -241,9 +254,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Command::Play { game, http } => {
+            if let Err(failure) = play::run(&game, &http) {
+                eprintln!("{failure}");
+                std::process::exit(1);
+            }
+        }
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),
         Command::Schema(Schema::Bench) => println!("{}", bench::schema()),
+        Command::Schema(Schema::Play) => {
+            println!("{}", engine::systems::player::headless::schema())
+        }
     }
 }

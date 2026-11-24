@@ -87,6 +87,7 @@ fn a_placement_turned_by_quarter_turns_turns_what_it_places_about_its_spot() {
                     { "type": "prop", "prop": path("prop", "rock"), "at": { "x": 2.0, "y": 1.0 }, "yaw": 30.0 },
                     { "type": "safe_zone", "rect": { "x": 1.0, "y": 0.0, "w": 2.0, "h": 1.0 } },
                     { "type": "resident", "npc": path("npc", "wren"), "at": { "x": 1.0, "y": 0.0 }, "facing": 350.0 },
+                    { "type": "object", "name": "chest", "shape": { "type": "point", "x": 3.0, "y": 2.0 }, "yaw": 10.0 },
                 ]),
             ),
             json!([placement("Camp", "camp", 4.0, 4.0, yaw)]),
@@ -104,7 +105,11 @@ fn a_placement_turned_by_quarter_turns_turns_what_it_places_about_its_spot() {
             AreaModule::Resident(resident) => (resident.at, resident.facing),
             _ => panic!("not a resident"),
         };
-        (at, yaw, zone, home, facing)
+        let chest = match &placed[3].module {
+            AreaModule::Object(object) => (object.shape.center(), object.yaw),
+            _ => panic!("not an object"),
+        };
+        (at, yaw, zone, home, facing, chest)
     };
 
     assert_eq!(
@@ -115,6 +120,7 @@ fn a_placement_turned_by_quarter_turns_turns_what_it_places_about_its_spot() {
             Rect::new(Pos::new(5.0, 4.0), Size::new(2.0, 1.0)),
             Pos::new(5.0, 4.0),
             Degrees(350.0),
+            (Pos::new(7.0, 6.0), Degrees(10.0)),
         )
     );
     assert_eq!(
@@ -125,6 +131,7 @@ fn a_placement_turned_by_quarter_turns_turns_what_it_places_about_its_spot() {
             Rect::new(Pos::new(3.0, 5.0), Size::new(1.0, 2.0)),
             Pos::new(4.0, 5.0),
             Degrees(80.0),
+            (Pos::new(2.0, 7.0), Degrees(100.0)),
         )
     );
     assert_eq!(
@@ -135,6 +142,7 @@ fn a_placement_turned_by_quarter_turns_turns_what_it_places_about_its_spot() {
             Rect::new(Pos::new(1.0, 3.0), Size::new(2.0, 1.0)),
             Pos::new(3.0, 4.0),
             Degrees(170.0),
+            (Pos::new(1.0, 2.0), Degrees(190.0)),
         )
     );
 }

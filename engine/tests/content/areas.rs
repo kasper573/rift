@@ -1,7 +1,8 @@
-use engine::systems::area::stages::COVER;
+use engine::systems::area::stages::{COVER, PROP};
 use std::io;
 use std::sync::Arc;
 
+use bevy::math::Vec3;
 use engine::core::content::{
     Content, ContentFolder, FileHash, FolderEntry, FolderReader, LoadPurpose, LoadReport,
     LoadWarnings, MemoryFolder, SETTINGS_FILE, load, version, write,
@@ -13,10 +14,10 @@ use engine::core::ground::{
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use engine::systems::area::scenery::{Sources, prop_transform};
-use engine::systems::area::{self, AreaDef, AreaId};
+use engine::systems::area::{self, AreaDef, AreaId, PropDef, PropPlacement};
 use engine::systems::player;
 use serde_json::{Value, json};
-use testkit::{Game, HEIGHTS, Map, path};
+use testkit::{Game, HEIGHTS, Map, box_glb, path, png};
 
 use crate::support::game;
 
@@ -75,22 +76,31 @@ fn the_ground_walks_where_it_is_flat_enough_and_painted_walkable() {
 }
 
 #[test]
-fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_props_for_its_seed() {
-    let field = || {
+fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_props_for_its_seed_clear_of_what_stands()
+ {
+    let hut = |x: f32, y: f32| -> Rect<Meters> {
+        Rect::new(Pos::new(x - 1.5, y - 1.0), Size::new(3.0, 2.0))
+    };
+    let huts = [hut(2.0, 2.0), hut(5.5, 5.5)];
+    let field = |strewn: &[&str], with_huts: bool| {
+        let strewn: Vec<String> = strewn.iter().map(|name| path("prop", name)).collect();
+        let mut scene = vec![
+            json!({ "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 4.0, "y": 4.0 } }),
+            json!({ "type": "prop", "prop": path("prop", "tuft"), "at": { "x": 1.0, "y": 6.0 } }),
+            json!({ "type": "scatter", "props": strewn, "region": { "x": -0.5, "y": -0.5, "w": 8.0, "h": 8.0 }, "per_square_meter": 0.5, "seed": 7 }),
+        ];
+        if with_huts {
+            scene.push(json!({ "type": "object", "name": "shed", "shape": { "type": "point", "x": 5.5, "y": 5.5 }, "look": path("prop", "hut") }));
+            scene.push(json!({ "type": "prop", "prop": path("prop", "hut"), "at": { "x": 2.0, "y": 2.0 } }));
+        }
         game()
             .prop("boulder", json!({ "type": "circle", "radius": 0.4 }))
             .prop("tuft", json!({ "type": "none" }))
-            .area(
-                "field",
-                &Map::open(8, 8),
-                json!([
-                    { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 4.0, "y": 4.0 } },
-                    { "type": "prop", "prop": path("prop", "tuft"), "at": { "x": 1.0, "y": 6.0 } },
-                    { "type": "scatter", "props": [path("prop", "tuft")], "region": { "x": -0.5, "y": -0.5, "w": 8.0, "h": 8.0 }, "per_square_meter": 0.5, "seed": 7 },
-                ]),
-            )
+            .prop("pebble", json!({ "type": "circle", "radius": 0.3 }))
+            .prop("hut", json!({ "type": "box", "width": 3.0, "depth": 2.0 }))
+            .area("field", &Map::open(8, 8), json!(scene))
     };
-    let content = field().load();
+    let content = field(&["tuft"], false).load();
     let field_area = area::load(&content, area_id(&content, "field"));
     let _held = field_area.hold(field_area.ground_size().each_tile());
 
@@ -100,13 +110,64 @@ fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_pr
         field_area.mesh().walkable(Pos::new(1.0, 6.0)),
         "a tuft takes no ground"
     );
-    assert_eq!(field_area.props.len(), 2 + 32);
     let region = Rect::new(GROUND_ORIGIN, Size::new(8.0, 8.0));
     assert!(field_area.props.iter().all(|prop| region.contains(prop.at)));
 
-    let again = field().load();
+    let again = field(&["tuft"], false).load();
     let again = area::load(&again, area_id(&again, "field"));
     assert_eq!(again.props, field_area.props, "the same seed strews alike");
+
+    let open = field(&["tuft", "pebble"], false).load();
+    let open = area::load(&open, area_id(&open, "field"));
+    let built = field(&["tuft", "pebble"], true).load();
+    let reach = |placed: &PropPlacement| {
+        let pebble = built.by_path::<PropDef>(&path("prop", "pebble"));
+        if Some(placed.prop) == pebble {
+            0.3 * placed.scale
+        } else {
+            0.0
+        }
+    };
+    let apart = |placed: &PropPlacement| {
+        huts.iter()
+            .map(|hut| {
+                let dx = (hut.min_x() - placed.at.x)
+                    .max(placed.at.x - hut.max_x())
+                    .max(0.0);
+                let dy = (hut.min_y() - placed.at.y)
+                    .max(placed.at.y - hut.max_y())
+                    .max(0.0);
+                (dx * dx + dy * dy).sqrt()
+            })
+            .fold(f32::INFINITY, f32::min)
+            - reach(placed)
+    };
+    let strewn = open.props[2..].to_vec();
+    let kept = &area::load(&built, area_id(&built, "field")).props;
+    let kept = kept[2..kept.len() - 1].to_vec();
+    let mut left = strewn.iter();
+    for placed in &kept {
+        assert!(
+            left.any(|open| open == placed),
+            "what stands clear is strewn as on open ground, in order: {placed:?}"
+        );
+    }
+    assert!(
+        kept.iter().all(|placed| apart(placed) > 0.0),
+        "nothing is strewn on a placed prop's or an object's ground"
+    );
+    let left_out: Vec<_> = strewn
+        .iter()
+        .filter(|placed| !kept.contains(placed))
+        .collect();
+    assert!(
+        !left_out.is_empty(),
+        "the huts stand where the scatter strews"
+    );
+    assert!(
+        left_out.iter().all(|placed| apart(placed) < 0.01),
+        "only what would stand on that ground is left out: {left_out:?}"
+    );
 }
 
 #[test]
@@ -129,7 +190,11 @@ fn a_prop_stands_on_the_ground_under_it_sunk_as_deep_as_it_is_placed() {
     let standing: Vec<f32> = hill_area
         .props
         .iter()
-        .map(|placed| prop_transform(&hill_area.heights, placed).translation.y)
+        .map(|placed| {
+            prop_transform(&hill_area.heights, &hill_area.snap_surfaces, placed)
+                .translation
+                .y
+        })
         .collect();
     let expected = [0.0, 3.0 - 1.5];
     assert!(
@@ -139,6 +204,68 @@ fn a_prop_stands_on_the_ground_under_it_sunk_as_deep_as_it_is_placed() {
             .all(|(stands, ground)| (stands - ground).abs() < 0.01),
         "a prop stands on the ground, a sunk one that far under it: {standing:?}"
     );
+}
+
+/// A prop snapping to the ground rests on what lies under it, its shape as it is: out of a floor
+/// it is placed inside onto the floor's top, on bare ground where nothing else lies, and along a
+/// slope, lifted until no part of it sinks in.
+#[test]
+fn a_prop_snapping_to_the_ground_rests_on_what_lies_under_it_along_its_slope() {
+    let floor = box_glb(Vec3::new(3.0, 0.3, 3.0), "stone", [1.0; 4]);
+    let shine = box_glb(Vec3::new(1.0, 0.05, 1.0), "light", [1.0; 4]);
+    let content = game()
+        .prop_of("floor", floor, json!({ "footprint": { "type": "none" } }))
+        .prop_of(
+            "shine",
+            shine,
+            json!({ "footprint": { "type": "none" }, "snap_to_ground": true }),
+        )
+        .area(
+            "hill",
+            &Map::open(8, 8),
+            json!([
+                { "type": "prop", "prop": path("prop", "floor"), "at": { "x": 2.0, "y": 2.0 } },
+                { "type": "prop", "prop": path("prop", "shine"), "at": { "x": 2.0, "y": 2.0 } },
+                { "type": "prop", "prop": path("prop", "shine"), "at": { "x": 2.0, "y": 6.0 } },
+                { "type": "prop", "prop": path("prop", "shine"), "at": { "x": 5.0, "y": 6.0 } },
+            ]),
+        )
+        .part("area", "hill", "height/0_0.png", tile(&hill()))
+        .part("area", "hill", "height_overview.png", overview(&hill()))
+        .load();
+    let hill_area = area::load(&content, area_id(&content, "hill"));
+    let stands = |index: usize| {
+        let placed = &hill_area.props[index];
+        prop_transform(&hill_area.heights, &hill_area.snap_surfaces, placed)
+    };
+    let slope = Vec3::new(-0.5, 1.0, 0.0).normalize();
+    for (index, foot, up, case) in [
+        (
+            1,
+            0.3,
+            Vec3::Y,
+            "out of the floor it is placed inside, onto its top",
+        ),
+        (2, 0.0, Vec3::Y, "on bare ground"),
+        (
+            3,
+            0.5,
+            slope,
+            "along the slope, at the ground under its middle",
+        ),
+    ] {
+        let stood = stands(index);
+        assert!(
+            (stood.translation.y - foot).abs() < 0.02,
+            "a snapping prop rests {case}: its foot at {}, not {foot}",
+            stood.translation.y
+        );
+        assert!(
+            (stood.rotation * Vec3::Y).angle_between(up) < 0.02,
+            "a snapping prop rests {case}: its up {:?}, not {up:?}",
+            stood.rotation * Vec3::Y
+        );
+    }
 }
 
 #[test]
@@ -788,6 +915,52 @@ fn a_water_is_drawn_by_a_water_stage_shader_and_an_area_lists_every_water_its_ma
     for (rule, game) in cases {
         let report = game.try_load().err().expect("refused");
         assert!(rules(&report).contains(&rule), "{rule}: {report}");
+    }
+}
+
+#[test]
+fn a_props_material_draws_in_pictures_its_model_can_lay_or_by_a_prop_stage_shader_it_fills() {
+    let game = || {
+        game()
+            .asset("pictures/paint.png", png(4, 4))
+            .shader_on("bark", PROP)
+            .shader("flash")
+            .area("yard", &Map::open(8, 8), json!([]))
+    };
+    let painted = |material: Value| {
+        game().row("prop_material", "paint", material).prop_of(
+            "block",
+            box_glb(Vec3::ONE, "paint", [1.0; 4]),
+            json!({
+                "footprint": { "type": "none" },
+                "materials": { "paint": path("prop_material", "paint") },
+            }),
+        )
+    };
+    let cases = [
+        ("a material that draws nothing", json!({})),
+        (
+            "a value with no shader to fill",
+            json!({ "color": "pictures/paint.png", "params": { "glow": 1.0 } }),
+        ),
+        (
+            "a shader of another stage",
+            json!({ "shader": path("vfx_shader", "flash") }),
+        ),
+        (
+            "nothing to turn a relief by",
+            json!({ "normal": "pictures/paint.png" }),
+        ),
+    ];
+    for (rule, material) in cases {
+        let report = painted(material.clone()).try_load().err().expect("refused");
+        assert!(rules(&report).contains(&rule), "{material}: {report}");
+    }
+    for material in [
+        json!({ "color": "pictures/paint.png" }),
+        json!({ "color": "pictures/paint.png", "shader": path("vfx_shader", "bark") }),
+    ] {
+        painted(material).load();
     }
 }
 

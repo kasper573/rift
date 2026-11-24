@@ -45,7 +45,7 @@ pub struct ResetPrompt {
     pub points: SkillPoints,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct ResetAnswerRequest {
     pub accepted: bool,
 }

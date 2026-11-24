@@ -20,6 +20,7 @@ use engine::core::render::world::lights;
 use engine::core::render::world::sky::{self, Sky};
 use engine::core::units::Degrees;
 use engine::systems::area::prop::PropDef;
+use engine::systems::area::scenery::ShowsProp;
 use ui::egui;
 
 use crate::app::Editor;
@@ -179,10 +180,10 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
         let Some(hash) = model_hash(&prop) else {
             continue;
         };
-        let def = content
+        let id = content
             .by_path::<PropDef>(&prop)
-            .expect("a prop with a model hash")
-            .get(&content);
+            .expect("a prop with a model hash");
+        let def = id.get(&content);
         let path = def.model.path();
         let bounds = content
             .built::<GltfInfos>()
@@ -204,10 +205,9 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             world.resource_mut::<Assets<Image>>().add(image)
         };
         let layers = RenderLayers::from_layers(&[LAYER]);
-        let scene = engine::core::assets::model_scene(world.resource::<AssetServer>(), path);
         let root = world
             .spawn((
-                WorldAssetRoot(scene),
+                ShowsProp(id),
                 Transform::default(),
                 bevy::app::Propagate(layers.clone()),
             ))

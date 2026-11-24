@@ -21,7 +21,6 @@ use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, LoopStart, S
 use super::skeleton::{EquipmentSlot, GestureName, MoveName};
 use super::stance::{self, HandIndex, PropHand, StanceId};
 use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
-use crate::core::assets;
 use crate::core::audio::playback::{PlaySfx, SfxId, SfxPlace};
 use crate::core::content::Content;
 use crate::core::content::gltf::NodeTree;
@@ -39,6 +38,7 @@ use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::core::vfx::render::SiteExtent;
 use crate::core::vfx::standing::StandingVfx;
+use crate::systems::area::scenery::ShowsProp;
 use crate::systems::area::{self, Area, PropId};
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::item::{Grip, ItemId, PropAxis, PropHold, Wear};
@@ -1090,14 +1090,10 @@ pub fn hang(world: &mut World) {
             };
             let placed = held_at(model, &hands[hand.index()], &grip);
             let plumb = plumb_from(model, &hands[hand.index()], &grip);
-            let scene = assets::model_scene(
-                world.resource::<AssetServer>(),
-                look.get(&content).model.path(),
-            );
             let prop = world
                 .spawn((
                     HeldProp,
-                    WorldAssetRoot(scene),
+                    ShowsProp(look),
                     placed,
                     Visibility::default(),
                     ChildOf(joint),

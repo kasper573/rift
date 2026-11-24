@@ -21,7 +21,7 @@ type MediaCheck = Result<Decoded, MediaProblem>;
 enum Decoded {
     Plain,
     Image((u32, u32)),
-    Model(GltfInfo),
+    Model(Box<GltfInfo>),
     Sound(Seconds),
 }
 
@@ -67,7 +67,7 @@ pub fn check_media(loading: &mut Loading) {
                 for problem in image_problems(&path, &info, &hashes) {
                     loading.file_error(path.clone(), ErrorPlace::WholeFile, problem);
                 }
-                models.insert(path, info);
+                models.insert(path, *info);
             }
             Ok(Decoded::Plain | Decoded::Sound(_)) => {}
             Err(problem) => loading.file_error(
@@ -166,7 +166,7 @@ pub(super) fn sound_length(path: &str, hash: Option<&str>, bytes: &[u8]) -> Opti
 /// What the model at `path` of `bytes`, hashed `hash` when known, holds, when it reads.
 pub fn gltf_info(path: &str, hash: Option<&str>, bytes: &[u8]) -> Option<GltfInfo> {
     match decoded(path, hash, bytes)? {
-        Decoded::Model(info) => Some(info),
+        Decoded::Model(info) => Some(*info),
         _ => None,
     }
 }
@@ -191,15 +191,13 @@ fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
         Some(AssetKind::Audio) => super::sound::decode(bytes)
             .map(|sound| Decoded::Sound(Seconds(sound.duration().as_secs_f32())))
             .map_err(unreadable_sound),
-        Some(AssetKind::Model) => {
-            gltf::inspect(bytes)
-                .map(Decoded::Model)
-                .map_err(|found| MediaProblem {
-                    rule: "unreadable model",
-                    found,
-                    expected: "a glTF binary that validates",
-                })
-        }
+        Some(AssetKind::Model) => gltf::inspect(bytes)
+            .map(|info| Decoded::Model(Box::new(info)))
+            .map_err(|found| MediaProblem {
+                rule: "unreadable model",
+                found,
+                expected: "a glTF binary that validates",
+            }),
         None => Ok(Decoded::Plain),
     }
 }

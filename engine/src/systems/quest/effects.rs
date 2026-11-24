@@ -18,8 +18,11 @@ use crate::core::script::{EffectCall, Expr};
 use crate::core::text::LineText;
 use crate::systems::aim::{self as effects, Reaching};
 use crate::systems::dialogue::{self, CardOffer, ChoiceChip, ChoiceTag, ConversationPanel};
-use crate::systems::item::{Inventory, ItemStack};
+use crate::systems::equipment::Belongings;
+use crate::systems::item::ItemStack;
 use crate::systems::messages;
+use crate::systems::movement::position;
+use crate::systems::party;
 
 const CANCELLED: &str = "cancelled";
 
@@ -87,7 +90,8 @@ pub struct FailQuest {
     pub next: Arrow,
 }
 
-/// Completes a task objective.
+/// Completes a task objective, for each member of the character's party who shares in what they
+/// do, as in a kill.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("quest"))]
 pub struct CompleteTask {
@@ -251,7 +255,7 @@ impl EffectDef for FailQuest {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let quest = self.quest;
         Ok(Box::new(move |world, flow, cx| {
-            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let aimed = effects::aimed_record_anywhere(world, cx, &who);
             effects::reach(
                 world,
                 flow,
@@ -290,7 +294,7 @@ impl EffectDef for CompleteTask {
                 )
             })?;
         Ok(Box::new(move |world, flow, cx| {
-            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let aimed = effects::aimed_record_anywhere(world, cx, &who);
             effects::reach(
                 world,
                 flow,
@@ -298,7 +302,9 @@ impl EffectDef for CompleteTask {
                 aimed,
                 Reaching::quietly(NEXT),
                 move |world, player| {
-                    super::complete_task(world, player, quest, index);
+                    for sharer in party::sharers(world, player, position(world, player)) {
+                        super::complete_task(world, sharer, quest, index);
+                    }
                     Ok(())
                 },
             )
@@ -328,7 +334,7 @@ impl EffectDef for Decide {
             ));
         }
         Ok(Box::new(move |world, flow, cx| {
-            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let aimed = effects::aimed_record_anywhere(world, cx, &who);
             let path = path.clone();
             effects::reach(
                 world,
@@ -384,8 +390,8 @@ fn offer_card(world: &World, player: Entity, quest: QuestId) -> Vec<CardOffer> {
 fn turn_in_card(world: &World, player: Entity, quest: QuestId) -> Vec<CardOffer> {
     let content = world.resource::<Content>();
     let def = quest.get(content);
-    let inventory = world.get::<Inventory>(player);
-    let have = |item| inventory.map_or(0, |inventory| inventory.count(item));
+    let belongings = Belongings::by(world, player);
+    let have = |item| belongings.count(item);
     let chips = |pick: Option<ItemStack>| {
         let mut chips = Vec::new();
         if def.reveals(ChoiceReveal::Costs) {

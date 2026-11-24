@@ -21,6 +21,7 @@ use crate::core::time::UnixMillis;
 use crate::systems::chat::ChatEmbed;
 use crate::systems::dialogue::windows;
 use crate::systems::dialogue::{Conversation, ConversationPanel};
+use crate::systems::equipment::{Belongings, Equipment};
 use crate::systems::hud::{self, WindowKey};
 use crate::systems::item::card::CardLook;
 use crate::systems::item::grid::item_grid;
@@ -140,12 +141,12 @@ pub fn offer<I: ImageSource + ?Sized>(
     content: &Content,
     parties: &Parties,
     quest: QuestId,
-    inventory: Option<&Inventory>,
+    belongings: Belongings<'_>,
     plate: Plate,
 ) -> Vec<DrawnItem> {
     let reader = QuestReader {
         log: &QuestLog::default(),
-        inventory,
+        belongings,
     };
     let shown = terms(ui, images, content, parties, quest, reader, plate);
     card::foot(ui, words(content).offer_foot());
@@ -156,7 +157,7 @@ pub fn offer<I: ImageSource + ?Sized>(
 #[derive(Clone, Copy)]
 struct QuestReader<'a> {
     log: &'a QuestLog,
-    inventory: Option<&'a Inventory>,
+    belongings: Belongings<'a>,
 }
 
 /// What a quest asks, as far as its reader is with it, and what it gives when the quest lets
@@ -176,7 +177,7 @@ fn terms<I: ImageSource + ?Sized>(
         content,
         parties,
         reader.log.active(quest).unwrap_or(&fresh),
-        reader.inventory,
+        reader.belongings,
     );
     let finished = reader.log.finished(quest).map(|finished| finished.result);
     let standing = match finished {
@@ -267,7 +268,10 @@ fn draw_offer(world: &mut World) {
 }
 
 fn show_offer(ui: &mut Ui, world: &mut World, quest: QuestId, moment: QuestMoment) -> Response {
-    let inventory = Inventory::of(world, session::me(world));
+    let me = session::me(world);
+    let bag = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+    let worn = me.and_then(|me| world.get::<Equipment>(me)).cloned();
+    let belongings = Belongings::of(bag.as_ref(), worn.as_ref());
     let content = world.resource::<Content>().clone();
     let parties = world.resource::<Parties>().clone();
     let painted = ui.layer_id();
@@ -279,16 +283,8 @@ fn show_offer(ui: &mut Ui, world: &mut World, quest: QuestId, moment: QuestMomen
     };
     let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
         let shown = match moment {
-            QuestMoment::Offer => offer(
-                ui,
-                world,
-                &content,
-                &parties,
-                quest,
-                Some(&inventory),
-                plate,
-            ),
-            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory, plate),
+            QuestMoment::Offer => offer(ui, world, &content, &parties, quest, belongings, plate),
+            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, belongings, plate),
             QuestMoment::Decision => {
                 decision(ui, &content, quest);
                 Vec::new()
@@ -331,7 +327,8 @@ fn draw_card(world: &mut World) {
                 .and_then(|me| world.get::<QuestLog>(me))
                 .cloned()
                 .unwrap_or_default();
-            let inventory = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+            let bag = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+            let worn = me.and_then(|me| world.get::<Equipment>(me)).cloned();
             let shown_as = QuestCardLook {
                 moment: None,
                 action: Some(chat::card_action(&messages::of(&content).terminal)),
@@ -343,7 +340,7 @@ fn draw_card(world: &mut World) {
             let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
                 let reader = QuestReader {
                     log: &log,
-                    inventory: inventory.as_ref(),
+                    belongings: Belongings::of(bag.as_ref(), worn.as_ref()),
                 };
                 let shown = terms(ui, world, &content, &parties, quest, reader, plate);
                 answer_drawn(world, shown);
@@ -359,7 +356,7 @@ fn turn_in(
     images: &mut World,
     content: &Content,
     quest: QuestId,
-    inventory: &Inventory,
+    belongings: Belongings<'_>,
     plate: Plate,
 ) -> Vec<DrawnItem> {
     let def = quest.get(content);
@@ -368,7 +365,7 @@ fn turn_in(
     if def.reveals(ChoiceReveal::Costs) {
         card::heading(ui, plate, words.card_hand_in());
         for (index, &stack) in def.hand_in().iter().enumerate() {
-            let held = inventory.count(stack.item);
+            let held = belongings.count(stack.item);
             shown.push(
                 ui.push_id(("hand in", index), |ui| {
                     hand_in_row(ui, images, content, stack, held)

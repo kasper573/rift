@@ -3,6 +3,7 @@
 //! them from. What is placed in the tray stays in the bag and is known to this client alone until
 //! it is submitted.
 
+use super::view;
 use bevy::prelude::*;
 use ui::controls;
 use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, UiBuilder, Vec2};
@@ -62,11 +63,6 @@ pub struct Placing {
     /// The turn the placed items were submitted for, until the server answers it.
     sent: Option<WindowStep>,
     seen: Option<WindowStep>,
-}
-
-/// The prompt before the player, if one is open.
-pub fn view(world: &World) -> Option<&PromptView> {
-    session::me(world).and_then(|me| world.get::<PromptView>(me))
 }
 
 /// What is placed in the tray, slot by slot.

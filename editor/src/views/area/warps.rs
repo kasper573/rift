@@ -7,7 +7,7 @@ use crate::tabs::file_title;
 use engine::core::math::Pos;
 use engine::core::script::PlaceValue;
 use engine::core::script::VarValue;
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{Degrees, MeterPos, Meters};
 use engine::systems::area::Place;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
@@ -104,6 +104,7 @@ pub(crate) fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str)
         title: None,
         shape: ObjectShape::Point(beside_arrival),
         look: None,
+        yaw: Degrees::default(),
         shown: None,
         scripts: object.scripts.clone(),
     };

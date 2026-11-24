@@ -54,6 +54,9 @@ pub struct ObjectDef {
     pub shape: ObjectShape,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<PropId>,
+    /// How far its look is turned, as a placed prop's is.
+    #[serde(default, skip_serializing_if = "Degrees::is_zero")]
+    pub yaw: Degrees,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shown: Option<Expr>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -62,14 +65,14 @@ pub struct ObjectDef {
 
 impl ObjectDef {
     /// The object standing as the prop it looks like, which keeps the ground under it as that
-    /// prop placed at the object's middle would. An object shown only to some stands as none: the
+    /// prop placed at the object's middle, turned as the object is, would. An object shown only to some stands as none: the
     /// ground is everyone's alike.
     pub fn standing(&self) -> Option<PropPlacement> {
         let look = self.look.filter(|_| self.shown.is_none())?;
         Some(PropPlacement {
             prop: look,
             at: self.shape.center(),
-            yaw: Degrees(0.0),
+            yaw: self.yaw,
             scale: 1.0,
             sunk: Meters(0.0),
         })
@@ -258,7 +261,7 @@ pub fn spawn_in(world: &mut World, tile: TileAt) {
             title: object.title.clone(),
             shape: object.shape,
             look: object.look.map(|look| look.path(&content).to_owned()),
-            yaw: Degrees(0.0),
+            yaw: object.yaw,
             warp: None,
         };
         let stood = stand(world, standing, OwnerRow::of_object(zone, *index));
@@ -282,7 +285,10 @@ pub fn stand(world: &mut World, object: AreaObject, row: OwnerRow) -> Entity {
         .reaching::<Warps>()
         .next()
         .map(|warps| warps.0);
-    let seen = object.look.is_some() || object.title.is_some() || interactive.is_some();
+    // A warp is seen though nothing stands there, so a player's client knows where stepping
+    // takes them somewhere.
+    let seen =
+        object.look.is_some() || object.title.is_some() || interactive.is_some() || warp.is_some();
     let title = object.title.clone();
     let mut entity = world.spawn((
         Position::at(match object.shape {

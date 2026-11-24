@@ -126,6 +126,7 @@ impl Plugin for WorldScenePlugin {
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
+        .init_resource::<material::MaterialPictures>()
         .init_resource::<afloat::LidMaterial>()
         .init_resource::<cover::CoverVariants>()
         .add_observer(material::dress_scenes)

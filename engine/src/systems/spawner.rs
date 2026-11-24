@@ -23,12 +23,12 @@ use crate::systems::area::AREA_RUNNER;
 use crate::systems::area::sky;
 use crate::systems::area::sky::SkyCondition;
 use crate::systems::area::{self, Area, AreaId, AreaModule, TimeOfDayName, Wild};
-use crate::systems::movement::{NavMesh, Position, Spots, position};
+use crate::systems::movement::{NavMesh, Position, Spots};
 use crate::systems::npc::{self, AbsenceSpanAt, Npc, NpcId, Pack, Roams, absence};
 use crate::systems::player::PlayedBy;
 use crate::systems::resource::{self, ResourceAfloat, ResourceId};
 use crate::systems::visibility::Viewers;
-use crate::systems::{WorldArea, dialogue, stat, visibility};
+use crate::systems::{WorldArea, combat, dialogue, stat, visibility};
 
 /// Keeps what it spawns standing within a rect of the area, from one of its populations at a
 /// time: an endless one for as long as it is there, a finite one until all it spawned has fallen.
@@ -147,7 +147,8 @@ pub struct SpawnShare {
     #[serde(default = "serial::one", skip_serializing_if = "serial::is_one")]
     pub weight: u32,
     /// The sky it is drawn under, its weight counting for as much as the condition holds; always
-    /// without one. What stands of it once it holds no longer leaves when nobody is looking.
+    /// without one. What stands of it once it holds no longer leaves at once, but for what is in
+    /// combat, which leaves once its fight is over.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub when: Option<SkyCondition>,
 }
@@ -427,8 +428,8 @@ struct SkyTended {
     followed: Vec<(SkyCondition, bool)>,
     /// The time of day, where an npc that keeps hours is among what is kept.
     time: Option<Option<TimeOfDayName>>,
-    /// Whether something was left to see to under that sky: what goes once nobody looks, or
-    /// whoever is away but for those in the middle of something with it.
+    /// Whether something was left to see to under that sky: what goes once its fight is over,
+    /// or whoever is away but for those in the middle of something with it.
     unsettled: bool,
 }
 
@@ -701,7 +702,7 @@ pub fn tend(
 ) {
     let turned = world.resource::<SpawnerEntries>().turned(world);
     if turned {
-        let settled = retire(world, characters, sessions);
+        let settled = retire(world, sessions);
         let time = time_now(world);
         let held: Vec<bool> = world
             .resource::<SpawnerEntries>()
@@ -905,16 +906,12 @@ fn tell<E: SpawnerEvent>(world: &mut World, spawner: &Spawner, population: usize
     }
 }
 
-/// Takes away what stands of a share that holds no longer under the sky, each once no character
-/// has it in sight, its entry to be filled again within its spawner's respawn. A resident that
-/// is away leaves at once, but for whoever is in the middle of something with it, and its sign
-/// stands where it lives for everyone else until it is back. Says whether that is all seen to:
-/// nothing waits to go for somebody to look away or to be done with it.
-fn retire(
-    world: &mut World,
-    characters: &mut QueryState<&'static Position, With<PlayedBy>>,
-    sessions: &mut dialogue::Sessions,
-) -> bool {
+/// Takes away what stands of a share that holds no longer under the sky, each once it is out of
+/// combat, its entry to be filled again within its spawner's respawn. A resident that is away
+/// leaves at once, but for whoever is in the middle of something with it, and its sign stands
+/// where it lives for everyone else until it is back. Says whether that is all seen to: nothing
+/// waits to go for a fight to end or somebody to be done with it.
+fn retire(world: &mut World, sessions: &mut dialogue::Sessions) -> bool {
     let under_sky = world.resource::<SpawnerEntries>().under_sky.clone();
     if under_sky.is_empty() {
         return true;
@@ -953,13 +950,9 @@ fn retire(
     if over.is_empty() {
         return settled;
     }
-    let watching = watchers(world, characters);
-    let sight = visibility::sight(world);
     let now = time::uptime(world);
     for (at, entry, stands, respawn) in over {
-        let seen = position(world, stands)
-            .is_some_and(|stood| watching.iter().any(|&from| from.distance(stood) <= sight));
-        if seen {
+        if combat::in_combat(world, stands) {
             settled = false;
             continue;
         }

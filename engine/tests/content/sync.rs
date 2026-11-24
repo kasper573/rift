@@ -7,7 +7,7 @@ use engine::core::content::FileHash;
 use engine::core::content::store::ContentStore;
 use engine::core::content::sync::{
     ContentSource, FILES, MANIFEST, ServedContent, SyncError, SyncPolicy, SyncStatus,
-    SyncedContent, sync,
+    SyncedContent, is_content_of, sync,
 };
 use engine::core::content::version;
 use engine::core::os::FetchFailure;
@@ -333,6 +333,27 @@ fn a_streamed_part_is_fetched_as_it_is_first_read_and_kept() {
 
     run(&server, &store).expect("the next visit syncs");
     assert!(store.hashes().contains(&tile.held.hash), "a visit keeps it");
+}
+
+#[test]
+fn whoever_holds_a_game_folder_knows_whether_a_server_runs_that_game() {
+    let manifest = served(sounding()).manifest;
+    let holds = |game: Game| {
+        let folder = game.folder();
+        let registry = game.registry();
+        let content = game.load();
+        is_content_of(&manifest, registry, &content, &folder).expect("the folder reads")
+    };
+
+    assert!(holds(sounding()));
+    assert!(
+        !holds(sounding().edit("class", "hero", |row| row["name"] = "Wanderer".into())),
+        "a row that differs is another game"
+    );
+    assert!(
+        !holds(sounding().part("sfx", "slash", "clip.wav", longer_slash())),
+        "media that differs is another game"
+    );
 }
 
 /// A small game with a sound to fetch.

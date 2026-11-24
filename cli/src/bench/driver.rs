@@ -81,7 +81,7 @@ impl Driver {
             steps,
         };
         let entered = hands::wait_for(&mut driver, "the player in the world", LONG, |snapshot| {
-            (snapshot.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle)
+            (snapshot.sight.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle)
                 .then_some(snapshot.frame)
         })?;
         driver.measuring = Some(Measuring::since(entered));
@@ -170,15 +170,15 @@ impl Driver {
     /// on whatever the scene does next.
     fn place(&mut self, place: Place) -> Result<(), Failure> {
         let before = self.snapshot()?;
-        let was = (before.area, before.me.map(|me| me.jumps));
+        let was = (before.sight.area, before.sight.me.map(|me| me.jumps));
         self.stage(&Staging::Place { place })?;
         hands::wait_for(
             self,
             "the player put at the staged place",
             LONG,
             move |snapshot| {
-                let me = snapshot.me.as_ref()?;
-                ((snapshot.area, Some(me.jumps)) != was && !me.locked).then_some(())
+                let me = snapshot.sight.me.as_ref()?;
+                ((snapshot.sight.area, Some(me.jumps)) != was && !me.locked).then_some(())
             },
         )?;
         self.wait(&Cond::Arrived(place))?;
@@ -209,13 +209,14 @@ impl Driver {
             return Ok(());
         }
         hands::wait_for(self, "the player to set off", BUDGET, |snapshot| {
-            let me = snapshot.me.as_ref()?;
+            let me = snapshot.sight.me.as_ref()?;
             (me.at.distance(from) > STILL_WITHIN).then_some(())
         })
     }
 
     fn me_at(&mut self) -> Result<Pos<Meters>, Failure> {
         self.snapshot()?
+            .sight
             .me
             .map(|me| me.at)
             .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))
@@ -331,11 +332,13 @@ impl Driver {
             Step::CrossWarp => {
                 let snapshot = self.snapshot()?;
                 let me = snapshot
+                    .sight
                     .me
                     .as_ref()
                     .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
                     .at;
                 let warp = snapshot
+                    .sight
                     .warps
                     .iter()
                     .min_by(|a, b| a.at.distance(me).0.total_cmp(&b.at.distance(me).0))
@@ -344,8 +347,8 @@ impl Driver {
                 self.stage(&Staging::Walk { to: warp.at })?;
                 self.arriving();
                 hands::wait_for(self, "the warp to lead on", LONG, move |snapshot| {
-                    (snapshot.area == Some(warp.to)
-                        && snapshot.me.is_some()
+                    (snapshot.sight.area == Some(warp.to)
+                        && snapshot.sight.me.is_some()
                         && snapshot.transition == ScreenTransitionPhase::Idle)
                         .then_some(())
                 })?;
@@ -449,8 +452,8 @@ impl Driver {
             Cond::Arrived(place) => {
                 let place = *place;
                 hands::wait_for(self, "the arrival", LONG, move |snapshot| {
-                    (snapshot.area == Some(place.area)
-                        && snapshot.me.is_some()
+                    (snapshot.sight.area == Some(place.area)
+                        && snapshot.sight.me.is_some()
                         && snapshot.transition == ScreenTransitionPhase::Idle)
                         .then_some(())
                 })?;
@@ -475,7 +478,7 @@ impl Driver {
                 let mut last: Option<(Pos<Meters>, Instant)> = None;
                 let mut rested_at: Option<u32> = None;
                 hands::wait_for(self, "the player to come to rest", LONG, move |snapshot| {
-                    let me = snapshot.me.as_ref()?;
+                    let me = snapshot.sight.me.as_ref()?;
                     if me.resting {
                         let since = *rested_at.get_or_insert(snapshot.frame);
                         return (snapshot.frame >= since + REST_FRAMES).then_some(());
@@ -491,7 +494,7 @@ impl Driver {
                         }
                     }
                 })?;
-                let me = self.snapshot()?.me;
+                let me = self.snapshot()?.sight.me;
                 if me.is_some_and(|me| !me.resting) {
                     return Err(Failure::Harness(
                         "the player stopped moving without coming to rest".to_owned(),
@@ -548,11 +551,12 @@ impl Driver {
         match (&snapshot.terrain, &self.terrain) {
             (Some(terrain), _) => {
                 self.terrain = snapshot
+                    .sight
                     .area
                     .map(|area| (area.path(self.play.content()).to_owned(), terrain.clone()));
             }
             (None, Some((area, terrain)))
-                if snapshot.area.map(|now| now.path(self.play.content())) == Some(area) =>
+                if snapshot.sight.area.map(|now| now.path(self.play.content())) == Some(area) =>
             {
                 snapshot.terrain = Some(terrain.clone());
             }
@@ -797,6 +801,7 @@ impl Driver {
     fn open_ground(&mut self) -> Result<Pos<WindowPx>, Failure> {
         let snapshot = self.snapshot()?;
         let me = snapshot
+            .sight
             .me
             .as_ref()
             .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
@@ -812,6 +817,7 @@ impl Driver {
     fn ahead_of(&mut self, to: Pos<Meters>) -> Result<f32, Failure> {
         let snapshot = self.snapshot()?;
         let me = snapshot
+            .sight
             .me
             .as_ref()
             .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?

@@ -43,6 +43,7 @@ use bevy_replication::{
     AppMessageExt, AppReplicationExt, ClientLink, ClientReplicationPlugin, FromClient, Remote,
     Replicated, ServerLink, ServerReplicationPlugin,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Component, Serialize, Deserialize, Debug, PartialEq)]
@@ -51,7 +52,7 @@ struct Health(u32);
 #[derive(Component, Serialize, Deserialize)]
 struct Name(String);
 
-#[derive(Message, Serialize, Deserialize)]
+#[derive(Message, Serialize, Deserialize, JsonSchema)]
 struct Shout(String);
 
 fn protocol(app: &mut App) {
@@ -104,6 +105,15 @@ Components replicate in three ways, each declared once in the protocol:
 
 A client puts a received component on its entity in place when the component is mutable, so change
 detection sees an update, and inserts it anew when it is immutable.
+
+## Clients driven from outside
+
+A client's messages cross JSON as well as the wire, so whoever drives a client from outside its process
+(a bot, a load test, a script) can hand it any message of the protocol. `write_client_message` takes an
+object of one key, the message's name, over the message as serde writes it, and writes it as the
+client's own systems would, so it goes out with the next send. `client_message_schema` is the JSON Schema
+of what it takes. An entity in such a message is named as the server knows it, and must be one the
+server has shown the client.
 
 ## Interest
 
@@ -192,13 +202,14 @@ use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
 use bevy_replication::{AppMessageExt, AppReplicationExt};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Component, MapEntities, Serialize, Deserialize)]
 struct Follows(#[entities] Entity);
 
-#[derive(Message, MapEntities, Serialize, Deserialize)]
-struct Attack(#[entities] Entity);
+#[derive(Message, MapEntities, Serialize, Deserialize, JsonSchema)]
+struct Attack(#[entities] #[schemars(with = "u64")] Entity);
 
 #[derive(Message, Serialize, Deserialize)]
 struct Defeated {

@@ -1,6 +1,7 @@
 use bevy_app::App;
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// What a line starts with to be a command rather than something said.
@@ -8,7 +9,7 @@ pub const COMMAND_PREFIX: char = '/';
 
 /// One of the channels an app's terminal has: what a line is said on, and what it is typed on.
 /// Which there are, and who is in each, is the app's to say.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct TerminalChannel(pub u8);
 
 /// Where a line's text holds something of the app's own rather than a letter: the character
@@ -17,13 +18,13 @@ pub const EMBED: char = '\u{FFFC}';
 
 /// Something of the app's own set in a line's text: which kind of thing, and which of the kind.
 /// What kinds there are, and how each is shown, is the app's to say.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct TerminalEmbed {
     pub kind: String,
     pub key: String,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TerminalInput {
     pub text: String,
     pub channel: TerminalChannel,

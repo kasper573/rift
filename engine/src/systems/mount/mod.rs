@@ -10,6 +10,7 @@ pub mod seat;
 use crate::core::script::ReachDef;
 use crate::core::script::RunnerSpec;
 use crate::core::script::Vocabulary;
+use crate::systems::player::session;
 use std::collections::BTreeSet;
 
 use bevy_app::App;
@@ -708,4 +709,47 @@ pub fn scripting(vocabulary: &mut Vocabulary) {
         )
         .binder(|loading, content, bind| bind.bind_table::<MountDef>(loading, content));
     effect::scripting(vocabulary);
+}
+
+/// The mount the player's character rides, as the plate shows it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownMount {
+    pub mount: MountId,
+    pub kind: MountKind,
+    /// Why they cannot step off where they are, in the game's words.
+    pub step_off_shut: Option<String>,
+}
+
+pub fn shown(world: &mut World) -> Option<ShownMount> {
+    let me = session::me(world)?;
+    let riding = riding(world)?;
+    let def = riding.mount.get(world.resource::<Content>());
+    Some(ShownMount {
+        mount: riding.mount,
+        kind: MountKind::from(def.travels),
+        step_off_shut: step_off_shut(world, me)
+            .map(|why| why.plain_words(world.resource::<Content>())),
+    })
+}
+
+pub(crate) fn riding(world: &World) -> Option<Riding> {
+    session::my_character(world)?.get::<Riding>().copied()
+}
+
+/// Whether `rider` floats where no walker could stand, and so picks the ground they leave for.
+pub(crate) fn afloat(world: &World, rider: Entity) -> bool {
+    let content = world.resource::<Content>();
+    matches!(
+        travels(content, world, rider),
+        Some(Travels::Floating { .. })
+    ) && !over_ground(world, rider)
+}
+
+/// Why `rider` cannot step off where they are, in the game's words: nothing afloat, where the
+/// ground is theirs to pick.
+pub(crate) fn step_off_shut(world: &World, rider: Entity) -> Option<LineText> {
+    if afloat(world, rider) {
+        return None;
+    }
+    landing(world, rider, None).err()
 }

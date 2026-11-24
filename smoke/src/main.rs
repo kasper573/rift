@@ -195,7 +195,7 @@ impl Probe {
         let deadline = Instant::now() + DRAWN_WITHIN;
         loop {
             let snapshot = self.snapshot(content);
-            if snapshot.me.is_some() && snapshot.area == Some(area) {
+            if snapshot.sight.me.is_some() && snapshot.sight.area == Some(area) {
                 return;
             }
             assert!(

@@ -77,7 +77,7 @@ pub fn place_prop(
     );
 }
 
-/// Turns what the Place tool puts down next, or the selected props, by a step.
+/// Turns what the Place tool puts down next, or the selected props and objects, by a step.
 pub fn turn(editor: &mut Editor, view_key: &str, frame: &AreaFrame, clockwise: bool) {
     let step = Degrees(if clockwise { TURN_STEP.0 } else { -TURN_STEP.0 });
     let view = editor.views.area.view_mut(view_key);
@@ -85,22 +85,32 @@ pub fn turn(editor: &mut Editor, view_key: &str, frame: &AreaFrame, clockwise: b
     let selected = select::selected_nodes(editor, frame);
     let turned: Vec<String> = selected
         .into_iter()
-        .filter(|node| matches!(frame.module(node), Some(AreaModule::Prop(_))))
+        .filter(|node| frame.module(node).is_some_and(turns_by_step))
         .collect();
     if !turned.is_empty() {
         super::nodes::change_scene(editor, &frame.bundle, |scene| {
             for node in &turned {
-                if let Some(ModuleNode {
-                    module: AreaModule::Prop(prop),
-                    ..
-                }) = scene.module_mut(node)
-                {
-                    prop.yaw = Degrees((prop.yaw.0 + step.0).rem_euclid(360.0));
-                }
+                let yaw = match scene.module_mut(node) {
+                    Some(ModuleNode {
+                        module: AreaModule::Prop(prop),
+                        ..
+                    }) => &mut prop.yaw,
+                    Some(ModuleNode {
+                        module: AreaModule::Object(object),
+                        ..
+                    }) => &mut object.yaw,
+                    _ => continue,
+                };
+                *yaw = Degrees((yaw.0 + step.0).rem_euclid(360.0));
             }
-            Some(format!("Turn {} props", turned.len()))
+            Some(format!("Turn {} modules", turned.len()))
         });
     }
+}
+
+/// Whether `module` turns by the Place tool's step: a prop, or an object, which looks like one.
+pub fn turns_by_step(module: &AreaModule) -> bool {
+    matches!(module, AreaModule::Prop(_) | AreaModule::Object(_))
 }
 
 /// The prop following the pointer, for the viewport to stand where it would land.
@@ -113,7 +123,6 @@ pub fn ghost(editor: &Editor, view_key: &str, frame: &AreaFrame) -> Option<Ghost
     let ground = frame.pointer_ground?;
     let fine = frame.response.ctx.input(|i| EditorKey::Unsnapped.held(i));
     let id = frame.reader.id_of::<PropDef>(prop)?;
-    let def = frame.content.by_path::<PropDef>(prop)?.get(&frame.content);
     let placed = PropPlacement {
         prop: id,
         at: snap(ground, fine),
@@ -122,8 +131,8 @@ pub fn ghost(editor: &Editor, view_key: &str, frame: &AreaFrame) -> Option<Ghost
         sunk: Meters::default(),
     };
     Some(Ghost {
-        model: def.model.path(),
-        transform: prop_transform(&frame.area().heights, &placed),
+        prop: frame.content.by_path::<PropDef>(prop)?,
+        transform: prop_transform(&frame.area().heights, &frame.area().snap_surfaces, &placed),
     })
 }
 

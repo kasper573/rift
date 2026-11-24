@@ -17,6 +17,8 @@ struct Instance {
     prop: u32,
     seed: u32,
     chunk: u32,
+    // How far its up axis leans east and south once turned, as two signed normalized halves.
+    lean: u32,
 }
 
 @group(2) @binding(100) var<storage, read> instances: array<Instance>;
@@ -90,10 +92,9 @@ struct Placement {
 fn placement(index: u32) -> Placement {
     let listed = drawn[index];
     let instance = instances[listed.x];
-    let half = 0.5 * instance.yaw;
     return Placement(
         vec3<f32>(instance.x, instance.y, instance.z),
-        vec4<f32>(0.0, sin(half), 0.0, cos(half)),
+        turn_of(instance),
         bitcast<f32>(listed.y),
     );
 }
@@ -135,6 +136,17 @@ fn clear_impostor(pixel: vec2<f32>, shown: vec2<f32>) {
 
 // The fade's dither is stepped off the clearing's, so the two never drop the same pixels.
 const FADE_OFFSET: vec2<f32> = vec2<f32>(17.0, 29.0);
+
+// The quaternion an instance is turned by: about the up axis by its yaw, then along the shortest
+// arc that leans its up axis as its record says.
+fn turn_of(instance: Instance) -> vec4<f32> {
+    let half = 0.5 * instance.yaw;
+    let lean = unpack2x16snorm(instance.lean);
+    let up = vec3<f32>(lean.x, sqrt(max(1.0 - dot(lean, lean), 0.0)), lean.y);
+    let tilt = normalize(vec4<f32>(up.z, 0.0, -up.x, 1.0 + up.y));
+    let yaw = vec4<f32>(0.0, sin(half), 0.0, cos(half));
+    return vec4<f32>(tilt.w * yaw.xyz + yaw.w * tilt.xyz + cross(tilt.xyz, yaw.xyz), tilt.w * yaw.w - dot(tilt.xyz, yaw.xyz));
+}
 
 // `way` turned by the quaternion `turn`.
 fn turned(turn: vec4<f32>, way: vec3<f32>) -> vec3<f32> {

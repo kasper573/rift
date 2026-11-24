@@ -56,6 +56,12 @@ const LEAST_REACH: Meters = Meters(1.0);
 /// with it, so it moves only by steps, and only on to the next once the view needs it.
 const REACH_STEPS_A_DOUBLING: f32 = 4.0;
 
+/// How far the sun turns before its shadows turn with it. The shadow map's texels are laid out
+/// under the sun's rotation about the world's origin, far from where an area lies, so a sun that
+/// turned every frame would set every texel of the map somewhere new each frame and show every
+/// shadow's edge flickering. Turned in steps, the texels hold still between them.
+const SHADOW_STEP: Degrees = Degrees(0.25);
+
 /// How many rays along each edge of a camera's view find how far it sees the ground.
 const RIM_RAYS: u32 = 8;
 
@@ -194,6 +200,7 @@ pub(super) fn cast_shadows(
 /// as the light sinks so they reach as far at every hour, and no further once it stands on the
 /// horizon, where they would reach without end.
 pub fn sun_transform(elevation: Degrees, azimuth: Degrees, over: Vec2) -> Transform {
+    let (elevation, azimuth) = (in_shadow_steps(elevation), in_shadow_steps(azimuth));
     let toward_sun = toward(elevation, azimuth);
     let over = Vec3::new(over.x, 0.0, over.y);
     let span = SHADOW_SPAN.0 / 2.0;
@@ -201,6 +208,11 @@ pub fn sun_transform(elevation: Degrees, azimuth: Degrees, over: Vec2) -> Transf
     Transform::from_translation(over + toward_sun * 50.0)
         .looking_at(over, Vec3::Y)
         .with_scale(Vec3::new(span, span * slant, span))
+}
+
+/// `angle` to the nearest step the sun's shadows turn by.
+fn in_shadow_steps(angle: Degrees) -> Degrees {
+    Degrees((angle.0 / SHADOW_STEP.0).round() * SHADOW_STEP.0)
 }
 
 /// The unit way toward a light `elevation` above the horizon at `azimuth` clockwise from north.

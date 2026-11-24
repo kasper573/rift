@@ -212,8 +212,8 @@ fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
     }
 }
 
-/// A walk keeps a body out of what blocks, give or take a tenth of its radius, and through a
-/// notch the body fits with that much to spare.
+/// A walk keeps a body out of what blocks, as it stands and turned, give or take a tenth of its
+/// radius, and through a notch the body fits with that much to spare.
 #[test]
 fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
     let radius = radius();
@@ -250,6 +250,34 @@ fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
             );
         }
     }
+
+    // A shed across the way, and the same shed turned along it, clear of it.
+    let shed = |yaw: f32| {
+        Walk::among(
+            json!({ "type": "box", "width": 0.5, "depth": 6.0 }),
+            json!([{
+                "type": "object",
+                "shape": { "type": "point", "x": 7.0, "y": 9.5 },
+                "look": path("prop", "block"),
+                "yaw": yaw,
+            }]),
+            Pos::new(2.0, 7.0),
+        )
+        .toward(Offset::new(10.0, 0.0))
+        .trail()
+    };
+    let across = shed(0.0);
+    assert_arrives(&across, Offset::new(10.0, 0.0), "round the shed");
+    assert!(
+        across.iter().any(|at| at.y < -0.5 - radius + give),
+        "went round the shed standing across the way"
+    );
+    let along = shed(90.0);
+    assert_arrives(&along, Offset::new(10.0, 0.0), "past the turned shed");
+    assert!(
+        along.iter().all(|at| at.y.abs() < give),
+        "went straight past the shed turned along the way"
+    );
 
     let edge = Offset::new(5.0 - 1.0 - radius + give, 0.0);
     let hair_off = Walk::among(

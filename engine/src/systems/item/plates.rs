@@ -341,10 +341,10 @@ pub fn taken_by_plate(world: &World, whys: &[Named]) -> Option<Entity> {
     item::takeable(world.get::<Reservation>(item), &item::DropTaker::me(world)).then_some(item)
 }
 
-/// Where the plate that names `item` is drawn, when one is.
+/// Where the plate that names `item` is drawn, when one is: a client that draws nothing has none.
 pub fn plate_of(world: &World, item: Entity) -> Option<Rect> {
     world
-        .resource::<DrawnPlates>()
+        .get_resource::<DrawnPlates>()?
         .plates
         .iter()
         .find(|plate| plate.items.contains(&item))

@@ -1905,7 +1905,9 @@ dependencies = [
  "bevy_platform 0.20.1",
  "postcard",
  "rayon",
+ "schemars 1.2.3",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2099,6 +2101,7 @@ dependencies = [
  "bevy_app",
  "bevy_ecs",
  "nucleo-matcher",
+ "schemars 1.2.3",
  "serde",
 ]
 

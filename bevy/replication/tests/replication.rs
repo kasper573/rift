@@ -1,13 +1,16 @@
+use std::collections::BTreeMap;
+
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashMap;
 use bevy_replication::{
-    AppMessageExt, AppReplicationExt, ClientLink, ClientReplicationPlugin, FromClient, Interest,
-    Remote, Replicated, ReplicationInterest, ServerEntities, ServerLink, ServerReplicationPlugin,
-    ToClient,
+    AppMessageExt, AppReplicationExt, ClientLink, ClientMessageRefusal, ClientReplicationPlugin,
+    FromClient, Interest, Remote, Replicated, ReplicationInterest, ServerEntities, ServerLink,
+    ServerReplicationPlugin, ToClient, client_message_schema, write_client_message,
 };
+use schemars::{JsonSchema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 #[test]
@@ -197,6 +200,61 @@ fn entities_are_named_as_each_side_knows_them() {
 }
 
 #[test]
+fn a_client_sends_the_message_json_names_as_one_of_its_own() {
+    let mut net = Net::new();
+    let player = net.connect();
+    let (pup, hidden) = {
+        let world = net.server.world_mut();
+        let pup = world.spawn((Replicated, Name("pup".into()))).id();
+        (pup, world.spawn(Name("hidden".into())).id())
+    };
+    net.step();
+    let link = net.links[player];
+    let named = |name: &str, message: &Pick| {
+        serde_json::to_value(BTreeMap::from([(name, message)])).expect("a message as JSON")
+    };
+
+    let client = net.clients[player].world_mut();
+    write_client_message(client, named("Pick", &Pick(pup)))
+        .expect("a message naming what the server showed is written");
+    assert!(
+        matches!(
+            write_client_message(client, named("Pick", &Pick(hidden))),
+            Err(ClientMessageRefusal::Unseen)
+        ),
+        "a client names only what the server showed it"
+    );
+    assert!(matches!(
+        write_client_message(client, named("Poke", &Pick(pup))),
+        Err(ClientMessageRefusal::Unknown(name)) if name == "Poke"
+    ));
+    assert!(matches!(
+        write_client_message(
+            client,
+            serde_json::to_value(BTreeMap::from([("Pick", "pup")])).expect("a message as JSON")
+        ),
+        Err(ClientMessageRefusal::Unreadable(_))
+    ));
+    let schema = client_message_schema(client, &mut SchemaGenerator::default());
+    assert!(
+        serde_json::to_string(&schema)
+            .expect("a schema as JSON")
+            .contains("\"Pick\""),
+        "the schema names every message a client takes"
+    );
+
+    net.step();
+    let picked: Vec<(Entity, Pick)> = net
+        .server
+        .world_mut()
+        .resource_mut::<Messages<FromClient<Pick>>>()
+        .drain()
+        .map(|from| (from.client, from.message))
+        .collect();
+    assert_eq!(picked, [(link, Pick(pup))]);
+}
+
+#[test]
 fn a_lost_connection_takes_everything_it_showed() {
     let mut net = Net::new();
     let player = net.connect();
@@ -322,8 +380,12 @@ struct Follows(#[entities] Entity);
 #[derive(Message, MapEntities, Serialize, Deserialize, Clone, Debug, PartialEq)]
 struct Pointed(#[entities] Entity);
 
-#[derive(Message, MapEntities, Serialize, Deserialize, Clone, Debug, PartialEq)]
-struct Pick(#[entities] Entity);
+#[derive(Message, MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+struct Pick(
+    #[entities]
+    #[schemars(with = "u64")]
+    Entity,
+);
 
 fn protocol(app: &mut App) {
     app.replicate::<Health>()

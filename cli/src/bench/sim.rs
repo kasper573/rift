@@ -261,7 +261,7 @@ fn build_world(
         ordinal as u64,
         SEED,
         CLOCK,
-        ServerDay::TURNING,
+        ServerDay::TURNING.course(content, CLOCK.now),
         ServerWeather::Still.course(CLOCK.now),
         content,
     );

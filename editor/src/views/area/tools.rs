@@ -895,7 +895,7 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
                 let turned = selected_nodes(editor, frame);
                 let props: Vec<String> = turned
                     .iter()
-                    .filter(|node| matches!(frame.module(node), Some(AreaModule::Prop(_))))
+                    .filter(|node| frame.module(node).is_some_and(place::turns_by_step))
                     .cloned()
                     .collect();
                 if !props.is_empty() {

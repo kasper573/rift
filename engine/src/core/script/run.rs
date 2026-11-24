@@ -1175,9 +1175,14 @@ fn write_step(
         } => match call(world, key, &mut cx) {
             EffectStep::Done => StepOutcome::Next(outputs.first().and_then(|(_, to)| *to)),
             EffectStep::Output(name) => StepOutcome::Next(output_to(outputs, name)),
-            EffectStep::Pause => StepOutcome::Pause(Pause::Effect {
-                keeps_box: *keeps_box,
-            }),
+            EffectStep::Pause => {
+                // An effect that pauses in the box may be the first to show it, as an item's
+                // quest offer is, and the box it shows closes with the flow as a line's does.
+                box_opened |= *keeps_box;
+                StepOutcome::Pause(Pause::Effect {
+                    keeps_box: *keeps_box,
+                })
+            }
         },
         _ => unreachable!("reading ahead stops only at a step that writes"),
     };

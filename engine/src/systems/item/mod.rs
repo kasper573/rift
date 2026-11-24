@@ -842,7 +842,7 @@ pub struct DroppedItem {
     pub until: UnixMillis,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UseItemRequest {
     pub slot: u32,
 }
@@ -853,13 +853,13 @@ pub struct ItemShown {
     pub item: ItemId,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DropItemRequest {
     pub slot: u32,
 }
 
 /// Some of what a slot of the bag holds: `stack.count` of the stack in `slot`.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SlotStack {
     pub slot: u32,
     pub stack: ItemStack,
@@ -867,7 +867,7 @@ pub struct SlotStack {
 
 /// Splits `count` off the stack in the bag's slot `slot`, into a stack of its own in the next
 /// empty slot.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SplitStackRequest {
     pub slot: u32,
     pub count: u32,
@@ -875,7 +875,7 @@ pub struct SplitStackRequest {
 
 /// Moves the stack in the bag's slot `from` to its slot `to`, as `Inventory::move_stack` does.
 /// `item` is what the player saw in `from`: the move is refused when it holds something else.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MoveStackRequest {
     pub from: u32,
     pub to: u32,
@@ -883,14 +883,15 @@ pub struct MoveStackRequest {
 }
 
 /// Sorts the whole bag once, in the order `by`.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SortBagRequest {
     pub by: BagSort,
 }
 
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct PickupRequest {
     #[entities]
+    #[schemars(with = "u64")]
     pub target: Entity,
 }
 

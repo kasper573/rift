@@ -399,6 +399,7 @@ pub fn module_template(
             title: None,
             shape: ObjectShape::Point(at.ok_or_else(placed)?),
             look: None,
+            yaw: Degrees::default(),
             shown: None,
             scripts: Vec::new(),
         }),

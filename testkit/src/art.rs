@@ -13,13 +13,18 @@ use gltf::json::validation::{Checked, USize64};
 /// A PNG of `width` × `height` transparent pixels: an image a row can name, the right size and no
 /// more.
 pub fn png(width: u32, height: u32) -> Vec<u8> {
+    plain_png(width, height, [0; 4])
+}
+
+/// A PNG of `width` × `height` pixels, every one `color`: a picture that shows where it is drawn.
+pub fn plain_png(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut encoder = png::Encoder::new(&mut bytes, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().expect("a png header");
     writer
-        .write_image_data(&vec![0; (width * height * 4) as usize])
+        .write_image_data(&color.repeat((width * height) as usize))
         .expect("png pixels");
     writer.finish().expect("a png");
     bytes

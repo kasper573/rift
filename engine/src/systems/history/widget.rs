@@ -8,7 +8,7 @@ use ui::theme;
 use ui::{panel, sheet};
 
 use super::{
-    HistoryEntry, HistoryMark, HistoryMessages, HistoryNews, HistoryRecord, HistoryTopic,
+    HistoryBook, HistoryEntry, HistoryMark, HistoryMessages, HistoryRecord, HistoryTopic,
     RecordTally,
 };
 use crate::core::content::Content;
@@ -20,8 +20,6 @@ use crate::systems::hud::menu::{self, MenuTab, MenuTabName, SubTabs};
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::messages::{self, Direction};
-use crate::systems::player::ClientId;
-use crate::systems::screen::ClientScreen;
 use ui::form;
 
 const TIME_WIDTH: f32 = 72.0;
@@ -33,9 +31,7 @@ pub struct HistoryPlugin;
 
 impl Plugin for HistoryPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<HistoryBook>()
-            .add_systems(Update, receive_news.run_if(resource_exists::<Content>))
-            .add_systems(OnExit(ClientScreen::Area), forget);
+        app.init_resource::<HistoryPage>();
     }
 }
 
@@ -86,34 +82,16 @@ impl HistoryTab {
     }
 }
 
+/// The tab the history page shows, which stays as the player left it from one session to the
+/// next.
 #[derive(Resource, Default)]
-pub struct HistoryBook {
-    subject: Option<ClientId>,
-    records: Vec<HistoryRecord>,
+struct HistoryPage {
     tab: HistoryTab,
-}
-
-impl HistoryBook {
-    pub fn records(&self) -> &[HistoryRecord] {
-        &self.records
-    }
-
-    fn upsert(&mut self, record: HistoryRecord, kept: usize) {
-        match self
-            .records
-            .binary_search_by_key(&record.nth, |kept| kept.nth)
-        {
-            Ok(index) => self.records[index] = record,
-            Err(index) => self.records.insert(index, record),
-        }
-        let overflow = self.records.len().saturating_sub(kept);
-        self.records.drain(..overflow);
-    }
 }
 
 pub fn shown_tab(world: &World) -> Option<HistoryTab> {
     (menu::showing(world) == Some(MenuTabName::History))
-        .then(|| world.resource::<HistoryBook>().tab)
+        .then(|| world.resource::<HistoryPage>().tab)
 }
 
 pub struct HistoryMenuTab;
@@ -129,7 +107,7 @@ impl MenuTab for HistoryMenuTab {
         InputAction::OpenHistory
     }
     fn sub_tabs(&self, world: &World) -> Option<SubTabs> {
-        let chosen = world.resource::<HistoryBook>().tab;
+        let chosen = world.resource::<HistoryPage>().tab;
         let words = &messages::of(world.resource::<Content>()).history;
         Some(SubTabs {
             labels: HistoryTab::VARIANTS
@@ -144,11 +122,11 @@ impl MenuTab for HistoryMenuTab {
     }
     fn choose_sub_tab(&self, world: &mut World, chosen: usize) {
         if let Some(&tab) = HistoryTab::VARIANTS.get(chosen) {
-            world.resource_mut::<HistoryBook>().tab = tab;
+            world.resource_mut::<HistoryPage>().tab = tab;
         }
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let tab = world.resource::<HistoryBook>().tab;
+        let tab = world.resource::<HistoryPage>().tab;
         let rows = rows(world, tab);
         let clock = LocalClock::of_this_machine();
         let area = egui::ScrollArea::vertical()
@@ -227,44 +205,13 @@ impl Row {
     }
 }
 
-fn receive_news(
-    mut news: MessageReader<HistoryNews>,
-    mut book: ResMut<HistoryBook>,
-    content: Res<Content>,
-) {
-    let kept = content.built::<GameSettings>().history.kept as usize;
-    for news in news.read() {
-        match news.clone() {
-            HistoryNews::Backfill { subject, records } => {
-                book.subject = Some(subject);
-                book.records = records;
-            }
-            HistoryNews::Recorded { subject, record } => {
-                if *book.subject.get_or_insert(subject) != subject {
-                    continue;
-                }
-                book.upsert(record, kept);
-            }
-        }
-    }
-}
-
-fn forget(mut book: ResMut<HistoryBook>) {
-    let tab = book.tab;
-    *book = HistoryBook {
-        tab,
-        ..HistoryBook::default()
-    };
-}
-
 fn rows(world: &World, tab: HistoryTab) -> Vec<Row> {
-    let book = world.resource::<HistoryBook>();
+    let records = world.resource::<HistoryBook>().records();
     let mut rows = Vec::new();
-    if book.records.first().is_some_and(|first| first.nth > 1) {
+    if records.first().is_some_and(|first| first.nth > 1) {
         rows.push(Row::Trimmed);
     }
-    let shown: Vec<Row> = book
-        .records
+    let shown: Vec<Row> = records
         .iter()
         .filter(|record| tab.shows(&record.entry))
         .cloned()

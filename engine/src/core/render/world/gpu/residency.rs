@@ -31,6 +31,18 @@ impl<K: Copy + Eq + Hash, S: PartialEq> Residency<K, S> {
         }
     }
 
+    /// How many slots there are.
+    pub fn slots(&self) -> u32 {
+        self.slots.len() as u32
+    }
+
+    /// Adds free slots until there are `slots`: what holds a slot keeps it.
+    pub fn grow(&mut self, slots: u32) {
+        if slots as usize > self.slots.len() {
+            self.slots.resize_with(slots as usize, || None);
+        }
+    }
+
     /// Begins a frame: what was wanted before it may now give up its slot.
     pub fn next_frame(&mut self) {
         self.frame += 1;

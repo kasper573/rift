@@ -14,9 +14,10 @@ use crate::systems::messages;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
+use schemars::JsonSchema;
 
 /// The whole plan the player confirmed: each node of their class tree with the rank to reach.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct LearnSkillsRequest {
     pub ranks: Vec<(NodeKey, Rank)>,
 }

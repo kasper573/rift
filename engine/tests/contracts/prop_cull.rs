@@ -448,6 +448,7 @@ fn instance(rng: &mut Rng, chunk: u32) -> InstanceRecord {
         prop: rng.rand_range(0..PROPS),
         seed: rng.rand_range(0..u32::MAX),
         chunk,
+        lean: [0.0, 0.0],
     }
 }
 
@@ -584,6 +585,7 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
         prop,
         seed: 0,
         chunk,
+        lean: [0.0, 0.0],
     };
     let near = [
         standing_at(
@@ -862,6 +864,7 @@ fn a_lights_view_leaves_out_the_casters_whose_shadows_fall_short_of_it() {
         prop: DRESSED_WITH_IMPOSTOR,
         seed: 0,
         chunk: NEAR_CHUNK,
+        lean: [0.0, 0.0],
     };
     let reach = 2.0 * radius / sine;
     let casters = [caster_at(reach * 0.5), caster_at(reach * 2.0)];
@@ -1020,6 +1023,7 @@ fn the_lit_passes_leave_out_what_the_prepass_depth_hides() {
         prop: 0,
         seed: 0,
         chunk: NEAR_CHUNK,
+        lean: [0.0, 0.0],
     };
     let table_of = |records: &[InstanceRecord]| {
         DrawTable::of(records.iter().take(1).map(|record| {

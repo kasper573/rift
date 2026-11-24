@@ -1,5 +1,6 @@
 pub mod channel;
 pub mod embed;
+pub mod log;
 
 use crate::core::script::EventDef;
 use crate::core::script::Reach;
@@ -185,7 +186,7 @@ pub fn speak(world: &mut World) {
             .embeds
             .iter()
             .map(|sent| {
-                let embed = ChatEmbed::read(content, sent)?.said_by(world, speaker)?;
+                let embed = ChatEmbed::read(content, sent)?.held(content)?;
                 Some(embed.sent(content))
             })
             .collect();

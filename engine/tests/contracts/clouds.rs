@@ -84,6 +84,15 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
         });
         assert!(joined, "{when} the shadows join where they repeat");
     }
+    let level = sun_transform(Degrees(0.0), Degrees(290.0), near);
+    let drift = drifting.drift();
+    sheet.lay(level, drift, &mut images, Handoff::NextFrame);
+    sheet.lay(level, drift, &mut images, Handoff::NextFrame);
+    let shade = sheet.shade_over(Vec3::new(near.x, 0.0, near.y), drift);
+    assert!(
+        (0.0..=1.0).contains(&shade),
+        "with the sun on the horizon the shade told of a spot is still a share of the light: {shade}"
+    );
     let told = drifting.drift();
     let mut joining = CloudDrift::told(told);
     assert_eq!(

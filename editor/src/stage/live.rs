@@ -267,7 +267,7 @@ pub(crate) fn sandbox(
         0,
         seed,
         clock,
-        day,
+        day.course(content, clock.now),
         ServerWeather::Turning.course(clock.now),
         content,
     );

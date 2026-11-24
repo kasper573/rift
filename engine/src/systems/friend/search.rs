@@ -1,14 +1,18 @@
 //! Finding a player by the start of their name, among every account that has signed in.
 
+use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::common_conditions::resource_removed;
+use bevy_replication::ServerLink;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::systems::GameSettings;
 use crate::systems::society::{Society, SocietyMember};
+use schemars::JsonSchema;
 
 /// A player asking for the players whose names start with this.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct FindCharacters(pub String);
 
 /// The players whose names start with what a player asked for.
@@ -21,6 +25,23 @@ pub struct CharactersFound {
     /// How many there are in all.
     pub in_all: u32,
 }
+
+/// Keeps a client's [`FoundCharacters`] as the server answers its searches, until the session
+/// ends.
+pub struct FoundCharactersPlugin;
+
+impl Plugin for FoundCharactersPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<FoundCharacters>().add_systems(
+            Update,
+            (read_answers, forget.run_if(resource_removed::<ServerLink>)),
+        );
+    }
+}
+
+/// The server's answer to the client's latest search for players by name.
+#[derive(Resource, Default)]
+pub struct FoundCharacters(pub Option<CharactersFound>);
 
 /// Whether `typed` is enough of a name to search by in the game `content` is of.
 pub fn searches(content: &Content, typed: &str) -> bool {
@@ -64,4 +85,14 @@ pub(crate) fn find(
 
 fn goes_by(typed: &str, search_letters: u32) -> bool {
     typed.trim().chars().count() >= search_letters as usize
+}
+
+fn read_answers(mut answers: MessageReader<CharactersFound>, mut found: ResMut<FoundCharacters>) {
+    if let Some(answer) = answers.read().last() {
+        found.0 = Some(answer.clone());
+    }
+}
+
+fn forget(mut found: ResMut<FoundCharacters>) {
+    found.0 = None;
 }

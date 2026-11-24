@@ -894,6 +894,7 @@ pub fn place(module: &mut AreaModule, at: Pos<Meters>, yaw: Degrees) {
                 ObjectShape::Point(p) => ObjectShape::Point(point(p)),
                 ObjectShape::Rect(r) => ObjectShape::Rect(rect(r)),
             };
+            object.yaw = turned(object.yaw);
         }
         AreaModule::SafeZone(zone) => zone.rect = rect(zone.rect),
         AreaModule::Fog(bank) => bank.rect = rect(bank.rect),

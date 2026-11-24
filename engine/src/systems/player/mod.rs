@@ -1,5 +1,6 @@
 pub mod bar;
 pub mod errand;
+pub mod headless;
 pub mod roster;
 pub mod session;
 pub mod sheet;
@@ -183,13 +184,13 @@ pub struct ArrivalHold {
 /// report comes in.
 pub const ARRIVAL_PATIENCE: Seconds = Seconds(5.0);
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaDrawn;
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct JoinRequest;
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RespawnRequest;
 
 #[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

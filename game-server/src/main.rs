@@ -25,7 +25,8 @@ use engine::core::net::auth::TokenClaims;
 use engine::core::net::transport::{STREAM, token_text};
 use engine::core::os::StdinClosed;
 use engine::core::store::{Record, RecordId, RecordStore, RecordStoreProblem};
-use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::time::{DayClock, TimeCourse, UnixMillis, UtcHour, WallClock};
+use engine::core::units::HourOfDay;
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::area::{self, AreaDef, AreaId, transition};
 use engine::systems::area_instance::AreaInstanceWorld;
@@ -43,7 +44,7 @@ use engine::systems::save::{
 use engine::systems::society::{ServerSociety, Society};
 use engine::systems::staging::{self, STAGING_ROUTE, Staging};
 use engine::systems::worlds::{self, AboveWorlds, WorldName, Worlds};
-use engine::systems::{GameSettings, TICK_HZ, load_content, server_app, start_server};
+use engine::systems::{GameSettings, TICK_HZ, load_content, run_day, server_app, start_server};
 use metrics::{counter, gauge, histogram};
 use renet2::{DisconnectReason, ServerEvent};
 use serde::de::DeserializeOwned;
@@ -181,10 +182,12 @@ fn main() {
         day.daylight != ServerDaylight::Fixed || day.hour.is_some(),
         "{SERVER_ENV_PREFIX}HOUR: a fixed daylight names the hour it holds at"
     );
-    let weather = config.weather.course(wall_clock(reset).now);
+    let started = wall_clock(reset).now;
+    let weather = config.weather.course(started);
     let mut worlds = AreaWorlds {
         apps: BTreeMap::new(),
-        make: Box::new(move |name| {
+        day: day.course(&content, started),
+        make: Box::new(move |name, day| {
             let mut app = server_app(
                 name.area,
                 areas.ordinal(name),
@@ -222,14 +225,30 @@ fn main() {
 /// holds it.
 struct AreaWorlds {
     apps: BTreeMap<WorldName, App>,
-    make: Box<dyn Fn(WorldName) -> App>,
+    /// The course of the game's day, one for the whole server: every world runs it, whenever it
+    /// was made.
+    day: Option<TimeCourse<HourOfDay>>,
+    make: Box<dyn Fn(WorldName, Option<TimeCourse<HourOfDay>>) -> App>,
 }
 
 impl AreaWorlds {
     /// The world `name`, made now if it wasn't.
     fn app(&mut self, name: WorldName) -> &mut App {
-        let make = &self.make;
-        self.apps.entry(name).or_insert_with(|| make(name))
+        let (make, day) = (&self.make, self.day);
+        self.apps.entry(name).or_insert_with(|| make(name, day))
+    }
+
+    /// Runs the day on `day` in every world, made or yet to be made.
+    fn run_day(&mut self, day: Option<TimeCourse<HourOfDay>>) {
+        if day == self.day {
+            return;
+        }
+        self.day = day;
+        for app in self.apps.values_mut() {
+            if app.world().resource::<DayClock>().0 != day {
+                run_day(app.world_mut(), day);
+            }
+        }
     }
 
     fn made(&mut self) -> impl Iterator<Item = &mut App> {
@@ -581,11 +600,13 @@ fn stage(
         .values()
         .find(|conn| conn.client == client)
         .ok_or("the account's character is between areas")?;
-    staging::stage(
-        worlds.app(conn.world).world_mut(),
-        conn.entity,
-        asked.staging.clone(),
-    )
+    let world = worlds.app(conn.world).world_mut();
+    staging::stage(world, conn.entity, asked.staging.clone())?;
+    // The day is the server's, so however a scene left it in the character's world, it runs so
+    // in every world.
+    let day = world.resource::<DayClock>().0;
+    worlds.run_day(day);
+    Ok(())
 }
 
 fn wall_clock(reset: UtcHour) -> WallClock {

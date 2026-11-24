@@ -13,6 +13,7 @@ use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::window::ExitCondition;
 use engine::core::audio::playback::Listener;
 use engine::core::content::Content;
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::os::Profile;
@@ -31,7 +32,7 @@ use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, AreaDef};
 use serde_json::json;
 use tempfile::TempDir;
-use testkit::{Game, Map, box_glb, path};
+use testkit::{Game, Map, box_glb, path, plain_png};
 
 /// The picture is `SIDE` pixels square, looking down at the middle of a field `FIELD` metres
 /// across from `EYE_HEIGHT` metres over it and `EYE_BACK` metres toward the viewer, tilted enough
@@ -50,6 +51,8 @@ const LANTERN: Pos<Meters> = Pos::new(24.0, 22.0);
 /// that draws it stands every point of it instead.
 const VANE: Pos<Meters> = Pos::new(30.0, 16.0);
 const VANE_MOVED: f32 = -4.0;
+/// Where the poster stands on the bare half: a white model its material draws in a green picture.
+const POSTER: Pos<Meters> = Pos::new(19.0, 16.0);
 /// How high up each prop the picture is read.
 const PROP_HEIGHT: f32 = 2.0;
 /// Where the specks are strewn on the bare half, far enough off the eye to fall under the grain,
@@ -61,14 +64,15 @@ const SPECK: f32 = 0.35;
 const PROP_TALL: f32 = 12.0;
 
 /// A picture of a scenery shows every prop the view sees, each drawn as its material asks: in
-/// the world's own material, through a shader of the game's, and strewn as a cover's copies,
+/// the world's own material, in a picture of the game's, through a shader of the game's, and
+/// strewn as a cover's copies,
 /// among the cover's blades; and the props cast their shadows on the ground. The picture is
 /// taken as soon as nothing has been readying for two frames running, with the smoothing started
 /// over, as a client lifts its veil, so what is first seen is seen whole.
 #[test]
 fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_ground() {
     let _gpu = crate::gpu::exclusive();
-    let mut staged = stage();
+    let mut staged = stage(field(), EYE_BACK);
     let picture = staged.shoot();
 
     let [r, g, b] = picture.around(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 1);
@@ -80,6 +84,11 @@ fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_g
     assert!(
         r > g && r > b && r > 40.0,
         "the lantern shows red, as the game's shader paints it: {r} {g} {b}"
+    );
+    let [r, g, b] = picture.around(Vec3::new(POSTER.x, PROP_HEIGHT, POSTER.y), 1);
+    assert!(
+        g > r && g > b && g > 40.0,
+        "the poster shows green, as its material's picture colours it: {r} {g} {b}"
     );
 
     let bare = picture.luminances(Pos::new(18.0, 26.0), Pos::new(22.0, 30.0));
@@ -126,7 +135,7 @@ fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_g
 #[test]
 fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
     let _gpu = crate::gpu::exclusive();
-    let mut staged = stage();
+    let mut staged = stage(field(), EYE_BACK);
     let picture = staged.shoot();
     let redness = |[r, g, _]: [f32; 3]| r - g;
     let bare: Vec<f32> = picture
@@ -154,7 +163,7 @@ fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
 #[test]
 fn an_outlined_prop_is_edged_in_the_outlines_colour() {
     let _gpu = crate::gpu::exclusive();
-    let mut staged = stage();
+    let mut staged = stage(field(), EYE_BACK);
     let picture = staged.shoot();
     let cyan = |[r, g, b]: [f32; 3]| g > 150.0 && r < 0.9 * g && b > 0.9 * g;
     let bare = picture.counted_near(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 12, cyan);
@@ -213,7 +222,7 @@ fn an_outlined_prop_is_edged_in_the_outlines_colour() {
 #[test]
 fn pointing_at_the_picture_names_the_prop_it_shows_there() {
     let _gpu = crate::gpu::exclusive();
-    let mut staged = stage();
+    let mut staged = stage(field(), EYE_BACK);
     let up = |at: Pos<Meters>| Vec3::new(at.x, PROP_HEIGHT, at.y);
     let moved = up(VANE) + Vec3::X * VANE_MOVED;
     for (what, at, named) in [
@@ -316,10 +325,80 @@ impl Staged {
     }
 }
 
-fn stage() -> Staged {
+/// A prop snapping to the ground lies along a slope, its shape as it is, where one standing as it
+/// is sinks into the rising ground.
+#[test]
+fn a_prop_snapping_to_the_ground_lies_along_a_slope_where_one_standing_as_it_is_sinks_into_it() {
+    let _gpu = crate::gpu::exclusive();
+    let mut staged = stage(slope(), OVERHEAD);
+    let picture = staged.shoot();
+    let uphill = PLATE + PLATE_LONG / 2.0 - 1.0;
+    let on = |row: f32| Vec3::new(uphill, rise(uphill) + PLATE_THICK, row);
+    let [r, g, b] = picture.around(on(LYING), 1);
+    assert!(
+        r > 2.0 * g && b > 2.0 * g,
+        "the plate snapping to the ground shows magenta up the slope: {r} {g} {b}"
+    );
+    let [r, g, b] = picture.around(on(STANDING), 1);
+    assert!(
+        g > r && g > b,
+        "the plate standing as it is lies under the ground up the slope: {r} {g} {b}"
+    );
+}
+
+/// How high the sloped field's ground lies `x` metres along it, rising a metre every two.
+fn rise(x: f32) -> f32 {
+    (x - FIELD / 2.0) / 2.0
+}
+
+/// How far toward the viewer the eye looking down on the slope stands: all but straight overhead,
+/// so each point of the picture shows whatever lies highest there.
+const OVERHEAD: f32 = 0.1;
+/// How far along the slope the plates' middles are laid, the rows they lie along, how far each
+/// runs up it and how thick each is.
+const PLATE: f32 = 16.0;
+const LYING: f32 = 10.0;
+const STANDING: f32 = 22.0;
+const PLATE_LONG: f32 = 8.0;
+const PLATE_THICK: f32 = 0.3;
+
+/// A field of turf rising eastward, a magenta plate snapping to the ground on it and another
+/// standing on it as it is.
+fn slope() -> Game {
+    let size = GroundSize {
+        width: FIELD as u32,
+        height: FIELD as u32,
+    };
+    let heights = Heightfield::from_fn(size, testkit::HEIGHTS, |column, _| {
+        Meters(rise(column as f32 / SAMPLES_PER_METER as f32))
+    });
+    let plate = box_glb(
+        Vec3::new(PLATE_LONG, PLATE_THICK, 2.0),
+        "paint",
+        [1.0, 0.0, 1.0, 1.0],
+    );
+    Game::new()
+        .prop_of(
+            "lying",
+            plate.clone(),
+            json!({ "footprint": { "type": "none" }, "snap_to_ground": true }),
+        )
+        .prop_of("standing", plate, json!({ "footprint": { "type": "none" } }))
+        .area(
+            "field",
+            &Map::open(FIELD as usize, FIELD as usize),
+            json!([
+                { "type": "prop", "prop": path("prop", "lying"), "at": { "x": PLATE, "y": LYING } },
+                { "type": "prop", "prop": path("prop", "standing"), "at": { "x": PLATE, "y": STANDING } },
+            ]),
+        )
+        .ground("field", &heights)
+        .hero("field", 2.0, 2.0)
+}
+
+fn stage(game: Game, back: f32) -> Staged {
     let folder = tempfile::tempdir().expect("a scratch folder");
     let profile = tempfile::tempdir().expect("a scratch profile");
-    let game = field();
     game.write_to(folder.path());
     let content = game.load();
     let id = content
@@ -381,7 +460,7 @@ fn stage() -> Staged {
     image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
     let image = world.resource_mut::<Assets<Image>>().add(image);
     let middle = Pos::new(FIELD / 2.0, FIELD / 2.0);
-    let eye = Vec3::new(middle.x, EYE_HEIGHT, middle.y + EYE_BACK);
+    let eye = Vec3::new(middle.x, EYE_HEIGHT, middle.y + back);
     let look = testkit::look();
     let camera = world
         .spawn((
@@ -458,6 +537,16 @@ fn field() -> Game {
                 "fn vfx(uv: vec2<f32>) -> vec4<f32> {{\n    return vec4<f32>(0.0, 1.0, 0.0, 1.0);\n}}\nfn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {{\n    return world + vec3<f32>({VANE_MOVED:?}, 0.0, 0.0);\n}}\n"
             ),
         )
+        .asset("pictures/green.png", plain_png(8, 8, [0, 255, 0, 255]))
+        .row("prop_material", "print", json!({ "color": "pictures/green.png" }))
+        .prop_of(
+            "poster",
+            box_glb(Vec3::new(1.0, PROP_TALL, 1.0), "print", white),
+            json!({
+                "footprint": { "type": "none" },
+                "materials": { "print": path("prop_material", "print") },
+            }),
+        )
         .row("prop_material", "glow", json!({ "shader": path("vfx_shader", "lamp") }))
         .row("prop_material", "drift", json!({ "shader": path("vfx_shader", "aside") }))
         .prop_of(
@@ -498,6 +587,7 @@ fn field() -> Game {
                 { "type": "prop", "prop": path("prop", "block"), "at": { "x": BLOCK.x, "y": BLOCK.y } },
                 { "type": "prop", "prop": path("prop", "lantern"), "at": { "x": LANTERN.x, "y": LANTERN.y } },
                 { "type": "prop", "prop": path("prop", "vane"), "at": { "x": VANE.x, "y": VANE.y } },
+                { "type": "prop", "prop": path("prop", "poster"), "at": { "x": POSTER.x, "y": POSTER.y } },
                 {
                     "type": "scatter",
                     "props": [path("prop", "speck")],

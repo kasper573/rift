@@ -1626,7 +1626,8 @@ fn game(most: u32) -> Game {
                 "invite_lasts": 60.0,
                 "call_lasts": 120.0,
                 "absent_for": 3600.0,
-                "experience": { "split": "even", "range": 40.0, "bonus": 0.0 },
+                "range": 40.0,
+                "experience": { "split": "even", "bonus": 0.0 },
             });
             settings["mail"] = json!({
                 "inbox": 2, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2

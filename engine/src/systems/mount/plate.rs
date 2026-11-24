@@ -3,15 +3,12 @@
 //! screen.
 
 use bevy::prelude::*;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align2, Margin, Pos2, Rect, Ui, Vec2};
 use ui::{controls, dialog, face, sheet};
 
 use super::seat::MountRequest;
-use super::{MountId, MountKind, Riding, Travels};
+use super::{afloat, riding, step_off_shut};
 use crate::core::content::Content;
-use crate::core::text::LineText;
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::input::scope;
@@ -28,26 +25,6 @@ pub fn plugin(app: &mut App) {
 }
 
 pub struct MountPlateWidget;
-
-/// The mount the player's character rides, as the plate shows it.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownMount {
-    pub mount: MountId,
-    pub kind: MountKind,
-    /// Why they cannot step off where they are, in the game's words.
-    pub step_off_shut: Option<String>,
-}
-
-pub fn shown(world: &mut World) -> Option<ShownMount> {
-    let me = session::me(world)?;
-    let riding = riding(world)?;
-    let def = riding.mount.get(world.resource::<Content>());
-    Some(ShownMount {
-        mount: riding.mount,
-        kind: MountKind::from(def.travels),
-        step_off_shut: shut(world, me).map(|why| why.plain_words(world.resource::<Content>())),
-    })
-}
 
 impl HudWidget for MountPlateWidget {
     fn fallback(&self, _: &World, screen: Rect) -> Pos2 {
@@ -68,7 +45,7 @@ impl HudWidget for MountPlateWidget {
         let content = world.resource::<Content>().clone();
         let words = &messages::of(&content).mount;
         let title = riding.mount.get(&content).name.clone();
-        let shut = shut(world, me);
+        let shut = step_off_shut(world, me);
         let key = (shut.is_none() && scope::reads(world, InputAction::StepOff))
             .then(|| world.resource::<InputMap>().cap(InputAction::StepOff))
             .flatten();
@@ -115,26 +92,4 @@ fn keys(world: &mut World) {
     if riding(world).is_some() && map::just_pressed(world, InputAction::StepOff) {
         step_off(world);
     }
-}
-
-fn riding(world: &World) -> Option<Riding> {
-    session::my_character(world)?.get::<Riding>().copied()
-}
-
-/// Whether `rider` floats where no walker could stand, and so picks the ground they leave for.
-fn afloat(world: &World, rider: Entity) -> bool {
-    let content = world.resource::<Content>();
-    matches!(
-        super::travels(content, world, rider),
-        Some(Travels::Floating { .. })
-    ) && !super::over_ground(world, rider)
-}
-
-/// Why `rider` cannot step off where they are, in the game's words: nothing afloat, where the
-/// ground is theirs to pick.
-fn shut(world: &World, rider: Entity) -> Option<LineText> {
-    if afloat(world, rider) {
-        return None;
-    }
-    super::landing(world, rider, None).err()
 }

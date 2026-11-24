@@ -2,12 +2,14 @@ pub mod widget;
 
 use std::collections::VecDeque;
 
-use bevy_app::App;
+use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::common_conditions::resource_removed;
+use bevy_replication::ServerLink;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::ImageRef;
+use crate::core::content::{Content, ImageRef};
 use crate::core::text::LineText;
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
@@ -31,6 +33,47 @@ pub struct HistorySettings {
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
     app.add_server_message::<HistoryNews>();
+}
+
+/// Keeps a client's [`HistoryBook`] as the server tells it of its character's history, until
+/// the session ends.
+pub struct HistoryBookPlugin;
+
+impl Plugin for HistoryBookPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<HistoryBook>().add_systems(
+            Update,
+            (
+                read_news.run_if(resource_exists::<Content>),
+                forget.run_if(resource_removed::<ServerLink>),
+            ),
+        );
+    }
+}
+
+/// The history of the character a client plays, as far as the game keeps it.
+#[derive(Resource, Default)]
+pub struct HistoryBook {
+    subject: Option<ClientId>,
+    records: Vec<HistoryRecord>,
+}
+
+impl HistoryBook {
+    pub fn records(&self) -> &[HistoryRecord] {
+        &self.records
+    }
+
+    fn upsert(&mut self, record: HistoryRecord, kept: usize) {
+        match self
+            .records
+            .binary_search_by_key(&record.nth, |kept| kept.nth)
+        {
+            Ok(index) => self.records[index] = record,
+            Err(index) => self.records.insert(index, record),
+        }
+        let overflow = self.records.len().saturating_sub(kept);
+        self.records.drain(..overflow);
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -315,4 +358,30 @@ messages! {
         /// What another's line in a conversation or a notification is led by: the speaker `{by}`.
         speaker(by: Text),
     }
+}
+
+fn read_news(
+    mut news: MessageReader<HistoryNews>,
+    mut book: ResMut<HistoryBook>,
+    content: Res<Content>,
+) {
+    let kept = content.built::<GameSettings>().history.kept as usize;
+    for news in news.read() {
+        match news.clone() {
+            HistoryNews::Backfill { subject, records } => {
+                book.subject = Some(subject);
+                book.records = records;
+            }
+            HistoryNews::Recorded { subject, record } => {
+                if *book.subject.get_or_insert(subject) != subject {
+                    continue;
+                }
+                book.upsert(record, kept);
+            }
+        }
+    }
+}
+
+fn forget(mut book: ResMut<HistoryBook>) {
+    *book = HistoryBook::default();
 }

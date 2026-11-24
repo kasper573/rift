@@ -2,14 +2,12 @@
 //! side, with both players' accepts under them.
 
 use bevy::prelude::*;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use ui::controls;
 use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, UiBuilder, Vec2};
 use ui::face::TextRole;
 use ui::{ink, sheet};
 
-use super::{TradeRequest, TradeView};
+use super::{TradeRequest, TradeView, my_trade, status};
 use crate::core::content::Content;
 use crate::core::time::{self, UnixMillis};
 use crate::systems::GameSettings;
@@ -20,9 +18,8 @@ use crate::systems::item::transfer::{
     self, ItemTransfer, TransferPane, TransferWindow, transfer_window,
 };
 use crate::systems::item::tray;
-use crate::systems::item::{self, ItemId, ItemStack};
-use crate::systems::messages::{self, Messages};
-use crate::systems::player::session;
+use crate::systems::item::{self, ItemStack};
+use crate::systems::messages::{self};
 use crate::systems::settings::Placed;
 use crate::systems::trade::TradeMessages;
 
@@ -47,7 +44,7 @@ pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
         world,
         gui,
         window,
-        view(world).cloned(),
+        my_trade(world).cloned(),
         title,
         |ui, world, trading| body(ui, world, trading, now),
     );
@@ -66,7 +63,7 @@ pub(crate) fn draw(world: &mut World, gui: &egui::Context) {
 
 /// Cancels the trade under way, if there is one: what stepping out does while the player trades.
 pub fn is_open(world: &World) -> bool {
-    view(world).is_some()
+    my_trade(world).is_some()
 }
 
 pub fn cancel(world: &mut World) -> bool {
@@ -75,50 +72,6 @@ pub fn cancel(world: &mut World) -> bool {
     }
     world.write_message(TradeRequest::Cancel);
     true
-}
-
-/// The trade the player is in, for a driver of the client.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownTrade {
-    pub with: String,
-    pub mine: Vec<ShownTradeStack>,
-    pub theirs: Vec<ShownTradeStack>,
-    pub i_accept: bool,
-    pub they_accept: bool,
-    /// Whether Accept is open now.
-    pub accept_open: bool,
-    /// The sentence above Accept that says where the trade stands.
-    pub status: String,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownTradeStack {
-    pub item: ItemId,
-    pub count: u32,
-}
-
-pub fn shown(world: &World) -> Option<ShownTrade> {
-    let view = view(world)?;
-    let now = time::server_now(world)?;
-    let messages = messages::of(world.resource::<Content>());
-    let stacks = |stacks: &[ItemStack]| {
-        stacks
-            .iter()
-            .map(|stack| ShownTradeStack {
-                item: stack.item,
-                count: stack.count,
-            })
-            .collect()
-    };
-    Some(ShownTrade {
-        with: view.with.clone(),
-        mine: stacks(&view.mine),
-        theirs: stacks(&view.theirs),
-        i_accept: view.i_accept,
-        they_accept: view.they_accept,
-        accept_open: !view.i_accept && view.open_at(now),
-        status: status(messages, view, now),
-    })
 }
 
 /// What the trade window holds: the bag and what both sides give, side by side, and under them
@@ -216,12 +169,8 @@ fn width(gui: &egui::Context) -> f32 {
     bag_pane(gui) + 2.0 * pane() + 2.0 * sheet::GUTTER
 }
 
-fn view(world: &World) -> Option<&TradeView> {
-    session::my_character(world)?.get::<TradeView>()
-}
-
 fn trading(world: &World) -> bool {
-    view(world).is_some()
+    my_trade(world).is_some()
 }
 
 fn slots(world: &World) -> u32 {
@@ -229,24 +178,6 @@ fn slots(world: &World) -> u32 {
         .resource::<GameSettings>()
         .trade
         .map_or(0, |settings| settings.slots)
-}
-
-/// Where the trade stands, in one sentence.
-fn status(messages: &Messages, shown: &TradeView, now: UnixMillis) -> String {
-    let words = &messages.trade;
-    let with = &shown.with;
-    if shown.mine.is_empty() && shown.theirs.is_empty() {
-        return words.nothing_given().to_owned();
-    }
-    if now < shown.opens {
-        return words.opens_in(messages.time.rough(shown.opens.since(now)));
-    }
-    match (shown.i_accept, shown.they_accept) {
-        (false, false) => words.none_accepted().to_owned(),
-        (false, true) => words.they_accepted(with),
-        (true, false) => words.you_accepted(with),
-        (true, true) => words.both_accepted().to_owned(),
-    }
 }
 
 /// Accept, shut while nothing is given or the latest change waits out its time, and Undo
@@ -293,7 +224,7 @@ impl TransferWindow for TradeGives {
 
     /// Takes `count` of the stack at `index` of what the player gives back.
     fn take(world: &mut World, index: usize, count: u32) -> bool {
-        let Some(given) = view(world).and_then(|view| view.mine.get(index).copied()) else {
+        let Some(given) = my_trade(world).and_then(|view| view.mine.get(index).copied()) else {
             return false;
         };
         world.write_message(TradeRequest::Withdraw(ItemStack::new(given.item, count)));
@@ -301,7 +232,7 @@ impl TransferWindow for TradeGives {
     }
 
     fn aside(world: &World, slot: u32, _: ItemStack) -> u32 {
-        let (Some(view), Some(bag)) = (view(world), item::my_bag(world)) else {
+        let (Some(view), Some(bag)) = (my_trade(world), item::my_bag(world)) else {
             return 0;
         };
         bag.taken_from(slot, &view.mine)

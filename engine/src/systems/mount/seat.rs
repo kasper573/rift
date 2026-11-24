@@ -6,16 +6,21 @@ use serde::{Deserialize, Serialize};
 use super::{BarredAct, RiderAct, Riding, Travels};
 use crate::core::content::Content;
 use crate::core::math::Pos;
+use crate::core::math::PosSchema;
 use crate::core::text::LineText;
 use crate::core::units::Meters;
 use crate::systems::messages;
 use crate::systems::player::{self, RequestNeeds};
+use schemars::JsonSchema;
 
 /// What a player asks of the mount they ride.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum MountRequest {
     /// Leaves their seat: for the spot they picked, or for the ground nearest them.
-    StepOff { at: Option<Pos<Meters>> },
+    StepOff {
+        #[schemars(with = "Option<PosSchema>")]
+        at: Option<Pos<Meters>>,
+    },
 }
 
 pub fn requests(world: &mut World) {

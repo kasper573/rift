@@ -64,6 +64,8 @@ struct Instance {
     prop: u32,
     seed: u32,
     chunk: u32,
+    // How far its up axis leans east and south once turned, as two signed normalized halves.
+    lean: u32,
 }
 
 // A prop as the view draws it: the middle of its model's box and the radius round it holding the
@@ -279,7 +281,7 @@ fn hidden(listing: vec4<u32>) -> bool {
     }
     let prop = props[instance.prop];
     let scale = bitcast<f32>(listing.y);
-    let turn = vec2<f32>(cos(instance.yaw), sin(instance.yaw));
+    let turn = turn_of(instance);
     let radius = prop.radius * scale;
     let seen = occlusion.view_from_world * vec4<f32>(center_of(instance, prop, turn, scale), 1.0);
     let nearest_z = seen.z + radius;
@@ -338,7 +340,7 @@ struct Sighted {
     scale: f32,
     allowed: f32,
     prop: Prop,
-    turn: vec2<f32>,
+    turn: vec4<f32>,
     model: f32,
     impostor: f32,
     proxy: f32,
@@ -418,7 +420,7 @@ fn sight(instance: Instance, far: bool) -> Sighted {
     if far && near_stands(instance.chunk) {
         return sighted;
     }
-    let turn = vec2<f32>(cos(instance.yaw), sin(instance.yaw));
+    let turn = turn_of(instance);
     let center = center_of(instance, prop, turn, instance.scale);
     if !in_frustum(center, prop.radius * instance.scale) {
         return sighted;
@@ -494,7 +496,7 @@ const EASED_PAST: f32 = 2.0;
 // How far the instance at `index` shows this frame, moved a step toward cleared while the eye
 // stands inside its box or the way from the eye to the subject passes through it, and toward whole
 // once neither holds: whole for a view that clears nothing.
-fn faded(index: u32, instance: Instance, prop: Prop, turn: vec2<f32>) -> f32 {
+fn faded(index: u32, instance: Instance, prop: Prop, turn: vec4<f32>) -> f32 {
     if view.fade_step <= 0.0 || prop.fades == 0u {
         return 1.0;
     }
@@ -513,9 +515,8 @@ fn faded(index: u32, instance: Instance, prop: Prop, turn: vec2<f32>) -> f32 {
 
 // Where `world` lies in the model's own metres, for an instance standing at `at`, turned by
 // `turn` and grown `scale` times.
-fn local_of(world: vec3<f32>, at: vec3<f32>, turn: vec2<f32>, scale: f32) -> vec3<f32> {
-    let way = world - at;
-    return vec3<f32>(turn.x * way.x - turn.y * way.z, way.y, turn.y * way.x + turn.x * way.z) / scale;
+fn local_of(world: vec3<f32>, at: vec3<f32>, turn: vec4<f32>, scale: f32) -> vec3<f32> {
+    return turned(vec4<f32>(-turn.xyz, turn.w), world - at) / scale;
 }
 
 // Whether the segment from `a` to `b` passes through the box from `low` to `high`.
@@ -543,10 +544,25 @@ fn crosses(a: vec3<f32>, b: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> bool 
 
 // The middle of `prop`'s sphere for `instance`, turned by `turn` and drawn `scale` times its
 // size.
-fn center_of(instance: Instance, prop: Prop, turn: vec2<f32>, scale: f32) -> vec3<f32> {
+fn center_of(instance: Instance, prop: Prop, turn: vec4<f32>, scale: f32) -> vec3<f32> {
     let middle = vec3<f32>(prop.x, prop.y, prop.z) * scale;
-    return vec3<f32>(instance.x, instance.y, instance.z)
-        + vec3<f32>(turn.x * middle.x + turn.y * middle.z, middle.y, -turn.y * middle.x + turn.x * middle.z);
+    return vec3<f32>(instance.x, instance.y, instance.z) + turned(turn, middle);
+}
+
+// The quaternion an instance is turned by: about the up axis by its yaw, then along the shortest
+// arc that leans its up axis as its record says.
+fn turn_of(instance: Instance) -> vec4<f32> {
+    let half = 0.5 * instance.yaw;
+    let lean = unpack2x16snorm(instance.lean);
+    let up = vec3<f32>(lean.x, sqrt(max(1.0 - dot(lean, lean), 0.0)), lean.y);
+    let tilt = normalize(vec4<f32>(up.z, 0.0, -up.x, 1.0 + up.y));
+    let yaw = vec4<f32>(0.0, sin(half), 0.0, cos(half));
+    return vec4<f32>(tilt.w * yaw.xyz + yaw.w * tilt.xyz + cross(tilt.xyz, yaw.xyz), tilt.w * yaw.w - dot(tilt.xyz, yaw.xyz));
+}
+
+// `way` turned by the quaternion `turn`.
+fn turned(turn: vec4<f32>, way: vec3<f32>) -> vec3<f32> {
+    return way + 2.0 * cross(turn.xyz, cross(turn.xyz, way) + turn.w * way);
 }
 
 // Whether a sphere about `center`, `radius` across, reaches into the view's frustum.

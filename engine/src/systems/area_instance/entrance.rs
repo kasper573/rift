@@ -87,14 +87,14 @@ pub enum EntranceParty {
 }
 
 /// The player's choice at the entrance panel, with what they inserted.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct EntranceChoice {
     pub step: WindowStep,
     pub answer: EntranceAnswer,
     pub offer: Vec<ItemStack>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntranceAnswer {
     GoAlone,
     Gather,
@@ -264,20 +264,14 @@ pub fn close(world: &mut World, player: Entity) {
     refuse(world, flow);
 }
 
-/// The entrance panel the player is shown, for a driver of the client.
+/// The entrance of an instance the player stands before, and how the party stands to it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ShownInstanceEntrance {
     pub area: String,
     pub least: u32,
     pub most: u32,
-    /// What the entrance says of what is inserted, or of how long the player waits.
-    pub says: String,
-    /// Whether what is inserted is what the area takes, so starting is open.
-    pub takes: bool,
     /// How long the player waits before they may start the area again.
     pub waits: Option<Seconds>,
-    /// Whether Go alone is open.
-    pub alone: bool,
     /// Whether Gather the party is offered: to a party's leader alone.
     pub gather: bool,
     /// How many members of the party stand within the player's sight.
@@ -289,22 +283,39 @@ pub struct ShownInstanceEntrance {
 pub fn shown(world: &World) -> Option<ShownInstanceEntrance> {
     let view = session::my_character(world)?.get::<EntranceView>()?;
     let content = world.resource::<Content>();
-    let waits = waits(world, view);
-    let state = state(world, view);
     Some(ShownInstanceEntrance {
         area: view.area.get(content).name.clone(),
         least: view.players.least,
         most: view.players.most,
-        says: says(content, view.area, &state).plain_words(content),
-        takes: state == Inserted::Right,
-        waits,
-        alone: alone_open(world, view, &state),
+        waits: waits(world, view),
         gather: matches!(view.party, EntranceParty::Leads { .. }),
         nearby: match &view.party {
             EntranceParty::Leads { nearby, .. } => nearby.len() as u32,
             _ => 0,
         },
         party_inside: view.party == EntranceParty::Inside,
+    })
+}
+
+/// The entrance panel as it shows what the player has inserted, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownEntrancePanel {
+    /// What the entrance says of what is inserted, or of how long the player waits.
+    pub says: String,
+    /// Whether what is inserted is what the area takes, so starting is open.
+    pub takes: bool,
+    /// Whether Go alone is open.
+    pub alone: bool,
+}
+
+pub fn shown_panel(world: &World) -> Option<ShownEntrancePanel> {
+    let view = session::my_character(world)?.get::<EntranceView>()?;
+    let content = world.resource::<Content>();
+    let state = state(world, view);
+    Some(ShownEntrancePanel {
+        says: says(content, view.area, &state).plain_words(content),
+        takes: state == Inserted::Right,
+        alone: alone_open(world, view, &state),
     })
 }
 
@@ -409,7 +420,7 @@ enum Inserted {
 }
 
 fn view(world: &World) -> Option<EntranceView> {
-    tray::view(world).filter(|prompt| prompt.kind == PromptKind::Hosted)?;
+    prompt::view(world).filter(|prompt| prompt.kind == PromptKind::Hosted)?;
     session::my_character(world)?.get::<EntranceView>().cloned()
 }
 
@@ -655,7 +666,7 @@ fn foot(
     }
     if let Some(answer) = chosen {
         let offer = tray::offer(world);
-        if let Some(step) = tray::view(world).map(|prompt| prompt.step) {
+        if let Some(step) = prompt::view(world).map(|prompt| prompt.step) {
             tray::sent(world, step);
         }
         world.write_message(EntranceChoice {

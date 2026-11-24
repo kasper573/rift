@@ -1,3 +1,4 @@
+use super::view;
 use bevy::prelude::*;
 use ui::card::CardPane;
 use ui::controls::{self, RowLook};
@@ -59,10 +60,6 @@ impl Plugin for ShopCounterPlugin {
             )
             .add_systems(OnExit(ClientScreen::Area), forget);
     }
-}
-
-pub fn view(world: &World) -> Option<&ShopView> {
-    session::me(world).and_then(|seen| world.get::<ShopView>(seen))
 }
 
 /// What the player has set out to sell at the open shop, and what the shop pays for all of it.

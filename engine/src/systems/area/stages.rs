@@ -58,6 +58,7 @@ pub const PROP: Stage = Stage::registered(&StageSpec {
         "local",
         "origin",
         "size",
+        "in_world",
         "tint",
         "screen_right",
         "screen_up",

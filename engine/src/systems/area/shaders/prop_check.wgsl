@@ -12,6 +12,7 @@ struct VertexOutput {
 var<private> at_local: vec3<f32>;
 var<private> stands: vec3<f32>;
 var<private> grown: f32;
+var<private> turning: vec4<f32>;
 var<private> tinted: vec4<f32>;
 var<private> lit: vec4<f32>;
 var<private> shine: vec3<f32>;
@@ -31,6 +32,10 @@ fn origin() -> vec3<f32> {
 
 fn size() -> f32 {
     return grown;
+}
+
+fn in_world(at: vec3<f32>) -> vec3<f32> {
+    return stands + (at + 2.0 * cross(turning.xyz, cross(turning.xyz, at) + turning.w * at)) * grown;
 }
 
 fn tint() -> vec4<f32> {

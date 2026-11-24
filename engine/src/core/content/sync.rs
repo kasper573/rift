@@ -62,6 +62,19 @@ pub struct IndexedFile {
     pub streamed: bool,
 }
 
+/// Whether `content`, loaded out of `folder`, is the content `manifest` names, so that whoever
+/// holds it names every file by the id the manifest's server does.
+pub fn is_content_of(
+    manifest: &Manifest,
+    registry: &ContentRegistry,
+    content: &Content,
+    folder: &dyn ContentFolder,
+) -> io::Result<bool> {
+    let (bundle, index) = rows_and_index(registry, content, folder)?;
+    let index = serde_json::to_vec(&index)?;
+    Ok(manifest.rows == FileHash::of(&bundle) && manifest.index == FileHash::of(&index))
+}
+
 pub struct ServedContent {
     pub manifest: Manifest,
     files: HashMap<String, Arc<[u8]>>,
@@ -75,29 +88,15 @@ impl ServedContent {
         build: &str,
         name: &str,
     ) -> io::Result<ServedContent> {
-        let hashes = content.built::<FileHashes>();
-        let version = content.built::<super::ContentVersion>();
+        let (bundle, index) = rows_and_index(registry, content, folder)?;
         let mut files: HashMap<String, Arc<[u8]>> = HashMap::new();
-        let mut index = FileIndex { files: Vec::new() };
-        let mut rows: Vec<(String, Vec<u8>)> = Vec::new();
-        for (path, stamp) in &hashes.0 {
-            let bytes = folder.read(path)?;
-            if AssetKind::of(path).is_some() {
-                index.files.push(IndexedFile {
-                    path: path.clone(),
-                    held: stamp.clone(),
-                    streamed: registry.is_streamed(path),
-                });
-                files.insert(stamp.hash.clone(), Arc::from(bytes));
-            } else {
-                rows.push((path.clone(), bytes));
-            }
+        for file in &index.files {
+            files.insert(file.held.hash.clone(), Arc::from(folder.read(&file.path)?));
         }
         let index = serde_json::to_vec(&index)?;
-        let bundle = rows_bundle(&rows)?;
         let manifest = Manifest {
             build: build.to_owned(),
-            content_version: version.0.clone(),
+            content_version: content.built::<super::ContentVersion>().0.clone(),
             name: name.to_owned(),
             rows: FileHash::of(&bundle),
             index: FileHash::of(&index),
@@ -424,6 +423,28 @@ fn unpack_rows(bundle: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
         files.push((path, bytes));
     }
     Ok(files)
+}
+
+/// The rows of `content` as one bundle, and the index of its other files.
+fn rows_and_index(
+    registry: &ContentRegistry,
+    content: &Content,
+    folder: &dyn ContentFolder,
+) -> io::Result<(Vec<u8>, FileIndex)> {
+    let mut index = FileIndex { files: Vec::new() };
+    let mut rows: Vec<(String, Vec<u8>)> = Vec::new();
+    for (path, stamp) in &content.built::<FileHashes>().0 {
+        if AssetKind::of(path).is_some() {
+            index.files.push(IndexedFile {
+                path: path.clone(),
+                held: stamp.clone(),
+                streamed: registry.is_streamed(path),
+            });
+        } else {
+            rows.push((path.clone(), folder.read(path)?));
+        }
+    }
+    Ok((rows_bundle(&rows)?, index))
 }
 
 fn rows_bundle(rows: &[(String, Vec<u8>)]) -> io::Result<Vec<u8>> {

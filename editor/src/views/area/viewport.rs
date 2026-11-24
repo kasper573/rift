@@ -35,9 +35,10 @@ use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::{HandIndex, StanceId};
+use engine::systems::area::prop::PropId;
 use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::ShapedGround;
-use engine::systems::area::scenery::{self, Eyes, Sight};
+use engine::systems::area::scenery::{self, Eyes, ShowsProp, Sight};
 use engine::systems::area::sky;
 use engine::systems::area::sky::Sky;
 use engine::systems::area::{Area, Picture, Weather};
@@ -96,7 +97,7 @@ pub struct StrokeTerrain {
 /// placed, or a resource of a spawner's preview.
 #[derive(Clone, PartialEq)]
 pub struct Ghost {
-    pub model: String,
+    pub prop: PropId,
     pub transform: Transform,
 }
 
@@ -163,7 +164,7 @@ struct StageLayering {
 pub struct StandingProp {
     pub hand: HandIndex,
     pub joint: String,
-    pub model: String,
+    pub prop: PropId,
     pub transform: Transform,
     pub plumb: Option<Plumb>,
     pub hold: PropHold,
@@ -211,7 +212,7 @@ struct RenderedView {
     scene: StandingScene,
     /// The stroke whose terrain is laid, and whether it is laid bare of water.
     shaped: (Option<u64>, bool),
-    ghost: Option<(String, Entity)>,
+    ghost: Option<(PropId, Entity)>,
     stood: Option<(Arc<[Ghost]>, Vec<Entity>)>,
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
     picked: Option<StagePick>,
@@ -504,19 +505,15 @@ impl RenderedView {
             return;
         };
         let entity = match &self.ghost {
-            Some((model, entity)) if *model == ghost.model => *entity,
+            Some((prop, entity)) if *prop == ghost.prop => *entity,
             _ => {
                 if let Some((_, entity)) = self.ghost.take() {
                     world.despawn(entity);
                 }
-                let scene = engine::core::assets::model_scene(
-                    world.resource::<AssetServer>(),
-                    ghost.model.clone(),
-                );
                 let entity = world
-                    .spawn((WorldAssetRoot(scene), ghost.transform, ChildOf(self.root)))
+                    .spawn((ShowsProp(ghost.prop), ghost.transform, ChildOf(self.root)))
                     .id();
-                self.ghost = Some((ghost.model.clone(), entity));
+                self.ghost = Some((ghost.prop, entity));
                 entity
             }
         };
@@ -541,13 +538,9 @@ impl RenderedView {
         }
         let entities = stood
             .iter()
-            .map(|model| {
-                let scene = engine::core::assets::model_scene(
-                    world.resource::<AssetServer>(),
-                    model.model.clone(),
-                );
+            .map(|ghost| {
                 world
-                    .spawn((WorldAssetRoot(scene), model.transform, ChildOf(self.root)))
+                    .spawn((ShowsProp(ghost.prop), ghost.transform, ChildOf(self.root)))
                     .id()
             })
             .collect();
@@ -666,7 +659,7 @@ fn rehang(world: &mut World, rig: Entity, props: &[StandingProp]) {
             .props
             .iter()
             .zip(props)
-            .all(|(old, new)| old.joint == new.joint && old.model == new.model);
+            .all(|(old, new)| old.joint == new.joint && old.prop == new.prop);
     if same {
         held.props = props.to_vec();
         let moved: Vec<(Entity, Transform, Option<Plumb>)> = held
@@ -720,12 +713,8 @@ fn hang_props(world: &mut World) {
             .iter()
             .zip(joints.into_iter().flatten())
             .map(|(prop, joint)| {
-                let scene = engine::core::assets::model_scene(
-                    world.resource::<AssetServer>(),
-                    prop.model.clone(),
-                );
                 let mut hung = world.spawn((
-                    WorldAssetRoot(scene),
+                    ShowsProp(prop.prop),
                     prop.transform,
                     Visibility::default(),
                     ChildOf(joint),

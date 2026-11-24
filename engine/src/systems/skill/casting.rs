@@ -14,6 +14,7 @@ use super::{Cooldowns, Rank, SkillId, SkillMessages, Targeting};
 use crate::core::content::Content;
 use crate::core::content::{SchemaMark, serial};
 use crate::core::math::Pos;
+use crate::core::math::PosSchema;
 use crate::core::par;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, NEXT, REFUSED, ScriptFault, Value, ValueType,
@@ -21,7 +22,7 @@ use crate::core::script::{
 use crate::core::script::{EffectCall, EventKind, Expr, Instances, Owner};
 use crate::core::text::LineText;
 use crate::core::tick::{Cached, Planner};
-use crate::core::time::WallClock;
+use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::{self, playing};
 use crate::systems::aim::{self as effects};
@@ -39,7 +40,7 @@ use crate::systems::requirement;
 use crate::systems::stat::{self, Vital};
 use crate::systems::{notification, visibility};
 
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct UseSkillRequest {
     pub skill: SkillId,
     #[entities]
@@ -48,10 +49,14 @@ pub struct UseSkillRequest {
 
 /// What a cast is aimed at: an actor for the single kinds, a point for the area kinds, nothing for
 /// a skill on yourself.
-#[derive(Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
 pub enum CastAim {
-    Actor(#[entities] Entity),
-    Point(Pos<Meters>),
+    Actor(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
+    Point(#[schemars(with = "PosSchema")] Pos<Meters>),
     None,
 }
 
@@ -145,7 +150,7 @@ pub fn cast(
             return Err(refusal);
         }
     }
-    ready(world, caster, skill)?;
+    ready(world, caster, skill, world.resource::<WallClock>().now)?;
     let target = match (def.target, aim) {
         (Targeting::Caster, _) => ReachTarget::Actor(caster),
         (Targeting::SingleAlly | Targeting::SingleEnemy, CastAim::Actor(target)) => {
@@ -204,12 +209,16 @@ pub fn spot_refused(
     mount.and_then(|mount| mount::uncallable(world, caster, mount, CastAim::Point(spot)))
 }
 
-/// Whether a skill may be used now by someone who knows it: not cooling down, its requirements
-/// holding, its mana held and its cost in the bag.
-pub fn ready(world: &World, caster: Entity, skill: SkillId) -> Result<(), LineText> {
+/// Whether a skill may be used at `now`, by the server's wall clock, by someone who knows it: not
+/// cooling down, its requirements holding, its mana held and its cost in the bag.
+pub fn ready(
+    world: &World,
+    caster: Entity,
+    skill: SkillId,
+    now: UnixMillis,
+) -> Result<(), LineText> {
     let content = world.resource::<Content>();
     let def = skill.get(content);
-    let now = world.resource::<WallClock>().now;
     if world
         .get::<Cooldowns>(caster)
         .is_some_and(|cooldowns| cooldowns.cooling(skill, now))
@@ -306,16 +315,27 @@ impl Planner for StepCasts {
 /// What a caster's tick comes to, worked out from the world as the tick found it.
 enum CastStep {
     /// The cast is given up, told to the player who meant it when it was refused.
-    Forget {
-        refused: Option<LineText>,
-    },
-    /// Playing a cast, or waiting on the delay before the next.
+    Forget { refused: Option<LineText> },
+    /// Playing a cast.
     Wait,
-    Pursue(PursuitPlan),
+    /// Making its way into reach of what it aims at, or keeping there, and what it does once
+    /// there.
+    Pursue { pursuit: PursuitPlan, then: InReach },
+}
+
+/// What a caster does once in reach of what it aims at.
+enum InReach {
+    /// Not there yet.
+    Approaching,
+    /// Waiting on the delay before the next cast.
+    Waiting,
     Settle(Berths),
     Perform {
         skill: SkillId,
         rank: Rank,
+    },
+    Forget {
+        refused: Option<LineText>,
     },
 }
 
@@ -335,44 +355,55 @@ fn step_of(world: &World, caster: Entity, intent: ReachIntent) -> CastStep {
     }
     let range = super::range_of(world, caster, skill, rank);
     let pursuit = PursuitPlan::of(world, caster, range);
-    if !pursuit.arrived() {
-        return CastStep::Pursue(pursuit);
-    }
+    let then = if pursuit.arrived() {
+        in_reach(world, caster, target, skill, rank, range)
+    } else {
+        InReach::Approaching
+    };
+    CastStep::Pursue { pursuit, then }
+}
+
+fn in_reach(
+    world: &World,
+    caster: Entity,
+    target: ReachTarget,
+    skill: SkillId,
+    rank: Rank,
+    range: Meters,
+) -> InReach {
     if !playing::ready(world, caster) {
         return match reach::settling(world, caster, range) {
-            Some(berths) => CastStep::Settle(berths),
-            None => CastStep::Wait,
+            Some(berths) => InReach::Settle(berths),
+            None => InReach::Waiting,
         };
     }
     let targeting = skill.get(world.resource::<Content>()).target;
     if let ReachTarget::Actor(target) = target
         && !fits(world, caster, target, targeting)
     {
-        return CastStep::Forget { refused: None };
+        return InReach::Forget { refused: None };
     }
-    if let Err(reason) = ready(world, caster, skill) {
+    if let Err(reason) = ready(world, caster, skill, world.resource::<WallClock>().now) {
         let refused = world.get::<player::PlayedBy>(caster).map(|_| reason);
-        return CastStep::Forget { refused };
+        return InReach::Forget { refused };
     }
-    CastStep::Perform { skill, rank }
+    InReach::Perform { skill, rank }
 }
 
 fn apply(world: &mut World, caster: Entity, intent: ReachIntent, step: CastStep) {
-    match step {
-        CastStep::Forget { refused } => {
-            if let Some(reason) = refused {
-                notification::error(world, caster, reason);
-            }
-            reach::forget(world, caster);
-        }
-        CastStep::Wait => {}
-        CastStep::Pursue(pursuit) => {
-            if pursuit.apply(world, caster) == Pursuit::Lost {
-                reach::forget(world, caster);
-            }
-        }
-        CastStep::Settle(berths) => berths.settle(world, caster),
-        CastStep::Perform { skill, rank } => {
+    let (pursuit, then) = match step {
+        CastStep::Forget { refused } => return give_up(world, caster, refused),
+        CastStep::Wait => return,
+        CastStep::Pursue { pursuit, then } => (pursuit, then),
+    };
+    if pursuit.apply(world, caster) == Pursuit::Lost {
+        return reach::forget(world, caster);
+    }
+    match then {
+        InReach::Approaching | InReach::Waiting => {}
+        InReach::Settle(berths) => berths.settle(world, caster),
+        InReach::Forget { refused } => give_up(world, caster, refused),
+        InReach::Perform { skill, rank } => {
             perform(world, caster, skill, rank, intent.target);
             if let ReachAct::Cast {
                 way: CastWay::Once | CastWay::Lent,
@@ -383,6 +414,13 @@ fn apply(world: &mut World, caster: Entity, intent: ReachIntent, step: CastStep)
             }
         }
     }
+}
+
+fn give_up(world: &mut World, caster: Entity, refused: Option<LineText>) {
+    if let Some(reason) = refused {
+        notification::error(world, caster, reason);
+    }
+    reach::forget(world, caster);
 }
 
 fn perform(world: &mut World, caster: Entity, skill: SkillId, rank: Rank, target: ReachTarget) {

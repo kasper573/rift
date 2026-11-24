@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "61318f31",
+  "content_version": "5b9acb5d",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -358,9 +358,9 @@
     "invite_lasts": 60.0,
     "call_lasts": 120.0,
     "absent_for": 300.0,
+    "range": 40.0,
     "experience": {
       "split": "even",
-      "range": 40.0,
       "bonus": 0.0
     }
   },

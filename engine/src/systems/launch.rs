@@ -11,11 +11,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::core::content::version;
+use crate::core::content::{Content, version};
 use crate::core::net::auth::TokenClaims;
 use crate::core::store::RecordStoreAddress;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
 use crate::core::units::{HourOfDay, Seconds};
+use crate::systems::GameSettings;
 use crate::systems::area::Place;
 use crate::systems::player::SpawnPolicy;
 use crate::systems::staging::Staging;
@@ -230,6 +231,16 @@ impl ServerDay {
         daylight: ServerDaylight::Turning,
         hour: None,
     };
+
+    /// The course the day of `content` runs on a server that starts it `now`, the same in every
+    /// world the server makes: none for a game with no day cycle.
+    pub fn course(self, content: &Content, now: UnixMillis) -> Option<TimeCourse<HourOfDay>> {
+        content
+            .built::<GameSettings>()
+            .daylight
+            .as_ref()
+            .map(|cycle| cycle.course(self, now))
+    }
 }
 
 /// Whether a game's day turns on the server, holds at its start hour, or holds at the hour the

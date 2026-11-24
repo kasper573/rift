@@ -22,6 +22,10 @@ pub struct GltfInfo {
     pub triangles: usize,
     /// The name of each material, in the order the file lists them; unnamed ones are empty.
     pub materials: Vec<String>,
+    /// The materials, by name, some mesh is drawn in without texture coordinates to lay a
+    /// picture by, and those some mesh is drawn in without the tangents a relief is turned by.
+    pub unmapped: Vec<String>,
+    pub untangented: Vec<String>,
     /// Whether any mesh is skinned to joints.
     pub skinned: bool,
     /// The nodes the skins bind their meshes to, by index in the tree.
@@ -178,13 +182,25 @@ pub struct MeshBounds {
 
 /// A model seen from straight above: how high the highest of it stands over each cell of a grid
 /// laid over the ground it covers, [`TOP_SIDE`] cells along its longer side, and nothing where
-/// none of it stands.
+/// none of it stands; and where each of its faces crosses the middle of each cell, which way up.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelTop {
     low: Vec2,
     cell: f32,
     columns: usize,
     heights: Vec<Option<f32>>,
+    /// The faces crossing every cell, lowest first, a cell's from its place in `faces_from` to
+    /// the next one's.
+    faces: Vec<FaceCrossing>,
+    faces_from: Vec<usize>,
+}
+
+/// Where a face of a model crosses a line straight up through it: how high, and whether the face
+/// looks up, as a floor's does, or down, as a ceiling's does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FaceCrossing {
+    pub height: f32,
+    pub looks_up: bool,
 }
 
 /// How many cells a model's top is told apart by along its longer side.
@@ -206,8 +222,12 @@ impl ModelTop {
             cell,
             columns,
             heights: vec![None; columns * rows],
+            faces: Vec::new(),
+            faces_from: Vec::new(),
         };
+        let mut faces = vec![Vec::new(); columns * rows];
         for triangle in triangles {
+            let looks_up = looks_up(triangle);
             for corner in triangle.corners {
                 top.raise(top.cell_of(corner.xz()), corner.y);
             }
@@ -229,22 +249,51 @@ impl ModelTop {
                     let [at_a, at_b, at_c] = triangle.corners.map(|corner| corner.y);
                     let height = at_a + (at_b - at_a) * toward_b + (at_c - at_a) * toward_c;
                     top.raise((column, row), height);
+                    faces[row * columns + column].push(FaceCrossing { height, looks_up });
                 }
             }
         }
+        for mut cell in faces {
+            cell.sort_by(|a, b| a.height.total_cmp(&b.height));
+            top.faces_from.push(top.faces.len());
+            top.faces.extend(cell);
+        }
+        top.faces_from.push(top.faces.len());
         top
     }
 
     /// How high the model's top stands over `at` on its ground, or none where it covers none.
     pub fn over(&self, at: Vec2) -> Option<f32> {
+        self.heights[self.index_of(at)?]
+    }
+
+    /// Where the model's faces cross the line straight up through `at` on its ground, lowest
+    /// first.
+    pub fn faces_over(&self, at: Vec2) -> &[FaceCrossing] {
+        self.index_of(at).map_or(&[], |index| {
+            &self.faces[self.faces_from[index]..self.faces_from[index + 1]]
+        })
+    }
+
+    /// The middle of every cell some of the model stands over, on its ground.
+    pub fn covered(&self) -> impl Iterator<Item = Vec2> + '_ {
+        self.heights
+            .iter()
+            .enumerate()
+            .filter(|(_, height)| height.is_some())
+            .map(|(index, _)| {
+                let cell = Vec2::new((index % self.columns) as f32, (index / self.columns) as f32);
+                self.low + (cell + 0.5) * self.cell
+            })
+    }
+
+    fn index_of(&self, at: Vec2) -> Option<usize> {
         let cell = ((at - self.low) / self.cell).floor();
         let rows = self.heights.len().checked_div(self.columns)?;
         let inside = cell.cmpge(Vec2::ZERO).all()
             && (cell.x as usize) < self.columns
             && (cell.y as usize) < rows;
-        inside
-            .then(|| self.heights[cell.y as usize * self.columns + cell.x as usize])
-            .flatten()
+        inside.then(|| cell.y as usize * self.columns + cell.x as usize)
     }
 
     fn cell_of(&self, at: Vec2) -> (usize, usize) {
@@ -259,6 +308,17 @@ impl ModelTop {
     fn raise(&mut self, (column, row): (usize, usize), height: f32) {
         let top = &mut self.heights[row * self.columns + column];
         *top = Some(top.map_or(height, |top| top.max(height)));
+    }
+}
+
+/// Whether `triangle` faces up: by its normals where it has them, else by its winding.
+fn looks_up(triangle: &Triangle) -> bool {
+    match triangle.normals {
+        Some(normals) => normals.iter().map(|normal| normal.y).sum::<f32>() > 0.0,
+        None => {
+            let [a, b, c] = triangle.corners;
+            (b - a).cross(c - a).y > 0.0
+        }
     }
 }
 
@@ -535,6 +595,8 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
             .materials()
             .map(|material| material.name().unwrap_or_default().to_owned())
             .collect(),
+        unmapped: drawn_without(&document, gltf::Semantic::TexCoords(0)),
+        untangented: drawn_without(&document, gltf::Semantic::Tangents),
         skinned: document.skins().next().is_some(),
         skin_joints: {
             let mut joints: Vec<usize> = document
@@ -560,6 +622,19 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
             })
             .collect(),
     })
+}
+
+/// The names of the materials some mesh of `document` is drawn in without `attribute`.
+fn drawn_without(document: &gltf::Document, attribute: gltf::Semantic) -> Vec<String> {
+    let mut names: Vec<String> = document
+        .meshes()
+        .flat_map(|mesh| mesh.primitives())
+        .filter(|primitive| primitive.get(&attribute).is_none())
+        .map(|primitive| primitive.material().name().unwrap_or_default().to_owned())
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 fn span_of(view: &json::buffer::View) -> (usize, usize) {

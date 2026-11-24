@@ -2,6 +2,7 @@ mod editor;
 mod frames;
 mod game;
 mod hitches;
+mod sight;
 pub mod socket;
 
 pub use editor::{
@@ -19,6 +20,13 @@ pub use game::{
     ProbeProp, ProbeResident, ProbeSkill, ProbeSpawner, ProbeWater, answer,
 };
 pub use hitches::{SystemTimes, time_systems, timing_layer};
+pub use sight::{
+    ProbeAnswer, ProbeBody, ProbeChatLine, ProbeConversation, ProbeCrafting, ProbeFinishedQuest,
+    ProbeGathering, ProbeGroundItem, ProbeHand, ProbeLetter, ProbeObject, ProbePrompt, ProbeQuest,
+    ProbeQuests, ProbeRank, ProbeRecipe, ProbeRecord, ProbeRequest, ProbeResource, ProbeSaid,
+    ProbeShop, ProbeSight, ProbeSkills, ProbeStack, ProbeStatus, ProbeWare, ProbeWarp, ProbeWorn,
+    sight,
+};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
@@ -26,6 +34,7 @@ use ui::egui;
 use ui::float;
 
 use bevy::diagnostic::FrameCount;
+use bevy::ecs::entity::{EntityMapper, MapEntities};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseButtonInput, MouseWheel};
@@ -35,6 +44,7 @@ use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::tasks::AsyncComputeTaskPool;
 use bevy::window::{CursorOptions, PrimaryWindow};
 use bevy_egui::{EguiOutput, EguiPostUpdateSet, PrimaryEguiContext};
+use bevy_replication::ServerEntities;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -42,11 +52,11 @@ use crate::core::audio::Hearing;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{self, Listener};
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
+use crate::core::card::{CardMaterial, CardStyleDef, CardStyleId};
 use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
 use crate::core::geometry::Capsule;
 use crate::core::gui::{self, GuiContext, WorldLayers};
-use crate::core::interpolate::Jumps;
 use crate::core::math::{
     MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Rgb, Size, SizeSchema,
 };
@@ -63,70 +73,49 @@ use crate::core::render::world::sky::{Daylight, SkyLights};
 use crate::core::render::world::{OnItsWay, missing_drawn};
 use crate::core::render::{self, CameraRig, Look, Pointed, ground_height, world_point};
 use crate::core::script::DialogueCamera;
-use crate::core::script::Scripts;
 use crate::core::stage::card::HungCardLamp;
 use crate::core::time;
 use crate::core::units::{
-    Bytes, Degrees, MeterSize, Meters, Millis, Percent, PlaybackRate, Radians, Seconds, WindowPx,
+    Bytes, Degrees, MeterSize, Meters, Millis, PlaybackRate, Radians, Seconds, WindowPx,
 };
 use crate::core::vfx::standing::StandingVfx;
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
-use crate::systems::actor::held::{self, Held};
+use crate::systems::actor::held::{self};
 use crate::systems::actor::render::{Hung, Puppet, RenderActor};
-use crate::systems::actor::skeleton::{Clip, Naming, SkeletonId};
-use crate::systems::actor::stance::{HandIndex, StanceId};
-use crate::systems::actor::{
-    self, Action, Actor, ActorModel, Aloft, Appearance, Hitbox, Motion, Playing, Pose,
-};
+use crate::systems::actor::skeleton::{Clip, Naming};
+use crate::systems::actor::stance::HandIndex;
+use crate::systems::actor::{self, Actor, ActorModel, Aloft, Appearance, Hitbox, Motion, Playing};
 use crate::systems::area::rain::{RainField, Shelter};
 use crate::systems::area::shown_weather::ShownWeather;
-use crate::systems::area::sky;
-use crate::systems::area::weather::ShownCourse;
-use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayName};
-use crate::systems::area_instance::entrance::ShownInstanceEntrance;
-use crate::systems::area_instance::gather::ShownInstanceCall;
-use crate::systems::area_instance::{self, plate::ShownAreaInstance};
+use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId};
+use crate::systems::area_instance;
+use crate::systems::area_instance::entrance::ShownEntrancePanel;
 use crate::systems::area_map;
-use crate::systems::attention::{self, Attention, AttentionId, StatusBadges};
-use crate::systems::combat::Attitude;
-use crate::systems::crafting::{self, RecipeId};
+use crate::systems::attention::AttentionId;
+use crate::systems::crafting::{self};
 use crate::systems::dialogue::stage;
-use crate::systems::equipment::{self, EquipmentPlace};
-use crate::systems::friend::{self, page::ShownFriends};
-use crate::systems::history::widget::{self as history, HistoryBook};
-use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
+use crate::systems::history::widget as history;
 use crate::systems::hud;
 use crate::systems::hud::menu::MenuTabName;
 use crate::systems::input::claims::{self, ClickClaim};
-use crate::systems::input::map::InputMap;
 use crate::systems::input::scope::InputScope;
 use crate::systems::interface::CursorId;
 use crate::systems::item::bag_view;
-use crate::systems::item::rarity::ItemRarityId;
-use crate::systems::item::{
-    self, DroppedItem, Inventory, ItemCategory, ItemId, ItemStack, Reservation,
-};
-use crate::systems::mail::{self, page::ShownLetters};
+use crate::systems::item::{self, ItemCategory, ItemId};
+use crate::systems::mail::{self, page::ShownMailPage};
+use crate::systems::market::{self, window::ShownMarketWindow};
 use crate::systems::messages;
-use crate::systems::mount::{self, plate::ShownMount};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
-use crate::systems::npc::{Npc, NpcId};
-use crate::systems::party::{self, page::ShownParty};
-use crate::systems::player::{Away, PlayedBy, commands_locked, session};
+use crate::systems::player::session;
 use crate::systems::prompt;
-use crate::systems::quest::{self, Parties, QuestId, QuestLog, QuestResult};
-use crate::systems::reach::Engaged;
-use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
+use crate::systems::quest::{self, QuestId};
 use crate::systems::save::{self, notice::ShownSaving};
 use crate::systems::settings::Placed;
-use crate::systems::shop::{self, ShopId};
-use crate::systems::skill::{self, Rank, SkillId, aim::SpotAim, bar::SlotReport};
+use crate::systems::shop::{self};
+use crate::systems::skill::{self, SkillId, aim::SpotAim, bar::SlotReport};
 use crate::systems::social_request::{self, card::ShownRequestCard};
-use crate::systems::stat::{StatKind, Stats};
-use crate::systems::status::{self, StatusCategory, StatusEffectId};
 use crate::systems::terminal::{self, chat::ShownChat};
-use crate::systems::trade::window::ShownTrade;
 
 /// The probe's question about the game `line`, read against the game it names places of.
 pub fn read_question(content: &Content, line: &str) -> Result<ProbeGameQuestion, String> {
@@ -329,35 +318,41 @@ pub fn sample_frame(world: &mut World) {
     }
 }
 
-/// One frame of the client. Content ids (de)serialize by key, so a driver reads a snapshot within a
-/// content scope. World positions are metres on the ground, which `view` and `terrain` place in the
-/// window; window positions are the window's logical pixels.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+/// One frame of the client: what the client knows of the game, its sight, and how its screen
+/// shows it. Content ids (de)serialize by key, so a driver reads a snapshot within a content scope.
+/// World positions are metres on the ground, which `view` and `terrain` place in the window;
+/// window positions are the window's logical pixels.
+#[derive(MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeSnapshot {
+    #[serde(flatten)]
+    #[entities]
+    pub sight: ProbeSight,
     pub frame: u32,
     pub input: ProbeInput,
     /// Where the player is, which decides the actions that are read and what stepping out does.
     pub scope: InputScope,
+    #[entities]
     pub claim: ClickClaim,
     #[schemars(with = "Option<SizeSchema>")]
     pub screen: Option<Size<WindowPx>>,
     pub view: Option<ProbeView>,
-    pub area: Option<AreaId>,
     /// The ground's heights around the player: the chunks within the view's reach, sent as the
     /// player comes to new ground and left out while they stay, so a driver keeps the last it saw.
     pub terrain: Option<ProbeTerrain>,
-    pub me: Option<ProbeBody>,
-    pub actors: Vec<ProbeBody>,
-    pub objects: Vec<ProbeObject>,
-    pub items: Vec<ProbeGroundItem>,
-    pub resources: Vec<ProbeResource>,
-    pub warps: Vec<ProbeWarp>,
+    /// How each body of the area shows on screen, the player's own among them.
+    #[entities]
+    pub drawn: Vec<ProbeDrawnBody>,
+    /// How each item on the ground of the area shows on screen.
+    #[entities]
+    pub drawn_items: Vec<ProbeDrawnItem>,
     /// What the interface shows: text, icons, fields and sliders, less what is scrolled or clipped
     /// out of sight.
     pub ui: Vec<ProbeUiElement>,
     /// Where the interface takes the pointer: each rect edges included, as egui hit-tests.
     #[schemars(with = "Vec<RectSchema>")]
     pub covered: Vec<Rect<WindowPx>>,
+    /// The conversation as the dialogue box shows it.
+    #[entities]
     pub stage: Option<ProbeStage>,
     pub notifications: ProbeNotifications,
     pub feed: Vec<String>,
@@ -366,18 +361,15 @@ pub struct ProbeSnapshot {
     pub saving: ShownSaving,
     /// The request cards on the HUD, the one in front first.
     pub social_requests: Vec<ShownRequestCard>,
-    /// What the Friends page shows: the list, the requests in and out, the players kept away
-    /// and what the search found.
-    pub friends: ShownFriends,
-    /// What the Mail page shows: the inbox, the letter chosen and the one being written.
-    pub mail: ShownLetters,
-    /// The party the player is in, and the invitations that wait for their answer.
-    pub party: ShownParty,
+    /// The letter the Mail page shows, and the one being written.
+    pub mail: ShownMailPage,
     /// The tabs of chat, which is shown and how much waits on each.
     pub chat: ShownChat,
     /// The townsfolk the minimap and the map mark this frame, with the marks they wear.
+    #[entities]
     pub map_marks: Vec<ProbeMapMark>,
     /// The rings of marks open round a townsperson on the minimap or the map.
+    #[entities]
     pub map_rings: Vec<ProbeMapRing>,
     /// How many of the squares of ground the maps show have their picture yet.
     pub map_tiles: ProbeMapTiles,
@@ -385,48 +377,37 @@ pub struct ProbeSnapshot {
     pub bag_views: Vec<ProbeBagView>,
     /// What is carried over a bag, while something is.
     pub bag_carried: Option<ProbeBagCarried>,
-    /// The mount the player's character rides, the seat they hold and who sits where.
-    pub mount: Option<ShownMount>,
-    /// The instance the player's character is inside, as the plate shows it.
-    pub instance: Option<ShownAreaInstance>,
     /// The entrance panel, while the player chooses how to go into an instance.
-    pub instance_entrance: Option<ShownInstanceEntrance>,
-    /// The call to an instance the player leads or was called to: the roster window or the card.
-    pub instance_call: Option<ShownInstanceCall>,
-    /// The trade the player is in, as its window shows it.
-    pub trade: Option<ShownTrade>,
+    pub entrance_panel: Option<ShownEntrancePanel>,
     /// The options open for another player: what the player can do with them.
     pub actor_options: Option<crate::systems::actor::options::ShownActorOptions>,
-    /// The market, while it is open.
-    pub market: Option<crate::systems::market::window::ShownMarket>,
+    /// The market's window, while the market is open.
+    pub market_window: Option<ShownMarketWindow>,
     /// While a spot is aimed at: what asks for it, where the pointer's spot is and what the
     /// spot has against it.
     pub spot_aim: Option<SpotAim>,
     pub pops: Vec<pop::ShownPop>,
-    pub history: ProbeHistory,
-    pub shop: Option<ProbeShop>,
-    pub prompt: Option<ProbePrompt>,
-    pub crafting: Option<ProbeCrafting>,
+    pub history_page: ProbeHistoryPage,
+    /// What the player has placed on the shop's counter to sell, while the shop is open.
+    pub shop_counter: Option<ProbeShopCounter>,
+    /// What the player has placed in the prompt's tray, while a prompt is open.
+    pub prompt_tray: Option<ProbePromptTray>,
+    /// What the crafting panel makes of what is placed, while it is open.
+    pub crafting_panel: Option<ProbeCraftingPanel>,
     pub item_card: Option<ProbeItemCard>,
     pub skill_card: Option<ProbeSkillCard>,
     pub quest_card: Option<ProbeQuestCard>,
-    /// Every slot of the bag in its order, `None` for an empty one.
-    pub bag: Vec<Option<ProbeStack>>,
-    pub quests: ProbeQuests,
     pub bar_slots: Vec<SlotReport>,
-    pub statuses: Vec<ProbeStatus>,
+    /// What the skill tree shows beside the skills learned.
+    pub skill_tree: ProbeSkillTree,
     pub vfx: Vec<ProbeVfx>,
-    pub basic_attack: Option<SkillId>,
-    pub skills: Option<ProbeSkills>,
     pub soundscape: ProbeSoundscape,
-    pub weather: Option<ProbeWeather>,
+    /// The weather as the client draws it, where the player stands.
+    pub drawn_weather: Option<ProbeWeather>,
     pub transition: ScreenTransitionPhase,
     pub daylight: Daylight,
     /// Where the sun and the moon stand over the shown area, which has a sky of its own.
     pub heavens: Option<ProbeHeavens>,
-    /// The time of day that holds, in a game that names its times and once the client has been
-    /// told the hour.
-    pub time_of_day: Option<TimeOfDayName>,
     /// What the GPU holds in buffers and textures for the client.
     pub gpu_memory: Bytes,
     /// How long each frame took since the previous snapshot, the latest `FRAMES_KEPT` of them.
@@ -537,98 +518,52 @@ impl ProbeTerrain {
     }
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeBody {
+/// How a body shows on screen.
+#[derive(MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeDrawnBody {
+    #[entities]
     #[schemars(with = "u64")]
     pub id: Entity,
-    pub name: String,
-    pub appearance: Appearance,
-    pub flies: bool,
-    pub player: bool,
-    /// Whether it is a character whose player is gone, standing in the world without them.
-    pub away: bool,
-    #[schemars(with = "PosSchema")]
-    pub at: Pos<Meters>,
-    /// Where it shows on screen, which runs behind `at` for others and ahead of it for the player's
-    /// own walk.
+    /// Where it shows, which runs behind where it stands for others and ahead of it for the
+    /// player's own walk.
     #[schemars(with = "PosSchema")]
     pub drawn: Pos<Meters>,
-    pub capsule: Capsule,
     /// The way its body is turned on screen.
     pub facing: Radians,
-    pub action: Action,
-    /// The pose it holds while it idles.
-    pub pose: Pose,
-    /// The statuses it carries.
-    pub statuses: Vec<StatusEffectId>,
-    /// The actor it is casting at, a blow or a bolt alike.
-    #[schemars(with = "Option<u64>")]
-    pub engaged: Option<Entity>,
-    /// Whether it stands still rather than walks.
-    pub resting: bool,
-    /// How many times it was put where it stands rather than walked there: a warp, a respawn.
-    #[schemars(with = "u32")]
-    pub jumps: Jumps,
     /// The motion its body shows: what it does, or a move, a gesture, a flinch at a blow that
     /// just landed on it.
     pub shown: Motion,
+    /// The clip it plays for the motion it shows, as its stance resolves it.
+    pub clip: Clip,
+    /// How fast that clip plays: a hit at its attack speed, a gait as fast as covers its speed.
+    pub rate: PlaybackRate,
+    /// Where its skeleton's sets named that clip.
+    pub naming: Naming,
     /// Where its feet and the top of its head show in the window, as drawn: nowhere, behind the
     /// camera.
     #[schemars(with = "Option<PosSchema>")]
     pub feet: Option<Pos<WindowPx>>,
     #[schemars(with = "Option<PosSchema>")]
     pub head: Option<Pos<WindowPx>>,
-    pub health: f32,
-    pub max_health: f32,
-    pub mana: f32,
-    pub max_mana: f32,
-    pub npc: Option<NpcId>,
-    pub friendly: bool,
-    pub locked: bool,
-    pub marks: Vec<AttentionId>,
-    pub badges: Vec<AttentionId>,
-    /// The marks its plate shows, most pressing first: the first drawn large over its name, the
-    /// rest as pips after it.
-    pub plate_marks: Vec<AttentionId>,
-    pub skeleton: SkeletonId,
-    /// The stance its hands or a script put it in.
-    pub stance: Option<StanceId>,
-    /// The clip it plays for the motion it shows, as its stance resolves it, and the motion it was
-    /// told to play, if any.
-    pub clip: Clip,
-    pub motion: Option<Motion>,
-    /// How fast that clip plays: a hit at its attack speed, a gait as fast as covers its speed.
-    pub rate: PlaybackRate,
-    /// Where its skeleton's sets named that clip.
-    pub naming: Naming,
-    /// Each of its hands, in their order.
-    pub hands: Vec<ProbeHand>,
-    /// What each hand of its body shows, as the server says.
-    pub wearing: Vec<ProbeWorn>,
-    /// The item in its tool slot.
-    pub tool: Option<ItemId>,
-    /// The work it has under way at a resource.
-    pub gathering: Option<ProbeGathering>,
     /// The props its rig holds as drawn, each where it shows in the window.
     pub held: Vec<ProbeHeld>,
     /// Whether any layer moves its joints this frame.
     pub layered: bool,
 }
 
-/// A hand of a body, as its skeleton declares it.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeHand {
-    /// What its skeleton calls it.
-    pub name: String,
-    /// What the player calls it, as the equipment panel heads it.
-    pub label: String,
-}
-
-/// A prop hanging from a hand of a drawn body.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeWorn {
-    pub hand: HandIndex,
-    pub item: ItemId,
+/// How an item on the ground shows on screen.
+#[derive(MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeDrawnItem {
+    #[entities]
+    #[schemars(with = "u64")]
+    pub id: Entity,
+    /// Where the plate that names it is drawn, when one is.
+    #[schemars(with = "Option<RectSchema>")]
+    pub plate: Option<Rect<WindowPx>>,
+    /// Whether the vfx of its rarity plays on it.
+    pub effects: bool,
+    /// Whether a line is drawn round it.
+    pub outlined: bool,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -640,81 +575,6 @@ pub struct ProbeHeld {
     pub tool: Option<PropId>,
     #[schemars(with = "Option<PosSchema>")]
     pub at: Option<Pos<WindowPx>>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeObject {
-    #[schemars(with = "u64")]
-    pub id: Entity,
-    pub name: Option<String>,
-    pub title: Option<String>,
-    #[schemars(with = "PosSchema")]
-    pub at: Pos<Meters>,
-    #[schemars(with = "RectSchema")]
-    pub hitbox: Rect<Meters>,
-    pub marks: Vec<AttentionId>,
-    /// The statuses it carries.
-    pub statuses: Vec<StatusEffectId>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeGroundItem {
-    #[schemars(with = "u64")]
-    pub id: Entity,
-    pub item: ItemId,
-    pub rarity: ItemRarityId,
-    pub count: u32,
-    #[schemars(with = "PosSchema")]
-    pub at: Pos<Meters>,
-    /// Whether this player may take it.
-    pub mine: bool,
-    /// Where the plate that names it is drawn, when one is.
-    #[schemars(with = "Option<RectSchema>")]
-    pub plate: Option<Rect<WindowPx>>,
-    /// Whether the vfx of its rarity plays on it.
-    pub effects: bool,
-    /// Whether a line is drawn round it.
-    pub outlined: bool,
-}
-
-/// A resource standing in the world.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeResource {
-    #[schemars(with = "u64")]
-    pub id: Entity,
-    pub resource: ResourceId,
-    pub name: String,
-    #[schemars(with = "PosSchema")]
-    pub at: Pos<Meters>,
-    pub capsule: Capsule,
-    /// How many extractions it still holds.
-    pub left: u32,
-    /// How many may work it at once.
-    pub room: u32,
-    /// Who works it.
-    #[schemars(with = "Vec<u64>")]
-    pub workers: Vec<Entity>,
-}
-
-/// The work a character has under way at a resource.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeGathering {
-    #[schemars(with = "u64")]
-    pub resource: Entity,
-    /// The tool it works with, none by hand.
-    pub tool: Option<ItemId>,
-    /// How far through the extraction under way it is, from none to all of it.
-    pub progress: f32,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeWarp {
-    pub name: String,
-    pub to: AreaId,
-    #[schemars(with = "PosSchema")]
-    pub at: Pos<Meters>,
-    #[schemars(with = "RectSchema")]
-    pub rect: Rect<Meters>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, PartialEq, Debug)]
@@ -736,12 +596,13 @@ pub struct ProbeUiElement {
     pub rect: Rect<WindowPx>,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[derive(MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeStage {
     pub node: String,
     /// The dialogue box as last drawn.
     #[schemars(with = "Option<RectSchema>")]
     pub rect: Option<Rect<WindowPx>>,
+    #[entities]
     #[schemars(with = "Option<u64>")]
     pub with: Option<Entity>,
     /// The camera the line on show is seen through.
@@ -775,48 +636,32 @@ pub struct ProbeNotifications {
     pub intro: Option<intro::ShownIntro>,
 }
 
+/// A stack placed in a prompt's tray.
+/// The history page, while the menu shows it, and the tab it shows.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeHistory {
+pub struct ProbeHistoryPage {
     pub open: bool,
     pub tab: Option<String>,
-    pub records: Vec<ProbeRecord>,
 }
 
+/// What the player has placed to sell, stack by stack, and what the shop pays for it all.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeRecord {
-    pub topic: HistoryTopic,
-    pub by: Option<String>,
-    pub text: String,
-    pub mark: Option<HistoryMark>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeShop {
-    pub shop: ShopId,
-    pub wares: Vec<ProbeWare>,
-    pub buyback: Vec<ProbeStack>,
-    /// What the player has placed to sell, stack by stack.
+pub struct ProbeShopCounter {
     pub to_sell: Vec<ProbeStack>,
-    /// What the shop pays for all that is placed to sell.
     pub pays: Vec<ProbeStack>,
 }
 
-/// The prompt before the player and what they have placed in its tray.
+/// What the player has placed in a prompt's tray.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbePrompt {
-    pub title: String,
-    pub text: Option<String>,
-    pub slots: u32,
+pub struct ProbePromptTray {
     pub placed: Vec<ProbePlaced>,
     /// Whether what is placed was submitted and the server has yet to answer.
     pub waiting: bool,
 }
 
-/// What the prompt before the player crafts: every recipe it was opened with, what the items
-/// placed make, and what its button says.
+/// What the crafting panel makes of the items placed, and what its button says.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeCrafting {
-    pub recipes: Vec<ProbeRecipe>,
+pub struct ProbeCraftingPanel {
     /// What the items placed make, one result for each recipe they are a whole number of times:
     /// everything that recipe would give for them.
     pub results: Vec<Vec<ProbeStack>>,
@@ -825,31 +670,18 @@ pub struct ProbeCrafting {
     pub button: String,
     /// Whether the button can be pressed.
     pub ready: bool,
-    /// How far through the craft under way it is, from none to all of it.
-    pub progress: Option<f32>,
 }
 
-/// A recipe of a crafting prompt, as its window lists it.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeRecipe {
-    /// Its name within its book.
-    pub id: RecipeId,
-    /// Everything one craft gives.
-    pub makes: Vec<ProbeStack>,
-    pub from: Vec<ProbeStack>,
-    /// How long one craft takes at a crafting speed of 100%.
-    pub takes: Seconds,
-    /// How often one craft comes off: one that fails spends its materials and makes nothing.
-    pub chance: Percent,
-    /// Whether the character's bag covers every material.
-    pub can_make: bool,
-    /// Whether only a crafter who masters it makes it.
-    pub mastery: bool,
-    /// Whether it requires a mastery the player lacks, so the window lists it disabled.
-    pub locked: bool,
+/// What the skill tree shows beside the skills learned: the ranks planned, the skill being
+/// aimed, whether the offer to unlearn is up, and the pane, while the menu shows it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ProbeSkillTree {
+    pub planned: Vec<ProbeRank>,
+    pub aiming: Option<SkillId>,
+    pub reset_prompt: bool,
+    pub view: Option<ProbeTreeView>,
 }
 
-/// A stack placed in a prompt's tray.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbePlaced {
     pub item: ItemId,
@@ -858,20 +690,13 @@ pub struct ProbePlaced {
     pub short: bool,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeWare {
-    pub item: ItemId,
-    pub count: u32,
-    pub left: Option<u32>,
-    pub refusal: Option<String>,
-}
-
 /// A townsperson's mark on a map: which map, where on screen, and the marks they wear, most
 /// pressing first. The map draws the first, with a sign when there are more.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[derive(MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeMapMark {
     /// `minimap` or `map`.
     pub view: String,
+    #[entities]
     #[schemars(with = "u64")]
     pub actor: Entity,
     #[schemars(with = "PosSchema")]
@@ -881,10 +706,11 @@ pub struct ProbeMapMark {
 
 /// The marks of a townsperson laid round their spot on a map, and how far the ring is open,
 /// from 0 to 1.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[derive(MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeMapRing {
     /// `minimap` or `map`.
     pub view: String,
+    #[entities]
     #[schemars(with = "u64")]
     pub actor: Entity,
     pub marks: Vec<AttentionId>,
@@ -920,37 +746,34 @@ pub struct ProbeBagCarried {
     pub does: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
-pub struct ProbeStack {
-    pub item: ItemId,
-    pub count: u32,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeItemCard {
     pub item: ItemId,
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
     pub tilt: ProbeCardTilt,
     pub lamp: Option<ProbeCardLamp>,
+    pub material: CardMaterial,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeSkillCard {
     pub skill: SkillId,
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
     pub tilt: ProbeCardTilt,
     pub lamp: Option<ProbeCardLamp>,
+    pub material: CardMaterial,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeQuestCard {
     pub quest: QuestId,
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
     pub tilt: ProbeCardTilt,
     pub lamp: Option<ProbeCardLamp>,
+    pub material: CardMaterial,
 }
 
 /// How far a card is turned toward the pointer: `aside` about its upright axis and `above` about
@@ -994,13 +817,6 @@ impl From<ui::card::CardTilt> for ProbeCardTilt {
     }
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ProbeStatus {
-    pub effect: StatusEffectId,
-    pub category: StatusCategory,
-    pub left: Option<Seconds>,
-}
-
 /// A vfx seen starting lately, with the site it plays on; `over` once its time has run out. One
 /// shorter than the gap between two snapshots is still reported in the next.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -1008,26 +824,6 @@ pub struct ProbeVfx {
     pub vfx: VfxId,
     pub site: VfxSite,
     pub over: bool,
-}
-
-/// The character's class, tree and bar as the client shows them.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ProbeSkills {
-    pub class: String,
-    pub level: u32,
-    pub to_spend: u32,
-    pub learned: Vec<ProbeRank>,
-    pub planned: Vec<ProbeRank>,
-    pub aiming: Option<SkillId>,
-    pub reset_prompt: bool,
-    /// The pane the tree is drawn in, while the menu shows it.
-    pub view: Option<ProbeTreeView>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ProbeRank {
-    pub skill: String,
-    pub rank: Rank,
 }
 
 /// How the menu shows the skill tree: the canvas (backdrop and nodes) pans within the viewport,
@@ -1042,38 +838,14 @@ pub struct ProbeTreeView {
     pub panned: Offset<WindowPx>,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default)]
-pub struct ProbeQuests {
-    pub active: Vec<ProbeQuest>,
-    pub finished: Vec<ProbeFinishedQuest>,
-    pub tracked: Vec<QuestId>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeQuest {
-    pub quest: QuestId,
-    pub ready: bool,
-    pub left: Option<Seconds>,
-    /// Each objective's [have, need].
-    pub progress: Vec<[u32; 2]>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
-pub struct ProbeFinishedQuest {
-    pub quest: QuestId,
-    pub result: QuestResult,
-}
-
-/// The weather over the shown area as the client draws it: the spell under way by its name, or
-/// null before the course is known; how much cloud covers the sky, how much water it holds and how
-/// hard it rains under the wettest of it, each 0 to 1; and where the player stands, how hard it
-/// rains, how wet the ground lies, whether they stand sheltered from the rain, and how much of the
+/// The weather over the shown area as the client draws it: how much cloud covers the sky, how
+/// much water it holds and how hard it rains under the wettest of it, each 0 to 1; and where the
+/// player stands, how hard it rains, how wet the ground lies, whether they stand sheltered from the rain, and how much of the
 /// sun's or the moon's light the cloud overhead takes from them, 0 none to 1 all of it; how
 /// brightly lightning lights the world this moment; and how far the fog the camera's eye stands
 /// in lets it see, looking level, or null where no fog bank lies over it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeWeather {
-    pub spell: Option<String>,
     pub clouds: f32,
     pub water: f32,
     pub rain: f32,
@@ -1274,7 +1046,8 @@ fn publish(world: &mut World) {
                     .detach();
             }
             ProbeFrameQuestion::Aim { of } => {
-                let aim = aim_at(world, of);
+                let of = world.resource::<ServerEntities>().client_of(of);
+                let aim = of.and_then(|of| aim_at(world, of));
                 answers.give(&serde_json::to_string(&aim).expect("a serializable aim"));
             }
             ProbeFrameQuestion::Picture { path } => {
@@ -1294,6 +1067,7 @@ fn publish(world: &mut World) {
     }
     if snapshots > 0 {
         let (mut snapshot, ground) = snapshot(world);
+        snapshot.map_entities(&mut ServerNames(world.resource::<ServerEntities>()));
         let scope = ContentScope::of(world.resource::<Content>());
         // Sampling the ground and writing a snapshot out are long work for a frame, and neither
         // needs anything more of it.
@@ -1311,18 +1085,27 @@ fn publish(world: &mut World) {
     }
 }
 
+/// Names the client's entities as the server knows them, so an id a snapshot tells of means the
+/// same to every client of the server. What the server never showed is no entity there.
+struct ServerNames<'a>(&'a ServerEntities);
+
+impl EntityMapper for ServerNames<'_> {
+    fn get_mapped(&mut self, source: Entity) -> Entity {
+        self.0.server_of(source).unwrap_or(Entity::PLACEHOLDER)
+    }
+
+    fn set_mapped(&mut self, _source: Entity, _target: Entity) {}
+}
+
 /// What the client shows this frame, but for the ground around the player, which is still to be
 /// sampled where it is due.
 fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
     let content = world.resource::<Content>().clone();
+    let sight = sight::sight_as_held(world);
     let me = session::me(world);
-    let placed_sale = shop::counter::placed_sale(world);
-    let area = me
-        .and_then(|seen| world.get::<AreaTag>(seen))
-        .map(|tag| tag.area);
+    let area = sight.area;
     let view = view(world);
     let rows = stage::choice_rects(world);
-    let input_map = world.resource::<InputMap>().clone();
     let history_tab = history::shown_tab(world);
     let window = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
@@ -1353,6 +1136,8 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
             .as_ref()
             .map(|window| Size::new(window.resolution.width(), window.resolution.height())),
         claim: claims::claim(world),
+        drawn: drawn_bodies(world, area, view.as_ref()),
+        drawn_items: drawn_items(world, &sight.items),
         stage: stage::view(world).map(|view| ProbeStage {
             node: view.node,
             rect: stage::dialogue_rect(world).map(gui::window_rect),
@@ -1381,42 +1166,28 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
         feed_place: feed::place(world),
         saving: save::notice::shown(world),
         social_requests: social_request::card::shown(world),
-        friends: friend::page::shown(world),
         mail: mail::page::shown(world),
-        party: party::page::shown(world),
         chat: terminal::chat::shown(world),
         map_marks: map_marks(world),
         map_rings: map_rings(world),
         map_tiles: map_tiles(world),
         bag_views: bag_views(world),
         bag_carried: bag_carried(world),
-        mount: mount::plate::shown(world),
-        instance: area_instance::plate::shown(world),
-        instance_entrance: area_instance::entrance::shown(world),
-        instance_call: area_instance::gather::shown(world),
-        trade: crate::systems::trade::window::shown(world),
+        entrance_panel: area_instance::entrance::shown_panel(world),
         actor_options: crate::systems::actor::options::shown(world),
-        market: crate::systems::market::window::shown(world),
+        market_window: market::window::shown(world),
         spot_aim: skill::aim::spot_aim(world),
         pops: pop::shown(world),
-        history: ProbeHistory {
+        history_page: ProbeHistoryPage {
             open: history_tab.is_some(),
-            tab: history_tab.map(|tab| {
-                tab.named(&messages::of(world.resource::<Content>()).history)
-                    .to_owned()
-            }),
-            records: world
-                .resource::<HistoryBook>()
-                .records()
-                .iter()
-                .map(|record| record_line(record, world.resource::<Content>(), &input_map))
-                .collect(),
+            tab: history_tab.map(|tab| tab.named(&messages::of(&content).history).to_owned()),
         },
         item_card: item::card::shown(world).map(|(item, rect)| ProbeItemCard {
             item,
             rect: gui::window_rect(rect),
             tilt: item::card::tilt(world).into(),
             lamp: item::card::lamp(world).map(Into::into),
+            material: card_material(&content, item.get(&content).rarity.get(&content).card_style),
         }),
         skill_card: skill::card::shown(world)
             .zip(hud::pinned_rect::<SkillId>(world))
@@ -1425,20 +1196,16 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
                 rect: gui::window_rect(rect),
                 tilt: skill::card::tilt(world).into(),
                 lamp: skill::card::lamp(world).map(Into::into),
+                material: card_material(&content, skill.get(&content).card_style),
             }),
         quest_card: quest::card::shown(world).map(|(quest, rect)| ProbeQuestCard {
             quest,
             rect: gui::window_rect(rect),
             tilt: quest::card::tilt(world).into(),
             lamp: quest::card::lamp(world).map(Into::into),
+            material: card_material(&content, quest.get(&content).card_style),
         }),
-        prompt: prompt::tray::view(world).map(|view| ProbePrompt {
-            title: view.title.clone(),
-            text: view
-                .text
-                .as_ref()
-                .map(|text| text.words(&content, &world.resource::<InputMap>().key_names())),
-            slots: view.slots,
+        prompt_tray: prompt::view(world).map(|_| ProbePromptTray {
             placed: prompt::tray::placed(world)
                 .iter()
                 .map(|placed| ProbePlaced {
@@ -1449,30 +1216,13 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
                 .collect(),
             waiting: prompt::tray::waiting(world),
         }),
-        crafting: crafting::panel::view(world).map(|_| {
+        crafting_panel: crafting::view(world).map(|_| {
             let (button, ready) = crafting::panel::verdict(world);
             let results = crafting::panel::results(world);
-            let stack = |stack: ItemStack| ProbeStack {
-                item: stack.item,
-                count: stack.count,
-            };
-            ProbeCrafting {
-                recipes: crafting::panel::listed(world)
-                    .into_iter()
-                    .map(|listed| ProbeRecipe {
-                        id: listed.recipe.id.clone(),
-                        mastery: listed.recipe.mastery,
-                        locked: listed.locked,
-                        makes: listed.recipe.makes.iter().copied().map(stack).collect(),
-                        from: listed.recipe.from.iter().copied().map(stack).collect(),
-                        takes: listed.recipe.takes,
-                        chance: listed.recipe.chance,
-                        can_make: listed.can_make,
-                    })
-                    .collect(),
+            ProbeCraftingPanel {
                 results: results
                     .iter()
-                    .map(|result| result.makes.iter().copied().map(stack).collect())
+                    .map(|result| result.makes.iter().map(sight::stack).collect())
                     .collect(),
                 picked: crafting::panel::picked(world).and_then(|picked| {
                     results
@@ -1480,97 +1230,37 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
                         .position(|result| result.recipe == picked.recipe)
                 }),
                 button,
-                ready: ready.is_some() || crafting::panel::progress(world).is_some(),
-                progress: crafting::panel::progress(world),
+                ready: ready.is_some() || crafting::progress(world).is_some(),
             }
         }),
-        shop: shop::counter::view(world)
-            .zip(placed_sale)
-            .map(|(shown, sale)| ProbeShop {
-                to_sell: sale.stacks.iter().map(probe_stack).collect(),
-                pays: sale.pays.iter().map(probe_stack).collect(),
-                shop: shown.shop,
-                wares: shown
-                    .shop
-                    .get(&content)
-                    .sells()
-                    .zip(&shown.wares)
-                    .map(|(ware, view)| ProbeWare {
-                        item: ware.item,
-                        count: ware.count,
-                        left: view.left,
-                        refusal: view
-                            .refusal
-                            .as_ref()
-                            .map(|refusal| refusal.line(&content).plain_words(&content)),
-                    })
-                    .collect(),
-                buyback: shown
-                    .buyback
-                    .iter()
-                    .map(|buyback| ProbeStack {
-                        item: buyback.sale.item,
-                        count: buyback.sale.count,
-                    })
-                    .collect(),
-            }),
-        bag: item::my_bag(world)
-            .map(|inventory| {
-                inventory
-                    .slots
-                    .iter()
-                    .map(|slot| {
-                        slot.map(|stack| ProbeStack {
-                            item: stack.item,
-                            count: stack.count,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        quests: me.and_then(|seen| quests(world, seen)).unwrap_or_default(),
-        statuses: me
-            .and_then(|seen| world.get::<status::Statuses>(seen).cloned())
-            .map(|statuses| {
-                let now = time::server_now(world);
-                statuses
-                    .0
-                    .iter()
-                    .map(|held| ProbeStatus {
-                        effect: held.effect,
-                        category: held.effect.get(&content).category,
-                        left: held.until.zip(now).map(|(until, now)| until.since(now)),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
+        shop_counter: shop::counter::placed_sale(world).map(|sale| ProbeShopCounter {
+            to_sell: sale.stacks.iter().map(sight::stack).collect(),
+            pays: sale.pays.iter().map(sight::stack).collect(),
+        }),
         vfx: vfx_seen(world),
         bar_slots: skill::bar::report(world),
-        basic_attack: me
-            .and_then(|me| world.get::<skill::BasicAttack>(me))
-            .and_then(|slot| slot.0),
-        skills: me.and_then(|me| skills(world, me)),
-        me: me.and_then(|me| body(world, me, view.as_ref())),
+        skill_tree: ProbeSkillTree {
+            planned: world
+                .resource::<skill::window::SkillPlan>()
+                .0
+                .iter()
+                .map(sight::rank)
+                .collect(),
+            aiming: skill::aim::aiming(world).and_then(skill::aim::Aimed::skill),
+            reset_prompt: skill::prompt::showing(world),
+            view: tree_view(world),
+        },
         terrain: None,
-        actors: actors(world, me, area),
-        objects: objects(world, area),
-        items: items(world, area),
-        resources: resources(world, area),
-        warps: warps(world, area),
         ui: ui(world),
         covered: covered(world),
         soundscape: soundscape(world),
-        weather: area.and_then(|area| weather(world, area, me)),
+        drawn_weather: area.and(weather(world, me)),
         transition: world.resource::<ActiveTransition>().phase(),
         daylight: world
             .get_resource::<Daylight>()
             .copied()
             .unwrap_or_default(),
         heavens: area.and_then(|area| heavens(world, area)),
-        time_of_day: sky::now(world)
-            .hour
-            .and_then(|_| sky::time_of_day(world))
-            .map(|time| time.name.clone()),
         gpu_memory: gpu_memory(world),
         frame_times: world.resource_mut::<FrameTimes>().0.drain(..).collect(),
         scenery_standing: sceneries_standing > 0 || on_its_way.any(),
@@ -1580,7 +1270,7 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
             .get_resource::<RenderAdapterInfo>()
             .map(|adapter| adapter.name.clone()),
         view,
-        area,
+        sight,
     };
     (snapshot, ground)
 }
@@ -1593,27 +1283,8 @@ fn gpu_memory(world: &World) -> Bytes {
     Bytes(u64::try_from(held.buffer_memory.read() + held.texture_memory.read()).unwrap_or(0))
 }
 
-fn record_line(record: &HistoryRecord, content: &Content, inputs: &InputMap) -> ProbeRecord {
-    let text = record.entry.text.words(content, &inputs.key_names());
-    ProbeRecord {
-        topic: record.entry.topic,
-        by: record.entry.by.clone(),
-        text: record.entry.tally.map_or_else(
-            || text.clone(),
-            |tally| tally.line(&text, &messages::of(content).history),
-        ),
-        mark: record.entry.mark,
-    }
-}
-
-fn weather(world: &World, area: AreaId, me: Option<Entity>) -> Option<ProbeWeather> {
+fn weather(world: &World, me: Option<Entity>) -> Option<ProbeWeather> {
     let shown = world.get_resource::<ShownWeather>()?;
-    let content = world.resource::<Content>();
-    let spell = world
-        .get_resource::<ShownCourse>()
-        .and_then(|course| course.spell(area))
-        .and_then(|spell| area::load(content, area).climate.spells.get(spell))
-        .map(|spell| spell.name.clone());
     let at = me
         .and_then(|me| world.get::<GlobalTransform>(me))
         .map(GlobalTransform::translation);
@@ -1621,7 +1292,6 @@ fn weather(world: &World, area: AreaId, me: Option<Entity>) -> Option<ProbeWeath
     let sheltered = at.is_some_and(|at| world.resource::<Shelter>().covers(at));
     let open = if sheltered { 0.0 } else { 1.0 };
     Some(ProbeWeather {
-        spell,
         clouds: shown.clouds,
         water: shown.water,
         rain: shown.rain,
@@ -1704,37 +1374,6 @@ fn soundscape(world: &World) -> ProbeSoundscape {
     }
 }
 
-fn skills(world: &World, me: Entity) -> Option<ProbeSkills> {
-    let content = world.resource::<Content>();
-    let class = crate::systems::class::of(world, me)?;
-    let learned = world
-        .get::<skill::Learned>(me)
-        .map(|learned| learned.0.iter().map(rank).collect())
-        .unwrap_or_default();
-    Some(ProbeSkills {
-        class: class.path(content).to_owned(),
-        level: crate::systems::class::level(world, me),
-        to_spend: crate::systems::class::points_to_spend(world, me).0,
-        learned,
-        planned: world
-            .resource::<skill::window::SkillPlan>()
-            .0
-            .iter()
-            .map(rank)
-            .collect(),
-        aiming: skill::aim::aiming(world).and_then(skill::aim::Aimed::skill),
-        reset_prompt: skill::prompt::showing(world),
-        view: tree_view(world),
-    })
-}
-
-fn rank((skill, rank): (&impl ToString, &Rank)) -> ProbeRank {
-    ProbeRank {
-        skill: skill.to_string(),
-        rank: *rank,
-    }
-}
-
 fn tree_view(world: &World) -> Option<ProbeTreeView> {
     if hud::menu::showing(world) != Some(MenuTabName::Skills) {
         return None;
@@ -1744,40 +1383,6 @@ fn tree_view(world: &World) -> Option<ProbeTreeView> {
         viewport: gui::window_rect(view.viewport),
         canvas: Size::new(view.content.x, view.content.y),
         panned: Offset::new(view.offset.x, view.offset.y),
-    })
-}
-
-fn quests(world: &World, seen: Entity) -> Option<ProbeQuests> {
-    let content = world.resource::<Content>();
-    let log = world.get::<QuestLog>(seen)?;
-    let inventory = world.get::<Inventory>(seen);
-    let now = time::LocalClock::of_this_machine().now;
-    Some(ProbeQuests {
-        active: log
-            .active
-            .iter()
-            .map(|active| ProbeQuest {
-                quest: active.quest,
-                ready: active.ready(content, world.resource::<Parties>(), inventory),
-                left: active.left(now),
-                progress: active
-                    .quest
-                    .get(content)
-                    .progress(content, world.resource::<Parties>(), active, inventory)
-                    .iter()
-                    .map(|progress| [progress.have, progress.need])
-                    .collect(),
-            })
-            .collect(),
-        finished: log
-            .finished
-            .iter()
-            .map(|finished| ProbeFinishedQuest {
-                quest: finished.quest,
-                result: finished.result,
-            })
-            .collect(),
-        tracked: log.tracked.clone(),
     })
 }
 
@@ -1873,16 +1478,25 @@ fn ground_window(at: Pos<Meters>, bounds: Rect<Meters>, reach: Meters) -> Rect<M
         .unwrap_or(Rect::new(at, Size::zero()))
 }
 
-fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<ProbeBody> {
-    let viewer = session::me(world);
-    let marks = viewer
-        .and_then(|viewer| world.get::<Attention>(viewer))
-        .map(|attention| attention.of(entity).to_vec())
-        .unwrap_or_default();
-    let plate_marks = attention::plate_marks(world, viewer, entity);
-    let locked = commands_locked(world, entity);
+fn drawn_bodies(
+    world: &mut World,
+    area: Option<AreaId>,
+    view: Option<&ProbeView>,
+) -> Vec<ProbeDrawnBody> {
+    let bodies: Vec<Entity> = world
+        .query_filtered::<(Entity, &AreaTag), With<Actor>>()
+        .iter(world)
+        .filter(|(_, tag)| area.is_none_or(|area| tag.area == area))
+        .map(|(entity, _)| entity)
+        .collect();
+    bodies
+        .into_iter()
+        .filter_map(|entity| drawn_body(world, entity, view))
+        .collect()
+}
+
+fn drawn_body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<ProbeDrawnBody> {
     let entity = world.get_entity(entity).ok()?;
-    let npc = entity.get::<Npc>().map(|npc| npc.def);
     let at = entity.get::<Position>()?.pos;
     let capsule = entity.get::<Hitbox>()?.0;
     let actor = entity.get::<Actor>()?;
@@ -1899,28 +1513,24 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         },
         |aloft| aloft.0,
     );
-    let appearance = entity.get::<Appearance>()?.clone();
+    let appearance = entity.get::<Appearance>()?;
     let built = ActorModel::get(world.resource::<Content>(), appearance.model);
-    let flies = built.airborne();
-    let stat = |kind| entity.get::<Stats>().map_or(0.0, |stats| stats.get(kind));
     let stance = held::stance_of(world, entity.id());
-    let motion = entity
-        .get::<Playing>()
-        .filter(|playing| playing.motion.shows_over(actor.action))
-        .map(|playing| playing.motion.clone());
     let shown = entity
         .get::<Puppet>()
         .and_then(Puppet::shown)
         .cloned()
-        .or_else(|| motion.clone())
+        .or_else(|| {
+            entity
+                .get::<Playing>()
+                .filter(|playing| playing.motion.shows_over(actor.action))
+                .map(|playing| playing.motion.clone())
+        })
         .unwrap_or(Motion::Action(actor.action));
     let pick = entity
         .get::<Puppet>()
         .map_or(0, |puppet| puppet.pick_of(&shown));
     let resolved = built.resolve(stance, &shown, actor.pose, pick);
-    let naming = built.naming(stance, &shown, actor.pose);
-    let clip = resolved.clip.clone();
-    let rate = built.rate(&shown, &resolved, actor.attack_rate, actor.speed);
     let held = entity
         .get::<Puppet>()
         .map(|puppet| {
@@ -1941,123 +1551,37 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
                 .collect()
         })
         .unwrap_or_default();
-    Some(ProbeBody {
+    Some(ProbeDrawnBody {
         id: entity.id(),
-        engaged: entity.get::<Engaged>().map(|engaged| engaged.0),
-        name: entity
-            .get::<actor::Name>()
-            .map_or_else(String::new, |name| name.name.clone()),
-        appearance,
-        flies,
-        player: entity.contains::<PlayedBy>(),
-        away: entity.contains::<Away>(),
-        at,
         drawn,
-        capsule,
         facing: entity
             .get::<RenderActor>()
             .map_or(actor.facing, |shown| shown.facing),
-        action: actor.action,
-        pose: actor.pose,
-        statuses: carried(world, entity.id()),
-        resting: !actor.action.moves(),
-        jumps: entity.get::<Position>()?.jumps,
-        shown: shown.clone(),
+        naming: built.naming(stance, &shown, actor.pose),
+        rate: built.rate(&shown, &resolved, actor.attack_rate, actor.speed),
+        clip: resolved.clip.clone(),
+        shown,
         feet: view.and_then(|view| view.window_point(drawn, ground)),
         head: view.and_then(|view| view.window_point(drawn, ground + capsule.height)),
-        health: stat(StatKind::Health),
-        max_health: stat(StatKind::MaxHealth),
-        mana: stat(StatKind::Mana),
-        max_mana: stat(StatKind::MaxMana),
-        npc,
-        friendly: entity.get::<Attitude>() == Some(&Attitude::Friendly),
-        locked,
-        marks,
-        plate_marks,
-        badges: entity
-            .get::<StatusBadges>()
-            .map(|badges| badges.0.clone())
-            .unwrap_or_default(),
-        skeleton: built.skeleton_id(),
-        stance,
-        clip,
-        motion,
-        rate,
-        naming,
-        hands: built
-            .hands()
-            .iter()
-            .map(|hand| ProbeHand {
-                name: hand.name.clone(),
-                label: hand.label().to_owned(),
-            })
-            .collect(),
-        wearing: entity
-            .get::<Held>()
-            .map(|wearing| {
-                wearing
-                    .hands
-                    .iter()
-                    .map(|(&hand, &item)| ProbeWorn { hand, item })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        tool: equipment::in_slot(world, entity.id(), &EquipmentPlace::Tool),
-        gathering: entity.get::<Working>().map(|working| ProbeGathering {
-            resource: working.resource,
-            tool: working.tool,
-            progress: resource::render::progress(world, working).unwrap_or(0.0),
-        }),
         held,
         layered: entity.get::<Layered>().is_some_and(Layered::moving),
     })
 }
 
-fn actors(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec<ProbeBody> {
-    let others: Vec<Entity> = world
-        .query_filtered::<(Entity, &AreaTag), With<Actor>>()
-        .iter(world)
-        .filter(|(entity, tag)| Some(*entity) != me && area.is_none_or(|area| tag.area == area))
-        .map(|(entity, _)| entity)
-        .collect();
-    let view = view(world);
-    others
-        .into_iter()
-        .filter_map(|entity| body(world, entity, view.as_ref()))
-        .collect()
-}
-
-fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
-    let viewer = session::me(world);
-    let attention = viewer
-        .and_then(|viewer| world.get::<Attention>(viewer))
-        .cloned();
-    world
-        .query::<(Entity, &AreaObject, &Position, &AreaTag)>()
-        .iter(world)
-        .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
-        .filter(|(_, object, ..)| object.look.is_some())
-        .map(|(entity, object, at, _)| ProbeObject {
-            id: entity,
-            name: object.name.clone(),
-            title: object.title.clone(),
-            at: at.pos,
-            hitbox: object.shape.bounds(),
-            marks: attention
-                .as_ref()
-                .map(|attention| attention.of(entity).to_vec())
-                .unwrap_or_default(),
-            statuses: carried(world, entity),
+fn drawn_items(world: &World, items: &[ProbeGroundItem]) -> Vec<ProbeDrawnItem> {
+    items
+        .iter()
+        .map(|item| ProbeDrawnItem {
+            id: item.id,
+            plate: item::plates::plate_of(world, item.id).map(gui::window_rect),
+            effects: world.get::<StandingVfx>(item.id).is_some(),
+            outlined: world.get::<Outline>(item.id).is_some(),
         })
         .collect()
 }
 
-/// The statuses a thing carries, in the order it took them.
-fn carried(world: &World, thing: Entity) -> Vec<StatusEffectId> {
-    world
-        .get::<status::Statuses>(thing)
-        .map(|statuses| statuses.0.iter().map(|held| held.effect).collect())
-        .unwrap_or_default()
+fn card_material(content: &Content, style: Option<CardStyleId>) -> CardMaterial {
+    CardStyleDef::of(content, style).material.clone()
 }
 
 /// The ground point to point at to take `thing`: an object by its shape, what has a body by its
@@ -2150,94 +1674,6 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
         | ClickClaim::Walk(_)
         | ClickClaim::Nothing => None,
     }
-}
-
-fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
-    let content = world.resource::<Content>().clone();
-    let me = item::DropTaker::me(world);
-    world
-        .query::<(
-            Entity,
-            &DroppedItem,
-            &Position,
-            &AreaTag,
-            Option<&Reservation>,
-        )>()
-        .iter(world)
-        .filter(|(.., tag, _)| area.is_none_or(|area| tag.area == area))
-        .map(|(entity, dropped, at, _, reservation)| ProbeGroundItem {
-            id: entity,
-            item: dropped.item,
-            rarity: dropped.item.get(&content).rarity,
-            count: dropped.count,
-            at: at.pos,
-            mine: item::takeable(reservation, &me),
-            plate: None,
-            effects: false,
-            outlined: false,
-        })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .map(|item| ProbeGroundItem {
-            plate: item::plates::plate_of(world, item.id).map(gui::window_rect),
-            effects: world.get::<StandingVfx>(item.id).is_some(),
-            outlined: world.get::<Outline>(item.id).is_some(),
-            ..item
-        })
-        .collect()
-}
-
-fn resources(world: &mut World, area: Option<AreaId>) -> Vec<ProbeResource> {
-    let content = world.resource::<Content>().clone();
-    let standing: Vec<(Entity, ResourceId, u32, Pos<Meters>, Capsule)> = world
-        .query::<(Entity, &Resource, &Left, &Position, &Hitbox, &AreaTag)>()
-        .iter(world)
-        .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
-        .map(|(entity, resource, left, at, hitbox, _)| {
-            (entity, resource.def, left.0, at.pos, hitbox.0)
-        })
-        .collect();
-    let working: Vec<(Entity, Entity)> = world
-        .query::<(Entity, &Working)>()
-        .iter(world)
-        .map(|(worker, working)| (worker, working.resource))
-        .collect();
-    standing
-        .into_iter()
-        .map(|(entity, def, left, at, capsule)| ProbeResource {
-            id: entity,
-            resource: def,
-            name: def.get(&content).name.clone(),
-            at,
-            capsule,
-            left,
-            room: def.get(&content).max_occupants,
-            workers: working
-                .iter()
-                .filter(|(_, resource)| *resource == entity)
-                .map(|(worker, _)| *worker)
-                .collect(),
-        })
-        .collect()
-}
-
-fn warps(world: &World, area: Option<AreaId>) -> Vec<ProbeWarp> {
-    let Some(area) = area else {
-        return Vec::new();
-    };
-    let content = world.resource::<Content>();
-    let scripts = world.resource::<Scripts>();
-    let mut warps: Vec<ProbeWarp> = area::warp::warp_objects(content, scripts, area)
-        .into_iter()
-        .map(|object| ProbeWarp {
-            name: object.name,
-            to: object.to.area,
-            at: object.shape.center(),
-            rect: object.shape.bounds(),
-        })
-        .collect();
-    warps.sort_by(|a, b| a.name.cmp(&b.name));
-    warps
 }
 
 fn ui(world: &mut World) -> Vec<ProbeUiElement> {
@@ -2531,11 +1967,4 @@ fn bag_carried(world: &World) -> Option<ProbeBagCarried> {
         over: carried.over,
         does: carried.does,
     })
-}
-
-fn probe_stack(stack: &ItemStack) -> ProbeStack {
-    ProbeStack {
-        item: stack.item,
-        count: stack.count,
-    }
 }

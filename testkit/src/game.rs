@@ -11,7 +11,7 @@ use engine::core::content::{
     MemoryFolder, SETTINGS_FILE, content_path, name_of, table_of, version,
 };
 use engine::core::ground::{
-    GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER, WaterSurface,
+    GroundSize, HeightRange, Heightfield, MIN_SIDE, PaintMap, SAMPLES_PER_METER, WaterSurface,
 };
 use engine::core::math::Rgb;
 use engine::core::render::{
@@ -817,6 +817,30 @@ impl Game {
             Some(bytes) => game.part("area", name, &area::PAINT_OVERVIEW.named("", "png"), bytes),
             None => game,
         }
+    }
+
+    /// Raises the ground of the area `area` to `heights`, which span the heights every declared
+    /// area's ground does.
+    pub fn ground(self, area: &str, heights: &Heightfield) -> Game {
+        let game = heights
+            .size()
+            .each_tile()
+            .filter_map(|at| Some((at, heights.encode_tile(at)?)))
+            .fold(self, |game, (at, bytes)| {
+                game.part(
+                    "area",
+                    area,
+                    &area::HEIGHT.named(&at.key(), "png"),
+                    bytes.to_vec(),
+                )
+            });
+        let overview = heights.encode_overview().expect("ground that isn't flat");
+        game.part(
+            "area",
+            area,
+            &area::HEIGHT_OVERVIEW.named("", "png"),
+            overview,
+        )
     }
 
     /// Lays `water` on the area `area`, as the one water the area names: the pond.

@@ -28,7 +28,6 @@ use ui::{dusk, input};
 use super::TerminalMessages;
 use super::draft::ChatDraft;
 use super::history::{InField, SentLines};
-use super::{ChatSpeakers, LoggedLineId, TerminalLog};
 use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band, Tier};
 use crate::core::math::Rgb;
@@ -37,6 +36,7 @@ use crate::core::text::{self, LinkKey, StyledLine, StyledSpan, TextLook, TextPie
 use crate::systems::GameSettings;
 use crate::systems::actor::portrait::ActorPortraits;
 use crate::systems::area_map::{self, MapPin, MapSight};
+use crate::systems::chat::log::{ChatLog, ChatSpeakers, LoggedLineId};
 use crate::systems::chat::{
     ChatChannel, ChatChannels, ChatEmbed, ChatEmbedKind, ChatLocation, EMBED_ASK,
 };
@@ -222,8 +222,8 @@ pub(super) fn suggested(
     }
 }
 
-/// Keeps a tab for each channel the server says the player is in. A channel that is gone takes
-/// its lines with it, and chat shows its first tab when the one shown went.
+/// Keeps a tab for each channel the server says the player is in, and shows the first tab when
+/// the one shown went.
 pub(super) fn channels(world: &mut World) {
     let Some(told) = session::my_character(world)
         .and_then(|me| me.get::<ChatChannels>().cloned())
@@ -238,11 +238,6 @@ pub(super) fn channels(world: &mut World) {
         .copied()
         .filter(|channel| !told.0.contains(channel))
         .collect();
-    for channel in &gone {
-        world
-            .resource_mut::<TerminalLog>()
-            .forget(channel.terminal());
-    }
     let mut view = world.resource_mut::<ChatView>();
     for channel in &gone {
         view.reading_from.remove(channel);
@@ -678,7 +673,7 @@ fn lines(
         .on(Ground::Dusk)
         .shadowed(dusk::SMALL_TEXT_SHADOW);
     let content = world.resource::<Content>().clone();
-    let log = world.resource::<TerminalLog>();
+    let log = world.resource::<ChatLog>();
     view.revealed
         .retain(|(line, _)| log.numbered().any(|(kept, _)| kept == *line));
     let laid: Vec<LaidLine> = {
@@ -830,7 +825,7 @@ fn lines(
     view.revealed.extend(uncovered);
     let end = scrolled.content_size.y - scrolled.inner_rect.height();
     let reading = typing && scrolled.state.offset.y < end - 1.0;
-    let log = world.resource::<TerminalLog>();
+    let log = world.resource::<ChatLog>();
     let arrived = log.arrived(shown.terminal());
     if !typing {
         view.reading_from.clear();
