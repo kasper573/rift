@@ -1,9 +1,9 @@
 //! Where a prop that snaps to the ground stands: on the ground under it or on a prop placed there,
 //! as a warp's shine lies on a floor laid over the ground, and along it where it slopes. Under each
-//! point of its model, a foot inside another model (the first of its faces over the foot looks up,
-//! out of it) rises out onto that face, and a foot inside nothing is let down onto the highest face
-//! looking up under it, never under the ground. The prop then lies along the plane closest to
-//! where its points rest, lifted until none of them rests over it, its shape as it is.
+//! point of its model, a foot inside another model rises out onto the face it leaves it through,
+//! and a foot inside nothing is let down onto the highest face looking up under it, never under the
+//! ground. The prop then lies along the plane closest to where its points rest, lifted until none
+//! of them rests over it, its shape as it is.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -130,15 +130,27 @@ impl SnapSurfaces {
 }
 
 /// Where a foot at `at` comes out of the model whose faces cross the line up through it at `faces`,
-/// lowest first: onto the first face over it looking up, where more of those over it look up than
-/// down, so it lies inside the model; none where it lies outside.
+/// lowest first: counted up from below the model, the line goes in through each face looking down
+/// and out through each looking up, never further out than outside, which an open face (a roof
+/// with no underside) would take it. A foot inside comes out where the count is back outside;
+/// none where it lies outside.
 fn way_out(faces: &[FaceCrossing], at: f32) -> Option<f32> {
-    let over = || faces.iter().filter(|face| face.height > at + LEVEL);
-    let up = over().filter(|face| face.looks_up).count();
-    if up * 2 <= over().count() {
-        return None;
+    let mut depth = 0usize;
+    for face in faces {
+        let over = face.height > at + LEVEL;
+        if over && depth == 0 {
+            return None;
+        }
+        depth = if face.looks_up {
+            depth.saturating_sub(1)
+        } else {
+            depth + 1
+        };
+        if over && depth == 0 {
+            return Some(face.height);
+        }
     }
-    over().find(|face| face.looks_up).map(|face| face.height)
+    None
 }
 
 /// How near a face lies to a foot to count as level with it, in metres: as near as a model's own

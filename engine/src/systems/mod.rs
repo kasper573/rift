@@ -644,12 +644,8 @@ pub fn client_app(
     let files = SyncedAssetReader::default();
     app.insert_resource(files.clone());
     app.insert_resource(Rng::from_entropy());
-    bevy::asset::AssetApp::register_asset_source(
-        &mut app,
-        bevy::asset::io::AssetSourceId::Default,
-        files.source(),
-    )
-    .add_plugins(
+    files.register(&mut app);
+    app.add_plugins(
         DefaultPlugins
             .set(bevy::log::LogPlugin {
                 filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
@@ -800,10 +796,7 @@ pub fn install_content(world: &mut World, synced: SyncedContent, content: Conten
     if let Some(changed) = changed {
         let assets = world.resource::<bevy::asset::AssetServer>();
         for path in changed {
-            let path = bevy::asset::AssetPath::from(path);
-            if assets.get_path_id(path.clone()).is_some() {
-                assets.reload(path);
-            }
+            crate::core::assets::reload(assets, &path);
         }
     }
     insert_content(world, &content);

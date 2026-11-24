@@ -44,9 +44,9 @@ pub fn timespans(
     let value_at = |x: f32| snapped(start + (x - rect.left()) / rect.width() * length);
     let mut picked = picked(ui).filter(|&at| at < spans.len());
 
-    paint::band(ui.painter(), rect, |along| {
+    ui.painter().add(paint::band(rect, |along| {
         color_at(spans, &range, start + along * length)
-    });
+    }));
     for (at, span) in spans.iter().enumerate() {
         for piece in pieces(spans, at, &range) {
             let piece =

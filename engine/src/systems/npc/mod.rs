@@ -236,7 +236,14 @@ pub struct Home(pub Pos<Meters>);
 pub struct Roams(pub Rect<Meters>);
 
 #[derive(Component, Default)]
-pub struct Near(Vec<Entity>);
+pub struct Near(Vec<Approached>);
+
+/// Someone near a watcher, and whether they were going through the air.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Approached {
+    who: Entity,
+    aloft: bool,
+}
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct NpcDef {
@@ -511,7 +518,7 @@ struct Watcher {
 /// every core from the tick's roster, then raised in the order the watchers were found.
 #[derive(Default)]
 pub struct ApproachWatchers {
-    approached: Vec<(Watcher, Vec<Entity>)>,
+    approached: Vec<(Watcher, Vec<Approached>)>,
 }
 
 impl Planner for ApproachWatchers {
@@ -520,6 +527,7 @@ impl Planner for ApproachWatchers {
         let Some(roster) = world.get_resource::<TickRoster>() else {
             return;
         };
+        let content = world.resource::<Content>();
         let instances = world.resource::<Instances>();
         let watchers: Vec<Watcher> = instances
             .owners_answering(EventKind::of::<CameNear>())
@@ -549,7 +557,7 @@ impl Planner for ApproachWatchers {
         self.approached = watchers
             .into_par_iter()
             .map(|watcher| {
-                let mut now: Vec<Entity> = roster
+                let mut now: Vec<Approached> = roster
                     .near(Among::Anyone, watcher.at, watcher.reach)
                     .filter(|listed| {
                         listed.entity != watcher.npc
@@ -559,7 +567,10 @@ impl Planner for ApproachWatchers {
                             && visibility::coexist(world, watcher.npc, listed.entity)
                             && !dialogue::in_conversation(world, listed.entity)
                     })
-                    .map(|listed| listed.entity)
+                    .map(|listed| Approached {
+                        who: listed.entity,
+                        aloft: movement::aloft(content, world, listed.entity),
+                    })
                     .collect();
                 now.sort_unstable();
                 (watcher, now)
@@ -569,14 +580,21 @@ impl Planner for ApproachWatchers {
 
     fn apply(&mut self, world: &mut World) {
         for (Watcher { npc, at, .. }, now) in self.approached.drain(..) {
-            let before: Vec<Entity> = world
+            let before: Vec<Approached> = world
                 .get::<Near>(npc)
                 .map(|near| near.0.clone())
                 .unwrap_or_default();
             if now == before {
                 continue;
             }
-            for &other in now.iter().filter(|other| !before.contains(other)) {
+            for &Approached { who: other, aloft } in &now {
+                let was = before
+                    .iter()
+                    .find(|was| was.who == other)
+                    .map(|was| was.aloft);
+                if was == Some(aloft) {
+                    continue;
+                }
                 let is_npc = world.get::<Npc>(other).is_some();
                 let def = world.get::<Npc>(other).map(|npc| npc.def);
                 let distance = position(world, other).map(|there| there.distance(at));
@@ -587,7 +605,10 @@ impl Planner for ApproachWatchers {
                     Vec::new(),
                     move |event| {
                         event.downcast_ref::<CameNear>().is_some_and(|near| {
-                            distance.is_some_and(|distance| distance <= near.within)
+                            let takes = |aloft: bool| near.fliers || !aloft;
+                            takes(aloft)
+                                && !was.is_some_and(takes)
+                                && distance.is_some_and(|distance| distance <= near.within)
                                 && near.by.admits(is_npc)
                                 && near.npc.is_none_or(|npc| Some(npc) == def)
                         })
@@ -676,6 +697,9 @@ pub struct DiedHere {
 pub struct CameNear {
     pub within: Meters,
     pub by: Who,
+    /// Whether someone going through the air, on a mount that flies or with a body that does,
+    /// comes near as they pass; either way, one who lands within reach has come near.
+    pub fliers: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub npc: Option<NpcId>,
 }

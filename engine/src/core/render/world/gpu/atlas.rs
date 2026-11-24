@@ -1027,6 +1027,8 @@ fn keep_atlases(
 }
 
 impl AtlasGround {
+    /// Reads the tile at `tile` of each map, and finds which terrains and waters it names while
+    /// off the frame, so the frame that lays sheets over the tile finds them ready.
     fn load(&self, tile: TileAt) {
         for problem in [
             self.heights.load(tile).err(),
@@ -1039,6 +1041,8 @@ impl AtlasGround {
         {
             warn!("ground tile {} doesn't load: {problem}", tile.key());
         }
+        self.paint.names_on(tile);
+        self.waters.names_on(tile);
     }
 }
 

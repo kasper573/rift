@@ -491,3 +491,53 @@ fn any_colour_reads_as_text_over_the_dark_and_one_that_already_does_is_left_as_i
     }
     assert_eq!(ink::legible(ink::SPRING, ink::VEIL), ink::SPRING);
 }
+
+#[test]
+fn labels_laid_apart_never_overlap_and_only_those_that_would_move() {
+    let label = |x: f32, y: f32| Rect::from_min_size(Pos2::new(x, y), Vec2::new(120.0, 20.0));
+    let cases = [
+        vec![label(100.0, 300.0), label(100.0, 300.0)],
+        vec![
+            label(100.0, 300.0),
+            label(100.0, 300.0),
+            label(100.0, 300.0),
+        ],
+        vec![label(100.0, 300.0), label(160.0, 310.0), label(40.0, 290.0)],
+        vec![label(100.0, 300.5), label(100.3, 279.7), label(99.9, 300.2)],
+        vec![label(100.0, 300.0), label(400.0, 300.0)],
+    ];
+    let apart = 4.0;
+    for case in cases {
+        let mut laid = case.clone();
+        ui::float::lay_apart(&mut laid, apart);
+        assert_eq!(laid[0], case[0], "the first keeps its place");
+        for (i, rect) in laid.iter().enumerate() {
+            assert_eq!(rect.size(), case[i].size());
+            assert_eq!(rect.left(), case[i].left(), "a label only rises");
+            assert!(rect.top() <= case[i].top(), "a label only rises");
+            let clear = |other: &Rect| {
+                rect.right() + apart <= other.left() + 1e-3
+                    || other.right() + apart <= rect.left() + 1e-3
+                    || rect.bottom() + apart <= other.top() + 1e-3
+                    || other.bottom() + apart <= rect.top() + 1e-3
+            };
+            for other in &laid[..i] {
+                assert!(clear(other), "{rect:?} comes near {other:?} in {case:?}");
+            }
+            let near_none_before = case[..i].is_empty()
+                || laid[..i].iter().all(|other| {
+                    let start = case[i];
+                    start.right() + apart <= other.left()
+                        || other.right() + apart <= start.left()
+                        || start.bottom() + apart <= other.top()
+                        || other.bottom() + apart <= start.top()
+                });
+            if near_none_before {
+                assert_eq!(
+                    *rect, case[i],
+                    "a label clear of the others keeps its place"
+                );
+            }
+        }
+    }
+}

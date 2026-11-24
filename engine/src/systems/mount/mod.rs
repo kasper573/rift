@@ -88,6 +88,13 @@ pub struct MountDef {
     pub rider: MountSeat,
     /// What comes of a rider doing what their seat does not let them.
     pub barred: BarredAct,
+    /// Where the mount carries what its rider holds while they ride: the hands of its model's
+    /// skeleton, by name, the first taking what the rider's first hand holds and so on, each
+    /// holding it as a hand holds it. The rider's hands are then free, and what they hold stays
+    /// theirs, held. A hand of the rider's past the last keeps what it holds, as every hand does on
+    /// a mount that names none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gear: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<MountModule>,
 }
@@ -189,6 +196,7 @@ impl ContentFile for MountDef {
                 may: Vec::new(),
             },
             barred: BarredAct::Refuse,
+            gear: Vec::new(),
             modules: Vec::new(),
         })
     }
@@ -571,8 +579,8 @@ impl Planner for UnseatFallen {
 }
 
 /// What every mount must hold against the rest of the game: its rider seated on a joint of its own
-/// model, riding with a move some skeleton declares, and a skill that calls it aimed as it
-/// travels.
+/// model, their gear carried on hands of it, riding with a move some skeleton declares, and a
+/// skill that calls it aimed as it travels.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let declared = content.built::<Declared>();
@@ -589,6 +597,15 @@ pub fn check_all(loading: &mut Loading) {
                     "a joint of the mount's model",
                 ),
             );
+        }
+        for (index, hand) in mount.gear.iter().enumerate() {
+            if !model.is_none_or(|model| model.hands().iter().any(|held| held.name == *hand)) {
+                loading.row_error(
+                    id,
+                    &format!("/gear/{index}"),
+                    ContentProblem::new("unknown hand", hand, "a hand of the mount's model"),
+                );
+            }
         }
         if !declared.moves.contains(&seat.rides) {
             loading.row_error(

@@ -10,7 +10,7 @@ use crate::core::content::media::GltfInfos;
 use crate::core::content::{Content, FileHashes, ImageRef};
 use crate::core::ground::Heightfield;
 use crate::core::render::world::material::{
-    MaterialLook, PictureKind, PictureRead, SceneLooks, material_picture,
+    LookWear, MaterialLook, PictureKind, PictureRead, SceneLooks, material_picture,
 };
 use crate::core::units::Meters;
 use crate::core::vfx::render::{self as vfx_render, SiteExtent};
@@ -174,6 +174,19 @@ pub fn compiled_looks(
             };
             let color = picture(&material.color, PictureKind::Color);
             let normal = picture(&material.normal, PictureKind::Relief);
+            let wear = match &material.wear {
+                Some(wear) => {
+                    let mask = picture(&Some(wear.mask.clone()), PictureKind::Mask)?;
+                    let mottle = picture(&Some(wear.mottle.clone()), PictureKind::Mask)?;
+                    mask.zip(mottle).map(|(mask, mottle)| LookWear {
+                        mask,
+                        mottle,
+                        colors: [wear.colors.from, wear.colors.to]
+                            .map(|color| color.color().to_linear()),
+                    })
+                }
+                None => None,
+            };
             let shader = match material.shader {
                 Some(shader) => Some((
                     vfx_render::compiled_shader(world, shader)?,
@@ -187,6 +200,7 @@ pub fn compiled_looks(
                 material: name.clone(),
                 color: color?,
                 normal: normal?,
+                wear,
                 params: shader
                     .as_ref()
                     .map(|(_, params)| *params)

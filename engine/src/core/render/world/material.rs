@@ -17,7 +17,7 @@ use bevy::pbr::{
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     TextureDimension, TextureFormat,
 };
 use bevy::shader::{Shader, ShaderRef};
@@ -51,7 +51,7 @@ pub fn textures(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Ima
 
 /// How the world draws a mesh beyond its standard material, which has none of these: the game's
 /// shader where one draws the mesh, with its parameters, the shader board it reads and
-/// the site its prelude reads.
+/// the site its prelude reads, and the wear laid over its colours.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 #[bind_group_data(WorldLookKey)]
 pub struct WorldLook {
@@ -61,6 +61,14 @@ pub struct WorldLook {
     pub board: Handle<Image>,
     #[uniform(103)]
     pub site: SiteUniform,
+    #[texture(104)]
+    #[sampler(105)]
+    pub wear_mask: Option<Handle<Image>>,
+    #[texture(106)]
+    #[sampler(107)]
+    pub wear_mottle: Option<Handle<Image>>,
+    #[uniform(108)]
+    pub wear: WearUniform,
     pub shader: Option<Handle<Shader>>,
 }
 
@@ -73,23 +81,43 @@ pub struct MaterialLook {
     pub material: String,
     pub color: Option<Handle<Image>>,
     pub normal: Option<Handle<Image>>,
+    pub wear: Option<LookWear>,
     pub shader: Option<Handle<Shader>>,
     pub params: ParamsUniform,
     pub translucency: f32,
 }
 
-/// What a world material's shaders are built for: the game's shader when one draws it.
+/// Wear laid over a look's colours by the mesh's second texture coordinates: where `mask` shows
+/// it, in the colour `mottle` picks between `colors`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookWear {
+    pub mask: Handle<Image>,
+    pub mottle: Handle<Image>,
+    pub colors: [LinearRgba; 2],
+}
+
+/// What a world material's shaders are built for: the game's shader when one draws it, and
+/// whether it lays wear over its colours.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorldLookKey {
     shader: Option<VfxShaderKey>,
+    worn: bool,
 }
 
 impl From<&WorldLook> for WorldLookKey {
     fn from(look: &WorldLook) -> WorldLookKey {
         WorldLookKey {
             shader: look.shader.as_ref().map(VfxShaderKey::of),
+            worn: look.wear_mask.is_some(),
         }
     }
+}
+
+/// The colours a world material's wear is mixed between, as its shader reads them.
+#[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
+pub struct WearUniform {
+    pub low: Vec4,
+    pub high: Vec4,
 }
 
 impl MaterialExtension for WorldLook {
@@ -108,7 +136,13 @@ impl MaterialExtension for WorldLook {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<WorldLook>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let WorldLookKey { shader } = key.bind_group_data;
+        let WorldLookKey { shader, worn } = key.bind_group_data;
+        if worn {
+            descriptor.vertex.shader_defs.push("WORN".into());
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("WORN".into());
+            }
+        }
         let Some(shader) = shader else {
             return Ok(());
         };
@@ -198,6 +232,9 @@ pub fn world_material(
             params: ParamsUniform::default(),
             board: Handle::default(),
             site: SiteUniform::default(),
+            wear_mask: None,
+            wear_mottle: None,
+            wear: WearUniform::default(),
             shader: None,
         },
     }
@@ -231,6 +268,14 @@ pub fn looked_material(
     };
     let mut material = world_material(base, finish, Glass::Solid);
     material.base.diffuse_transmission = look.translucency;
+    if let Some(wear) = &look.wear {
+        material.extension.wear_mask = Some(wear.mask.clone());
+        material.extension.wear_mottle = Some(wear.mottle.clone());
+        material.extension.wear = WearUniform {
+            low: wear.colors[0].to_vec4(),
+            high: wear.colors[1].to_vec4(),
+        };
+    }
     if let Some(shader) = &look.shader {
         material.base.double_sided = false;
         material.base.cull_mode = None;
@@ -247,9 +292,17 @@ pub fn looked_material(
 struct LookKey {
     color: Option<AssetId<Image>>,
     normal: Option<AssetId<Image>>,
+    wear: Option<WearKey>,
     shader: Option<AssetId<Shader>>,
     params: [u32; PARAMS_BYTES / 4],
     translucency: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct WearKey {
+    mask: AssetId<Image>,
+    mottle: AssetId<Image>,
+    colors: [[u32; 4]; 2],
 }
 
 /// The world materials standing in for each standard material under each look, its glass drawn
@@ -304,6 +357,13 @@ impl Wardrobe<'_> {
         let looked = look.map(|look| LookKey {
             color: look.color.as_ref().map(Handle::id),
             normal: look.normal.as_ref().map(Handle::id),
+            wear: look.wear.as_ref().map(|wear| WearKey {
+                mask: wear.mask.id(),
+                mottle: wear.mottle.id(),
+                colors: wear
+                    .colors
+                    .map(|color| color.to_f32_array().map(f32::to_bits)),
+            }),
             shader: look.shader.as_ref().map(Handle::id),
             params: look.params.bits(),
             translucency: look.translucency.to_bits(),
@@ -320,12 +380,13 @@ impl Wardrobe<'_> {
     }
 }
 
-/// What a picture a material is drawn in holds: the colours of a surface, or its relief as the
-/// way each point of it faces.
+/// What a picture a material is drawn in holds: the colours of a surface, its relief as the way
+/// each point of it faces, or how much of something covers each point of it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PictureKind {
     Color,
     Relief,
+    Mask,
 }
 
 /// The pictures the game's materials are drawn in, each read once however many materials and
@@ -451,7 +512,7 @@ fn scaled(read: Image, kind: PictureKind) -> Option<Image> {
         TextureDimension::D2,
         match kind {
             PictureKind::Color => TextureFormat::Rgba8UnormSrgb,
-            PictureKind::Relief => TextureFormat::Rgba8Unorm,
+            PictureKind::Relief | PictureKind::Mask => TextureFormat::Rgba8Unorm,
         },
         RenderAssetUsages::RENDER_WORLD,
     );

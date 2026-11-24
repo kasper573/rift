@@ -4,16 +4,19 @@
 //! joint transforms only. Nothing the game reasons about comes from them (a body's place, its
 //! reach, the moment a hit lands), so they need not agree between clients and keep no seed.
 
+mod blend;
 mod chain;
 mod feet;
 mod held_pose;
 mod squash;
+mod steady;
 mod wave;
 
 pub use chain::Chain;
 pub use feet::{Feet, Gait, Stepping};
 pub use held_pose::HeldPose;
 pub use squash::Squash;
+pub use steady::{Steady, SteadyHand};
 pub use wave::Wave;
 
 use bevy::camera::primitives::{Frustum, Sphere};
@@ -74,16 +77,32 @@ pub enum JointLayer {
     Wave(Wave),
     Squash(Squash),
     HeldPose(HeldPose),
+    Steady(Steady),
 }
 
 impl JointLayer {
-    fn run(&mut self, frame: &mut Frame) {
+    /// Moves the layer on a frame: one that is `on` acts, and one that isn't eases out of what it
+    /// still shows.
+    fn run(&mut self, frame: &mut Frame, on: bool) {
         match self {
             JointLayer::Feet(feet) => feet.run(frame),
             JointLayer::Chain(chain) => chain.run(frame),
             JointLayer::Wave(wave) => wave.run(frame),
             JointLayer::Squash(squash) => squash.run(frame),
-            JointLayer::HeldPose(held) => held.run(frame),
+            JointLayer::HeldPose(held) => held.run(frame, on),
+            JointLayer::Steady(steady) => steady.run(frame, on),
+        }
+    }
+
+    /// Whether a layer that is off shows nothing anymore, rather than still easing out.
+    fn resting(&self) -> bool {
+        match self {
+            JointLayer::HeldPose(held) => held.resting(),
+            JointLayer::Steady(steady) => steady.resting(),
+            JointLayer::Feet(_)
+            | JointLayer::Chain(_)
+            | JointLayer::Wave(_)
+            | JointLayer::Squash(_) => true,
         }
     }
 
@@ -94,6 +113,7 @@ impl JointLayer {
             JointLayer::Wave(_) => {}
             JointLayer::Squash(squash) => squash.reset(),
             JointLayer::HeldPose(held) => held.reset(),
+            JointLayer::Steady(steady) => steady.reset(),
         }
     }
 }
@@ -123,6 +143,11 @@ impl Layered {
             last: None,
             skipped: false,
         }
+    }
+
+    /// The layer at `index` of the order the body was layered in.
+    pub fn layer_mut(&mut self, index: usize) -> Option<&mut JointLayer> {
+        self.layers.get_mut(index)
     }
 
     /// Whether any layer is moving joints.
@@ -195,7 +220,12 @@ pub(super) fn run(
             eye.translation().distance(Vec3::new(at.x, at.y, at.z))
         });
         let stepped = std::mem::take(&mut body.stepped);
-        if !seen || distance > FAR || !body.on.iter().any(|on| *on) {
+        let idle = body
+            .layers
+            .iter()
+            .zip(&body.on)
+            .all(|(layer, on)| !on && layer.resting());
+        if !seen || distance > FAR || idle {
             for layer in &mut body.layers {
                 layer.reset();
             }
@@ -232,7 +262,7 @@ pub(super) fn run(
         let rest = body.rig.rest_poses();
         let root = affine(root_global);
         for (layer, on) in body.layers.iter_mut().zip(&body.on) {
-            if !*on {
+            if !*on && layer.resting() {
                 layer.reset();
                 continue;
             }
@@ -249,7 +279,7 @@ pub(super) fn run(
                 speed,
                 stepped,
             };
-            layer.run(&mut frame);
+            layer.run(&mut frame, *on);
         }
         write(
             &mut transforms,

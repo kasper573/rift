@@ -1001,6 +1001,13 @@ pub fn atlas_key(model_hash: &str, overhang: Meters, materials: &[BakeMaterialKe
             }
             hasher.update(&look.params.map(u32::to_le_bytes).concat());
             hasher.update(&look.translucency.to_le_bytes());
+            if let Some(wear) = &look.wear {
+                for picture in [&wear.mask, &wear.mottle] {
+                    hasher.update(picture.as_deref().unwrap_or("").as_bytes());
+                    hasher.update(&[0]);
+                }
+                hasher.update(&[wear.from, wear.to].concat());
+            }
         }
     }
     let header = ImpostorHeader::current();
@@ -1022,7 +1029,8 @@ pub struct BakeMaterialKey {
 }
 
 /// What of a look the bake shows: what the pictures it draws in hold, the shader as it is
-/// compiled, the parameters it is filled with and how translucent it is.
+/// compiled, the parameters it is filled with, how translucent it is, and its wear: what its
+/// pictures hold and its colours.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LookBakeKey {
     pub color: Option<String>,
@@ -1030,6 +1038,17 @@ pub struct LookBakeKey {
     pub shader: Option<String>,
     pub params: [u32; PARAMS_BYTES / 4],
     pub translucency: f32,
+    pub wear: Option<WearBakeKey>,
+}
+
+/// What of a look's wear the bake shows: what its mask and mottle hold, and the colours it runs
+/// between.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WearBakeKey {
+    pub mask: Option<String>,
+    pub mottle: Option<String>,
+    pub from: [u8; 3],
+    pub to: [u8; 3],
 }
 
 /// How many models' atlases the GPU has room for to begin with. Every kind of prop dressed wants

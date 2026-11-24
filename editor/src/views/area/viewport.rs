@@ -28,13 +28,13 @@ use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::{CameraFocus, Look, camera, world_point};
 use engine::core::units::{HourOfDay, Meters, Seconds};
-use engine::systems::actor::Action;
-use engine::systems::actor::layering::{self, Layering};
+use engine::systems::actor::layering::{self, HandHold, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::{HandIndex, StanceId};
+use engine::systems::actor::{Action, Pose};
 use engine::systems::area::prop::PropId;
 use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::ShapedGround;
@@ -42,7 +42,7 @@ use engine::systems::area::scenery::{self, Eyes, ShowsProp, Sight};
 use engine::systems::area::sky;
 use engine::systems::area::sky::Sky;
 use engine::systems::area::{Area, Picture, Weather};
-use engine::systems::item::PropHold;
+use engine::systems::item::{PropHold, Steady};
 use engine::systems::water::{WaterDef, WaterId};
 use ui::egui;
 
@@ -158,8 +158,8 @@ struct StageLayering {
 }
 
 /// A prop a standing rig holds in `hand`, as `hold` has the hand carry it: the scene of `model` under
-/// the rig's joint `joint`, placed there by `transform`, and hanging plumb from there by `plumb` if
-/// it does.
+/// the rig's joint `joint`, placed there by `transform`, hanging plumb from there by `plumb` if it
+/// does, and held out by `steady` if it is.
 #[derive(Clone, PartialEq)]
 pub struct StandingProp {
     pub hand: HandIndex,
@@ -168,6 +168,7 @@ pub struct StandingProp {
     pub transform: Transform,
     pub plumb: Option<Plumb>,
     pub hold: PropHold,
+    pub steady: Option<Steady>,
 }
 
 /// The props a stood rig holds, and those hung so far.
@@ -790,15 +791,16 @@ fn run_layers(world: &mut World) {
         .query::<(&mut Layered, &Layering, &StageLayering, Option<&StageProps>)>()
         .iter_mut(world)
     {
-        let holding: Vec<(HandIndex, PropHold)> = props
+        let holding: Vec<HandHold> = props
             .map_or(&[][..], |props| props.props.as_slice())
             .iter()
-            .map(|prop| (prop.hand, prop.hold))
+            .map(|prop| (prop.hand, prop.hold, prop.steady))
             .collect();
         layering::drive(
             &mut layered,
             layering,
             stage.asked.action,
+            Pose::Idle,
             stage.asked.stance,
             &holding,
             stage.asked.stepped,

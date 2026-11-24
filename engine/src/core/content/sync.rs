@@ -236,6 +236,9 @@ pub struct SyncedContent {
 #[derive(Clone, Default)]
 pub struct SyncedAssets {
     hashes: Arc<HashMap<String, String>>,
+    /// Each asset whose bytes another asset holds too, and the one of them all that holding them
+    /// is read as.
+    copies: Arc<HashMap<String, String>>,
     held: Arc<HashMap<String, Arc<[u8]>>>,
     reader: Option<ContentStore>,
     streamed: Arc<HashSet<String>>,
@@ -258,6 +261,12 @@ impl SyncedAssets {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// The asset that holds the same bytes as the one at `path` and that every asset holding them
+    /// is read as: the first by path. None where `path` is that one, or no other holds its bytes.
+    pub fn copy_of(&self, path: &str) -> Option<&str> {
+        self.copies.get(path).map(String::as_str)
     }
 
     pub fn paths(&self) -> impl Iterator<Item = &str> {
@@ -408,6 +417,25 @@ pub async fn sync(
 
 pub fn well_formed_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Each of `files` whose bytes another holds too, and the first of them by path, which all of
+/// them are read as.
+fn copies_of(files: &[IndexedFile]) -> HashMap<String, String> {
+    let mut first: HashMap<&str, &str> = HashMap::new();
+    for file in files {
+        let held = first.entry(file.held.hash.as_str()).or_insert(&file.path);
+        if file.path.as_str() < *held {
+            *held = &file.path;
+        }
+    }
+    files
+        .iter()
+        .filter_map(|file| {
+            let first = first[file.held.hash.as_str()];
+            (first != file.path).then(|| (file.path.clone(), first.to_owned()))
+        })
+        .collect()
 }
 
 fn unpack_rows(bundle: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
@@ -592,12 +620,14 @@ impl Run<'_> {
             .filter(|file| file.streamed)
             .map(|file| file.path.clone())
             .collect();
+        let copies = copies_of(&index.files);
         Ok(SyncedContent {
             manifest,
             index,
             rows,
             assets: SyncedAssets {
                 hashes: Arc::new(hashes),
+                copies: Arc::new(copies),
                 held: Arc::new(held),
                 reader: Some(self.store.clone()),
                 streamed: Arc::new(streamed),

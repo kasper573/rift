@@ -103,7 +103,7 @@ fn the_names_of_a_pile_stack_by_rank_and_items_of_a_kind_share_a_line() {
     let apart = lie(&mut sim, "bone", at + Offset::new(8.0, 0.0), None);
 
     let named = plates::named(&mut sim.world);
-    let mut lines: Vec<Vec<(ItemId, Vec<Entity>, u32)>> = plates::columns(&mut sim.world, &named)
+    let mut lines: Vec<Vec<(ItemId, Vec<Entity>, u32)>> = plates::columns(&sim.world, &named)
         .into_iter()
         .map(|column| {
             column

@@ -147,6 +147,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         mirrored: false,
         strap: None,
         clasp: None,
+        chest: None,
     });
     hands.swap(0, 2);
     assert!(skeleton::edits::set_hands(&mut editor, &key, hands));

@@ -29,7 +29,7 @@ use crate::systems::area::Place;
 use crate::systems::area::PropId;
 use crate::systems::area::prop::PropPlacement;
 use crate::systems::area::{self, AreaId, AreaTag};
-use crate::systems::area::{OBJECT_RUNNER, Started, Warps};
+use crate::systems::area::{OBJECT_RUNNER, Started, warp};
 use crate::systems::interact::Interactive;
 use crate::systems::movement::Position;
 use crate::systems::npc::NPC_RUNNER;
@@ -280,11 +280,7 @@ pub fn stand(world: &mut World, object: AreaObject, row: OwnerRow) -> Entity {
     let scripts = world.resource::<Scripts>().clone();
     let procedures = scripts.of(row).to_vec();
     let interactive = Interactive::of(&procedures);
-    let warp = scripts
-        .may_do(row)
-        .reaching::<Warps>()
-        .next()
-        .map(|warps| warps.0);
+    let warp = warp::doorway(&scripts, row);
     // A warp is seen though nothing stands there, so a player's client knows where stepping
     // takes them somewhere.
     let seen =

@@ -569,9 +569,9 @@ pub fn check_fitted(loading: &mut Loading) {
     }
 }
 
-/// A material drawn in pictures of the game's lays them by its model's texture coordinates, and
-/// turns a relief by its tangents: a model that draws the material without them is reported at
-/// the prop.
+/// A material drawn in pictures of the game's lays them by its model's texture coordinates, its
+/// wear by the second set, and turns a relief by its tangents: a model that draws the material
+/// without them is reported at the prop.
 pub fn check_pictured(loading: &mut Loading) {
     let content = loading.content();
     let infos = content.built::<GltfInfos>();
@@ -589,6 +589,14 @@ pub fn check_pictured(loading: &mut Loading) {
                     "nothing to lay a picture by",
                     "a mesh drawn in the material without texture coordinates",
                     "a model whose meshes of the material all carry texture coordinates",
+                );
+            }
+            if material.wear.is_some() && info.unworn.contains(name) {
+                check.error(
+                    format!("/materials/{name}"),
+                    "nothing to lay wear by",
+                    "a mesh drawn in the material without a second set of texture coordinates",
+                    "a model whose meshes of the material all carry a second set",
                 );
             }
             if material.normal.is_some() && info.untangented.contains(name) {

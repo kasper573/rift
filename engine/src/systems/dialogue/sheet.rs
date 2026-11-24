@@ -5,6 +5,7 @@
 use ui::egui;
 
 use bevy::prelude::*;
+use ui::dusk::Tally;
 use ui::egui::emath::TSTransform;
 use ui::egui::{
     Align, Color32, FontId, Id, LayerId, Layout, Pos2, Rect, Response, Sense, Shape, Ui, UiBuilder,
@@ -150,6 +151,11 @@ const TAG_GAP: f32 = 1.1;
 /// ems.
 const TAG_MARK: f32 = 0.8;
 const TAG_MARK_GAP: f32 = 0.1;
+/// How far apart the chips of a choice's trade stand, how far what it takes stands from what it
+/// gives, and how wide a chip's sign stands, in the dialogue's ems.
+const TALLY_GAP: f32 = 0.3;
+const TALLY_GROUPS_GAP: f32 = 1.1;
+const TALLY_SIGN: f32 = 0.6;
 /// How far left of a choice the mark of the one the player is on stands, in the dialogue's ems.
 const LIT_MARK_GAP: f32 = 0.3;
 const LIT_MARK: &str = "\u{bb}";
@@ -307,7 +313,9 @@ fn lit_mark(ui: &Ui, row: Rect, color: Color32) {
     );
 }
 
-/// What a choice needs, pays and gets, as coloured tags set in the dialogue's own outlined text.
+/// What a choice needs, pays and gets, as tags set in the dialogue's own outlined text: what it
+/// needs as a mark and its words, and what it trades as chips, what it takes kept apart from what
+/// it gives.
 fn tags(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId, Rect)> {
     let mut pointed = None;
     if let Some(warn) = &choice.warn {
@@ -319,6 +327,7 @@ fn tags(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId, 
             dusk::DANGER,
         );
     }
+    let mut gets_laid = false;
     for shown in choice.chips.iter().rev() {
         match shown {
             ChoiceChip::Needs { what, met } => {
@@ -330,18 +339,21 @@ fn tags(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId, 
                 tag(ui, world, Some(mark), what, color);
             }
             ChoiceChip::Pays { item, count, have } => {
-                let color = if have >= count {
-                    Prose::Item.on(Ground::Dusk)
+                if std::mem::take(&mut gets_laid) {
+                    ui.add_space(text_size(ui) * (TALLY_GROUPS_GAP - TALLY_GAP));
+                }
+                let tally = if have >= count {
+                    Tally::Gives
                 } else {
-                    dusk::DANGER
+                    Tally::Lacks
                 };
-                let paid = InlineItem::of(*item).count(*count).nameless();
-                tag(ui, world, None, &paid.into(), color);
+                let paid = InlineItem::of(*item).count(*count).tallied();
+                tallied(ui, world, tally, &paid.into());
             }
             ChoiceChip::Gets { item, count } => {
-                let got = InlineItem::of(*item).count(*count).nameless();
-                let color = Prose::Name.on(Ground::Dusk);
-                let response = tag(ui, world, Some(Mark::Plus), &got.into(), color);
+                gets_laid = true;
+                let got = InlineItem::of(*item).count(*count).tallied();
+                let response = tallied(ui, world, Tally::Gets, &got.into());
                 if response.contains_pointer() {
                     pointed = Some((*item, response.rect));
                 }
@@ -349,6 +361,31 @@ fn tags(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId, 
         }
     }
     pointed
+}
+
+/// A chip of what a choice trades, laid from the right as the row's tags are: its line, then its
+/// sign before it, in its tally's colour.
+fn tallied(ui: &mut Ui, world: &mut World, tally: Tally, line: &LineText) -> Response {
+    let size = text_size(ui);
+    let color = tally.ink();
+    let look = text_look(ui, color);
+    let outline = outline(ui);
+    let gap = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = size * TALLY_GAP;
+    let response = dusk::tally(ui, tally, size, |ui| {
+        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.x = size * TAG_MARK_GAP;
+            inline::show_line_with_tooltips(ui, world, line, look);
+            let height = size * face::DIALOGUE_LEADING;
+            let (rect, _) =
+                ui.allocate_exact_size(Vec2::new(size * TALLY_SIGN, height), Sense::hover());
+            let sign = Rect::from_center_size(rect.center(), Vec2::splat(size * TALLY_SIGN));
+            dusk::mark(ui.painter(), tally.mark(), sign, color, &outline);
+        });
+    })
+    .response;
+    ui.spacing_mut().item_spacing.x = gap;
+    response
 }
 
 /// A tag laid from the right, as the row's tags are: its line, then its mark before it.

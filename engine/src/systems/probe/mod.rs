@@ -15,9 +15,9 @@ pub use frames::{
     ProbeFrames, ProbePass, ProbeSlowFrame, ProbeSystem, SETTLE_FRAMES, SLOW_KEPT,
 };
 pub use game::{
-    ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,
-    ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc,
-    ProbeProp, ProbeResident, ProbeSkill, ProbeSpawner, ProbeWater, answer,
+    GameAnswers, ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion,
+    ProbeGame, ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject,
+    ProbeNpc, ProbeProp, ProbeResident, ProbeSkill, ProbeSpawner, ProbeWater,
 };
 pub use hitches::{SystemTimes, time_systems, timing_layer};
 pub use sight::{
@@ -53,7 +53,6 @@ use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{self, Listener};
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use crate::core::card::{CardMaterial, CardStyleDef, CardStyleId};
-use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
 use crate::core::geometry::Capsule;
 use crate::core::gui::{self, GuiContext, WorldLayers};
@@ -64,19 +63,20 @@ use crate::core::render::sample::{
     self, FrameSamplingPlugin, FrameWork, GpuReportsRead, RenderReports,
 };
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
-use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::haze::Haze;
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::outline::Outline;
 use crate::core::render::world::sky::{Daylight, SkyLights};
 use crate::core::render::world::{OnItsWay, missing_drawn};
-use crate::core::render::{self, CameraRig, Look, Pointed, ground_height, world_point};
+use crate::core::render::{
+    self, CameraRig, Look, Pointed, View, ground_height, surface_height, world_point,
+};
 use crate::core::script::DialogueCamera;
 use crate::core::stage::card::HungCardLamp;
 use crate::core::time;
 use crate::core::units::{
-    Bytes, Degrees, MeterSize, Meters, Millis, PlaybackRate, Radians, Seconds, WindowPx,
+    Bytes, Degrees, Meters, Millis, PlaybackRate, Radians, Seconds, WindowPx,
 };
 use crate::core::vfx::standing::StandingVfx;
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
@@ -158,6 +158,7 @@ pub struct ProbeProtocol {
     pub water: ProbeWater,
     pub batch: Vec<serde_json::Value>,
     pub frames: ProbeFrames,
+    pub shown: Vec<Option<ProbeShown>>,
     pub editor_question: EditorFrameQuestion,
     pub editor_snapshot: EditorSnapshot,
     pub editor_trees: EditorTrees,
@@ -169,10 +170,11 @@ pub fn install(app: &mut App, driver: std::net::SocketAddr) {
     let game: Arc<(Mutex<Option<Content>>, Condvar)> = Arc::default();
     let socket = socket::ProbeSocket::connect(driver, {
         let game = game.clone();
+        let mut answers = GameAnswers::default();
         move |line| {
             let content = loaded(&game);
             match read_question(&content, line) {
-                Ok(question) => answer(&content, &question),
+                Ok(question) => answers.answer(&content, &question),
                 Err(error) => {
                     bevy::log::error!("the probe's driver asked {line}: {error}");
                     std::process::exit(1);
@@ -182,7 +184,6 @@ pub fn install(app: &mut App, driver: std::net::SocketAddr) {
     });
     app.insert_non_send(Probe { socket, game })
         .add_plugins((ProbeFramesPlugin, ProbeInterfacePlugin))
-        .init_resource::<TerrainSent>()
         .init_resource::<VfxSeen>()
         .init_resource::<FrameTimes>()
         .add_observer(remember_vfx)
@@ -320,8 +321,8 @@ pub fn sample_frame(world: &mut World) {
 
 /// One frame of the client: what the client knows of the game, its sight, and how its screen
 /// shows it. Content ids (de)serialize by key, so a driver reads a snapshot within a content scope.
-/// World positions are metres on the ground, which `view` and `terrain` place in the window;
-/// window positions are the window's logical pixels.
+/// World positions are metres on the ground, which `view` places in the window; window positions
+/// are the window's logical pixels.
 #[derive(MapEntities, Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeSnapshot {
     #[serde(flatten)]
@@ -336,9 +337,6 @@ pub struct ProbeSnapshot {
     #[schemars(with = "Option<SizeSchema>")]
     pub screen: Option<Size<WindowPx>>,
     pub view: Option<ProbeView>,
-    /// The ground's heights around the player: the chunks within the view's reach, sent as the
-    /// player comes to new ground and left out while they stay, so a driver keeps the last it saw.
-    pub terrain: Option<ProbeTerrain>,
     /// How each body of the area shows on screen, the player's own among them.
     #[entities]
     pub drawn: Vec<ProbeDrawnBody>,
@@ -482,39 +480,6 @@ impl ProbeView {
                     (1.0 - ndc.y) / 2.0 * self.viewport.size.height,
                 ),
         )
-    }
-}
-
-/// Ground heights a metre apart, row by row from the corner at `origin` on: `size` plus one of
-/// them to a row, and as many rows. Beyond its edge the nearest height stands in.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ProbeTerrain {
-    #[schemars(with = "PosSchema")]
-    pub origin: Pos<Meters>,
-    #[schemars(with = "SizeSchema")]
-    pub size: Size<Meters>,
-    pub heights: Vec<Meters>,
-    /// How deep water stands over each of the heights, nothing over dry ground. The pointer of
-    /// someone a mount carries over water, and an aim at a spot, meet the water's surface there
-    /// rather than the ground under it.
-    pub depths: Vec<Meters>,
-}
-
-impl ProbeTerrain {
-    pub fn height_at(&self, at: Pos<Meters>) -> Meters {
-        let columns = self.size.width as usize + 1;
-        let rows = self.size.height as usize + 1;
-        let x = (at.x - self.origin.x).clamp(0.0, columns as f32 - 1.0);
-        let y = (at.y - self.origin.y).clamp(0.0, rows as f32 - 1.0);
-        let (column, row) = (x.floor() as usize, y.floor() as usize);
-        let (u, v) = (x - column as f32, y - row as f32);
-        let sample = |column: usize, row: usize| {
-            self.heights[row.min(rows - 1) * columns + column.min(columns - 1)].0
-        };
-        let top = sample(column, row) + (sample(column + 1, row) - sample(column, row)) * u;
-        let bottom =
-            sample(column, row + 1) + (sample(column + 1, row + 1) - sample(column, row + 1)) * u;
-        Meters(top + (bottom - top) * v)
     }
 }
 
@@ -1050,6 +1015,10 @@ fn publish(world: &mut World) {
                 let aim = of.and_then(|of| aim_at(world, of));
                 answers.give(&serde_json::to_string(&aim).expect("a serializable aim"));
             }
+            ProbeFrameQuestion::Show { spots } => {
+                let shown = show(world, &spots);
+                answers.give(&serde_json::to_string(&shown).expect("serializable spots"));
+            }
             ProbeFrameQuestion::Picture { path } => {
                 let answers = answers.clone();
                 world.spawn(Screenshot::primary_window()).observe(
@@ -1066,14 +1035,12 @@ fn publish(world: &mut World) {
         }
     }
     if snapshots > 0 {
-        let (mut snapshot, ground) = snapshot(world);
+        let mut snapshot = snapshot(world);
         snapshot.map_entities(&mut ServerNames(world.resource::<ServerEntities>()));
         let scope = ContentScope::of(world.resource::<Content>());
-        // Sampling the ground and writing a snapshot out are long work for a frame, and neither
-        // needs anything more of it.
+        // Writing a snapshot out is long work for a frame, and needs nothing more of it.
         AsyncComputeTaskPool::get()
             .spawn(async move {
-                snapshot.terrain = ground.map(|ground| ground.sampled());
                 let (json, _) = with_content(scope, || {
                     serde_json::to_string(&snapshot).expect("a serializable snapshot")
                 });
@@ -1083,6 +1050,18 @@ fn publish(world: &mut World) {
             })
             .detach();
     }
+}
+
+/// Where a spot shows in the window: the whole pixel the pointer rests on to click it, where a
+/// click there lands, and how much ground the pixel spans, the nearest a click can come to any
+/// spot there.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
+pub struct ProbeShown {
+    #[schemars(with = "PosSchema")]
+    pub at: Pos<WindowPx>,
+    #[schemars(with = "PosSchema")]
+    pub lands: Pos<Meters>,
+    pub span: Meters,
 }
 
 /// Names the client's entities as the server knows them, so an id a snapshot tells of means the
@@ -1099,7 +1078,7 @@ impl EntityMapper for ServerNames<'_> {
 
 /// What the client shows this frame, but for the ground around the player, which is still to be
 /// sampled where it is due.
-fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
+fn snapshot(world: &mut World) -> ProbeSnapshot {
     let content = world.resource::<Content>().clone();
     let sight = sight::sight_as_held(world);
     let me = session::me(world);
@@ -1118,8 +1097,7 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
         .is_ok_and(|options| options.visible);
     let sceneries_standing = area::scenery::sceneries_standing(world);
     let on_its_way = render::world::on_its_way(world);
-    let ground = ground_due(world, me, area);
-    let snapshot = ProbeSnapshot {
+    ProbeSnapshot {
         frame: world.resource::<FrameCount>().0,
         input: ProbeInput {
             cursor: window
@@ -1250,7 +1228,6 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
             reset_prompt: skill::prompt::showing(world),
             view: tree_view(world),
         },
-        terrain: None,
         ui: ui(world),
         covered: covered(world),
         soundscape: soundscape(world),
@@ -1271,8 +1248,7 @@ fn snapshot(world: &mut World) -> (ProbeSnapshot, Option<GroundDue>) {
             .map(|adapter| adapter.name.clone()),
         view,
         sight,
-    };
-    (snapshot, ground)
+    }
 }
 
 fn gpu_memory(world: &World) -> Bytes {
@@ -1400,84 +1376,6 @@ fn view(world: &mut World) -> Option<ProbeView> {
     })
 }
 
-/// The ground the probe last sent: the window it covered and how many of the ground's tiles
-/// under it were loaded, so it goes out again only once the player has moved on to ground beyond
-/// it or more of it answers exactly rather than from the ground's overview.
-#[derive(Resource, Default, PartialEq)]
-struct TerrainSent(Option<(AreaId, Rect<Meters>, usize)>);
-
-/// The ground the probe is due to send, none while what it last sent still holds.
-fn ground_due(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Option<GroundDue> {
-    let standing = me.and_then(|me| {
-        world
-            .get::<RenderPosition>(me)
-            .map(|drawn| drawn.0)
-            .or_else(|| world.get::<Position>(me).map(|position| position.pos))
-    });
-    let (Some(area_id), Some(at)) = (area, standing) else {
-        world.resource_mut::<TerrainSent>().0 = None;
-        return None;
-    };
-    let reach = area::render::view_reach(
-        world.get_resource::<CameraRig>()?.framing(),
-        world.get_resource::<VideoPreferences>()?,
-    );
-    let area = area::shared(world.resource::<Content>(), area_id).clone();
-    let window = ground_window(at, area.size.bounds(), reach);
-    let loaded = area
-        .heights
-        .size()
-        .tiles_within(window)
-        .map(|tile| {
-            usize::from(area.heights.is_loaded(tile)) + usize::from(area.water.is_loaded(tile))
-        })
-        .sum();
-    let sending = TerrainSent(Some((area_id, window, loaded)));
-    let mut sent = world.resource_mut::<TerrainSent>();
-    if *sent == sending {
-        return None;
-    }
-    *sent = sending;
-    Some(GroundDue { area, window })
-}
-
-/// A window of an area's ground for the probe to send.
-struct GroundDue {
-    area: Arc<area::Area>,
-    window: Rect<Meters>,
-}
-
-impl GroundDue {
-    fn sampled(&self) -> ProbeTerrain {
-        let (area, window) = (&self.area, self.window);
-        let size = Size::new(window.size.width.floor(), window.size.height.floor());
-        let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);
-        let samples = || {
-            (0..rows)
-                .flat_map(|row| (0..columns).map(move |column| (column, row)))
-                .map(|(column, row)| window.origin + Offset::new(column as f32, row as f32))
-        };
-        ProbeTerrain {
-            origin: window.origin,
-            size,
-            heights: samples().map(|at| area.heights.height_at(at)).collect(),
-            depths: samples()
-                .map(|at| area.water.depth_at(&area.heights, at))
-                .collect(),
-        }
-    }
-}
-
-/// The ground around `at` the probe reports: the chunks within the view's reach, within the
-/// area, so the window moves only as the player crosses from chunk to chunk.
-fn ground_window(at: Pos<Meters>, bounds: Rect<Meters>, reach: Meters) -> Rect<Meters> {
-    let low = Chunk::at(Pos::new(at.x - reach.0, at.y - reach.0)).rect();
-    let high = Chunk::at(Pos::new(at.x + reach.0, at.y + reach.0)).rect();
-    Rect::from_points([low.min(), high.max()])
-        .intersection(&bounds)
-        .unwrap_or(Rect::new(at, Size::zero()))
-}
-
 fn drawn_bodies(
     world: &mut World,
     area: Option<AreaId>,
@@ -1584,51 +1482,61 @@ fn card_material(content: &Content, style: Option<CardStyleId>) -> CardMaterial 
     CardStyleDef::of(content, style).material.clone()
 }
 
-/// The ground point to point at to take `thing`: an object by its shape, what has a body by its
-/// body, and what has neither where it lies; none for what the client shows no such thing of.
-fn aim_at(world: &mut World, thing: Entity) -> Option<Pos<Meters>> {
+/// The pixel to rest the pointer on to take `thing`: an object by its shape, what has a body by
+/// its body, and what has neither where it lies; none for what the client shows no such thing of,
+/// or what shows nowhere in the window.
+fn aim_at(world: &mut World, thing: Entity) -> Option<Pos<WindowPx>> {
+    let view = render::view_of(world)?;
     if let Some(hitbox) = world
         .get::<AreaObject>(thing)
         .map(|object| object.shape.bounds())
     {
-        return Some(object_aim(world, thing, hitbox));
+        return object_aim(world, &view, thing, hitbox);
     }
     let at = world.get::<Position>(thing)?.pos;
-    Some(match world.get::<Hitbox>(thing).map(|hitbox| hitbox.0) {
-        Some(capsule) => body_aim(world, thing, at, capsule),
-        None => at,
-    })
+    match world.get::<Hitbox>(thing).map(|hitbox| hitbox.0) {
+        Some(capsule) => body_aim(world, &view, thing, at, capsule),
+        None => pixel_of(&view, world_point(at, ground_height(world, at))),
+    }
 }
 
-/// The ground point to point at to take the body: where the ray from the eye through its capsule
-/// lands, at the height nearest its middle where pointing claims the body, else where it stands.
-/// A body is given up on at the first height where pointing takes nothing at all: nothing stands
-/// in its way there, so it is not for taking.
-fn body_aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> Pos<Meters> {
+/// The pixel to point at to take the body: over its capsule, at the height nearest its middle
+/// where pointing claims the body, else over where it stands. A body is given up on at the first
+/// height where pointing takes nothing at all: nothing stands in its way there, so it is not for
+/// taking.
+fn body_aim(
+    world: &mut World,
+    view: &View,
+    entity: Entity,
+    at: Pos<Meters>,
+    capsule: Capsule,
+) -> Option<Pos<WindowPx>> {
     const HEIGHTS: [f32; 7] = [0.5, 0.375, 0.625, 0.25, 0.75, 0.125, 0.875];
-    let Some(view) = render::view_of(world) else {
-        return at;
-    };
-    let eye = view.eye();
     let foot = actor::foot_height(world, entity, at);
     for share in HEIGHTS {
-        let point = world_point(at, foot + Meters(capsule.height.0 * share));
-        let Ok(direction) = Dir3::new(point - eye) else {
+        let Some(pixel) = pixel_of(
+            view,
+            world_point(at, foot + Meters(capsule.height.0 * share)),
+        ) else {
             continue;
         };
-        let pointed = Pointed::along(world, Ray3d::new(eye, direction));
-        match (clicked(world, &pointed), pointed.ground) {
-            (Some(clicked), Some(ground)) if clicked == entity => return ground,
-            (Some(_), _) => {}
-            (None, _) => break,
+        match clicked(world, &pointed_through(world, view, pixel)) {
+            Some(clicked) if clicked == entity => return Some(pixel),
+            Some(_) => {}
+            None => break,
         }
     }
-    at
+    pixel_of(view, world_point(at, foot))
 }
 
-/// The ground point to point at to take the object: the middle of its shape, or the nearest point
-/// of it that pointing at claims the object, else the middle.
-fn object_aim(world: &mut World, entity: Entity, hitbox: Rect<Meters>) -> Pos<Meters> {
+/// The pixel to point at to take the object: over the middle of its shape, or over the nearest
+/// point of it where pointing claims the object, else over the middle.
+fn object_aim(
+    world: &mut World,
+    view: &View,
+    entity: Entity,
+    hitbox: Rect<Meters>,
+) -> Option<Pos<WindowPx>> {
     const STEPS: u8 = 5;
     let center = hitbox.center();
     let mut spots: Vec<Pos<Meters>> = (0..STEPS)
@@ -1642,23 +1550,80 @@ fn object_aim(world: &mut World, entity: Entity, hitbox: Rect<Meters>) -> Pos<Me
         })
         .collect();
     spots.sort_by(|a, b| a.distance_to(center).total_cmp(&b.distance_to(center)));
-    std::iter::once(center)
+    let over = |spot: Pos<Meters>| pixel_of(view, world_point(spot, ground_height(world, spot)));
+    let pixels: Vec<Pos<WindowPx>> = std::iter::once(center)
         .chain(spots)
-        .find(|&spot| {
-            pointed_at(world, spot).is_some_and(|pointed| clicked(world, &pointed) == Some(entity))
-        })
-        .unwrap_or(center)
+        .filter_map(over)
+        .collect();
+    let middle = over(center);
+    pixels
+        .into_iter()
+        .find(|&pixel| clicked(world, &pointed_through(world, view, pixel)) == Some(entity))
+        .or(middle)
 }
 
-/// The pointer as it would point at the ground at `spot` from the camera.
-fn pointed_at(world: &mut World, spot: Pos<Meters>) -> Option<Pointed> {
-    let view = render::view_of(world)?;
-    let eye = view.eye();
-    let direction = Dir3::new(world_point(spot, ground_height(world, spot)) - eye).ok()?;
-    Some(Pointed {
-        ground: Some(spot),
-        ..Pointed::along(world, Ray3d::new(eye, direction))
-    })
+/// Where each of `spots` shows to be clicked as a click reads the window now: the pixel over the
+/// spot, on what lies open to the sky there or on the ground under it, whose click lands no
+/// farther from the spot than the ground the pixel spans; none where no such pixel lies in the
+/// window, for a spot hidden from the eye or one a click there takes something else at.
+pub fn show(world: &mut World, spots: &[Pos<Meters>]) -> Vec<Option<ProbeShown>> {
+    let Some(view) = render::view_of(world) else {
+        return vec![None; spots.len()];
+    };
+    spots
+        .iter()
+        .map(|&spot| {
+            let surface = surface_height(world, spot);
+            let ground = ground_height(world, spot);
+            let heights = if surface == ground {
+                vec![ground]
+            } else {
+                vec![surface, ground]
+            };
+            heights.into_iter().find_map(|height| {
+                let pixel = pixel_of(&view, world_point(spot, height))?;
+                let lands = landing(world, &view, pixel)?;
+                let span = span(world, &view, pixel)?;
+                (lands.distance_to(spot) <= span.0).then_some(ProbeShown {
+                    at: pixel,
+                    lands,
+                    span,
+                })
+            })
+        })
+        .collect()
+}
+
+/// Where a click at `pixel` goes or aims, if it does either.
+fn landing(world: &mut World, view: &View, pixel: Pos<WindowPx>) -> Option<Pos<Meters>> {
+    match claims::claim_at(world, Some(&pointed_through(world, view, pixel))) {
+        ClickClaim::Walk(at) | ClickClaim::AimAt(at) => Some(at),
+        _ => None,
+    }
+}
+
+/// How much ground `pixel` spans: how far the ground under it lies from the ground under the
+/// pixels beside it, the farther of the two.
+fn span(world: &World, view: &View, pixel: Pos<WindowPx>) -> Option<Meters> {
+    let under = |pixel: Pos<WindowPx>| pointed_through(world, view, pixel).surface;
+    let here = under(pixel)?;
+    [Offset::new(1.0, 0.0), Offset::new(0.0, 1.0)]
+        .into_iter()
+        .filter_map(|step| under(pixel + step))
+        .map(|beside| Meters(beside.distance_to(here)))
+        .reduce(|a, b| if b.0 > a.0 { b } else { a })
+}
+
+/// The whole pixel of the window a point of the world shows in, none outside the window.
+fn pixel_of(view: &View, point: Vec3) -> Option<Pos<WindowPx>> {
+    let shown = view.project(point)?.round();
+    let inside = shown.cmpge(Vec2::ZERO).all() && shown.cmplt(view.viewport()).all();
+    inside.then(|| Pos::new(shown.x, shown.y))
+}
+
+/// The pointer as it points through `pixel` of the window.
+fn pointed_through(world: &World, view: &View, pixel: Pos<WindowPx>) -> Pointed {
+    Pointed::along(world, view.ray(Vec2::new(pixel.x, pixel.y)))
 }
 
 fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {

@@ -33,8 +33,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 
 use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
-use bevy::light::DirectionalLightShadowMap;
+use bevy::light::cascade::build_directional_light_cascades;
 use bevy::light::cluster::GlobalClusterSettings;
+use bevy::light::{DirectionalLightShadowMap, SimulationLightSystems};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, ScreenSpaceTransmission};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
@@ -68,6 +69,7 @@ impl Plugin for WorldScenePlugin {
 
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "shade.wesl");
+        bevy::shader::load_shader_library!(app, "wear.wesl");
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::shader::load_shader_library!(app, "clearing.wesl");
         bevy::shader::load_shader_library!(app, "opacity.wesl");
@@ -149,6 +151,12 @@ impl Plugin for WorldScenePlugin {
                 material::forget_dropped,
                 cover::forget_dropped,
             ),
+        )
+        .add_systems(
+            PostUpdate,
+            lights::turn_cascades_in_place
+                .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
+                .after(build_directional_light_cascades),
         )
         .add_systems(
             PostUpdate,

@@ -935,13 +935,7 @@ pub fn warp_objects(content: &Content, area: AreaId) -> Vec<(u32, &ObjectDef)> {
     }
     let scripts = content.built::<Scripts>();
     objects(placed(content, area))
-        .filter(|(index, _)| {
-            scripts
-                .may_do(OwnerRow::of_object(area, *index))
-                .reaching::<Warps>()
-                .next()
-                .is_some()
-        })
+        .filter(|(index, _)| warp::doorway(scripts, OwnerRow::of_object(area, *index)).is_some())
         .collect()
 }
 

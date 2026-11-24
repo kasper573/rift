@@ -4,6 +4,8 @@
 use bevy::mesh::MeshTag;
 use bevy::prelude::*;
 
+use super::afloat::WaterLid;
+
 /// How much of an entity and all that hangs under it shows, from 1 whole to 0 nothing: its meshes
 /// thin out pixel by pixel, and its lamps dim.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -44,11 +46,11 @@ impl Opacity {
 }
 
 /// Tells every mesh under a fading thing how much of it to drop, those its scene spawns while it
-/// fades among them.
+/// fades among them. A lid over the water keeps its tag for the water's level.
 pub(super) fn thin(
     fading: Query<(Entity, Ref<Opacity>)>,
     children: Query<&Children>,
-    meshes: Query<Option<&MeshTag>, With<Mesh3d>>,
+    meshes: Query<Option<&MeshTag>, (With<Mesh3d>, Without<WaterLid>)>,
     mut commands: Commands,
 ) {
     for (entity, opacity) in &fading {

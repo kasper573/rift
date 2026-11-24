@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use bevy::asset::io::AssetSourceId;
 use bevy::asset::{AssetApp, AssetPlugin};
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -160,7 +159,7 @@ fn voice_app() -> App {
     let mut app = App::new();
     let files = SyncedAssetReader::default();
     app.insert_resource(files.clone());
-    AssetApp::register_asset_source(&mut app, AssetSourceId::Default, files.source());
+    files.register(&mut app);
     app.add_plugins((
         MinimalPlugins,
         AssetPlugin::default(),

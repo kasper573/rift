@@ -2,8 +2,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use bevy::app::{TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
-use bevy::asset::AssetApp;
-use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
 use clap::error::ErrorKind;
@@ -71,39 +69,39 @@ fn main() {
     }
     app.insert_resource(files.clone())
         .insert_resource(Rng::from_entropy());
-    AssetApp::register_asset_source(&mut app, AssetSourceId::Default, files.source())
-        .add_plugins(
-            DefaultPlugins
-                .set(bevy::log::LogPlugin {
-                    filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
-                    custom_layer: engine::systems::probe::timing_layer,
+    files.register(&mut app);
+    app.add_plugins(
+        DefaultPlugins
+            .set(bevy::log::LogPlugin {
+                filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
+                custom_layer: engine::systems::probe::timing_layer,
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Rift editor".to_owned(),
+                    resolution: WindowResolution::new(1600, 1000),
+                    present_mode: PresentMode::AutoNoVsync,
                     ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Rift editor".to_owned(),
-                        resolution: WindowResolution::new(1600, 1000),
-                        present_mode: PresentMode::AutoNoVsync,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest())
-                .set(TaskPoolPlugin {
-                    task_pool_options: TaskPoolOptions {
-                        compute: TaskPoolThreadAssignmentPolicy {
-                            max_threads: FRAME_WORKERS,
-                            ..TaskPoolOptions::default().compute
-                        },
-                        ..default()
-                    },
                 }),
-        )
-        .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
-        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
-        .add_plugins(StagePlugin)
-        .add_plugins(EditorPlugin { launch })
-        .run();
+                ..default()
+            })
+            .set(ImagePlugin::default_nearest())
+            .set(TaskPoolPlugin {
+                task_pool_options: TaskPoolOptions {
+                    compute: TaskPoolThreadAssignmentPolicy {
+                        max_threads: FRAME_WORKERS,
+                        ..TaskPoolOptions::default().compute
+                    },
+                    ..default()
+                },
+            }),
+    )
+    .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
+    .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
+    .add_plugins(StagePlugin)
+    .add_plugins(EditorPlugin { launch })
+    .run();
 }
 
 /// How many workers at most run a frame's systems side by side. The editor's frame is its

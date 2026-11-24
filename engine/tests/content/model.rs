@@ -127,6 +127,7 @@ fn a_mirrored_hand_holds_a_prop_as_the_mirror_image_of_the_hand_it_mirrors_turne
             turn: LocalTurn([Degrees(20.0), Degrees(-35.0), Degrees(50.0)]),
             symmetry,
             hold: PropHold::Gripped,
+            steady: None,
         };
         let held = |hand: usize, joint: &str| {
             let placed = render::held_at(model, &model.hands()[hand], &grip);
@@ -171,6 +172,7 @@ fn a_prop_that_hangs_plumb_stays_upright_from_where_the_hand_grips_it_however_th
         turn: LocalTurn([Degrees(0.0), Degrees(0.0), Degrees(90.0)]),
         symmetry: PropAxis::Z,
         hold,
+        steady: None,
     };
     for hold in [PropHold::Gripped, PropHold::Strapped] {
         assert_eq!(

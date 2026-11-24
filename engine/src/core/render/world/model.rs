@@ -1,15 +1,18 @@
 //! A model as the world draws it: the pieces its glTF holds, each mesh placed by its node's
 //! transform, and their vertices joined by the material they are drawn in.
 
+use std::sync::Arc;
+
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::mesh::VertexAttributeValues;
-use bevy::platform::collections::HashSet;
+use bevy::platform::collections::hash_map::Entry;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 /// A piece of a model: its mesh, placed by its node's transform, and the material the model
 /// draws it with.
 pub struct Piece {
-    pub mesh: Mesh,
+    pub mesh: Arc<Mesh>,
     pub transform: Transform,
     pub material: Option<Handle<GltfMaterial>>,
 }
@@ -54,6 +57,7 @@ fn joined(pieces: &[&PieceVertices]) -> PieceVertices {
         positions: Vec::new(),
         normals: Vec::new(),
         uvs: Vec::new(),
+        uvs_b: Some(Vec::new()),
         colors: Some(Vec::new()),
         indices: Vec::new(),
     };
@@ -62,6 +66,12 @@ fn joined(pieces: &[&PieceVertices]) -> PieceVertices {
         joined.positions.extend(&piece.positions);
         joined.normals.extend(&piece.normals);
         joined.uvs.extend(&piece.uvs);
+        if let Some(uvs_b) = joined.uvs_b.as_mut() {
+            match &piece.uvs_b {
+                Some(piece_uvs) => uvs_b.extend(piece_uvs),
+                None => uvs_b.extend(std::iter::repeat_n([0.0; 2], piece.positions.len())),
+            }
+        }
         if let Some(colors) = joined.colors.as_mut() {
             match &piece.colors {
                 Some(piece_colors) => colors.extend(piece_colors),
@@ -75,22 +85,25 @@ fn joined(pieces: &[&PieceVertices]) -> PieceVertices {
     joined
 }
 
-/// A piece's vertices in the model's own space, with the colours it carries if any.
+/// A piece's vertices in the model's own space, with the second texture coordinates and the
+/// colours it carries if any.
 pub struct PieceVertices {
     pub positions: Vec<Vec3>,
     pub normals: Vec<Vec3>,
     pub uvs: Vec<[f32; 2]>,
+    pub uvs_b: Option<Vec<[f32; 2]>>,
     pub colors: Option<Vec<[f32; 4]>>,
     pub indices: Vec<u32>,
 }
 
 /// The model's meshes as pieces, each placed by its node's transform down from the roots, once
-/// every mesh has loaded.
+/// every mesh has loaded. The meshes are taken out of `meshes` rather than copied, as nothing but
+/// the model's pieces reads them: a mesh several nodes place is shared between their pieces.
 pub fn pieces_of(
     gltf: &Gltf,
     nodes: &Assets<GltfNode>,
     gltf_meshes: &Assets<GltfMesh>,
-    meshes: &Assets<Mesh>,
+    meshes: &mut Assets<Mesh>,
 ) -> Option<Vec<Piece>> {
     let children: HashSet<AssetId<GltfNode>> = gltf
         .nodes
@@ -98,7 +111,7 @@ pub fn pieces_of(
         .filter_map(|node| nodes.get(node))
         .flat_map(|node| node.children.iter().map(Handle::id))
         .collect();
-    let mut pieces = Vec::new();
+    let mut placed = Vec::new();
     let mut pending: Vec<(Handle<GltfNode>, Transform)> = gltf
         .nodes
         .iter()
@@ -110,15 +123,27 @@ pub fn pieces_of(
         let transform = parent * node.transform;
         if let Some(mesh) = &node.mesh {
             for primitive in &gltf_meshes.get(mesh)?.primitives {
-                pieces.push(Piece {
-                    mesh: meshes.get(&primitive.mesh)?.clone(),
-                    transform,
-                    material: primitive.material.clone(),
-                });
+                meshes.get(&primitive.mesh)?;
+                placed.push((primitive.mesh.id(), transform, primitive.material.clone()));
             }
         }
         pending.extend(node.children.iter().map(|child| (child.clone(), transform)));
     }
+    let mut taken: HashMap<AssetId<Mesh>, Arc<Mesh>> = HashMap::new();
+    let pieces = placed
+        .into_iter()
+        .filter_map(|(mesh, transform, material)| {
+            let mesh = match taken.entry(mesh) {
+                Entry::Occupied(shared) => shared.get().clone(),
+                Entry::Vacant(free) => free.insert(Arc::new(meshes.remove(mesh)?)).clone(),
+            };
+            Some(Piece {
+                mesh,
+                transform,
+                material,
+            })
+        })
+        .collect();
     Some(pieces)
 }
 
@@ -142,6 +167,10 @@ fn piece_vertices(piece: &Piece) -> Option<PieceVertices> {
         Some(VertexAttributeValues::Float32x2(uvs)) => uvs.clone(),
         _ => vec![[0.0, 0.0]; positions.len()],
     };
+    let uvs_b = match piece.mesh.attribute(Mesh::ATTRIBUTE_UV_1) {
+        Some(VertexAttributeValues::Float32x2(uvs)) => Some(uvs.clone()),
+        _ => None,
+    };
     let colors = match piece.mesh.attribute(Mesh::ATTRIBUTE_COLOR) {
         Some(VertexAttributeValues::Float32x4(colors)) => Some(colors.clone()),
         _ => None,
@@ -154,6 +183,7 @@ fn piece_vertices(piece: &Piece) -> Option<PieceVertices> {
         positions,
         normals,
         uvs,
+        uvs_b,
         colors,
         indices,
     })

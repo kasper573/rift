@@ -463,6 +463,12 @@ impl Sources {
                 files.extend(material.shader.map(|shader| shader.path(content)));
                 files.extend(material.color.as_ref().map(ImageRef::as_str));
                 files.extend(material.normal.as_ref().map(ImageRef::as_str));
+                files.extend(
+                    material
+                        .wear
+                        .iter()
+                        .flat_map(|wear| [wear.mask.as_str(), wear.mottle.as_str()]),
+                );
             }
         }
         let hashes = &content.built::<FileHashes>().0;

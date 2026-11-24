@@ -263,10 +263,10 @@ enum FeedAnchor {
 }
 
 impl FeedAnchor {
-    /// Over `head` while as many lines as the feed ever shows fit between it and the top of the
-    /// window, each as tall as the lowest of `lines`; else the corner. A feed showing lines in
-    /// the corner comes back over the head only once a line more than that fits, so it never
-    /// wavers between the two.
+    /// Over `head` while as many lines as the feed ever shows, each as tall as the lowest of
+    /// `lines` and as wide as a line can be, fit between it and the top of the window clear of
+    /// every other notice drawn; else the corner. A feed showing lines in the corner comes back
+    /// over the head only once a line more than that fits, so it never wavers between the two.
     fn of(
         world: &World,
         gui: &egui::Context,
@@ -291,7 +291,15 @@ impl FeedAnchor {
             .notices
             .feed_rows as f32;
         let needed = ABOVE_HEAD + shown * row + spare;
-        if let Some(head) = head.filter(|head| head.y - needed >= screen.top() + EDGE) {
+        let others = super::drawn_besides_feed(world);
+        let clear = |head: &bevy::math::Vec2| {
+            let stack = Rect::from_x_y_ranges(
+                head.x - WIDEST / 2.0..=head.x + WIDEST / 2.0,
+                head.y - needed..=head.y - ABOVE_HEAD,
+            );
+            stack.top() >= screen.top() + EDGE && !others.iter().any(|rect| rect.intersects(stack))
+        };
+        if let Some(head) = head.filter(clear) {
             return FeedAnchor::OverHead(Pos2::new(head.x, head.y - ABOVE_HEAD));
         }
         let widest = lines.iter().map(|line| line.size.x).fold(0.0, f32::max);

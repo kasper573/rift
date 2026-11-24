@@ -3,7 +3,7 @@
 //! before it along the path the first went.
 
 use bevy_skeleton_modifiers::core::{
-    ChainIndices, SkeletonView, SpringBoneSettings, SpringBoneState, process_spring_bones,
+    BonePose, ChainIndices, SkeletonView, SpringBoneSettings, SpringBoneState, process_spring_bones,
 };
 use glam::{Quat, Vec3};
 
@@ -12,9 +12,17 @@ use super::{Frame, Rig};
 /// How far the first joint moves before the path it went takes another point.
 const TRAIL_STEP: f32 = 0.02;
 
+/// The longest step a sprung chain is moved on by. A spring's drag is what it loses each step,
+/// so a chain moved on once a frame would swing one way at one frame rate and another at the
+/// next, and wildly over a frame the body skipped: it steps through a longer frame in steps no
+/// longer than this, its drag kept to what it loses over that time.
+const SPRING_STEP: f32 = 1.0 / 60.0;
+
 pub struct Chain {
     chain: ChainIndices,
     follow: bool,
+    /// What the spring loses of its swing over a step of `SPRING_STEP`.
+    drag: f32,
     spring: Box<SpringBoneSettings>,
     state: Box<SpringBoneState>,
     /// Where the first joint has been in the world, the latest first.
@@ -45,6 +53,7 @@ impl Chain {
         Some(Chain {
             chain,
             follow,
+            drag,
             spring: Box::new(SpringBoneSettings {
                 stiffness,
                 drag,
@@ -65,6 +74,27 @@ impl Chain {
         if self.follow {
             self.follow(frame);
         } else {
+            self.spring(frame);
+        }
+    }
+
+    /// Moves the spring on through the frame in even steps no longer than `SPRING_STEP`, each
+    /// from the pose the body's clips gave the chain this frame.
+    fn spring(&mut self, frame: &mut Frame) {
+        let steps = (frame.dt / SPRING_STEP).ceil().max(1.0);
+        let step = frame.dt / steps;
+        self.spring.drag = 1.0 - (1.0 - self.drag).powf(step / SPRING_STEP);
+        let joints = self.chain.as_slice();
+        let posed: Vec<BonePose> = joints
+            .iter()
+            .map(|&joint| frame.view.local[joint as usize])
+            .collect();
+        for nth in 0..steps as usize {
+            if nth > 0 {
+                for (&joint, pose) in joints.iter().zip(&posed) {
+                    frame.view.local[joint as usize] = *pose;
+                }
+            }
             process_spring_bones(
                 &mut frame.view,
                 &self.chain,
@@ -72,7 +102,7 @@ impl Chain {
                 &mut self.state,
                 &[],
                 Vec3::ZERO,
-                frame.dt,
+                step,
             );
         }
     }

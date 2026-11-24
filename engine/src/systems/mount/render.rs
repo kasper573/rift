@@ -15,7 +15,7 @@ use crate::core::render::world::body::Body;
 use crate::core::render::{CameraRigSystems, GroundHeights, facing_rotation};
 use crate::core::units::{Meters, PlaybackRate, Seconds};
 use crate::systems::actor::render::{self as bodies, RenderActor, Seated};
-use crate::systems::actor::{Action, Actor, ActorModel, Aloft, Appearance, Pose};
+use crate::systems::actor::{Action, Actor, ActorModel, Aloft, Appearance, ModelId, Pose};
 use crate::systems::area::AreaTag;
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
@@ -47,6 +47,40 @@ impl Plugin for MountRenderPlugin {
 #[derive(Component)]
 pub(crate) struct Steed {
     pub(crate) rider: Entity,
+}
+
+/// Where a rider's held gear lies while they ride: on `steed`, the body of their mount drawn as
+/// `look`, in the hands of it that `hands` names by their place among the model's hands, the first
+/// for the rider's first hand and so on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GearPlaces {
+    pub steed: Entity,
+    pub look: ModelId,
+    pub hands: Vec<usize>,
+}
+
+/// Where the mount `rider` rides carries their gear, if it carries it and its body stands.
+pub fn gear_places(world: &mut World, rider: Entity) -> Option<GearPlaces> {
+    let content = world.resource::<Content>().clone();
+    let def = world.get::<Riding>(rider)?.mount.get(&content);
+    if def.gear.is_empty() {
+        return None;
+    }
+    let steed = steeds(world)
+        .into_iter()
+        .find(|(_, ridden)| *ridden == rider)
+        .map(|(steed, _)| steed)?;
+    let model = ActorModel::get(&content, def.look);
+    let hands = def
+        .gear
+        .iter()
+        .filter_map(|name| model.hands().iter().position(|hand| hand.name == *name))
+        .collect();
+    Some(GearPlaces {
+        steed,
+        look: def.look,
+        hands,
+    })
 }
 
 /// Shows every rider as high as their mount travels: one that flies its height over the land or

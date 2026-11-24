@@ -2,18 +2,20 @@ use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::Pos;
+use engine::core::script::Value as Recalled;
 use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::systems::area::Place;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::item::{self, UseItemRequest};
+use engine::systems::memory::{self, MemoryDef};
 use engine::systems::mount::seat::MountRequest;
 use engine::systems::mount::{self, MountDef, MountKind, Riding};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, SnapshotSpot};
 use engine::systems::player::{self, AreaDrawn};
-use engine::systems::probe::{ProbeGame, ProbeGameQuestion, answer};
+use engine::systems::probe::{GameAnswers, ProbeGame, ProbeGameQuestion};
 use engine::systems::resource::{self, GatherRequest, ResourceDef, StopGathering, Working};
 use engine::systems::skill::{self, CastAim, SkillDef, UseSkillRequest};
 use engine::systems::stat::{self, StatKind};
@@ -569,6 +571,67 @@ fn a_character_saved_where_no_walker_stands_signs_in_where_dying_would_send_them
 }
 
 #[test]
+fn someone_flying_past_comes_near_only_an_npc_watching_for_fliers_and_landing_near_everyone() {
+    let watching = |game: Game, (npc, fliers): (&str, bool)| {
+        let script = format!("{npc}_watching");
+        let seen = format!("seen_by_{npc}");
+        game.memory(&seen, "never")
+            .npc(
+                npc,
+                40.0,
+                json!([{ "type": "script", "script": path("script", &script) }]),
+            )
+            .script(
+                &script,
+                "npc",
+                json!({
+                    "came_near": {
+                        "type": "on", "event": "came_near", "within": 3.0, "by": "characters",
+                        "fliers": fliers, "next": "seen",
+                    },
+                    "seen": { "type": "remember", "memory": path("memory", &seen) },
+                }),
+            )
+    };
+    let game = [("lookout", true), ("fisher", false)]
+        .into_iter()
+        .fold(game(), watching)
+        .edit_scene("area", "village", |scene| {
+            *scene = json!([
+                { "type": "resident", "npc": path("npc", "lookout"), "at": { "x": 6.0, "y": 10.0 } },
+                { "type": "resident", "npc": path("npc", "fisher"), "at": { "x": 6.0, "y": 8.0 } },
+            ]);
+        });
+    let mut server = server_of(game);
+    let wren = server.sign_in(1, "Wren", "village");
+    stand(&mut server, wren, BEACH);
+    server.village.give(wren, "feather", 1);
+    let seen = |server: &Server, npc: &str| {
+        let memory = server.village.id::<MemoryDef>(&format!("seen_by_{npc}"));
+        memory::get(&server.village.world, wren, memory) == Recalled::Bool(true)
+    };
+
+    cast(&mut server, 1, "call_crow", CastAim::None);
+    walk(&mut server, 1, Pos::new(6.0, 9.0));
+    assert_eq!(
+        (
+            seat(&server, wren),
+            seen(&server, "lookout"),
+            seen(&server, "fisher")
+        ),
+        (Some("crow"), true, false),
+        "flying past, Wren comes near the npc watching for fliers, and only that one"
+    );
+    server.send(1, MountRequest::StepOff { at: None });
+    run(&mut server, 0.5);
+    assert_eq!(
+        (seat(&server, wren), seen(&server, "fisher")),
+        (None, true),
+        "landing within reach, Wren comes near the npc that ignores fliers"
+    );
+}
+
+#[test]
 fn the_game_answers_where_each_of_its_mounts_goes() {
     let content = game().engine_rows().load();
     let listed: ProbeGame = asked(&content, &ProbeGameQuestion::Game);
@@ -639,7 +702,7 @@ fn asked<Answer: serde::de::DeserializeOwned>(
     question: &ProbeGameQuestion,
 ) -> Answer {
     use engine::core::content::{ContentScope, with_content};
-    let line = answer(content, question);
+    let line = GameAnswers::default().answer(content, question);
     with_content(ContentScope::of(content), || serde_json::from_str(&line))
         .0
         .unwrap_or_else(|error| panic!("an unreadable answer {line}: {error}"))
@@ -898,6 +961,7 @@ fn server_of(game: Game) -> Server {
             .plan(skill::casting::StepCasts::default())
             .plan((
                 engine::systems::roster::ListRoster::default(),
+                npc::ApproachWatchers::default(),
                 engine::core::script::run::FlowRunner::default(),
                 movement::AdvanceWalks::default(),
             ))

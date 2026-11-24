@@ -90,12 +90,10 @@ fn held(app: &App) -> Held {
 fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
     let (content, area) = picture(game, folder);
     let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, folder);
     app.add_plugins((
         MinimalPlugins,
-        AssetPlugin {
-            file_path: folder.display().to_string(),
-            ..Default::default()
-        },
+        AssetPlugin::default(),
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),

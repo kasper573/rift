@@ -1,12 +1,16 @@
-//! The names of items on the ground: which are named and why, the plates that name them stacked
-//! over each pile, and the item a click on a plate takes.
+//! The names of items on the ground: which are named and why, the plates that name them over
+//! where they lie, nudged apart so none hides another, and the item a click on a plate takes.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use serde::{Deserialize, Serialize};
-use ui::egui::{self, Align2, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2};
+use ui::egui::emath::TSTransform;
+use ui::egui::epaint::Shadow;
+use ui::egui::text::{LayoutJob, TextWrapping};
+use ui::egui::{self, Align2, Color32, FontId, Galley, Pos2, Rect, Stroke, StrokeKind, Vec2};
 use ui::face::Face;
 use ui::glyph::Mark;
 use ui::{dusk, ink, paint};
@@ -19,14 +23,13 @@ use crate::core::render::world::outline::Outline;
 use crate::core::render::{self, window_point};
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Seconds};
-use crate::systems::actor::Name;
 use crate::systems::dialogue;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::rarity::{DropNaming, ItemRarityDef, RarityRank};
 use crate::systems::item::render::DropAnim;
 use crate::systems::item::{self, DroppedItem, ItemId, ItemStack, Reservation};
 use crate::systems::movement::{Position, position};
-use crate::systems::player::{PlayedBy, session};
+use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
 use crate::systems::{GameSettings, messages};
@@ -132,8 +135,6 @@ pub struct PlateLine {
     pub count: u32,
     pub why: Named,
     pub mine: bool,
-    /// Whose it is, when it is reserved for another player: theirs alone, or their party's.
-    pub whose: Option<String>,
 }
 
 /// Which items on the ground are named now. None is while the player talks or the screen
@@ -216,7 +217,7 @@ pub fn named(world: &mut World) -> NamedItems {
 /// The names of `named` pile by pile: items no farther from one another than a drop scatters
 /// what it holds lie in one pile, its column over their middle, and those of one kind that may be
 /// taken alike share a line.
-pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
+pub fn columns(world: &World, named: &NamedItems) -> Vec<PlateColumn> {
     let content = world.resource::<Content>().clone();
     // A drop lays its items in a ring the game's scatter from where it fell, so two of one drop
     // lie up to twice that apart.
@@ -265,12 +266,11 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
                 column.folded.push(item.entity);
                 continue;
             };
-            let reservation = world.get::<Reservation>(item.entity).cloned();
-            let mine = item::takeable(reservation.as_ref(), &account);
-            let whose = whose(world, reservation.as_ref(), &account);
-            let line = column.lines.iter_mut().find(|line| {
-                line.item == item.dropped.item && line.mine == mine && line.whose == whose
-            });
+            let mine = item::takeable(world.get::<Reservation>(item.entity), &account);
+            let line = column
+                .lines
+                .iter_mut()
+                .find(|line| line.item == item.dropped.item && line.mine == mine);
             match line {
                 Some(line) => {
                     line.items.push(item.entity);
@@ -283,7 +283,6 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
                     count: item.dropped.count,
                     why,
                     mine,
-                    whose,
                 }),
             }
         }
@@ -308,27 +307,6 @@ pub fn columns(world: &mut World, named: &NamedItems) -> Vec<PlateColumn> {
     }
     columns.retain(|column| !column.lines.is_empty() || !column.folded.is_empty());
     columns
-}
-
-/// Whose a drop reserved as `reservation` says is, to `taker`: nobody's to name when it is
-/// their own or anyone's, else its holder's, or its holder's party's when that is theirs too.
-fn whose(
-    world: &mut World,
-    reservation: Option<&Reservation>,
-    taker: &item::DropTaker,
-) -> Option<String> {
-    let holder = reservation?.by.filter(|by| Some(*by) != taker.client)?;
-    let name = world
-        .query::<(&PlayedBy, &Name)>()
-        .iter(world)
-        .find(|(by, _)| by.client == holder)
-        .map(|(_, name)| name.name.clone())?;
-    let messages = &messages::of(world.resource::<Content>()).item;
-    Some(if taker.party.contains(&holder) {
-        messages.reserved_for_party(name)
-    } else {
-        messages.reserved_for(name)
-    })
 }
 
 /// The item a click where the pointer rests takes by its plate: the nearest of the plate's
@@ -405,12 +383,11 @@ struct LyingItem {
 #[derive(Resource, Default)]
 struct OpenedPile(Vec<Entity>);
 
-/// What was drawn last: each plate with the items it names, and each column with its order, so
-/// a column the pointer is on keeps it.
+/// What was drawn last: each plate with the items it names, and each pile with what it names.
 #[derive(Resource, Default)]
 struct DrawnPlates {
     plates: Vec<DrawnPlate>,
-    columns: Vec<DrawnColumn>,
+    piles: Vec<DrawnPile>,
 }
 
 struct DrawnPlate {
@@ -419,30 +396,48 @@ struct DrawnPlate {
     why: Named,
 }
 
-struct DrawnColumn {
+/// A pile's plates as drawn: the rect round them all, the chip counting the kinds left unnamed,
+/// and the items named and folded there.
+struct DrawnPile {
     rect: Rect,
-    order: Vec<ItemId>,
     chip: Option<Rect>,
+    named: Vec<Entity>,
     folded: Vec<Entity>,
 }
 
-const NAME_SIZE: f32 = 13.0;
-const PLAIN_NAME_SIZE: f32 = 11.0;
-const ICON: f32 = 16.0;
+const NAME_SIZE: f32 = 14.0;
+const NOTE_SIZE: f32 = 11.0;
+const ICON: f32 = 18.0;
 const GAP: f32 = 4.0;
-const PADDING: Vec2 = Vec2::new(7.0, 3.0);
-const LINE_GAP: f32 = 2.0;
-const EDGE: f32 = 1.5;
+/// How small the padlock or hourglass after a name is, against the item's icon.
+const MARK_SHARE: f32 = 0.75;
+const PADDING: Vec2 = Vec2::new(2.0, 1.0);
+const CHIP_PADDING: Vec2 = Vec2::new(7.0, 3.0);
+/// How far apart plates nudged off one another keep.
+const APART: f32 = 4.0;
 const NAME_WIDEST: f32 = 190.0;
 const OVER_PILE: Meters = Meters(0.7);
 /// How small and how pale a plate at the edge of the key's reach is, against one at the
 /// character's feet.
 const FAR_SCALE: f32 = 0.82;
 const FAR_OPACITY: f32 = 0.7;
+/// How pale the plate of an item another player may take is.
+const THEIRS_OPACITY: f32 = 0.6;
 /// How long a name that has run out takes to fade away.
 const NAME_FADES: Seconds = Seconds(0.6);
-const MUTED: Color32 = Color32::from_rgb(150, 150, 156);
-const TIE: Color32 = Color32::from_rgba_premultiplied(70, 70, 70, 70);
+/// The soft dark under a plate, reaching past its words, that sets them apart from the ground.
+const SHADE: Shadow = Shadow {
+    offset: [0, 0],
+    blur: 12,
+    spread: 0,
+    color: Color32::from_black_alpha(150),
+};
+const SHADE_REACH: Vec2 = Vec2::new(4.0, 0.0);
+/// How far round a pointed plate its edge runs, how round it is, and how much its words brighten.
+const HOVER_REACH: Vec2 = Vec2::new(4.0, 1.0);
+const HOVER_RADIUS: f32 = 9.0;
+const HOVER_EDGE: Color32 = Color32::from_rgba_premultiplied(220, 213, 196, 230);
+const HOVER_LIFT: f32 = 0.35;
 
 /// How strongly an item's rarity names it by itself, of 1, if it does: wholly for as long as the
 /// name lasts, counted from when the item landed or the pointer last rested on its pile, and
@@ -528,146 +523,128 @@ fn draw_plates(world: &mut World) {
     let uptime = time::uptime(world);
     let fades_for = content.built::<GameSettings>().drops.fades_for;
     let screen = gui.content_rect();
-    let mut drawn = DrawnPlates::default();
-    let mut laid: Vec<LaidColumn> = Vec::new();
-    for column in &columns {
-        let Some(foot) = window_point(world, column.over, Meters(0.0)) else {
-            continue;
+    let mut laid: Vec<Laid> = Vec::new();
+    for (pile, column) in columns.iter().enumerate() {
+        let shrink = |at: Pos<Meters>| {
+            let far = eye.map_or(0.0, |eye| {
+                (eye.distance(at).0 / reach.0.max(f32::EPSILON)).clamp(0.0, 1.0)
+            });
+            (
+                1.0 + (FAR_SCALE - 1.0) * far,
+                1.0 + (FAR_OPACITY - 1.0) * far,
+                far < 1.0,
+            )
         };
-        let Some(over) = window_point(world, column.over, OVER_PILE) else {
-            continue;
-        };
-        let far = eye.map_or(0.0, |eye| {
-            (eye.distance(column.over).0 / reach.0.max(f32::EPSILON)).clamp(0.0, 1.0)
-        });
-        let scale = 1.0 + (FAR_SCALE - 1.0) * far;
-        let opacity = 1.0 + (FAR_OPACITY - 1.0) * far;
-        let near = far < 1.0;
-        let mut lines: Vec<PlateLook> = column
-            .lines
-            .iter()
-            .map(|line| {
-                let def = line.item.get(&content);
-                let rarity = def.rarity.get(&content);
-                let hovered = pointed.item.is_some_and(|item| line.items.contains(&item));
-                let leaving = line.items.iter().any(|item| {
-                    world.get::<DroppedItem>(*item).is_some_and(|dropped| {
-                        now.is_some_and(|now| dropped.until.since(now) < fades_for)
-                    })
-                });
-                PlateLook {
-                    item: line.item,
-                    items: line.items.clone(),
-                    why: line.why,
-                    name: def.name.clone(),
-                    count: line.count,
-                    icon: rarity
-                        .icon
-                        .as_ref()
-                        .and_then(|icon| gui::image(world, icon))
-                        .map(|icon| icon.texture),
-                    colors: rarity.gradient.colors(),
-                    mine: line.mine,
-                    hovered,
-                    leaving,
-                    strength: match line.why {
-                        Named::Unprompted => line
-                            .items
-                            .iter()
-                            .map(|item| strength(world, &content, *item, near, uptime))
-                            .fold(0.0, f32::max),
-                        Named::ByKey | Named::ByPointer => 1.0,
-                    },
-                    note: (hovered && full)
-                        .then(|| messages::of(&content).item.needs_slots(1))
-                        .or_else(|| line.whose.clone()),
-                    scale,
-                }
-            })
-            .collect();
-        let was = world
-            .resource::<DrawnPlates>()
-            .columns
-            .iter()
-            .find(|was| {
-                pointer.is_some_and(|pointer| was.rect.contains(pointer))
-                    && lines.iter().any(|line| was.order.contains(&line.item))
-            })
-            .map(|was| was.order.clone());
-        if let Some(order) = was {
-            lines.sort_by_key(|line| order.iter().position(|item| *item == line.item));
+        for line in &column.lines {
+            let at = middle(world, &line.items).unwrap_or(column.over);
+            let Some(over) = window_point(world, at, OVER_PILE) else {
+                continue;
+            };
+            let (scale, opacity, near) = shrink(at);
+            let def = line.item.get(&content);
+            let rarity = def.rarity.get(&content);
+            let hovered = pointed.item.is_some_and(|item| line.items.contains(&item));
+            let leaving = line.items.iter().any(|item| {
+                world.get::<DroppedItem>(*item).is_some_and(|dropped| {
+                    now.is_some_and(|now| dropped.until.since(now) < fades_for)
+                })
+            });
+            let strength = match line.why {
+                Named::Unprompted => line
+                    .items
+                    .iter()
+                    .map(|item| strength(world, &content, *item, near, uptime))
+                    .fold(0.0, f32::max),
+                Named::ByKey | Named::ByPointer => 1.0,
+            };
+            let look = PlateLook {
+                items: line.items.clone(),
+                why: line.why,
+                name: def.name.clone(),
+                count: line.count,
+                icon: gui::image(world, &def.icon).map(|icon| icon.texture),
+                color: rarity.gradient.colors()[0],
+                mine: line.mine,
+                hovered,
+                leaving,
+                note: (hovered && full).then(|| messages::of(&content).item.needs_slots(1)),
+                scale,
+            };
+            let theirs = if line.mine { 1.0 } else { THEIRS_OPACITY };
+            laid.push(Laid {
+                rect: over_point(Pos2::new(over.x, over.y), look.size(&gui), screen),
+                rank: Some(rarity.rank),
+                pile,
+                opacity: opacity * strength * theirs,
+                drawn: Drawn::Plate(look),
+            });
         }
-        let sizes: Vec<Vec2> = lines.iter().map(|line| line.size(&gui)).collect();
         let kinds: BTreeSet<ItemId> = column
             .folded
             .iter()
             .filter_map(|item| Some(world.get::<DroppedItem>(*item)?.item))
             .collect();
-        let said = (!kinds.is_empty()).then(|| messages::of(&content).item.more_kinds(kinds.len()));
-        let chip = said.as_deref().map(|said| chip_size(&gui, said, scale));
-        let width = sizes
-            .iter()
-            .chain(&chip)
-            .map(|size| size.x)
-            .fold(0.0, f32::max);
-        let height = sizes.iter().chain(&chip).map(|size| size.y).sum::<f32>()
-            + LINE_GAP * (sizes.len() + usize::from(chip.is_some())).saturating_sub(1) as f32;
-        let wanted = Rect::from_min_size(
-            Pos2::new(over.x - width / 2.0, over.y - height),
-            Vec2::new(width, height),
-        );
-        let rect = wanted.translate(kept_inside(wanted, screen));
-        let mut top = rect.top();
-        let mut placed = Vec::new();
-        for (line, size) in lines.into_iter().zip(sizes) {
-            let at = Rect::from_min_size(Pos2::new(rect.center().x - size.x / 2.0, top), size);
-            top += size.y + LINE_GAP;
-            placed.push((at, line));
+        if kinds.is_empty() {
+            continue;
         }
-        let chip = chip.zip(said).map(|(size, said)| {
-            let at = Rect::from_min_size(Pos2::new(rect.center().x - size.x / 2.0, top), size);
-            (at, said)
-        });
-        drawn.columns.push(DrawnColumn {
-            rect,
-            order: placed.iter().map(|(_, line)| line.item).collect(),
-            chip: chip.as_ref().map(|(at, _)| *at),
-            folded: column.folded.clone(),
-        });
-        drawn
-            .plates
-            .extend(placed.iter().map(|(at, line)| DrawnPlate {
-                rect: *at,
-                items: line.items.clone(),
-                why: line.why,
-            }));
-        laid.push(LaidColumn {
-            rect,
-            foot: Pos2::new(foot.x, foot.y),
+        let Some(over) = window_point(world, column.over, OVER_PILE) else {
+            continue;
+        };
+        let (scale, opacity, _) = shrink(column.over);
+        let said = messages::of(&content).item.more_kinds(kinds.len());
+        laid.push(Laid {
+            rect: over_point(
+                Pos2::new(over.x, over.y),
+                chip_size(&gui, &said, scale),
+                screen,
+            ),
+            rank: None,
+            pile,
             opacity,
-            scale,
-            lines: placed,
-            chip,
+            drawn: Drawn::Chip { said, scale },
         });
     }
+    nudge_apart(&mut laid);
+    let mut drawn = DrawnPlates::default();
+    for (pile, column) in columns.iter().enumerate() {
+        let laid: Vec<&Laid> = laid.iter().filter(|laid| laid.pile == pile).collect();
+        let Some(rect) = laid.iter().map(|laid| laid.rect).reduce(Rect::union) else {
+            continue;
+        };
+        drawn.piles.push(DrawnPile {
+            rect,
+            chip: laid
+                .iter()
+                .find(|laid| matches!(laid.drawn, Drawn::Chip { .. }))
+                .map(|laid| laid.rect),
+            named: column
+                .lines
+                .iter()
+                .flat_map(|line| line.items.iter().copied())
+                .collect(),
+            folded: column.folded.clone(),
+        });
+    }
+    drawn
+        .plates
+        .extend(laid.iter().filter_map(|laid| match &laid.drawn {
+            Drawn::Plate(look) => Some(DrawnPlate {
+                rect: laid.rect,
+                items: look.items.clone(),
+                why: look.why,
+            }),
+            Drawn::Chip { .. } => None,
+        }));
     gui::world_area(world, "item plates")
         .fixed_pos(Pos2::ZERO)
         .show(&gui, |ui| {
-            for column in &laid {
-                ui.set_opacity(column.opacity);
-                ui.painter().line_segment(
-                    [
-                        Pos2::new(column.rect.center().x, column.rect.bottom()),
-                        column.foot,
-                    ],
-                    Stroke::new(1.0, TIE),
-                );
-                if let Some((at, said)) = &column.chip {
-                    paint_chip(ui.painter(), *at, said, column.scale);
-                }
-                for (at, line) in &column.lines {
-                    ui.set_opacity(column.opacity * line.strength);
-                    line.paint(ui.painter(), *at);
+            for laid in &laid {
+                ui.set_opacity(laid.opacity);
+                match &laid.drawn {
+                    Drawn::Plate(look) => look.paint(ui.painter(), laid.rect),
+                    Drawn::Chip { said, scale } => {
+                        paint_chip(ui.painter(), laid.rect, said, *scale)
+                    }
                 }
             }
         });
@@ -706,44 +683,35 @@ fn point(world: &mut World, pointer: Option<Pos2>) {
 }
 
 /// Opens the pile whose chip the pointer rests on, and keeps it open while the pointer stays on
-/// its column.
+/// its plates.
 fn open_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>) {
     let opened = pointer.and_then(|pointer| {
         let on_chip = drawn
-            .columns
+            .piles
             .iter()
-            .find(|column| column.chip.is_some_and(|chip| chip.contains(pointer)));
+            .find(|pile| pile.chip.is_some_and(|chip| chip.contains(pointer)));
         let kept = || {
             let opened = &world.resource::<OpenedPile>().0;
             drawn
-                .columns
+                .piles
                 .iter()
-                .any(|column| column.rect.contains(pointer))
+                .any(|pile| pile.rect.contains(pointer))
                 .then(|| opened.clone())
         };
-        on_chip.map(|column| column.folded.clone()).or_else(kept)
+        on_chip.map(|pile| pile.folded.clone()).or_else(kept)
     });
     world.insert_resource(OpenedPile(opened.unwrap_or_default()));
 }
 
 /// Notes the pointer resting on the names of a pile, on every item named there.
 fn rest_on_pile(world: &mut World, drawn: &DrawnPlates, pointer: Option<Pos2>, now: Seconds) {
-    let Some(column) = pointer.and_then(|pointer| {
-        drawn
-            .columns
-            .iter()
-            .find(|column| column.rect.contains(pointer))
-    }) else {
+    let Some(pile) =
+        pointer.and_then(|pointer| drawn.piles.iter().find(|pile| pile.rect.contains(pointer)))
+    else {
         return;
     };
-    let named: Vec<Entity> = drawn
-        .plates
-        .iter()
-        .filter(|plate| column.rect.contains(plate.rect.center()))
-        .flat_map(|plate| plate.items.iter().copied())
-        .collect();
-    for item in named {
-        if let Ok(mut item) = world.get_entity_mut(item) {
+    for item in &pile.named {
+        if let Ok(mut item) = world.get_entity_mut(*item) {
             item.insert(Rested(now));
         }
     }
@@ -758,6 +726,44 @@ fn bag_refuses(world: &World, content: &Content, item: Option<Entity>) -> bool {
         bag.exchange(content, &[], &[ItemStack::new(dropped.item, dropped.count)])
             .is_err()
     })
+}
+
+/// Where the items `items` lie, in the middle of them all.
+fn middle(world: &World, items: &[Entity]) -> Option<Pos<Meters>> {
+    let at: Vec<Pos<Meters>> = items
+        .iter()
+        .filter_map(|item| position(world, *item))
+        .collect();
+    let sum = at
+        .iter()
+        .fold(Vec2::ZERO, |sum, at| sum + Vec2::new(at.x, at.y));
+    (!at.is_empty()).then(|| {
+        let middle = sum / at.len() as f32;
+        Pos::new(middle.x, middle.y)
+    })
+}
+
+/// A rect of `size` standing on `over`, centred on it and kept inside `screen`.
+fn over_point(over: Pos2, size: Vec2, screen: Rect) -> Rect {
+    let wanted = Rect::from_min_size(Pos2::new(over.x - size.x / 2.0, over.y - size.y), size);
+    wanted.translate(kept_inside(wanted, screen))
+}
+
+/// Moves plates up off the ones under them until none overlaps another: the highest ranks keep
+/// their place first, then the plates lowest on screen, so which moves never depends on where
+/// the pointer is, and a plate stays put under it.
+fn nudge_apart(laid: &mut [Laid]) {
+    laid.sort_by(|a, b| {
+        b.rank
+            .cmp(&a.rank)
+            .then(b.rect.bottom().total_cmp(&a.rect.bottom()))
+            .then(a.rect.left().total_cmp(&b.rect.left()))
+    });
+    let mut rects: Vec<Rect> = laid.iter().map(|laid| laid.rect).collect();
+    ui::float::lay_apart(&mut rects, APART);
+    for (laid, rect) in laid.iter_mut().zip(rects) {
+        laid.rect = Rect::from_min_size(rect.min.round(), rect.size());
+    }
 }
 
 /// How far to move `rect` so that it lies inside `screen`.
@@ -777,43 +783,46 @@ fn kept_inside(rect: Rect, screen: Rect) -> Vec2 {
     )
 }
 
-/// A pile's column as it is drawn: where it lies, the point on the ground it is tied to, and its
-/// plates with the chip under them that counts the kinds left unnamed.
-struct LaidColumn {
+/// A plate or a chip, laid where it is drawn, with the rank that keeps its place before others.
+struct Laid {
     rect: Rect,
-    foot: Pos2,
+    rank: Option<RarityRank>,
+    pile: usize,
     opacity: f32,
-    scale: f32,
-    lines: Vec<(Rect, PlateLook)>,
-    chip: Option<(Rect, String)>,
+    drawn: Drawn,
+}
+
+enum Drawn {
+    Plate(PlateLook),
+    /// Counts the kinds of items a pile holds that no plate names.
+    Chip {
+        said: String,
+        scale: f32,
+    },
 }
 
 /// One plate as it is drawn.
 struct PlateLook {
-    item: ItemId,
     items: Vec<Entity>,
     why: Named,
     name: String,
     count: u32,
     icon: Option<egui::TextureId>,
-    colors: [Color32; 2],
+    color: Color32,
     mine: bool,
     hovered: bool,
     leaving: bool,
-    /// How strongly it shows, of 1.
-    strength: f32,
     note: Option<String>,
     scale: f32,
 }
 
 impl PlateLook {
     fn font(&self) -> FontId {
-        let size = if self.icon.is_some() {
-            NAME_SIZE
-        } else {
-            PLAIN_NAME_SIZE
-        };
-        Face::BookBold.id(size * self.scale)
+        Face::BookBold.id(NAME_SIZE * self.scale)
+    }
+
+    fn note_font(&self) -> FontId {
+        Face::Book.id(NOTE_SIZE * self.scale)
     }
 
     fn text(&self) -> String {
@@ -838,54 +847,53 @@ impl PlateLook {
         ICON * self.scale
     }
 
+    fn mark_side(&self) -> f32 {
+        self.side() * MARK_SHARE
+    }
+
+    fn ink(&self) -> Color32 {
+        let ink = ink::legible(self.color, dusk::FILL);
+        if self.hovered {
+            ink.lerp_to_gamma(Color32::WHITE, HOVER_LIFT)
+        } else {
+            ink
+        }
+    }
+
+    fn name(&self, painter: &egui::Painter) -> Arc<Galley> {
+        let mut job = LayoutJob::simple_singleline(self.text(), self.font(), self.ink());
+        job.wrap = TextWrapping::truncate_at_width(NAME_WIDEST * self.scale);
+        painter.layout_job(job)
+    }
+
     fn size(&self, gui: &egui::Context) -> Vec2 {
-        let text = paint::text_size(gui, &self.text(), self.font());
+        let name = gui.fonts_mut(|fonts| {
+            let mut job = LayoutJob::simple_singleline(self.text(), self.font(), Color32::WHITE);
+            job.wrap = TextWrapping::truncate_at_width(NAME_WIDEST * self.scale);
+            fonts.layout_job(job).size()
+        });
         let note = self
             .note
             .as_ref()
             .map(|note| paint::text_size(gui, note, self.note_font()));
-        let lead = if self.icon.is_some() {
-            self.side() + GAP
-        } else {
-            0.0
+        let trail = match self.mark() {
+            Some(_) => GAP + self.mark_side(),
+            None => 0.0,
         };
-        let trail = if self.mark().is_some() {
-            self.side() + GAP
-        } else {
-            0.0
-        };
-        let line = Vec2::new(
-            lead + text.x.min(NAME_WIDEST) + trail,
-            text.y.max(if self.icon.is_some() {
-                self.side()
-            } else {
-                0.0
-            }),
-        );
+        let line = Vec2::new(self.side() + GAP + name.x + trail, name.y.max(self.side()));
         Vec2::new(
             line.x.max(note.map_or(0.0, |note| note.x)),
             line.y + note.map_or(0.0, |note| note.y),
         ) + PADDING * 2.0
     }
 
-    fn note_font(&self) -> FontId {
-        Face::Book.id(PLAIN_NAME_SIZE * self.scale)
-    }
-
     fn paint(&self, painter: &egui::Painter, rect: Rect) {
-        dusk::plate(painter, rect, 0.85);
-        let ink = if self.mine {
-            paint::gradient_edge(painter, rect, EDGE, self.colors);
-            ink::legible(self.colors[0], dusk::FILL)
-        } else {
-            paint::dashed_rect(painter, rect, Stroke::new(1.0, MUTED), 3.0, 3.0);
-            MUTED
-        };
+        painter.add(SHADE.as_shape(rect.expand2(SHADE_REACH), HOVER_RADIUS));
         if self.hovered {
             painter.rect_stroke(
-                rect.expand(1.5),
-                dusk::RADIUS,
-                Stroke::new(1.0, Color32::WHITE),
+                rect.expand2(HOVER_REACH),
+                HOVER_RADIUS,
+                Stroke::new(1.0, HOVER_EDGE),
                 StrokeKind::Outside,
             );
         }
@@ -894,57 +902,55 @@ impl PlateLook {
             paint::text_size(painter.ctx(), note, self.note_font()).y
         });
         let line = Rect::from_min_max(inner.min, Pos2::new(inner.max.x, inner.max.y - note_height));
-        let mut left = line.left();
-        if let Some(icon) = self.icon {
-            let tint = if self.mine { Color32::WHITE } else { MUTED };
-            painter.image(
-                icon,
-                Rect::from_center_size(
-                    Pos2::new(left + self.side() / 2.0, line.center().y),
-                    Vec2::splat(self.side()),
-                ),
-                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                tint,
-            );
-            left += self.side() + GAP;
-        }
-        let name = paint::text_within(
-            painter,
-            Pos2::new(left, line.center().y),
-            Align2::LEFT_CENTER,
-            &self.text(),
-            self.font(),
-            ink,
-            NAME_WIDEST,
+        let icon = Rect::from_min_size(
+            Pos2::new(line.left(), line.center().y - self.side() / 2.0),
+            Vec2::splat(self.side()),
         );
+        if let Some(texture) = self.icon {
+            painter.image(
+                texture,
+                icon,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        let outline = dusk::reaching(dusk::OUTLINED, dusk::outline_reach(NAME_SIZE * self.scale));
+        let name = self.name(painter);
+        let name_at = Pos2::new(icon.right() + GAP, line.center().y - name.size().y / 2.0);
+        let name_right = name_at.x + name.size().x;
+        dusk::lettering(painter, name_at, name, &outline, TSTransform::IDENTITY);
         if let Some(mark) = self.mark() {
-            mark.paint(
+            dusk::mark(
                 painter,
+                mark,
                 Rect::from_center_size(
-                    Pos2::new(name.right() + GAP + self.side() / 2.0, line.center().y),
-                    Vec2::splat(self.side()),
+                    Pos2::new(name_right + GAP + self.mark_side() / 2.0, line.center().y),
+                    Vec2::splat(self.mark_side()),
                 ),
-                ink,
+                self.ink(),
+                dusk::SMALL_TEXT_SHADOW,
             );
         }
         if let Some(note) = &self.note {
-            painter.text(
-                Pos2::new(inner.left(), inner.bottom()),
-                Align2::LEFT_BOTTOM,
-                note,
-                self.note_font(),
-                dusk::DANGER,
+            let galley = painter.layout_no_wrap(note.clone(), self.note_font(), dusk::DANGER);
+            let at = Pos2::new(inner.left(), inner.bottom() - galley.size().y);
+            dusk::lettering(
+                painter,
+                at,
+                galley,
+                dusk::SMALL_TEXT_SHADOW,
+                TSTransform::IDENTITY,
             );
         }
     }
 }
 
 fn chip_font(scale: f32) -> FontId {
-    Face::Book.id(PLAIN_NAME_SIZE * scale)
+    Face::Book.id(NOTE_SIZE * scale)
 }
 
 fn chip_size(gui: &egui::Context, said: &str, scale: f32) -> Vec2 {
-    paint::text_size(gui, said, chip_font(scale)) + PADDING * 2.0
+    paint::text_size(gui, said, chip_font(scale)) + CHIP_PADDING * 2.0
 }
 
 fn paint_chip(painter: &egui::Painter, rect: Rect, said: &str, scale: f32) {

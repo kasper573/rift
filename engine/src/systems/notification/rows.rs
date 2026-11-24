@@ -32,6 +32,7 @@ const WHITE: Color32 = Color32::WHITE;
 pub(super) const SLATE_90: Color32 = Color32::from_rgb(228, 234, 239);
 pub(super) const SLATE_40: Color32 = Color32::from_rgb(41, 46, 45);
 const AMBER_80: Color32 = Color32::from_rgb(246, 201, 96);
+const MILESTONE_RULE: Color32 = Color32::from_rgba_premultiplied(111, 89, 42, 120);
 const LABEL: f32 = 12.0;
 const CAPTION: f32 = 12.0;
 
@@ -233,7 +234,8 @@ pub(super) fn draw_captions(world: &mut World, gui: &egui::Context, top: f32) ->
     shown.inner.bottom()
 }
 
-pub(super) fn draw_milestones(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
+/// Draws the milestones from `top` down, giving back the bottom of what it drew.
+pub(super) fn draw_milestones(world: &mut World, gui: &egui::Context, top: f32) -> Option<f32> {
     let now = time(gui);
     let (lines, more) = lines_of::<Milestones>(world);
     let rows = world.resource_mut::<PlacedRows<Milestones>>().fades.sync(
@@ -243,7 +245,7 @@ pub(super) fn draw_milestones(world: &mut World, gui: &egui::Context, top: f32) 
     );
     if rows.is_empty() && more.is_none() {
         world.resource_mut::<PlacedRows<Milestones>>().drawn.clear();
-        return top;
+        return None;
     }
     let screen = gui.content_rect();
     let shown = column_area(gui, "milestones", top, Stacking::OverNotices).show(gui, |ui| {
@@ -270,7 +272,7 @@ pub(super) fn draw_milestones(world: &mut World, gui: &egui::Context, top: f32) 
         .inner
     });
     let drawn: Vec<Rect> = shown.inner.into_iter().collect();
-    let bottom = drawn.first().map_or(top, Rect::bottom);
+    let bottom = drawn.first().map(Rect::bottom);
     world.resource_mut::<PlacedRows<Milestones>>().drawn = drawn;
     bottom
 }
@@ -595,26 +597,28 @@ fn caption_row(ui: &mut Ui, world: &World, line: &LabelledLine, size: Vec2) {
 }
 
 fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: TransitPose) -> Rect {
-    ui.spacing_mut().item_spacing.y = LINE_GAP;
-    let shift = TSTransform::new(row.offset, row.scale);
-    let label = dusk::label(
-        ui,
-        &label_text(world, &line.label, line.replaced),
-        label_font(),
-        WHITE.gamma_multiply(0.85),
-        dusk::TEXT_SHADOW,
-        shift,
-    );
-    let words = line.text.plain(world.resource::<KeyNames>());
-    let words = dusk::label(
-        ui,
-        &words,
-        Face::BookBold.id(MILESTONE_SIZE),
-        AMBER_80,
-        dusk::TEXT_SHADOW,
-        shift,
-    );
-    label.rect.union(words.rect)
+    dusk::banner(ui, MILESTONE_RULE, |ui| {
+        ui.spacing_mut().item_spacing.y = LINE_GAP;
+        let shift = TSTransform::new(row.offset, row.scale);
+        let label = dusk::label(
+            ui,
+            &label_text(world, &line.label, line.replaced),
+            label_font(),
+            WHITE.gamma_multiply(0.85),
+            dusk::TEXT_SHADOW,
+            shift,
+        );
+        let words = line.text.plain(world.resource::<KeyNames>());
+        let words = dusk::label(
+            ui,
+            &words,
+            Face::BookBold.id(MILESTONE_SIZE),
+            AMBER_80,
+            dusk::TEXT_SHADOW,
+            shift,
+        );
+        label.rect.union(words.rect)
+    })
 }
 
 fn label_text(world: &World, label: &str, replaced: u32) -> String {

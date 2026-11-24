@@ -39,6 +39,7 @@ use crate::core::render::world::gpu::atlas::{
 };
 use crate::core::render::world::gpu::impostor::{
     self, AtlasKey, BakeMaterialKey, ImpostorFrame, ImpostorStore, LookBakeKey, LookFromAbove,
+    WearBakeKey,
 };
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
@@ -1544,6 +1545,12 @@ fn want_impostor(
                     shader,
                     params: look.params.bits(),
                     translucency: look.translucency,
+                    wear: material.wear.as_ref().map(|wear| WearBakeKey {
+                        mask: held(&Some(wear.mask.clone())),
+                        mottle: held(&Some(wear.mottle.clone())),
+                        from: wear.colors.from.0,
+                        to: wear.colors.to.0,
+                    }),
                 })
             });
             match standard {

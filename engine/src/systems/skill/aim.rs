@@ -97,13 +97,14 @@ impl Aimed {
     }
 }
 
-/// The spot an armed aim would take where the pointer points, and what the spot has against it,
-/// in the game's words.
+/// The spot an armed aim would take where the pointer points, how far around the character it
+/// reaches, and what the spot has against it, in the game's words.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct SpotAim {
     pub aimed: Aimed,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
+    pub reach: Meters,
     pub refused: Option<String>,
 }
 
@@ -129,6 +130,7 @@ pub fn spot_aim(world: &mut World) -> Option<SpotAim> {
     Some(SpotAim {
         aimed,
         at,
+        reach: reach_of(world, me, aimed),
         refused: spot_refusal(world, me, aimed, at)
             .map(|why| why.plain_words(world.resource::<Content>())),
     })

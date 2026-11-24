@@ -35,6 +35,8 @@ import bevy_pbr::render::pbr_types::PbrInput;
 import engine::core::render::world::gpu::impostor_bake::{BakeOutput, bake_clip, bake_right, bake_seen, bake_up, baked};
 
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
+@if(!PREPASS_PIPELINE)
+import engine::core::render::world::wear::worn;
 @if(PICK)
 import engine::core::render::world::gpu::instance::id_of;
 @if(MARK)
@@ -382,11 +384,11 @@ fn prepare(in: VertexOutput, is_front: bool) -> PbrInput {
         tinted = in.color;
     }
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    let base = alpha_discard(
+    let base = worn(alpha_discard(
         pbr_input.material.flags,
         pbr_input.material.alpha_cutoff,
         pbr_input.material.base_color
-    );
+    ), in);
     own = vec4<f32>(base.rgb / max(tinted.rgb, vec3<f32>(0.001)), base.a);
     facing = pbr_input.N;
     eye_way = pbr_input.V;

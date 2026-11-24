@@ -24,6 +24,8 @@ import engine::core::render::world::shade::lit_color;
 import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::alpha_discard};
 @if(IMPOSTOR_BAKE)
 import engine::core::render::world::gpu::impostor_bake::{BakeOutput, bake_clip, baked};
+@if(IMPOSTOR_BAKE)
+import engine::core::render::world::wear::worn;
 import bevy_pbr::render::view_transformations::position_world_to_clip;
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
 @if(PICK)
@@ -40,6 +42,8 @@ struct InstancedOutput {
     @location(1) world_normal: vec3<f32>,
     @if(VERTEX_UVS_A)
     @location(2) uv: vec2<f32>,
+    @if(VERTEX_UVS_B)
+    @location(3) uv_b: vec2<f32>,
     @if(VERTEX_COLORS)
     @location(5) color: vec4<f32>,
     @if(VERTEX_OUTPUT_INSTANCE_INDEX)
@@ -92,6 +96,9 @@ fn vertex(in: Vertex) -> InstancedOutput {
     @if(VERTEX_UVS_A) {
         out.uv = in.uv;
     }
+    @if(VERTEX_UVS_B && !PREPASS_PIPELINE) {
+        out.uv_b = in.uv_b;
+    }
     @if(VERTEX_COLORS) {
         out.color = in.color;
     }
@@ -129,11 +136,11 @@ fn fragment(in: InstancedOutput, @builtin(front_facing) is_front: bool) -> Fragm
 @fragment
 fn fragment(in: InstancedOutput, @builtin(front_facing) is_front: bool) -> BakeOutput {
     let pbr_input = pbr_input_from_standard_material(bevy_output(in), is_front);
-    let base = alpha_discard(
+    let base = worn(alpha_discard(
         pbr_input.material.flags,
         pbr_input.material.alpha_cutoff,
         pbr_input.material.base_color
-    );
+    ), bevy_output(in));
     return baked(base.rgb, pbr_input.N, in.position.z);
 }
 
@@ -174,6 +181,9 @@ fn bevy_output(in: InstancedOutput) -> VertexOutput {
     }
     @if(VERTEX_UVS_A) {
         out.uv = in.uv;
+    }
+    @if(VERTEX_UVS_B && !PREPASS_PIPELINE) {
+        out.uv_b = in.uv_b;
     }
     @if(VERTEX_COLORS) {
         out.color = in.color;

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
-use bevy_math::{Quat, Vec3};
+use bevy_math::{Quat, Vec2, Vec3};
 use engine::core::content::gltf::{
     NodeTree, Rest, TreeNode, glb as write_glb, placeholder_body, placeholder_mesh,
     placeholder_rig, posed_body, push_accessor,
@@ -44,7 +44,6 @@ pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
 /// A glTF binary of a box `size` metres across, tall and deep, standing on its origin, in one
 /// material named `material` of the plain colour `color`: a model a picture shows.
 pub fn box_glb(size: Vec3, material: &str, color: [f32; 4]) -> Vec<u8> {
-    let half = Vec3::new(size.x / 2.0, 0.0, size.z / 2.0);
     let faces: [(Vec3, Vec3, Vec3); 6] = [
         (Vec3::X, Vec3::Z, Vec3::Y),
         (Vec3::NEG_X, Vec3::Y, Vec3::Z),
@@ -53,23 +52,49 @@ pub fn box_glb(size: Vec3, material: &str, color: [f32; 4]) -> Vec<u8> {
         (Vec3::Z, Vec3::Y, Vec3::X),
         (Vec3::NEG_Z, Vec3::X, Vec3::Y),
     ];
+    let quads: Vec<(Vec3, [Vec3; 4])> = faces
+        .into_iter()
+        .map(|(normal, along, up)| {
+            let center = Vec3::Y * (size.y / 2.0) + normal * (size / 2.0);
+            let corner = |a: f32, b: f32| {
+                center
+                    + along * (a * (size * along).length() / 2.0)
+                    + up * (b * (size * up).length() / 2.0)
+            };
+            let quad = [
+                corner(-1.0, -1.0),
+                corner(1.0, -1.0),
+                corner(1.0, 1.0),
+                corner(-1.0, 1.0),
+            ];
+            (normal, quad)
+        })
+        .collect();
+    quads_glb(&quads, material, color)
+}
+
+/// A glTF binary of a roof with no underside: one face `size` metres across and deep, `height`
+/// metres over its origin, looking up, in one material named `material` of the plain colour
+/// `color`.
+pub fn roof_glb(size: Vec2, height: f32, material: &str, color: [f32; 4]) -> Vec<u8> {
+    let corner = |x: f32, z: f32| Vec3::new(x * size.x / 2.0, height, z * size.y / 2.0);
+    let quad = [
+        corner(-1.0, -1.0),
+        corner(-1.0, 1.0),
+        corner(1.0, 1.0),
+        corner(1.0, -1.0),
+    ];
+    quads_glb(&[(Vec3::Y, quad)], material, color)
+}
+
+/// A glTF binary of the quads `quads`, each its normal and its corners wound about it, in one
+/// material named `material` of the plain colour `color`.
+fn quads_glb(quads: &[(Vec3, [Vec3; 4])], material: &str, color: [f32; 4]) -> Vec<u8> {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
     let mut colors = Vec::new();
-    for (normal, along, up) in faces {
-        let center = Vec3::Y * (size.y / 2.0) + normal * (size / 2.0);
-        let corner = |a: f32, b: f32| {
-            center
-                + along * (a * (size * along).length() / 2.0)
-                + up * (b * (size * up).length() / 2.0)
-        };
-        let quad = [
-            corner(-1.0, -1.0),
-            corner(1.0, -1.0),
-            corner(1.0, 1.0),
-            corner(-1.0, 1.0),
-        ];
+    for (normal, quad) in quads {
         for index in [0, 1, 2, 0, 2, 3] {
             positions.extend_from_slice(&quad[index].to_array());
             normals.extend_from_slice(&normal.to_array());
@@ -77,6 +102,14 @@ pub fn box_glb(size: Vec3, material: &str, color: [f32; 4]) -> Vec<u8> {
             colors.extend_from_slice(&[1.0, 1.0, 1.0, 1.0]);
         }
     }
+    let low = quads
+        .iter()
+        .flat_map(|(_, quad)| quad.iter().copied())
+        .fold(Vec3::INFINITY, Vec3::min);
+    let high = quads
+        .iter()
+        .flat_map(|(_, quad)| quad.iter().copied())
+        .fold(Vec3::NEG_INFINITY, Vec3::max);
     let floats = |values: &[f32]| -> Vec<u8> {
         values
             .iter()
@@ -92,7 +125,7 @@ pub fn box_glb(size: Vec3, material: &str, color: [f32; 4]) -> Vec<u8> {
         &floats(&positions),
         corners,
         json::accessor::Type::Vec3,
-        Some((&[-half.x, 0.0, -half.z], &[half.x, size.y, half.z])),
+        Some((&low.to_array(), &high.to_array())),
     );
     let normal = push_accessor(
         &mut root,
@@ -198,16 +231,36 @@ pub fn glb_with_image_inside(name: &str, png: &[u8]) -> Vec<u8> {
     write_glb(&root, bin)
 }
 
-/// A glTF binary of nothing to look at whose one image is the file at `uri` beside it.
+/// A glTF binary of nothing to look at whose one material is coloured by its one image, the file
+/// at `uri` beside it.
 pub fn glb_naming_image(uri: &str) -> Vec<u8> {
     let (mut root, bin) = opened(placeholder_rig(&[]));
-    root.push(json::Image {
+    let image = root.push(json::Image {
         buffer_view: None,
         mime_type: None,
         name: None,
         uri: Some(uri.to_owned()),
         extensions: None,
         extras: Default::default(),
+    });
+    let texture = root.push(json::Texture {
+        name: None,
+        sampler: None,
+        source: image,
+        extensions: None,
+        extras: Default::default(),
+    });
+    root.push(json::Material {
+        pbr_metallic_roughness: json::material::PbrMetallicRoughness {
+            base_color_texture: Some(json::texture::Info {
+                index: texture,
+                tex_coord: 0,
+                extensions: None,
+                extras: Default::default(),
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
     });
     write_glb(&root, bin)
 }

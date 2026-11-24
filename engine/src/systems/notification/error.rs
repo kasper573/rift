@@ -101,7 +101,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
 }
 
 #[derive(Resource, Default)]
-struct Errors {
+pub(super) struct Errors {
     shown: Option<ErrorToast>,
     fades: Transits<(u64, Notification)>,
     drawn: Vec<Rect>,

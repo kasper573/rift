@@ -707,9 +707,9 @@ impl<'a> Card<'a> {
             ));
         }
         painter.rect_filled(ribbon, 0.0, ink::CREAM);
-        paint::band(painter, ribbon, |along| {
+        painter.add(paint::band(ribbon, |along| {
             ink::wash(from.lerp_to_gamma(to, along), 0.45)
-        });
+        }));
         painter.rect_stroke(
             ribbon,
             0.0,
@@ -727,14 +727,14 @@ impl<'a> Card<'a> {
             }
             NameBandLook::Washed { strength, icon } => {
                 painter.rect_filled(band, CornerRadius::ZERO, ink::white_wash(0.25));
-                paint::band(painter, band, |along| {
+                painter.add(paint::band(band, |along| {
                     let ends = (2.0 * along - 1.0).abs();
                     ink::wash(from.lerp_to_gamma(to, along), strength * ends * ends)
-                });
+                }));
                 (ink::INK, icon, true)
             }
             NameBandLook::Filled { icon } => {
-                paint::band(painter, band, |along| from.lerp_to_gamma(to, along));
+                painter.add(paint::band(band, |along| from.lerp_to_gamma(to, along)));
                 (ink::CREAM, icon, true)
             }
             NameBandLook::Ribbon { icon, .. } => (ink::INK, icon, false),
@@ -781,9 +781,9 @@ impl<'a> Card<'a> {
     /// The strip under the name band that carries the dress's label.
     fn paint_strip(&self, painter: &Painter, strip: Rect) {
         let [from, to] = self.dress.gradient;
-        paint::band(painter, strip, |along| {
+        painter.add(paint::band(strip, |along| {
             ink::wash(from.lerp_to_gamma(to, along), 0.35)
-        });
+        }));
         painter.line_segment(
             [strip.left_bottom(), strip.right_bottom()],
             Stroke::new(1.0, ink::ink_wash(0.5)),
@@ -1006,10 +1006,10 @@ pub fn heading(ui: &mut Ui, plate: Plate, text: &str) {
             painter.rect_filled(line, 0.0, ink::ink_wash(0.3));
         }
         (DividerLook::Gradient, _) => {
-            paint::band(painter, line.expand2(Vec2::new(0.0, 0.5)), |along| {
+            painter.add(paint::band(line.expand2(Vec2::new(0.0, 0.5)), |along| {
                 let ends = (along.min(1.0 - along) / RULE_FADE).clamp(0.0, 1.0);
                 ink::wash(from.lerp_to_gamma(to, along), ends)
-            });
+            }));
         }
         (DividerLook::Ornament, Some(icon)) => {
             let gap = RULE_ICON + 8.0;

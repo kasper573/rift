@@ -23,8 +23,10 @@ pub struct GltfInfo {
     /// The name of each material, in the order the file lists them; unnamed ones are empty.
     pub materials: Vec<String>,
     /// The materials, by name, some mesh is drawn in without texture coordinates to lay a
-    /// picture by, and those some mesh is drawn in without the tangents a relief is turned by.
+    /// picture by, those without a second set to lay wear by, and those without the tangents a
+    /// relief is turned by.
     pub unmapped: Vec<String>,
+    pub unworn: Vec<String>,
     pub untangented: Vec<String>,
     /// Whether any mesh is skinned to joints.
     pub skinned: bool,
@@ -52,6 +54,29 @@ pub struct Externalized {
     pub glb: Vec<u8>,
     /// Each image taken out, by its path from the model's folder, as the model now names it.
     pub images: Vec<(String, Vec<u8>)>,
+}
+
+/// The glTF binary `bytes` naming, for each image file it names, the file `rename` gives for it
+/// in its place: none where it renames none, or `bytes` isn't a glTF binary.
+pub fn with_images_renamed(
+    bytes: &[u8],
+    rename: impl Fn(&str) -> Option<String>,
+) -> Option<Vec<u8>> {
+    let binary = gltf::binary::Glb::from_slice(bytes).ok()?;
+    let mut root = json::Root::from_slice(&binary.json).ok()?;
+    let mut renamed = false;
+    for image in &mut root.images {
+        if let Some(name) = image.uri.as_deref().and_then(&rename) {
+            image.uri = Some(name);
+            renamed = true;
+        }
+    }
+    renamed.then(|| {
+        glb(
+            &root,
+            binary.bin.map(|bin| bin.into_owned()).unwrap_or_default(),
+        )
+    })
 }
 
 /// Takes every image kept inside `bytes` out into a PNG file of its own, kept as `images` keeps
@@ -596,6 +621,7 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
             .map(|material| material.name().unwrap_or_default().to_owned())
             .collect(),
         unmapped: drawn_without(&document, gltf::Semantic::TexCoords(0)),
+        unworn: drawn_without(&document, gltf::Semantic::TexCoords(1)),
         untangented: drawn_without(&document, gltf::Semantic::Tangents),
         skinned: document.skins().next().is_some(),
         skin_joints: {

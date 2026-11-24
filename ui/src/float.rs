@@ -158,6 +158,29 @@ pub fn toast(gui: &Context, text: &str, which: impl Hash) {
         });
 }
 
+/// Lays labels that float over the scene apart, so none overlaps another: each, in the order
+/// given, keeps its place unless it comes nearer than `apart` to one laid before it, and then
+/// rises until it is `apart` above every one it came near. The first keep their places.
+pub fn lay_apart(rects: &mut [Rect], apart: f32) {
+    for at in 0..rects.len() {
+        let (laid, rest) = rects.split_at_mut(at);
+        let rect = &mut rest[0];
+        let mut below = laid.to_vec();
+        loop {
+            let (near, clear): (Vec<Rect>, Vec<Rect>) = below
+                .into_iter()
+                .partition(|other| comes_near(*other, *rect, apart));
+            below = clear;
+            // Rising over the highest it comes near puts it over all of them, so each one it
+            // rises over is passed for good and the rise ends.
+            let Some(top) = near.iter().map(|other| other.top()).reduce(f32::min) else {
+                break;
+            };
+            *rect = rect.translate(Vec2::new(0.0, top - apart - rect.bottom()));
+        }
+    }
+}
+
 /// The layer drawn at `at`, leaving out the root layer egui keeps under the whole screen for panels
 /// to catch clicks on.
 pub fn layer_at(gui: &Context, at: Pos2) -> Option<LayerId> {
@@ -187,6 +210,13 @@ impl Afterimage {
                 .add(shape.shape.clone());
         }
     }
+}
+
+fn comes_near(a: Rect, b: Rect, apart: f32) -> bool {
+    a.left() - apart < b.right()
+        && b.left() - apart < a.right()
+        && a.top() - apart < b.bottom()
+        && b.top() - apart < a.bottom()
 }
 
 #[derive(Clone, Copy)]

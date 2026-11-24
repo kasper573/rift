@@ -959,12 +959,10 @@ fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::
     game.write_to(folder);
     let content = game.load();
     let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, folder);
     app.add_plugins((
         MinimalPlugins,
-        AssetPlugin {
-            file_path: folder.display().to_string(),
-            ..Default::default()
-        },
+        AssetPlugin::default(),
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),

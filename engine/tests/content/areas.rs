@@ -2,7 +2,7 @@ use engine::systems::area::stages::{COVER, PROP};
 use std::io;
 use std::sync::Arc;
 
-use bevy::math::Vec3;
+use bevy::math::{Vec2, Vec3};
 use engine::core::content::{
     Content, ContentFolder, FileHash, FolderEntry, FolderReader, LoadPurpose, LoadReport,
     LoadWarnings, MemoryFolder, SETTINGS_FILE, load, version, write,
@@ -17,7 +17,7 @@ use engine::systems::area::scenery::{Sources, prop_transform};
 use engine::systems::area::{self, AreaDef, AreaId, PropDef, PropPlacement};
 use engine::systems::player;
 use serde_json::{Value, json};
-use testkit::{Game, HEIGHTS, Map, box_glb, path, png};
+use testkit::{Game, HEIGHTS, Map, box_glb, path, png, roof_glb};
 
 use crate::support::game;
 
@@ -213,8 +213,10 @@ fn a_prop_stands_on_the_ground_under_it_sunk_as_deep_as_it_is_placed() {
 fn a_prop_snapping_to_the_ground_rests_on_what_lies_under_it_along_its_slope() {
     let floor = box_glb(Vec3::new(3.0, 0.3, 3.0), "stone", [1.0; 4]);
     let shine = box_glb(Vec3::new(1.0, 0.05, 1.0), "light", [1.0; 4]);
+    let eave = roof_glb(Vec2::new(1.6, 1.6), 2.5, "tiles", [1.0; 4]);
     let content = game()
         .prop_of("floor", floor, json!({ "footprint": { "type": "none" } }))
+        .prop_of("eave", eave, json!({ "footprint": { "type": "none" } }))
         .prop_of(
             "shine",
             shine,
@@ -228,6 +230,8 @@ fn a_prop_snapping_to_the_ground_rests_on_what_lies_under_it_along_its_slope() {
                 { "type": "prop", "prop": path("prop", "shine"), "at": { "x": 2.0, "y": 2.0 } },
                 { "type": "prop", "prop": path("prop", "shine"), "at": { "x": 2.0, "y": 6.0 } },
                 { "type": "prop", "prop": path("prop", "shine"), "at": { "x": 5.0, "y": 6.0 } },
+                { "type": "prop", "prop": path("prop", "eave"), "at": { "x": 3.2, "y": 4.4 } },
+                { "type": "prop", "prop": path("prop", "shine"), "at": { "x": 3.2, "y": 4.4 } },
             ]),
         )
         .part("area", "hill", "height/0_0.png", tile(&hill()))
@@ -252,6 +256,12 @@ fn a_prop_snapping_to_the_ground_rests_on_what_lies_under_it_along_its_slope() {
             0.5,
             slope,
             "along the slope, at the ground under its middle",
+        ),
+        (
+            5,
+            0.0,
+            Vec3::Y,
+            "on the ground under a roof with no underside",
         ),
     ] {
         let stood = stands(index);

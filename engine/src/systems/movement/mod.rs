@@ -533,6 +533,15 @@ pub fn mesh_of(content: &Content, world: &World, entity: Entity) -> Option<HeldM
     }
 }
 
+/// Whether the actor goes through the air: on a mount that flies, or riding nothing, with a body
+/// that flies.
+pub fn aloft(content: &Content, world: &World, entity: Entity) -> bool {
+    match mount::travels(content, world, entity) {
+        Some(travels) => matches!(travels, Travels::Flying { .. }),
+        None => airborne(world, entity),
+    }
+}
+
 /// The point `walker` would head for where the pointer points: on the water's surface for one
 /// whose mount carries them over it, on the ground for anyone else.
 pub fn pointed_spot(world: &World, walker: Entity, pointed: &Pointed) -> Option<Pos<Meters>> {

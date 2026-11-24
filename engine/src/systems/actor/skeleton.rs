@@ -448,6 +448,11 @@ pub struct Hand {
     pub strap: Option<HandStrap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clasp: Option<Clasp>,
+    /// The joint a prop held steady keeps the hand off (see `Steady`): one above the arm, so the
+    /// hand's joint, its forearm and its upper arm lie under it. A hand with none holds nothing
+    /// steady.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chest: Option<JointName>,
 }
 
 impl Hand {

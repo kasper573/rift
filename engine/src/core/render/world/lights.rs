@@ -1,10 +1,13 @@
 //! The lights of the world: one sun with its shadows, cloud shadows and shafts of light, an
 //! ambient glow, and up to a few point lights, some of which flicker.
 
+use bevy::ecs::entity::EntityHashMap;
+use bevy::light::cascade::Cascade;
 use bevy::light::{
-    CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLight, PointLight, SunDisk,
-    VolumetricLight,
+    CascadeShadowConfig, CascadeShadowConfigBuilder, Cascades, DirectionalLight, PointLight,
+    SunDisk, VolumetricLight,
 };
+use bevy::math::{DMat3, DQuat, DVec2, DVec3};
 use bevy::pbr::MAX_CASCADES_PER_LIGHT;
 use bevy::prelude::*;
 
@@ -56,12 +59,6 @@ const LEAST_REACH: Meters = Meters(1.0);
 /// with it, so it moves only by steps, and only on to the next once the view needs it.
 const REACH_STEPS_A_DOUBLING: f32 = 4.0;
 
-/// How far the sun turns before its shadows turn with it. The shadow map's texels are laid out
-/// under the sun's rotation about the world's origin, far from where an area lies, so a sun that
-/// turned every frame would set every texel of the map somewhere new each frame and show every
-/// shadow's edge flickering. Turned in steps, the texels hold still between them.
-const SHADOW_STEP: Degrees = Degrees(0.25);
-
 /// How many rays along each edge of a camera's view find how far it sees the ground.
 const RIM_RAYS: u32 = 8;
 
@@ -77,6 +74,7 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
         },
         shadow_cascades(ShadowQuality::High, ShadowReach::CLOSE),
         ShadowReach::CLOSE,
+        CascadeGrids::default(),
         VolumetricLight,
         SunDisk::OFF,
         sun_transform(elevation, azimuth, Vec2::ZERO),
@@ -176,6 +174,108 @@ impl ShadowReach {
     }
 }
 
+/// Where the texels of each cascade of a sun's shadows lay last, for each view it is cast for.
+#[derive(Component, Default)]
+pub struct CascadeGrids(EntityHashMap<Vec<CascadeGrid>>);
+
+/// The sun's turn a cascade was laid out under, the middle it was laid out round across the
+/// sun's rays, and how far apart its texels stood.
+#[derive(Clone, Copy)]
+struct CascadeGrid {
+    turn: DQuat,
+    middle: DVec2,
+    texel: f32,
+}
+
+/// Lays every cascade of a sun's shadows out again so its texels turn with the sun about the
+/// middle of what the cascade covers, holding their place there from frame to frame: the middle
+/// of its box, where its shadows fall, never its near plane, which may stand far up toward the
+/// sun, where a turn would move the ground under it. Laid out as they come, the texels stand
+/// fixed under the sun's rotation about the world's origin, so at the sun's pace they would
+/// sweep across an area lying kilometres from it, set every texel of the map somewhere new each
+/// frame and show every shadow's edge flickering. Turned about its middle, a cascade's texels
+/// move at the most as far as half its width turns, a fraction of a texel a frame, and a camera
+/// that moves moves them only by whole texels, as the cascades come.
+pub(super) fn turn_cascades_in_place(
+    mut lights: Query<(&GlobalTransform, &mut Cascades, &mut CascadeGrids)>,
+) {
+    for (transform, mut cascades, mut grids) in &mut lights {
+        let turn = transform.rotation().as_dquat();
+        let world_from_light = DMat3::from_quat(turn);
+        let light_from_world = world_from_light.transpose();
+        let mut laid = EntityHashMap::default();
+        for (view, cascades) in cascades.cascades.iter_mut() {
+            let was = grids.0.remove(view).unwrap_or_default();
+            let grids: Vec<CascadeGrid> = cascades
+                .iter_mut()
+                .enumerate()
+                .map(|(index, cascade)| {
+                    let came =
+                        light_from_world * cascade.world_from_cascade.w_axis.truncate().as_dvec3();
+                    let covered = cascade
+                        .clip_from_world
+                        .inverse()
+                        .project_point3(Vec3::new(0.0, 0.0, 0.5))
+                        .as_dvec3();
+                    let middle = match was.get(index).filter(|was| was.texel == cascade.texel_size)
+                    {
+                        Some(was) => kept_in_place(
+                            was,
+                            covered,
+                            came.truncate(),
+                            turn,
+                            f64::from(cascade.texel_size),
+                        ),
+                        None => came.truncate(),
+                    };
+                    lay_round(cascade, transform.rotation(), middle.extend(came.z));
+                    CascadeGrid {
+                        turn,
+                        middle,
+                        texel: cascade.texel_size,
+                    }
+                })
+                .collect();
+            laid.insert(*view, grids);
+        }
+        grids.0 = laid;
+    }
+}
+
+/// The middle across the sun's rays, under its new `turn`, that keeps the texels of a cascade
+/// laid out as `was` where they stood at `pivot`, the nearest such middle to `wanted`.
+fn kept_in_place(was: &CascadeGrid, pivot: DVec3, wanted: DVec2, turn: DQuat, texel: f64) -> DVec2 {
+    let then = (DMat3::from_quat(was.turn).transpose() * pivot).truncate();
+    let off = (then - was.middle) / texel;
+    let phase = off - off.floor();
+    let now = (DMat3::from_quat(turn).transpose() * pivot).truncate();
+    let middle = now - phase * texel;
+    middle + ((wanted - middle) / texel).round() * texel
+}
+
+/// `cascade` laid out under the sun's `turn` with its near plane's middle at `middle` in the
+/// light's space.
+fn lay_round(cascade: &mut Cascade, turn: Quat, middle: DVec3) {
+    let world_from_light = Mat4::from_quat(turn);
+    let light_from_world = world_from_light.transpose();
+    let cascade_from_world = Mat4::from_cols(
+        light_from_world.x_axis,
+        light_from_world.y_axis,
+        light_from_world.z_axis,
+        (-middle).as_vec3().extend(1.0),
+    );
+    let world_from_cascade = Mat4::from_cols(
+        world_from_light.x_axis,
+        world_from_light.y_axis,
+        world_from_light.z_axis,
+        (DMat3::from_quat(turn.as_dquat()) * middle)
+            .as_vec3()
+            .extend(1.0),
+    );
+    cascade.world_from_cascade = world_from_cascade;
+    cascade.clip_from_world = cascade.clip_from_cascade * cascade_from_world;
+}
+
 /// Every light that casts the world's shadows casts them as the player's video preferences ask,
 /// as far as its camera sees, anew whenever either changes.
 pub(super) fn cast_shadows(
@@ -200,7 +300,6 @@ pub(super) fn cast_shadows(
 /// as the light sinks so they reach as far at every hour, and no further once it stands on the
 /// horizon, where they would reach without end.
 pub fn sun_transform(elevation: Degrees, azimuth: Degrees, over: Vec2) -> Transform {
-    let (elevation, azimuth) = (in_shadow_steps(elevation), in_shadow_steps(azimuth));
     let toward_sun = toward(elevation, azimuth);
     let over = Vec3::new(over.x, 0.0, over.y);
     let span = SHADOW_SPAN.0 / 2.0;
@@ -208,11 +307,6 @@ pub fn sun_transform(elevation: Degrees, azimuth: Degrees, over: Vec2) -> Transf
     Transform::from_translation(over + toward_sun * 50.0)
         .looking_at(over, Vec3::Y)
         .with_scale(Vec3::new(span, span * slant, span))
-}
-
-/// `angle` to the nearest step the sun's shadows turn by.
-fn in_shadow_steps(angle: Degrees) -> Degrees {
-    Degrees((angle.0 / SHADOW_STEP.0).round() * SHADOW_STEP.0)
 }
 
 /// The unit way toward a light `elevation` above the horizon at `azimuth` clockwise from north.

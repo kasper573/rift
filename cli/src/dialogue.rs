@@ -40,50 +40,47 @@ pub fn run(folder: &Path, out: &Path, over: &[PathBuf]) {
     grounds.extend(over.iter().map(|path| picture(path)));
     let specimens = specimens(&content);
     let out = out.to_path_buf();
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    ..default()
-                })
-                .set(AssetPlugin {
-                    file_path: folder.display().to_string(),
-                    ..default()
-                })
-                .disable::<bevy::winit::WinitPlugin>(),
-        )
-        .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
-            1.0 / 60.0,
-        )))
-        .add_plugins(GuiPlugin)
-        .register_asset_loader(PngLoader)
-        .insert_resource(inputs.key_names())
-        .insert_resource(inputs)
-        .insert_resource(settings.lettering)
-        .insert_resource(settings.typing)
-        .insert_resource(settings.cards)
-        .insert_resource(settings)
-        .insert_resource(content)
-        .insert_resource(Drawing {
-            out,
-            grounds,
-            specimens,
-            at: 0,
-            frames: 0,
-            height: 0.0,
-            reading: None,
-            image: None,
-        })
-        .init_resource::<Read>()
-        .add_observer(|read: On<ReadbackComplete>, mut taken: ResMut<Read>| {
-            taken.0.push((read.entity, read.data.clone()));
-        })
-        .add_systems(Startup, aim)
-        .add_systems(EguiPrimaryContextPass, draw.in_set(Band::Stage))
-        .add_systems(Update, step)
-        .run();
+    let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, &folder);
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            })
+            .disable::<bevy::winit::WinitPlugin>(),
+    )
+    .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+        1.0 / 60.0,
+    )))
+    .add_plugins(GuiPlugin)
+    .register_asset_loader(PngLoader)
+    .insert_resource(inputs.key_names())
+    .insert_resource(inputs)
+    .insert_resource(settings.lettering)
+    .insert_resource(settings.typing)
+    .insert_resource(settings.cards)
+    .insert_resource(settings)
+    .insert_resource(content)
+    .insert_resource(Drawing {
+        out,
+        grounds,
+        specimens,
+        at: 0,
+        frames: 0,
+        height: 0.0,
+        reading: None,
+        image: None,
+    })
+    .init_resource::<Read>()
+    .add_observer(|read: On<ReadbackComplete>, mut taken: ResMut<Read>| {
+        taken.0.push((read.entity, read.data.clone()));
+    })
+    .add_systems(Startup, aim)
+    .add_systems(EguiPrimaryContextPass, draw.in_set(Band::Stage))
+    .add_systems(Update, step)
+    .run();
 }
 
 /// How large the dialogue is drawn: a screen many play on.

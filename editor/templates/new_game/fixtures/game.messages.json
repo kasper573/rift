@@ -233,8 +233,6 @@
     "place_lifted": "Click a slot to place it",
     "no_bag": "No bag to hold items",
     "nothing_to_move": "Nothing to move",
-    "reserved_for": "{name}'s",
-    "reserved_for_party": "{name}'s party",
     "more_kinds": "+{count, number} more",
     "category": "{category, select, consumable {Consumable} equipment {Equipment} material {Material} currency {Currency} other {Item}}",
     "category_plural": "{category, select, consumable {consumables} equipment {equipment} material {materials} currency {currency} other {items}}",

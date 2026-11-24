@@ -16,7 +16,7 @@ mod wait;
 
 pub use art::{
     box_glb, glb, glb_naming_image, glb_of, glb_with_image_inside, library_glb, plain_png, png,
-    pose_glb, rig, rig_glb, skin_glb, wav,
+    pose_glb, rig, rig_glb, roof_glb, skin_glb, wav,
 };
 pub use bag::saved_bag;
 pub use crowd::crowd;

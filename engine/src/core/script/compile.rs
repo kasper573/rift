@@ -1053,6 +1053,7 @@ fn compile_written<'c>(
             ));
         }
     }
+    may_do.sure = sure_reaches(&steps, &entries, &names, &cx.reached);
     let successors: Vec<Vec<StepIndex>> = steps.iter().map(step_successors).collect();
     let mut reachable = vec![false; names.len()];
     let mut subject_free = vec![false; names.len()];
@@ -1159,6 +1160,38 @@ fn node_arrows(node: &Node) -> Vec<&str> {
         .into_iter()
         .filter_map(|(_, arrow)| arrow.to())
         .collect()
+}
+
+/// The reaches each entry's flow comes to along its one way on, before a step that could stop it
+/// or ask: a test, a chance, a wait, a loop, a call, a conversation, or an effect with more than
+/// one way out, which may be refused.
+fn sure_reaches(
+    steps: &[Step],
+    entries: &[(StepIndex, ScriptEvent)],
+    names: &[&str],
+    reached: &[(Option<&str>, Reach)],
+) -> Vec<(EventKind, Reach)> {
+    let mut sure = Vec::new();
+    for (entry, event) in entries {
+        let mut passed = HashSet::new();
+        let mut at = Some(*entry);
+        while let Some(step) = at.filter(|step| passed.insert(*step)) {
+            at = match &steps[step.0] {
+                Step::On { next } | Step::Set { next, .. } => *next,
+                Step::Effect { outputs, .. } if outputs.len() <= 1 => {
+                    sure.extend(
+                        reached
+                            .iter()
+                            .filter(|(node, _)| *node == Some(names[step.0]))
+                            .map(|(_, reach)| (event.kind(), reach.clone())),
+                    );
+                    outputs.first().and_then(|(_, next)| *next)
+                }
+                _ => None,
+            };
+        }
+    }
+    sure
 }
 
 fn step_successors(step: &Step) -> Vec<StepIndex> {

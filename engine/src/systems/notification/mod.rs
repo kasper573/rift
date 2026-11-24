@@ -23,6 +23,7 @@ use bevy::window::WindowOccluded;
 use bevy_egui::EguiPrimaryContextPass;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::egui;
 
 use crate::core::audio::playback::{PlaySfx, SfxId, SfxPlace};
 use crate::core::content::ImageRef;
@@ -48,6 +49,7 @@ use crate::systems::npc::{Npc, NpcId};
 use crate::systems::player::ArrivalHold;
 use crate::systems::screen::ClientScreen;
 use crate::systems::{GameSettings, visibility};
+use rows::NoticePlace;
 
 pub type NotificationId = ContentId<NotificationDef>;
 
@@ -55,7 +57,6 @@ const LONGEST_ROW_WORDS: usize = 30;
 const COLUMN_TOP: f32 = 16.0;
 const GROUP_GAP: f32 = 8.0;
 const CENTRE_BELOW: f32 = 0.15;
-const CENTRE_GAP: f32 = 16.0;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -599,11 +600,29 @@ fn draw_column(world: &mut World) {
         return;
     };
     let screen = gui.content_rect();
-    let captions = rows::draw_captions(world, &gui, screen.top() + COLUMN_TOP);
+    let top = screen.top() + COLUMN_TOP;
+    let milestones = rows::draw_milestones(world, &gui, top);
+    let captions = rows::draw_captions(world, &gui, milestones.map_or(top, |end| end + GROUP_GAP));
     let error = error::draw(world, &gui, captions + GROUP_GAP);
     let centre = error + screen.height() * CENTRE_BELOW;
-    let intro = intro::draw(world, &gui, centre);
-    rows::draw_milestones(world, &gui, intro + CENTRE_GAP);
+    intro::draw(world, &gui, centre);
+}
+
+/// Where every notice but the feed's lines is drawn now.
+fn drawn_besides_feed(world: &World) -> Vec<egui::Rect> {
+    [
+        world.resource::<rows::PlacedRows<rows::Captions>>().drawn(),
+        world
+            .resource::<rows::PlacedRows<rows::Milestones>>()
+            .drawn(),
+        world.resource::<error::Errors>().drawn(),
+        world.resource::<intro::IntroShowing>().drawn(),
+    ]
+    .into_iter()
+    .flatten()
+    .copied()
+    .chain(bubble::drawn(world))
+    .collect()
 }
 
 fn deliver(world: &mut World, mut cursor: Local<MessageCursor<NotificationSent>>) {

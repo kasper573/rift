@@ -25,9 +25,9 @@ pub fn day_strip(
     let (start, length) = (*range.start(), range.end() - range.start());
     let value_at = |along: f32| start + along * length;
     let painter = ui.painter();
-    paint::band(painter, rect, |along| {
+    painter.add(paint::band(rect, |along| {
         ink::wash(timespans::color_at(spans, &range, value_at(along)), 0.45)
-    });
+    }));
 
     let columns = (rect.width() / COLUMN).ceil().max(1.0) as usize;
     let shares: Vec<f32> = (0..=columns)

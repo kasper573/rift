@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bevy::app::PluginsState;
-use bevy::asset::AssetPlugin;
 use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::image::ImageSampler;
@@ -408,15 +407,12 @@ fn stage(game: Game, back: f32) -> Staged {
         .expect("the field is pictured")
         .area;
     let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, folder.path());
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: None,
                 exit_condition: ExitCondition::DontExit,
-                ..default()
-            })
-            .set(AssetPlugin {
-                file_path: folder.path().display().to_string(),
                 ..default()
             })
             .disable::<bevy::winit::WinitPlugin>(),

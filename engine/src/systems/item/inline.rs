@@ -30,8 +30,19 @@ use crate::systems::messages::{self, Line, Number};
 pub struct InlineItem {
     pub item: ItemId,
     pub amount: Option<ItemAmount>,
-    /// Whether the item's name shows beside its icon.
-    pub named: bool,
+    pub shows: ItemShows,
+}
+
+/// What of an inline item shows, in the order it reads.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemShows {
+    /// How many, its icon and its name.
+    Named,
+    /// Its icon and how many, for a view whose players know the item by its icon.
+    Icon,
+    /// How many and then its icon, as a tally counts what is paid or got.
+    Tallied,
 }
 
 /// How many of an item an inline item says there are: a whole count, or a share of one, as a
@@ -58,7 +69,7 @@ impl InlineItem {
         InlineItem {
             item,
             amount: None,
-            named: true,
+            shows: ItemShows::Named,
         }
     }
 
@@ -81,18 +92,31 @@ impl InlineItem {
     /// By its icon alone, for a view whose players know the item by it.
     pub fn nameless(self) -> InlineItem {
         InlineItem {
-            named: false,
+            shows: ItemShows::Icon,
             ..self
         }
+    }
+
+    /// By how many and its icon, as a tally counts it.
+    pub fn tallied(self) -> InlineItem {
+        InlineItem {
+            shows: ItemShows::Tallied,
+            ..self
+        }
+    }
+
+    /// Whether its name shows beside its icon.
+    pub fn named(self) -> bool {
+        self.shows == ItemShows::Named
     }
 
     /// Its parts in the order they read, the same for a line and for `draw`.
     fn parts(self) -> Vec<Part> {
         let amount = self.amount.map(Part::Amount);
-        if self.named {
-            amount.into_iter().chain([Part::Icon, Part::Name]).collect()
-        } else {
-            std::iter::once(Part::Icon).chain(amount).collect()
+        match self.shows {
+            ItemShows::Named => amount.into_iter().chain([Part::Icon, Part::Name]).collect(),
+            ItemShows::Icon => std::iter::once(Part::Icon).chain(amount).collect(),
+            ItemShows::Tallied => amount.into_iter().chain([Part::Icon]).collect(),
         }
     }
 }
@@ -102,7 +126,7 @@ impl SpanDef for InlineItem {
         let def = self.item.get(content);
         let color = Color32::from(def.rarity.get(content).gradient.from);
         let shown = self.parts().into_iter().map(|part| match part {
-            Part::Amount(amount) if self.named => {
+            Part::Amount(amount) if self.shows != ItemShows::Icon => {
                 TextPiece::text(format!("{} ", messages::of(content).item.amount(amount)))
             }
             Part::Amount(amount) => TextPiece::text(messages::of(content).item.amount(amount)),
@@ -111,7 +135,7 @@ impl SpanDef for InlineItem {
         });
         let link = ItemLink {
             item: self.item,
-            named: self.named,
+            named: self.named(),
         };
         let name = self.words(content, None);
         std::iter::once(TextPiece::LinkStart {
@@ -269,7 +293,7 @@ pub fn draw_line(
 /// What a drawn inline item does to a pointer: shows its item's tooltip, and opens the item's
 /// card to a click.
 pub fn inspect(world: &mut World, response: Response, item: InlineItem) -> Response {
-    inspect_item(world, &response, item.item, item.named);
+    inspect_item(world, &response, item.item, item.named());
     response.on_hover_cursor(CursorIcon::PointingHand)
 }
 
@@ -278,7 +302,7 @@ pub fn inspect(world: &mut World, response: Response, item: InlineItem) -> Respo
 /// in a text field, which puts its caret there. It shows its item's tooltip, and leaves the click
 /// alone.
 pub fn tooltip(world: &mut World, response: &Response, item: InlineItem) {
-    item_tooltip(world, response, item.item, item.named, None);
+    item_tooltip(world, response, item.item, item.named(), None);
 }
 
 /// Draws `item` on its own, as `draw` does, showing its tooltip and opening its card.

@@ -58,6 +58,7 @@ fn a_held_items_stance_and_grip_land_in_its_file_and_its_pairs_in_the_stances() 
         turn: LocalTurn([Degrees(0.0), Degrees(180.0), Degrees(0.0)]),
         symmetry: PropAxis::X,
         hold: PropHold::Strapped,
+        steady: None,
     };
 
     assert!(item::wield::set_wield(

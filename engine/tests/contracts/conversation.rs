@@ -568,6 +568,7 @@ fn crying() -> Value {
                 "event": "came_near",
                 "within": 3.0,
                 "by": "characters",
+                "fliers": false,
                 "next": "news_due",
             },
             "news_due": {

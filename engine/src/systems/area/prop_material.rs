@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::content::{ContentFile, ContentId, ImageRef, Loading, Nearby, RowCheck, serial};
+use crate::core::math::ColorGradient;
 use crate::core::units::Meters;
 use crate::core::vfx::VfxShaderDef;
 use crate::core::vfx::{ParamValue, VfxShaderId};
@@ -27,6 +28,7 @@ pub type PropMaterialId = ContentId<PropMaterialDef>;
 /// through to the other, so a crown seen from beneath glows where the sun stands over it. A shader
 /// that draws past the mesh, spreading its leaves into cards facing the eye, says how far at most
 /// in `overhang`, in the model's metres: the prop's bounds and its impostor's frame grow by it.
+/// `wear` lies over the colours by the model's second texture coordinates.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PropMaterialDef {
@@ -43,6 +45,20 @@ pub struct PropMaterialDef {
     pub translucency: f32,
     #[serde(default, skip_serializing_if = "serial::is_zero_meters")]
     pub overhang: Meters,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wear: Option<PropWear>,
+}
+
+/// Weathering over a material's colours, laid by its model's second texture coordinates so it
+/// falls over a whole roof or beam however the first set repeats the colours' picture: moss on a
+/// roof's eaves, grime at a wall's foot. Where `mask` is white the surface takes the wear's colour,
+/// which `mottle` picks between `colors` at each point, black for its `from`.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropWear {
+    pub mask: ImageRef,
+    pub mottle: ImageRef,
+    pub colors: ColorGradient,
 }
 
 impl ContentFile for PropMaterialDef {
@@ -60,6 +76,7 @@ impl ContentFile for PropMaterialDef {
             params: BTreeMap::new(),
             translucency: 0.0,
             overhang: Meters(0.0),
+            wear: None,
         })
     }
 
