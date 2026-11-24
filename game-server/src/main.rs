@@ -1052,7 +1052,11 @@ async fn test_character(State(http): State<Http>, headers: HeaderMap, body: Stri
         JoinAs {
             snapshot: character.get(content).clone(),
             start,
-            origin: JoinOrigin::Staged,
+            origin: if request.kept {
+                JoinOrigin::Kept
+            } else {
+                JoinOrigin::Staged
+            },
         },
     );
     StatusCode::NO_CONTENT.into_response()

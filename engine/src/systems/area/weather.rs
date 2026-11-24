@@ -237,7 +237,7 @@ impl DayCycle {
     /// How the day runs for a world starting `now` on a server running it as `day` says.
     pub fn course(&self, day: ServerDay, now: UnixMillis) -> TimeCourse<HourOfDay> {
         match day.daylight {
-            ServerDaylight::Turning => self.turning_from(self.start, now),
+            ServerDaylight::Turning => self.turning_from(day.hour.unwrap_or(self.start), now),
             ServerDaylight::Still => TimeCourse::Held(self.start),
             ServerDaylight::Fixed => {
                 TimeCourse::Held(day.hour.expect("a fixed daylight names its hour"))

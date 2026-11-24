@@ -144,6 +144,11 @@ pub struct TestCharacterRequest {
     pub test_character: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<Place>,
+    /// Whether the character is kept as the account's own from then on, saved like any played
+    /// one, so later sign-ins play it as it was last saved. Left out, it only stands in for the
+    /// account's own and is never saved.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kept: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -163,7 +168,8 @@ pub struct ServerConfig {
     pub character_spawn_policy: SpawnPolicy,
     pub characters_immortal: bool,
     pub daylight: ServerDaylight,
-    /// The hour of the day a fixed daylight holds at, 0 to 24.
+    /// The hour of the day a fixed daylight holds at, or a turning one starts from in place of the
+    /// game's own start, 0 to 24.
     pub hour: Option<HourOfDay>,
     pub weather: ServerWeather,
     pub rng_seed: Option<u64>,
@@ -219,7 +225,8 @@ impl ServerConfig {
 const LOCAL_STORE: &str = "records.sqlite";
 const LOCAL_CHECKPOINT_EVERY: Seconds = Seconds(30.0);
 
-/// How a server runs the game's day: as its daylight says, held at `hour` where that is fixed.
+/// How a server runs the game's day: as its daylight says, held at `hour` where that is fixed, and
+/// starting from it where the day turns.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ServerDay {
     pub daylight: ServerDaylight,

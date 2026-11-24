@@ -59,6 +59,7 @@ impl Playtest {
             let request = TestCharacterRequest {
                 test_character: character.path(content).to_owned(),
                 start: Some(content.built::<GameSettings>().initial_spawn),
+                kept: false,
             };
             post(&server, content, TEST_CHARACTER_ROUTE, &request)
                 .map_err(|problem| format!("the server refused the test character: {problem}"))?;

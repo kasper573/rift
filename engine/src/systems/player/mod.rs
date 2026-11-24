@@ -601,6 +601,7 @@ pub fn join(world: &mut World) {
                 let (snapshot, start) = (joining.snapshot.clone(), joining.start);
                 let (taken, told, stand_in) = match joining.origin.clone() {
                     JoinOrigin::Staged => (clock.now, Vec::new(), true),
+                    JoinOrigin::Kept => (clock.now, Vec::new(), false),
                     JoinOrigin::Saved { at, told } => (at, told, false),
                 };
                 region::hold_around(world, start.at);
