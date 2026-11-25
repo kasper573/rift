@@ -1,6 +1,7 @@
 mod babble;
 mod backoff;
 mod bindings;
+mod chains;
 mod client_update;
 mod climate;
 mod clock;

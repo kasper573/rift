@@ -259,7 +259,11 @@ pub(super) fn run(
         };
         body.last = Some((now, at));
         let input = local.clone();
+        let scaled = Scaled::of(&body.rig, &input);
+        let mut local = scaled.unscaled(&input);
+        let unmoved = local.clone();
         let rest = body.rig.rest_poses();
+        let rest = Scaled::of(&body.rig, &rest).unscaled(&rest);
         let root = affine(root_global);
         for (layer, on) in body.layers.iter_mut().zip(&body.on) {
             if !*on && layer.resting() {
@@ -281,13 +285,90 @@ pub(super) fn run(
             };
             layer.run(&mut frame, *on);
         }
+        let shown = scaled.rescaled(&input, &unmoved, &local);
         write(
             &mut transforms,
             &body.rig,
             &input,
-            &local,
+            &shown,
             &mut body.written,
         );
+    }
+}
+
+/// How far each joint's parent and the parents above it scale what lies under them. The library
+/// the layers reach for reads a bone's length from its child's own translation, as a rig's joints
+/// were all of scale one; a rig made at another scale (a glTF exported in other units) carries
+/// scale on its joints, which would have every chain and leg reckoned at the wrong length. So
+/// the layers are handed the rig with every joint's scale moved into the translations under it,
+/// as long as they stand in the world, and the scales are put back on what they leave.
+struct Scaled(Vec<f32>);
+
+impl Scaled {
+    /// Of a rig posed as `local`, its joints' scales taken as uniform.
+    fn of(rig: &Rig, local: &[BonePose]) -> Scaled {
+        let mut whole: Vec<Option<f32>> = vec![None; local.len()];
+        fn whole_of(at: usize, rig: &Rig, local: &[BonePose], whole: &mut [Option<f32>]) -> f32 {
+            if let Some(known) = whole[at] {
+                return known;
+            }
+            let above =
+                rig.parents[at].map_or(1.0, |parent| whole_of(parent as usize, rig, local, whole));
+            let scaled = above * local[at].scale.x;
+            whole[at] = Some(scaled);
+            scaled
+        }
+        Scaled(
+            (0..local.len())
+                .map(|at| {
+                    rig.parents[at].map_or(1.0, |parent| {
+                        whole_of(parent as usize, rig, local, &mut whole)
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// The rig as the layers are handed it: every joint of scale one, standing where it stood.
+    fn unscaled(&self, local: &[BonePose]) -> Vec<BonePose> {
+        local
+            .iter()
+            .zip(&self.0)
+            .map(|(pose, above)| BonePose {
+                translation: pose.translation * *above,
+                rotation: pose.rotation,
+                scale: glam::Vec3::ONE,
+            })
+            .collect()
+    }
+
+    /// The pose the layers left, `moved` from `unmoved`, with the scales of `given` put back: a
+    /// joint no layer moved keeps the pose it was given as it was.
+    fn rescaled(
+        &self,
+        given: &[BonePose],
+        unmoved: &[BonePose],
+        moved: &[BonePose],
+    ) -> Vec<BonePose> {
+        given
+            .iter()
+            .zip(unmoved.iter().zip(moved))
+            .zip(&self.0)
+            .map(|((given, (unmoved, moved)), above)| {
+                if moved == unmoved {
+                    return *given;
+                }
+                BonePose {
+                    translation: if moved.translation == unmoved.translation {
+                        given.translation
+                    } else {
+                        moved.translation / *above
+                    },
+                    rotation: moved.rotation,
+                    scale: given.scale * moved.scale,
+                }
+            })
+            .collect()
     }
 }
 
