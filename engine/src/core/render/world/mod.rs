@@ -176,6 +176,7 @@ impl Plugin for WorldScenePlugin {
                 afloat::lid_the_floating,
                 plumb::hang
                     .after(layers::run)
+                    .in_set(BodiesPosed)
                     .before(bevy::transform::TransformSystems::Propagate),
                 sky::rest_sky_light
                     .after(bevy::transform::TransformSystems::Propagate)
@@ -184,6 +185,11 @@ impl Plugin for WorldScenePlugin {
         );
     }
 }
+
+/// The systems that pose every body for the frame, its layers and what hangs from it, before
+/// transforms propagate: what stands on a body's nodes reads them after these.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BodiesPosed;
 
 /// Every camera's depth can be read once its prepass is drawn, for the passes that sample it.
 fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {

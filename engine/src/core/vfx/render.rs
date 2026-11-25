@@ -43,6 +43,7 @@ use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER};
 use crate::core::render::sample::FrameWork;
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::world::BodiesPosed;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::decal::LIFT;
 use crate::core::render::world::lights;
@@ -89,6 +90,7 @@ impl Plugin for VfxRenderPlugin {
                 (standing::play, sync)
                     .chain()
                     .in_set(WorldViewSystems)
+                    .after(BodiesPosed)
                     .before(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(EguiPrimaryContextPass, draw_overlays.in_set(Band::World));
@@ -1256,18 +1258,33 @@ fn standing(frame: &SiteFrame, socket: Option<Vec3>) -> Option<(Vec3, f32)> {
     }
 }
 
-/// Where the node named `socket` stands in the world, among those of the thing a site is and of
-/// whatever hangs from it.
+/// Where the node named `socket` stands in the world this frame, among those of the thing a site
+/// is and of whatever hangs from it: as its body is posed now, not as the transforms propagated
+/// last frame left it, which a moving body has already left behind.
 fn socket_point(world: &World, site: &VfxSite, socket: &str) -> Option<Vec3> {
     let (VfxSite::Actor(thing) | VfxSite::Object(thing)) = site else {
         return None;
     };
     let children = world.get::<Children>(*thing)?;
-    descendants(world, children).into_iter().find_map(|node| {
-        let named = world.get::<Name>(node)?.as_str() == socket;
-        let stands = world.get::<GlobalTransform>(node)?;
-        named.then(|| stands.translation())
-    })
+    let node = descendants(world, children).into_iter().find(|node| {
+        world
+            .get::<Name>(*node)
+            .is_some_and(|name| name.as_str() == socket)
+    })?;
+    Some(posed(world, node).translation())
+}
+
+/// Where `node` stands in the world as its own transform and those of everything that holds it
+/// place it now.
+fn posed(world: &World, node: Entity) -> GlobalTransform {
+    let mut at = GlobalTransform::from(world.get::<Transform>(node).copied().unwrap_or_default());
+    let mut holder = world.get::<ChildOf>(node).map(ChildOf::parent);
+    while let Some(held_by) = holder {
+        let local = world.get::<Transform>(held_by).copied().unwrap_or_default();
+        at = GlobalTransform::from(local) * at;
+        holder = world.get::<ChildOf>(held_by).map(ChildOf::parent);
+    }
+    at
 }
 
 fn paint_world(

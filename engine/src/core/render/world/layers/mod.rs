@@ -65,6 +65,7 @@ impl Plugin for JointLayersPlugin {
         app.add_systems(
             PostUpdate,
             run.after(bevy::app::AnimationSystems)
+                .in_set(super::BodiesPosed)
                 .before(bevy::transform::TransformSystems::Propagate),
         );
     }
