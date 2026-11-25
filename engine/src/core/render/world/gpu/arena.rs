@@ -53,14 +53,19 @@ impl Plugin for ModelArenaPlugin {
     }
 }
 
-/// A scenery whose props are drawn from its arena, on its root.
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct PropArena;
+/// A scenery whose props are drawn from its arena, on its root, over ground no lower than
+/// `floor`.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct PropArena {
+    pub floor: Meters,
+}
 
-/// A scenery's arena as the render world draws it: on the layers the scenery shows on.
+/// A scenery's arena as the render world draws it: on the layers the scenery shows on, over
+/// ground no lower than `floor`.
 #[derive(Component, Clone, Debug)]
 pub struct ExtractedPropArena {
     pub layers: RenderLayers,
+    pub floor: Meters,
 }
 
 impl SyncComponent<RenderApp> for PropArena {
@@ -68,13 +73,16 @@ impl SyncComponent<RenderApp> for PropArena {
 }
 
 impl ExtractComponent<RenderApp> for PropArena {
-    type QueryData = Option<&'static RenderLayers>;
-    type QueryFilter = With<PropArena>;
+    type QueryData = (&'static PropArena, Option<&'static RenderLayers>);
+    type QueryFilter = ();
     type Out = ExtractedPropArena;
 
-    fn extract_component(layers: QueryItem<'_, '_, Self::QueryData>) -> Option<ExtractedPropArena> {
+    fn extract_component(
+        (arena, layers): QueryItem<'_, '_, Self::QueryData>,
+    ) -> Option<ExtractedPropArena> {
         Some(ExtractedPropArena {
             layers: layers.cloned().unwrap_or_default(),
+            floor: arena.floor,
         })
     }
 }

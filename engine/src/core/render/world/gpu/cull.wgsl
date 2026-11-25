@@ -23,10 +23,11 @@ struct CullView {
     // Whether what lies behind the near half-space is left out: not for a light at the horizon,
     // whose casters there still cast into what it sees.
     test_near: u32,
-    // For a light's view, the sine of how high its sun stands: a caster farther behind the near
-    // half-space than its height over it throws its shadow short of what the view sees. 0 for any
-    // other view.
+    // For a light's view, the sine of how high its sun stands, and the lowest ground its shadows
+    // fall on: a caster farther behind the near half-space than its top stands over that ground,
+    // over the sine, throws its shadow short of what the view sees. A sine of 0 for any other view.
     casting_sine: f32,
+    floor: f32,
     // How many pixels across a thing among many alike must span to be told apart, how far a level
     // may stray from the full mesh in pixels, and how near the eye nothing is measured from.
     grain_pixels: f32,
@@ -574,7 +575,7 @@ fn in_frustum(center: vec3<f32>, radius: f32) -> bool {
                 continue;
             }
             if view.casting_sine > 0.0 {
-                beyond += 2.0 * radius / view.casting_sine;
+                beyond += max(center.y + radius - view.floor, 0.0) / view.casting_sine;
             }
         }
         if dot(view.planes[plane], vec4<f32>(center, 1.0)) + beyond <= 0.0 {

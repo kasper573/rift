@@ -222,7 +222,9 @@ pub fn spawn(
     }
     let grass = Grass::new(world, terrain, covers.grass());
     let planner = planner_of(area);
-    world.entity_mut(root).insert(PropArena);
+    world.entity_mut(root).insert(PropArena {
+        floor: area.heights.range().lowest,
+    });
     let streaming = Streaming {
         content: content.clone(),
         area: area.clone(),
