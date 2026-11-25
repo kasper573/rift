@@ -8,7 +8,10 @@ use bevy::prelude::*;
 use ui::egui::{self, Pos2, Rect, Ui, Vec2};
 
 use super::stage;
+use crate::systems::area_map::minimap::MINIMAP;
 use crate::systems::hud::{self, Seat, Sizing, WindowKey};
+use crate::systems::party::frames::PARTY_FRAMES;
+use crate::systems::quest::tracker::QUEST_TRACKER;
 use crate::systems::settings::{Placed, UserSettings};
 
 const GAP: f32 = 12.0;
@@ -82,15 +85,20 @@ pub(crate) fn seat(
 }
 
 /// Where a window of `size` starts when it should keep the conversation in sight: as near the middle
-/// of the screen as it can stand, at least a margin clear of all the dialogue shows for its step and
-/// of everyone in the conversation as the camera frames them once it comes to rest, and never off
-/// the screen. The camera may still be on its way, so the spot is worth working out once and
+/// of the screen as it can stand, at least a margin clear of all the dialogue shows for its step, of
+/// everyone in the conversation as the camera frames them once it comes to rest, and of the minimap,
+/// the quest tracker and the party's frames, and never off the screen. The camera may still be on its way, so the spot is worth working out once and
 /// keeping, never following the camera.
 pub(crate) fn spot_in_sight(world: &mut World, gui: &egui::Context, size: Vec2) -> Pos2 {
     let screen = gui.content_rect();
+    let panels: Vec<Rect> = [MINIMAP, QUEST_TRACKER, PARTY_FRAMES]
+        .into_iter()
+        .filter_map(|panel| hud::shown_widget_rect(world, panel))
+        .collect();
     let kept_clear: Vec<Rect> = stage::dialogue_rect(world)
         .into_iter()
         .chain(super::camera::bodies_at_rest(world))
+        .chain(panels)
         .collect();
     ui::float::nearest_clear_spot(size, screen, &kept_clear, IN_SIGHT_MARGIN, screen.center())
 }

@@ -214,6 +214,15 @@ pub(crate) fn confirm_layer() -> LayerId {
     LayerId::new(Band::Modal.order(), Id::new(WindowKey::Confirm.name()))
 }
 
+/// Where the widget of the interface named `name` stands, while it shows.
+pub(crate) fn shown_widget_rect(world: &World, name: &str) -> Option<Rect> {
+    let (_, widget) = WIDGETS.iter().find(|(key, _)| *key == name)?;
+    if widget.hidden(world) {
+        return None;
+    }
+    world.resource::<WidgetRects>().0.get(name).copied()
+}
+
 /// Where every widget and window of the interface stood when last drawn.
 pub(crate) fn drawn_rects(world: &World) -> Vec<Rect> {
     world

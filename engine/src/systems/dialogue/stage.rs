@@ -172,7 +172,8 @@ pub fn dialogue_rect(world: &World) -> Option<Rect> {
 }
 
 /// Where the dialogue and the windows it opened stand, which a camera that frames the
-/// conversation leaves room for.
+/// conversation leaves room for: all but the card of a quest it puts to the player, which stands
+/// clear of the people as that camera frames them, so the framing never waits on the card.
 pub fn rects(world: &World) -> Vec<Rect> {
     let drawn = world.resource::<gui::WidgetRects>();
     dialogue_rect(world)
@@ -180,6 +181,7 @@ pub fn rects(world: &World) -> Vec<Rect> {
         .chain(
             WindowKey::OF_A_CONVERSATION
                 .iter()
+                .filter(|key| **key != WindowKey::QuestOffer)
                 .filter_map(|key| drawn.0.get(key.name()).copied()),
         )
         .collect()
