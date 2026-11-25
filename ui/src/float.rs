@@ -181,17 +181,22 @@ pub fn lay_apart(rects: &mut [Rect], apart: f32) {
     }
 }
 
-/// Where a rect of `size` goes within `within` so it covers as little of `kept_clear` as it can,
-/// none of it where it fits clear of them all, and of the spots that cover least, the nearest
-/// `preferred`. A rect that covers least lies flush with an edge of `within` or `apart` off an
-/// edge of one kept clear, along each axis, so those are the spots weighed.
+/// Where a rect of `size` goes within `within`: clear of everything `must_clear` holds, and never
+/// nearer it than `apart`, wherever it fits so, covering as little of it as it can where it never
+/// does; of those spots, the ones that cover least of `rather_clear`; and of those, the nearest
+/// `preferred`. A rect that covers least lies flush with an edge of `within` or `apart` off an edge
+/// of one kept clear, along each axis, so those are the spots weighed.
 pub fn clear_spot(
     size: Vec2,
     within: Rect,
-    kept_clear: &[Rect],
+    must_clear: &[Rect],
+    rather_clear: &[Rect],
     preferred: Pos2,
     apart: f32,
 ) -> Pos2 {
+    let must_clear: Vec<Rect> = must_clear.iter().map(|rect| rect.expand(apart)).collect();
+    let rather_kept: Vec<Rect> = rather_clear.iter().map(|rect| rect.expand(apart)).collect();
+    let edges = || must_clear.iter().chain(&rather_kept);
     let spots = |low: f32, high: f32, preferred: f32, edges: &mut dyn Iterator<Item = f32>| {
         let last = (high - low).max(0.0) + low;
         let mut spots: Vec<f32> = [low, last, preferred].into_iter().chain(edges).collect();
@@ -204,19 +209,15 @@ pub fn clear_spot(
         within.left(),
         within.right() - size.x,
         preferred.x,
-        &mut kept_clear
-            .iter()
-            .flat_map(|rect| [rect.left() - apart - size.x, rect.right() + apart]),
+        &mut edges().flat_map(|rect| [rect.left() - size.x, rect.right()]),
     );
     let ys = spots(
         within.top(),
         within.bottom() - size.y,
         preferred.y,
-        &mut kept_clear
-            .iter()
-            .flat_map(|rect| [rect.top() - apart - size.y, rect.bottom() + apart]),
+        &mut edges().flat_map(|rect| [rect.top() - size.y, rect.bottom()]),
     );
-    let covered = |at: Pos2| -> f32 {
+    let covered = |at: Pos2, kept_clear: &[Rect]| -> f32 {
         let placed = Rect::from_min_size(at, size);
         kept_clear
             .iter()
@@ -229,8 +230,9 @@ pub fn clear_spot(
     xs.iter()
         .flat_map(|&x| ys.iter().map(move |&y| Pos2::new(x, y)))
         .min_by(|a, b| {
-            covered(*a)
-                .total_cmp(&covered(*b))
+            covered(*a, &must_clear)
+                .total_cmp(&covered(*b, &must_clear))
+                .then(covered(*a, rather_clear).total_cmp(&covered(*b, rather_clear)))
                 .then(a.distance(preferred).total_cmp(&b.distance(preferred)))
         })
         .unwrap_or(preferred)

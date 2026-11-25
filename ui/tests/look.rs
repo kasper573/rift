@@ -542,45 +542,69 @@ fn labels_laid_apart_never_overlap_and_only_those_that_would_move() {
     }
 }
 
+/// A sheet set down in a scene never covers the dialogue, whole, or comes nearer it than the gap
+/// kept between them, where it fits anywhere on the screen so at its own size; of those spots, it
+/// covers as few of the people as it can, and stands where it would when nothing is in its way.
 #[test]
-fn a_sheet_set_down_beside_people_covers_as_few_of_them_as_it_can() {
+fn a_sheet_set_down_beside_people_never_covers_the_dialogue_and_as_few_of_them_as_it_can() {
     let screen = Rect::from_min_max(Pos2::new(8.0, 8.0), Pos2::new(1272.0, 560.0));
     let sheet = Vec2::new(300.0, 360.0);
-    let preferred = Pos2::new(490.0, 200.0);
+    let preferred = Pos2::new(490.0, 160.0);
     let body =
         |x: f32, width: f32| Rect::from_min_size(Pos2::new(x, 150.0), Vec2::new(width, 400.0));
+    let low_dialogue = Rect::from_min_max(Pos2::new(340.0, 532.0), Pos2::new(940.0, 560.0));
+    let tall_dialogue = Rect::from_min_max(Pos2::new(340.0, 300.0), Pos2::new(940.0, 560.0));
     let apart = 12.0;
-    let covered = |at: Pos2, bodies: &[Rect]| -> f32 {
+    let covered = |at: Pos2, kept_clear: &[Rect]| -> f32 {
         let placed = Rect::from_min_size(at, sheet);
-        bodies
+        kept_clear
             .iter()
-            .map(|body| {
-                let over = placed.intersect(*body);
+            .map(|rect| {
+                let over = placed.intersect(*rect);
                 if over.is_positive() { over.area() } else { 0.0 }
             })
             .sum()
     };
-    let cases: [(&str, Vec<Rect>); 4] = [
-        ("with nobody to keep clear", vec![]),
+    let cases: [(&str, Vec<Rect>, Vec<Rect>); 6] = [
+        ("with nothing in its way", vec![], vec![]),
         (
             "with someone where it would stand",
+            vec![low_dialogue],
             vec![body(560.0, 120.0)],
         ),
         (
             "with people on both sides of where it would stand",
+            vec![low_dialogue],
             vec![body(380.0, 120.0), body(700.0, 120.0)],
         ),
         (
             "with people across the whole screen",
+            vec![low_dialogue],
             vec![body(8.0, 600.0), body(640.0, 632.0)],
         ),
+        (
+            "with the dialogue too tall to stand above",
+            vec![tall_dialogue],
+            vec![],
+        ),
+        (
+            "with the dialogue too tall to stand above, and people on both sides of it",
+            vec![tall_dialogue],
+            vec![body(8.0, 320.0), body(940.0, 332.0)],
+        ),
     ];
-    for (case, bodies) in cases {
-        let at = ui::float::clear_spot(sheet, screen, &bodies, preferred, apart);
+    for (case, dialogue, bodies) in cases {
+        let at = ui::float::clear_spot(sheet, screen, &dialogue, &bodies, preferred, apart);
+        let kept_off: Vec<Rect> = dialogue.iter().map(|rect| rect.expand(apart)).collect();
         let placed = Rect::from_min_size(at, sheet);
         assert!(
             screen.contains_rect(placed),
             "{case}, the sheet stands at {placed:?}, off the screen"
+        );
+        assert_eq!(
+            covered(at, &kept_off),
+            0.0,
+            "{case}, the sheet stands at {placed:?}, over the dialogue or nearer it than {apart}"
         );
         let least = (0..=40)
             .flat_map(|i| (0..=10).map(move |j| (i, j)))
@@ -591,6 +615,7 @@ fn a_sheet_set_down_beside_people_covers_as_few_of_them_as_it_can() {
                     screen.top() + free.y * j as f32 / 10.0,
                 )
             })
+            .filter(|spot| covered(*spot, &kept_off) == 0.0)
             .map(|spot| covered(spot, &bodies))
             .fold(f32::INFINITY, f32::min);
         assert!(
@@ -598,18 +623,18 @@ fn a_sheet_set_down_beside_people_covers_as_few_of_them_as_it_can() {
             "{case}, the sheet covers {} of the people where it could cover {least}",
             covered(at, &bodies)
         );
-        if bodies.is_empty() {
+        if dialogue.is_empty() && bodies.is_empty() {
             assert_eq!(at, preferred, "{case}, the sheet stands where it would");
         }
         if covered(at, &bodies) == 0.0 {
-            for body in &bodies {
-                let clear = placed.right() + apart <= body.left() + 1e-3
-                    || body.right() + apart <= placed.left() + 1e-3
-                    || placed.bottom() + apart <= body.top() + 1e-3
-                    || body.bottom() + apart <= placed.top() + 1e-3;
+            for kept in &bodies {
+                let clear = placed.right() + apart <= kept.left() + 1e-3
+                    || kept.right() + apart <= placed.left() + 1e-3
+                    || placed.bottom() + apart <= kept.top() + 1e-3
+                    || kept.bottom() + apart <= placed.top() + 1e-3;
                 assert!(
                     clear,
-                    "{case}, the sheet stands nearer than {apart} to {body:?}"
+                    "{case}, the sheet stands nearer than {apart} to {kept:?}"
                 );
             }
         }

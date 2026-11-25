@@ -81,10 +81,12 @@ pub(crate) fn seat(
     Rect::from_min_size(Pos2::new(left, bottom - height), Vec2::new(size.x, height))
 }
 
-/// Where the window of `key` and `size` starts when it should keep the people talking in sight:
-/// above the dialogue, where it covers the least of them as the camera frames them once it comes
-/// to rest, and of those spots the nearest its seat in the row. The camera may still be on its
-/// way, so the spot is worth working out once and keeping, never following the camera.
+/// Where the window of `key`, `size` whole, starts when it should keep the people talking in
+/// sight: anywhere on the screen clear of the dialogue as it stands for its whole step, every line
+/// and choice of it, and of the conversation's other windows; of those spots, where it covers the
+/// least of the people as the camera frames them once it comes to rest; and of those, the nearest
+/// its seat in the row above the dialogue. The camera may still be on its way, so the spot is worth
+/// working out once and keeping, never following the camera.
 pub(crate) fn seat_in_sight_of_bodies(
     world: &mut World,
     gui: &egui::Context,
@@ -92,20 +94,21 @@ pub(crate) fn seat_in_sight_of_bodies(
     size: Vec2,
 ) -> Rect {
     let row = seat(world, gui, key, size, true);
-    let screen = gui.content_rect().shrink(SCREEN_MARGIN);
-    let within = Rect::from_min_max(screen.min, Pos2::new(screen.max.x, row.bottom()));
+    let within = gui.content_rect().shrink(SCREEN_MARGIN);
     let drawn = world.resource::<crate::core::gui::WidgetRects>();
-    let others: Vec<Rect> = WindowKey::OF_A_CONVERSATION
-        .iter()
-        .filter(|other| **other != key)
-        .filter_map(|other| drawn.0.get(other.name()).copied())
-        .collect();
-    let kept_clear: Vec<Rect> = super::camera::bodies_at_rest(world)
+    let dialogue: Vec<Rect> = stage::dialogue_rect(world)
         .into_iter()
-        .chain(others)
+        .chain(
+            WindowKey::OF_A_CONVERSATION
+                .iter()
+                .filter(|other| **other != key)
+                .filter_map(|other| drawn.0.get(other.name()).copied()),
+        )
         .collect();
-    let at = ui::float::clear_spot(row.size(), within, &kept_clear, row.min, GAP);
-    Rect::from_min_size(at, row.size())
+    let bodies = super::camera::bodies_at_rest(world);
+    let preferred = Pos2::new(row.left(), row.bottom() - size.y);
+    let at = ui::float::clear_spot(size, within, &dialogue, &bodies, preferred, GAP);
+    Rect::from_min_size(at, size)
 }
 
 /// What the windows drawn this pass stand to start at, which the next pass lays its row out by.
