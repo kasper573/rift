@@ -181,61 +181,84 @@ pub fn lay_apart(rects: &mut [Rect], apart: f32) {
     }
 }
 
-/// Where a rect of `size` goes within `within`: clear of everything `must_clear` holds, and never
-/// nearer it than `apart`, wherever it fits so, covering as little of it as it can where it never
-/// does; of those spots, the ones that cover least of `rather_clear`; and of those, the nearest
-/// `preferred`. A rect that covers least lies flush with an edge of `within` or `apart` off an edge
-/// of one kept clear, along each axis, so those are the spots weighed.
-pub fn clear_spot(
+/// Where a rect of `size` stands with its centre as near `toward` as it can, at least `margin` clear
+/// of every rect of `kept_clear`, and wholly within `within`. Staying within comes first: where no
+/// spot within keeps them all clear, the rect stands at the spot that keeps them clear needing the
+/// least push to come within, pushed within, and of such spots the one nearest `toward`.
+pub fn nearest_clear_spot(
     size: Vec2,
     within: Rect,
-    must_clear: &[Rect],
-    rather_clear: &[Rect],
-    preferred: Pos2,
-    apart: f32,
+    kept_clear: &[Rect],
+    margin: f32,
+    toward: Pos2,
 ) -> Pos2 {
-    let must_clear: Vec<Rect> = must_clear.iter().map(|rect| rect.expand(apart)).collect();
-    let rather_kept: Vec<Rect> = rather_clear.iter().map(|rect| rect.expand(apart)).collect();
-    let edges = || must_clear.iter().chain(&rather_kept);
-    let spots = |low: f32, high: f32, preferred: f32, edges: &mut dyn Iterator<Item = f32>| {
-        let last = (high - low).max(0.0) + low;
-        let mut spots: Vec<f32> = [low, last, preferred].into_iter().chain(edges).collect();
-        for spot in &mut spots {
-            *spot = spot.clamp(low, last);
-        }
-        spots
-    };
-    let xs = spots(
-        within.left(),
-        within.right() - size.x,
-        preferred.x,
-        &mut edges().flat_map(|rect| [rect.left() - size.x, rect.right()]),
-    );
-    let ys = spots(
-        within.top(),
-        within.bottom() - size.y,
-        preferred.y,
-        &mut edges().flat_map(|rect| [rect.top() - size.y, rect.bottom()]),
-    );
-    let covered = |at: Pos2, kept_clear: &[Rect]| -> f32 {
-        let placed = Rect::from_min_size(at, size);
-        kept_clear
-            .iter()
-            .map(|rect| {
-                let over = placed.intersect(*rect);
-                if over.is_positive() { over.area() } else { 0.0 }
-            })
-            .sum()
-    };
-    xs.iter()
-        .flat_map(|&x| ys.iter().map(move |&y| Pos2::new(x, y)))
-        .min_by(|a, b| {
-            covered(*a, &must_clear)
-                .total_cmp(&covered(*b, &must_clear))
-                .then(covered(*a, rather_clear).total_cmp(&covered(*b, rather_clear)))
-                .then(a.distance(preferred).total_cmp(&b.distance(preferred)))
+    let target = toward - size / 2.0;
+    let bounds = Rect::from_min_max(within.min, (within.max - size).max(within.min));
+    let blocked: Vec<Rect> = kept_clear
+        .iter()
+        .map(|rect| {
+            Rect::from_min_max(
+                rect.min - size - Vec2::splat(margin),
+                rect.max + Vec2::splat(margin),
+            )
         })
-        .unwrap_or(preferred)
+        .collect();
+    let free = |at: Pos2| {
+        !blocked.iter().any(|rect| {
+            rect.min.x < at.x && at.x < rect.max.x && rect.min.y < at.y && at.y < rect.max.y
+        })
+    };
+    // The free spot nearest the target, or the one the bounds push least, is the target itself or
+    // lies on an edge of a blocked rect or of the bounds, along each axis: those are the only spots
+    // weighed.
+    let xs: Vec<f32> = std::iter::once(target.x)
+        .chain(blocked.iter().flat_map(|rect| [rect.min.x, rect.max.x]))
+        .collect();
+    let ys: Vec<f32> = std::iter::once(target.y)
+        .chain(blocked.iter().flat_map(|rect| [rect.min.y, rect.max.y]))
+        .collect();
+    let nearest = |xs: &[f32], ys: &[f32]| {
+        xs.iter()
+            .flat_map(|&x| ys.iter().map(move |&y| Pos2::new(x, y)))
+            .filter(|at| free(*at))
+            .min_by(|a, b| a.distance_sq(target).total_cmp(&b.distance_sq(target)))
+    };
+    let within_bounds = |values: &[f32], low: f32, high: f32| -> Vec<f32> {
+        values
+            .iter()
+            .copied()
+            .filter(|value| (low..=high).contains(value))
+            .chain([low, high])
+            .collect()
+    };
+    let inside = nearest(
+        &within_bounds(&xs, bounds.min.x, bounds.max.x),
+        &within_bounds(&ys, bounds.min.y, bounds.max.y),
+    );
+    inside.unwrap_or_else(|| {
+        let push = |at: Pos2| at.distance(at.clamp(bounds.min, bounds.max));
+        let xs: Vec<f32> = xs
+            .iter()
+            .copied()
+            .chain([bounds.min.x, bounds.max.x])
+            .collect();
+        let ys: Vec<f32> = ys
+            .iter()
+            .copied()
+            .chain([bounds.min.y, bounds.max.y])
+            .collect();
+        let least_pushed = xs
+            .iter()
+            .flat_map(|&x| ys.iter().map(move |&y| Pos2::new(x, y)))
+            .filter(|at| free(*at))
+            .min_by(|a, b| {
+                push(*a)
+                    .total_cmp(&push(*b))
+                    .then(a.distance_sq(target).total_cmp(&b.distance_sq(target)))
+            })
+            .unwrap_or(target);
+        least_pushed.clamp(bounds.min, bounds.max)
+    })
 }
 
 /// The layer drawn at `at`, leaving out the root layer egui keeps under the whole screen for panels

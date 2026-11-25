@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::animation::{AnimatedBy, AnimationTargetId};
+use bevy::camera::primitives::Aabb;
 use bevy::mesh::VertexAttributeValues;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
@@ -93,6 +94,32 @@ impl Body {
     /// Whether every skin of the body is drawn: loaded, bound to the rig and painted.
     pub fn drawn(&self) -> bool {
         self.skins.iter().all(|skin| self.worn.contains_key(skin))
+    }
+
+    /// Where everything the body's skins draw stands as they are posed now: the corners of the box
+    /// round each of their meshes, in the world.
+    pub fn drawn_corners(&self, world: &World) -> Vec<Vec3> {
+        let mut corners = Vec::new();
+        let mut left = self.skins.clone();
+        while let Some(node) = left.pop() {
+            if let (Some(bounds), Some(placed)) =
+                (world.get::<Aabb>(node), world.get::<GlobalTransform>(node))
+            {
+                let (center, half) = (Vec3::from(bounds.center), Vec3::from(bounds.half_extents));
+                for sign in [-1.0, 1.0] {
+                    for other in [-1.0, 1.0] {
+                        for third in [-1.0, 1.0] {
+                            let corner = center + half * Vec3::new(sign, other, third);
+                            corners.push(placed.transform_point(corner));
+                        }
+                    }
+                }
+            }
+            if let Some(children) = world.get::<Children>(node) {
+                left.extend(children.iter());
+            }
+        }
+        corners
     }
 
     /// The entity the rig's clips play on.

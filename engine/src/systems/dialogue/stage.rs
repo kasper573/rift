@@ -165,7 +165,8 @@ pub(super) fn cast(world: &mut World) -> Option<Cast> {
     })
 }
 
-/// Where the dialogue's text stands, while it is on show.
+/// Where all the dialogue shows stands while it is on show: every line of its step and the choices
+/// that end it, as they will stand from the step's first letter.
 pub fn dialogue_rect(world: &World) -> Option<Rect> {
     world.resource::<StageDrawn>().dialogue
 }
@@ -681,7 +682,7 @@ fn dialogue_text(world: &mut World, gui: &egui::Context, pose: SheetPose, before
             .insert(index, row.response.rect);
     }
     keep_afterimage(world, gui, drawn.rect);
-    world.resource_mut::<StageDrawn>().dialogue = Some(drawn.rect);
+    world.resource_mut::<StageDrawn>().dialogue = Some(drawn.content);
 }
 
 /// What the conversation on show puts on the sheet: its line as far as it has typed, and its

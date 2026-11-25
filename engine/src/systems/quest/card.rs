@@ -274,31 +274,23 @@ fn draw_offer(world: &mut World) {
         .insert(key.name().to_owned(), shown.response.rect);
 }
 
-/// Where the card of an offer stands until the player places it: in sight of the people talking
-/// where it can be. It is worked out once, when the card has been drawn for this offer and its size
-/// is known, and kept while the offer shows, so it never moves with the camera.
+/// Where the card of an offer stands until the player places it: in sight of the conversation. It
+/// is worked out once, when the card has been drawn for this offer and its size is known, and kept
+/// while the offer shows, so it never moves with the camera.
 fn offer_spot(world: &mut World, gui: &egui::Context, shows: (QuestId, QuestMoment)) -> egui::Pos2 {
-    let key = WindowKey::QuestOffer;
-    let size = |gui: &egui::Context| {
-        hud::drawn_rect(gui, key).map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size())
-    };
-    let spot = *world.resource::<OfferSpot>();
-    match spot {
-        OfferSpot::At(of, at) if of == shows => {
-            // The row keeps the card's place, so the conversation's other windows stand where
-            // they would beside it.
-            windows::seat(world, gui, key, size(gui), true);
-            at
-        }
+    let size = hud::drawn_rect(gui, WindowKey::QuestOffer)
+        .map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size());
+    match *world.resource::<OfferSpot>() {
+        OfferSpot::At(of, at) if of == shows => at,
         OfferSpot::Measured(of) if of == shows => {
-            let at = windows::seat_in_sight_of_bodies(world, gui, key, size(gui)).min;
+            let at = windows::spot_in_sight(world, gui, size);
             *world.resource_mut::<OfferSpot>() = OfferSpot::At(shows, at);
             at
         }
         _ => {
             *world.resource_mut::<OfferSpot>() = OfferSpot::Measured(shows);
             gui.request_discard("a quest offer's card measured before it is placed");
-            windows::seat(world, gui, key, size(gui), true).min
+            windows::spot_in_sight(world, gui, size)
         }
     }
 }

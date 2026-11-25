@@ -542,101 +542,131 @@ fn labels_laid_apart_never_overlap_and_only_those_that_would_move() {
     }
 }
 
-/// A sheet set down in a scene never covers the dialogue, whole, or comes nearer it than the gap
-/// kept between them, where it fits anywhere on the screen so at its own size; of those spots, it
-/// covers as few of the people as it can, and stands where it would when nothing is in its way.
+/// A card set down in a scene stands with its centre as near the middle of the screen as it can, at
+/// least its margin clear of the dialogue and of everyone talking, and wholly on the screen; where
+/// no spot on the screen keeps them clear, the screen pushes it in from the clear spot it pushes
+/// least.
 #[test]
-fn a_sheet_set_down_beside_people_never_covers_the_dialogue_and_as_few_of_them_as_it_can() {
-    let screen = Rect::from_min_max(Pos2::new(8.0, 8.0), Pos2::new(1272.0, 560.0));
-    let sheet = Vec2::new(300.0, 360.0);
-    let preferred = Pos2::new(490.0, 160.0);
+fn a_card_set_down_in_a_scene_stands_nearest_the_middle_clear_of_the_dialogue_and_the_people() {
+    let screen = Rect::from_min_max(Pos2::ZERO, Pos2::new(1280.0, 720.0));
+    let card = Vec2::new(300.0, 415.0);
+    let margin = 20.0;
     let body =
-        |x: f32, width: f32| Rect::from_min_size(Pos2::new(x, 150.0), Vec2::new(width, 400.0));
-    let low_dialogue = Rect::from_min_max(Pos2::new(340.0, 532.0), Pos2::new(940.0, 560.0));
-    let tall_dialogue = Rect::from_min_max(Pos2::new(340.0, 300.0), Pos2::new(940.0, 560.0));
-    let apart = 12.0;
-    let covered = |at: Pos2, kept_clear: &[Rect]| -> f32 {
-        let placed = Rect::from_min_size(at, sheet);
-        kept_clear
-            .iter()
-            .map(|rect| {
-                let over = placed.intersect(*rect);
-                if over.is_positive() { over.area() } else { 0.0 }
-            })
-            .sum()
-    };
-    let cases: [(&str, Vec<Rect>, Vec<Rect>); 6] = [
-        ("with nothing in its way", vec![], vec![]),
+        |x: f32, width: f32| Rect::from_min_max(Pos2::new(x, 230.0), Pos2::new(x + width, 720.0));
+    let dialogue = |top: f32| Rect::from_min_max(Pos2::new(228.0, top), Pos2::new(1040.0, 634.0));
+    let cases: [(&str, Vec<Rect>, bool); 7] = [
+        ("with nothing in its way", vec![], true),
+        ("with someone in the middle", vec![body(560.0, 160.0)], true),
         (
-            "with someone where it would stand",
-            vec![low_dialogue],
-            vec![body(560.0, 120.0)],
+            "with a short dialogue and people on both sides of the middle",
+            vec![dialogue(580.0), body(380.0, 140.0), body(760.0, 140.0)],
+            true,
         ),
         (
-            "with people on both sides of where it would stand",
-            vec![low_dialogue],
-            vec![body(380.0, 120.0), body(700.0, 120.0)],
+            "with a narrow dialogue too tall to stand above",
+            vec![Rect::from_min_max(
+                Pos2::new(400.0, 430.0),
+                Pos2::new(880.0, 634.0),
+            )],
+            true,
         ),
         (
-            "with people across the whole screen",
-            vec![low_dialogue],
-            vec![body(8.0, 600.0), body(640.0, 632.0)],
+            "with people across the screen above a short dialogue",
+            vec![dialogue(580.0), body(0.0, 620.0), body(660.0, 620.0)],
+            false,
         ),
         (
-            "with the dialogue too tall to stand above",
-            vec![tall_dialogue],
-            vec![],
+            "with the dialogue a little too tall to stand above, someone in the middle and someone \
+             near at hand",
+            vec![
+                dialogue(428.0),
+                Rect::from_min_max(Pos2::new(300.0, 150.0), Pos2::new(800.0, 720.0)),
+                Rect::from_min_max(Pos2::new(880.0, 300.0), Pos2::new(1280.0, 720.0)),
+            ],
+            false,
         ),
         (
             "with the dialogue too tall to stand above, and people on both sides of it",
-            vec![tall_dialogue],
-            vec![body(8.0, 320.0), body(940.0, 332.0)],
+            vec![dialogue(430.0), body(0.0, 360.0), body(900.0, 380.0)],
+            false,
         ),
     ];
-    for (case, dialogue, bodies) in cases {
-        let at = ui::float::clear_spot(sheet, screen, &dialogue, &bodies, preferred, apart);
-        let kept_off: Vec<Rect> = dialogue.iter().map(|rect| rect.expand(apart)).collect();
-        let placed = Rect::from_min_size(at, sheet);
+    let middle = screen.center();
+    let clear = |at: Pos2, kept_clear: &[Rect]| {
+        let placed = Rect::from_min_size(at, card);
+        kept_clear
+            .iter()
+            .all(|kept| !placed.intersects(kept.expand(margin - 1e-3)))
+    };
+    for (case, kept_clear, fits) in cases {
+        let at = ui::float::nearest_clear_spot(card, screen, &kept_clear, margin, middle);
+        let placed = Rect::from_min_size(at, card);
         assert!(
-            screen.contains_rect(placed),
-            "{case}, the sheet stands at {placed:?}, off the screen"
+            screen.expand(1e-3).contains_rect(placed),
+            "{case}, the card stands at {placed:?}, off the screen"
         );
+        let free = screen.size() - card;
+        let nearest = (0..=640)
+            .flat_map(|i| (0..=152).map(move |j| (i, j)))
+            .map(|(i, j)| Pos2::new(free.x * i as f32 / 640.0, free.y * j as f32 / 152.0))
+            .filter(|spot| clear(*spot, &kept_clear))
+            .map(|spot| Rect::from_min_size(spot, card).center().distance(middle))
+            .fold(None, |nearest: Option<f32>, distance| {
+                Some(nearest.map_or(distance, |nearest| nearest.min(distance)))
+            });
         assert_eq!(
-            covered(at, &kept_off),
-            0.0,
-            "{case}, the sheet stands at {placed:?}, over the dialogue or nearer it than {apart}"
-        );
-        let least = (0..=40)
-            .flat_map(|i| (0..=10).map(move |j| (i, j)))
-            .map(|(i, j)| {
-                let free = screen.size() - sheet;
-                Pos2::new(
-                    screen.left() + free.x * i as f32 / 40.0,
-                    screen.top() + free.y * j as f32 / 10.0,
-                )
-            })
-            .filter(|spot| covered(*spot, &kept_off) == 0.0)
-            .map(|spot| covered(spot, &bodies))
-            .fold(f32::INFINITY, f32::min);
-        assert!(
-            covered(at, &bodies) <= least + 1.0,
-            "{case}, the sheet covers {} of the people where it could cover {least}",
-            covered(at, &bodies)
-        );
-        if dialogue.is_empty() && bodies.is_empty() {
-            assert_eq!(at, preferred, "{case}, the sheet stands where it would");
-        }
-        if covered(at, &bodies) == 0.0 {
-            for kept in &bodies {
-                let clear = placed.right() + apart <= kept.left() + 1e-3
-                    || kept.right() + apart <= placed.left() + 1e-3
-                    || placed.bottom() + apart <= kept.top() + 1e-3
-                    || kept.bottom() + apart <= placed.top() + 1e-3;
-                assert!(
-                    clear,
-                    "{case}, the sheet stands nearer than {apart} to {kept:?}"
-                );
+            nearest.is_some(),
+            fits,
+            "{case}, the screen {} a spot clear of them all",
+            if fits {
+                "should have"
+            } else {
+                "should not have"
             }
+        );
+        if nearest.is_none() {
+            let step = 4.0;
+            let reach = 600.0;
+            let pushed = |spot: Pos2| {
+                spot.distance(spot.clamp(Pos2::ZERO, (screen.size() - card).to_pos2()))
+            };
+            let clear_spots: Vec<Pos2> = (0..=((free_reach(screen, card, reach).x) / step)
+                as usize)
+                .flat_map(|i| {
+                    (0..=((free_reach(screen, card, reach).y) / step) as usize)
+                        .map(move |j| Pos2::new(i as f32 * step - reach, j as f32 * step - reach))
+                })
+                .filter(|spot| clear(*spot, &kept_clear))
+                .collect();
+            let least = clear_spots
+                .iter()
+                .map(|spot| pushed(*spot))
+                .fold(f32::INFINITY, f32::min);
+            let from_clear = clear_spots
+                .iter()
+                .map(|spot| spot.distance(at))
+                .fold(f32::INFINITY, f32::min);
+            assert!(
+                from_clear <= least + step * 2.0,
+                "{case}, the card stands {from_clear} from the nearest clear spot where the \
+                 screen need push it only {least}"
+            );
+        }
+        if let Some(nearest) = nearest {
+            assert!(
+                clear(at, &kept_clear),
+                "{case}, the card stands at {placed:?}, nearer than {margin} to what it keeps clear of"
+            );
+            let distance = placed.center().distance(middle);
+            assert!(
+                distance <= nearest + 1e-3,
+                "{case}, the card stands {distance} from the middle where it could stand {nearest}"
+            );
         }
     }
+}
+
+/// How far the top left of a card of `size` reaches over the screen and `reach` past it each way.
+fn free_reach(screen: Rect, size: Vec2, reach: f32) -> Vec2 {
+    screen.size() - size + Vec2::splat(reach * 2.0)
 }

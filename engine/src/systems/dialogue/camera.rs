@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::stage;
 use crate::core::content::RowCheck;
 use crate::core::geometry::Capsule;
+use crate::core::render::world::body::Body as DrawnBody;
 use crate::core::render::{
     CameraRig, CameraRigSystems, GroundHeights, Shot, View, ground_height, window_size, world_point,
 };
@@ -117,8 +118,8 @@ impl Plugin for DialogueCameraPlugin {
 }
 
 /// Where everyone in the conversation shows on the screen once the camera has come to rest on the
-/// shot it frames them in, each body from its feet to the top of its head: the camera may still
-/// be gliding there.
+/// shot it frames them in, each body as all it draws stands posed now: the camera may still be
+/// gliding there.
 pub(crate) fn bodies_at_rest(world: &mut World) -> Vec<ui::egui::Rect> {
     let (Some(cast), Some(me), Some(viewport)) =
         (stage::cast(world), session::me(world), window_size(world))
@@ -129,21 +130,16 @@ pub(crate) fn bodies_at_rest(world: &mut World) -> Vec<ui::egui::Rect> {
         return Vec::new();
     };
     let view = View::new(rig.resting().transform(), viewport, rig.framing().fov);
-    let right = rig.resting().transform().right().as_vec3();
     [me].into_iter()
         .chain(cast.with)
         .chain(cast.speakers.iter().copied())
-        .filter_map(|body| Body::of(world, body))
-        .filter_map(|body| {
-            let capsule = body.capsule?;
-            let wide = right * capsule.radius.0;
-            let head = body.foot + Vec3::Y * capsule.height.0;
-            let shown: Vec<ui::egui::Pos2> =
-                [body.foot - wide, body.foot + wide, head - wide, head + wide]
-                    .into_iter()
-                    .filter_map(|corner| view.project(corner))
-                    .map(|at| ui::egui::pos2(at.x, at.y))
-                    .collect();
+        .filter_map(|entity| {
+            let drawn = world.get::<DrawnBody>(entity)?.drawn_corners(world);
+            let shown: Vec<ui::egui::Pos2> = drawn
+                .into_iter()
+                .filter_map(|corner| view.project(corner))
+                .map(|at| ui::egui::pos2(at.x, at.y))
+                .collect();
             (!shown.is_empty()).then(|| ui::egui::Rect::from_points(&shown))
         })
         .collect()

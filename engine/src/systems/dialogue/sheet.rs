@@ -69,6 +69,10 @@ pub struct SheetDrawn {
     pub rows: Vec<RowDrawn>,
     /// How tall the sheet stood, which the next pass lays it out at.
     pub height: f32,
+    /// Where everything the sheet shows before the conversation moves on stands: every line of its
+    /// step, the choices that end it with the mark beside the one the player is on, and the mark
+    /// that asks the player to go on, as they will stand from the step's first letter.
+    pub content: Rect,
 }
 
 pub struct RowDrawn {
@@ -149,11 +153,18 @@ pub fn draw(
             );
             ui.painter()
                 .set(scrim, paint::fade_up(backing, ink::DIALOGUE_BACKING));
+            let chooses = !sheet.choices.is_empty() || !sheet.to_come.choices.is_empty();
+            let beside = if chooses { lit_mark_reach(ui) } else { 0.0 };
+            let content = Rect::from_min_max(
+                Pos2::new(rect.left() - beside, rect.top()),
+                Pos2::new(rect.right(), rect.top() + needed),
+            );
             SheetDrawn {
                 rect,
                 held,
                 rows,
                 height: needed,
+                content,
             }
         });
     drawn.inner
@@ -366,15 +377,7 @@ fn choice_row(
 /// nothing.
 fn lit_mark(ui: &Ui, row: Rect, color: Color32) {
     let size = text_size(ui);
-    let font = FontId::new(size, face::Face::Book.family());
-    let galley = ui
-        .painter()
-        .layout_no_wrap(LIT_MARK.to_owned(), font, color);
-    let drawn = if galley.mesh_bounds.is_positive() {
-        galley.mesh_bounds
-    } else {
-        galley.rect
-    };
+    let (galley, drawn) = lit_mark_galley(ui, color);
     let first_line = row.top() + f32::from(LINE_MARGIN.top) + size * face::DIALOGUE_LEADING / 2.0;
     let centre = Pos2::new(
         row.left() - size * LIT_MARK_GAP - drawn.width() / 2.0,
@@ -388,6 +391,26 @@ fn lit_mark(ui: &Ui, row: Rect, color: Color32) {
         &outline(ui),
         TSTransform::IDENTITY,
     );
+}
+
+/// How far left of the column the mark of the choice the player is on reaches.
+fn lit_mark_reach(ui: &Ui) -> f32 {
+    let (_, drawn) = lit_mark_galley(ui, ink::DIALOGUE_CHOICE_LIT);
+    text_size(ui) * LIT_MARK_GAP + drawn.width()
+}
+
+/// The mark of the choice the player is on, laid out, and the part of it its letter covers.
+fn lit_mark_galley(ui: &Ui, color: Color32) -> (std::sync::Arc<egui::Galley>, Rect) {
+    let font = FontId::new(text_size(ui), face::Face::Book.family());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(LIT_MARK.to_owned(), font, color);
+    let drawn = if galley.mesh_bounds.is_positive() {
+        galley.mesh_bounds
+    } else {
+        galley.rect
+    };
+    (galley, drawn)
 }
 
 /// What a choice needs, pays and gets, as tags set in the dialogue's own outlined text: what it

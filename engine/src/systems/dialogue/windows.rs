@@ -81,35 +81,23 @@ pub(crate) fn seat(
     Rect::from_min_size(Pos2::new(left, bottom - height), Vec2::new(size.x, height))
 }
 
-/// Where the window of `key`, `size` whole, starts when it should keep the people talking in
-/// sight: anywhere on the screen clear of the dialogue as it stands for its whole step, every line
-/// and choice of it, and of the conversation's other windows; of those spots, where it covers the
-/// least of the people as the camera frames them once it comes to rest; and of those, the nearest
-/// its seat in the row above the dialogue. The camera may still be on its way, so the spot is worth
-/// working out once and keeping, never following the camera.
-pub(crate) fn seat_in_sight_of_bodies(
-    world: &mut World,
-    gui: &egui::Context,
-    key: WindowKey,
-    size: Vec2,
-) -> Rect {
-    let row = seat(world, gui, key, size, true);
-    let within = gui.content_rect().shrink(SCREEN_MARGIN);
-    let drawn = world.resource::<crate::core::gui::WidgetRects>();
-    let dialogue: Vec<Rect> = stage::dialogue_rect(world)
+/// Where a window of `size` starts when it should keep the conversation in sight: as near the middle
+/// of the screen as it can stand, at least a margin clear of all the dialogue shows for its step and
+/// of everyone in the conversation as the camera frames them once it comes to rest, and never off
+/// the screen. The camera may still be on its way, so the spot is worth working out once and
+/// keeping, never following the camera.
+pub(crate) fn spot_in_sight(world: &mut World, gui: &egui::Context, size: Vec2) -> Pos2 {
+    let screen = gui.content_rect();
+    let kept_clear: Vec<Rect> = stage::dialogue_rect(world)
         .into_iter()
-        .chain(
-            WindowKey::OF_A_CONVERSATION
-                .iter()
-                .filter(|other| **other != key)
-                .filter_map(|other| drawn.0.get(other.name()).copied()),
-        )
+        .chain(super::camera::bodies_at_rest(world))
         .collect();
-    let bodies = super::camera::bodies_at_rest(world);
-    let preferred = Pos2::new(row.left(), row.bottom() - size.y);
-    let at = ui::float::clear_spot(size, within, &dialogue, &bodies, preferred, GAP);
-    Rect::from_min_size(at, size)
+    ui::float::nearest_clear_spot(size, screen, &kept_clear, IN_SIGHT_MARGIN, screen.center())
 }
+
+/// How far a window kept in sight of the conversation stands at least from the dialogue and from
+/// everyone in it.
+const IN_SIGHT_MARGIN: f32 = 20.0;
 
 /// What the windows drawn this pass stand to start at, which the next pass lays its row out by.
 #[derive(Resource, Default)]
