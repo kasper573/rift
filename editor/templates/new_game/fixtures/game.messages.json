@@ -757,7 +757,6 @@
   },
   "market": {
     "listed": "Listing for {goods} created",
-    "bought": "You got {goods} for {price}.",
     "sold": "Your listing of {goods} was bought. You got {price}.",
     "expired": "Your listing of {goods} ended unbought.",
     "cancelled": "{goods} came back from the market.",

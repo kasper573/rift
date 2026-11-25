@@ -40,8 +40,6 @@ messages! {
     pub struct MarketMessages {
         /// What the player is told once their listing of `{goods}` is up on the market.
         listed[goods: Line],
-        /// What a player is told as they get `{goods}` for `{price}` on the market.
-        bought[goods: Line, price: Line],
         /// What a seller is told as their listing of `{goods}` is bought and they get `{price}`.
         sold[goods: Line, price: Line],
         /// What a seller is told as their listing of `{goods}` ends unbought.
@@ -952,11 +950,6 @@ fn buy(
     };
     settling.unwritten.remove::<Listing>(listing.id());
     deliver::to_account(settling, content, by, &goods, DeliveryReason::MarketBought);
-    let said = messages.market.bought(
-        ItemStack::listed(&messages.interface, &goods),
-        ItemStack::listed(&messages.interface, &price),
-    );
-    settling.tell(by, Notification::feed(HistoryTopic::Item, said));
     let paid: Vec<ItemStack> = price
         .iter()
         .chain(listing.deposit.iter())

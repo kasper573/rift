@@ -115,6 +115,7 @@ fn a_listing_holds_its_goods_until_the_first_buyer_pays_its_price() {
         price: listing.price,
     };
     host.search(3, "sword");
+    let buyer_told = host.server.told(2);
     host.server.send(2, MarketRequest::Ask(buy.clone()));
     host.server.send(3, MarketRequest::Ask(buy));
     host.server.step();
@@ -158,6 +159,11 @@ fn a_listing_holds_its_goods_until_the_first_buyer_pays_its_price() {
             )
         ),
         "the seller gets the whole price, and the deposit back"
+    );
+    assert_eq!(
+        host.server.told(2),
+        buyer_told,
+        "the buyer bought it themselves, so the market tells them nothing past what they gained and gave"
     );
 
     host.give(marrow, "potion", 5);
