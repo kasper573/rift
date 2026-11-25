@@ -128,6 +128,8 @@ pub fn show(
 pub struct ShownLine {
     pub response: Response,
     pub links: Vec<ShownLink>,
+    /// Where each row of the line's letters stands, typed out yet or not.
+    pub rows: Vec<Rect>,
 }
 
 /// A row of a link's run as drawn, with the name the run is read out by.
@@ -152,13 +154,19 @@ pub fn show_linked(
     let (rect, response) = ui.allocate_exact_size(plan.footprint(&galley), Sense::hover());
     let plain = line.plain(keys);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &plain));
+    let origin = rect.min - galley.rect.min.to_vec2();
+    let rows = galley
+        .rows
+        .iter()
+        .map(|placed| placed.rect().translate(origin.to_vec2()))
+        .collect();
     if !ui.is_rect_visible(rect) {
         return ShownLine {
             response,
             links: Vec::new(),
+            rows,
         };
     }
-    let origin = rect.min - galley.rect.min.to_vec2();
     let placed = place(&galley, &plan, origin);
     let shown = shown.unwrap_or(plan.units);
     let time = ui.input(|input| input.time) as f32;
@@ -189,7 +197,11 @@ pub fn show_linked(
                 })
         })
         .collect();
-    ShownLine { response, links }
+    ShownLine {
+        response,
+        links,
+        rows,
+    }
 }
 
 /// Whether a letter, cap or picture is out once `shown` of the line's typing units are: what

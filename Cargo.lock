@@ -10675,8 +10675,11 @@ dependencies = [
  "egui-snarl",
  "egui_code_editor",
  "egui_dock",
+ "geo",
  "image",
  "jiff",
+ "serde",
+ "serde_json",
  "strum",
 ]
 

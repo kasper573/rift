@@ -474,7 +474,7 @@ fn draw_confirm(world: &mut World) {
                     .iter()
                     .map(|line| {
                         let look = TextLook::role(TextRole::Body, ink);
-                        inline::show_line_with_tooltips(ui, world, line, look)
+                        inline::show_line_with_tooltips(ui, world, line, look).response
                     })
                     .last();
                 let slid = text.amount.as_ref().map(|amount| {

@@ -329,7 +329,7 @@ pub fn show_line(
     shown: Option<usize>,
 ) -> Response {
     let styled = line.styled(world.resource::<Content>());
-    show_styled(ui, world, &styled, look, shown)
+    show_styled(ui, world, &styled, look, shown).response
 }
 
 /// Draws `line` with its inline items answering nothing, where the line stands in a row whose
@@ -350,7 +350,7 @@ pub fn show_line_with_tooltips(
     world: &mut World,
     line: &LineText,
     look: TextLook,
-) -> Response {
+) -> ShownLine {
     let styled = line.styled(world.resource::<Content>());
     draw_styled(ui, world, &styled, look, None, Clicks::Elsewhere)
 }
@@ -362,7 +362,7 @@ pub fn show_styled(
     line: &StyledLine,
     look: TextLook,
     shown: Option<usize>,
-) -> Response {
+) -> ShownLine {
     draw_styled(ui, world, line, look, shown, Clicks::Item)
 }
 
@@ -440,10 +440,10 @@ fn draw_styled(
     look: TextLook,
     shown: Option<usize>,
     clicks: Clicks,
-) -> Response {
+) -> ShownLine {
     let drawn = text::show_linked(ui, world, line, look, shown);
     answer(ui, world, &drawn, clicks);
-    drawn.response
+    drawn
 }
 
 fn answer(ui: &mut Ui, world: &mut World, drawn: &ShownLine, clicks: Clicks) {

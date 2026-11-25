@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::camera::primitives::Aabb;
+use bevy::math::Affine3A;
 use bevy::mesh::VertexAttributeValues;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
@@ -96,30 +97,23 @@ impl Body {
         self.skins.iter().all(|skin| self.worn.contains_key(skin))
     }
 
-    /// Where everything the body's skins draw stands as they are posed now: the corners of the box
-    /// round each of their meshes, in the world.
-    pub fn drawn_corners(&self, world: &World) -> Vec<Vec3> {
-        let mut corners = Vec::new();
+    /// Where everything the body's skins draw stands as they are posed now, as the corners of
+    /// boxes in the world: one round all each joint moves of a skinned mesh, as the joint holds it,
+    /// and one round each other mesh. Together they keep close to what the body draws, where a box
+    /// round a whole skinned mesh would reach far past it.
+    pub fn drawn_boxes(&self, world: &World) -> Vec<[Vec3; 8]> {
+        let mut boxes = Vec::new();
         let mut left = self.skins.clone();
         while let Some(node) = left.pop() {
-            if let (Some(bounds), Some(placed)) =
-                (world.get::<Aabb>(node), world.get::<GlobalTransform>(node))
-            {
-                let (center, half) = (Vec3::from(bounds.center), Vec3::from(bounds.half_extents));
-                for sign in [-1.0, 1.0] {
-                    for other in [-1.0, 1.0] {
-                        for third in [-1.0, 1.0] {
-                            let corner = center + half * Vec3::new(sign, other, third);
-                            corners.push(placed.transform_point(corner));
-                        }
-                    }
-                }
+            match skinned_boxes(world, node) {
+                Some(skinned) => boxes.extend(skinned),
+                None => boxes.extend(mesh_box(world, node)),
             }
             if let Some(children) = world.get::<Children>(node) {
                 left.extend(children.iter());
             }
         }
-        corners
+        boxes
     }
 
     /// The entity the rig's clips play on.
@@ -545,4 +539,46 @@ fn girth_between(laid: &[(f32, f32)], from: f32, to: f32) -> Option<f32> {
 fn from_bone(at: Vec3, tail: Vec3) -> f32 {
     let share = (at.dot(tail) / tail.length_squared()).clamp(0.0, 1.0);
     at.distance(tail * share)
+}
+
+fn skinned_boxes(world: &World, node: Entity) -> Option<Vec<[Vec3; 8]>> {
+    let skinned = world.get::<SkinnedMesh>(node)?;
+    let mesh = world
+        .resource::<Assets<Mesh>>()
+        .get(&world.get::<Mesh3d>(node)?.0)?;
+    let bindposes = world
+        .resource::<Assets<SkinnedMeshInverseBindposes>>()
+        .get(&skinned.inverse_bindposes)?;
+    let boxes = mesh
+        .skinned_mesh_bounds()?
+        .iter()
+        .filter_map(|(joint, bounds)| {
+            let index = usize::from(joint.0);
+            let placed = world.get::<GlobalTransform>(*skinned.joints.get(index)?)?;
+            let from_model = placed.affine() * Affine3A::from_mat4(*bindposes.get(index)?);
+            Some(
+                box_corners(bounds.center, bounds.half_size)
+                    .map(|corner| from_model.transform_point3(corner)),
+            )
+        })
+        .collect();
+    Some(boxes)
+}
+
+fn mesh_box(world: &World, node: Entity) -> Option<[Vec3; 8]> {
+    let (bounds, placed) = (
+        world.get::<Aabb>(node)?,
+        world.get::<GlobalTransform>(node)?,
+    );
+    Some(
+        box_corners(bounds.center.into(), bounds.half_extents.into())
+            .map(|corner| placed.transform_point(corner)),
+    )
+}
+
+fn box_corners(center: Vec3, half: Vec3) -> [Vec3; 8] {
+    std::array::from_fn(|corner| {
+        let side = |bit: usize| if corner & bit == 0 { -1.0 } else { 1.0 };
+        center + half * Vec3::new(side(1), side(2), side(4))
+    })
 }

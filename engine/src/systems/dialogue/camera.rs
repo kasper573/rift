@@ -118,9 +118,9 @@ impl Plugin for DialogueCameraPlugin {
 }
 
 /// Where everyone in the conversation shows on the screen once the camera has come to rest on the
-/// shot it frames them in, each body as all it draws stands posed now: the camera may still be
-/// gliding there.
-pub(crate) fn bodies_at_rest(world: &mut World) -> Vec<ui::egui::Rect> {
+/// shot it frames them in: for each, the corners of the boxes that keep close to all their body
+/// draws, posed as it stands now. The camera may still be gliding there.
+pub(crate) fn bodies_at_rest(world: &mut World) -> Vec<Vec<Vec<ui::egui::Pos2>>> {
     let (Some(cast), Some(me), Some(viewport)) =
         (stage::cast(world), session::me(world), window_size(world))
     else {
@@ -130,17 +130,20 @@ pub(crate) fn bodies_at_rest(world: &mut World) -> Vec<ui::egui::Rect> {
         return Vec::new();
     };
     let view = View::new(rig.resting().transform(), viewport, rig.framing().fov);
-    [me].into_iter()
-        .chain(cast.with)
-        .chain(cast.speakers.iter().copied())
-        .filter_map(|entity| {
-            let drawn = world.get::<DrawnBody>(entity)?.drawn_corners(world);
-            let shown: Vec<ui::egui::Pos2> = drawn
+    cast.everyone(me)
+        .into_iter()
+        .filter_map(|entity| world.get::<DrawnBody>(entity))
+        .map(|body| {
+            body.drawn_boxes(world)
                 .into_iter()
-                .filter_map(|corner| view.project(corner))
-                .map(|at| ui::egui::pos2(at.x, at.y))
-                .collect();
-            (!shown.is_empty()).then(|| ui::egui::Rect::from_points(&shown))
+                .map(|corners| {
+                    corners
+                        .into_iter()
+                        .filter_map(|corner| view.project(corner))
+                        .map(|at| ui::egui::pos2(at.x, at.y))
+                        .collect()
+                })
+                .collect()
         })
         .collect()
 }
@@ -182,10 +185,9 @@ fn shot(world: &mut World) -> Option<Shot> {
         shots.shoulder.shot(spoken_to, speaks, tall, kept)
     };
     let everyone = |world: &mut World| {
-        let bodies: Vec<Body> = [me]
+        let bodies: Vec<Body> = cast
+            .everyone(me)
             .into_iter()
-            .chain(cast.with)
-            .chain(cast.speakers.iter().copied())
             .filter_map(|body| Body::of(world, body))
             .collect();
         let front = match with {

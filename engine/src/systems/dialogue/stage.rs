@@ -141,6 +141,21 @@ pub(super) struct Cast {
     pub speakers: Vec<Entity>,
 }
 
+impl Cast {
+    /// Everyone the conversation stages, each once: the player `me`, whoever it is with and
+    /// whoever says its lines.
+    pub fn everyone(&self, me: Entity) -> Vec<Entity> {
+        let mut everyone: Vec<Entity> = [me]
+            .into_iter()
+            .chain(self.with)
+            .chain(self.speakers.iter().copied())
+            .collect();
+        everyone.sort_unstable();
+        everyone.dedup();
+        everyone
+    }
+}
+
 pub(super) fn cast(world: &mut World) -> Option<Cast> {
     let shown = world.resource::<Stage>().shown.as_ref()?;
     let (camera, with) = (shown.seen_through(), shown.with);
@@ -169,6 +184,12 @@ pub(super) fn cast(world: &mut World) -> Option<Cast> {
 /// that end it, as they will stand from the step's first letter.
 pub fn dialogue_rect(world: &World) -> Option<Rect> {
     world.resource::<StageDrawn>().dialogue
+}
+
+/// Where within the dialogue's rect something stands: each row of its lines' letters, each choice
+/// with its tags, and the marks beside them, as they will stand from the step's first letter.
+pub fn dialogue_parts(world: &World) -> Vec<Rect> {
+    world.resource::<StageDrawn>().dialogue_parts.clone()
 }
 
 /// Where the dialogue and the windows it opened stand, which a camera that frames the
@@ -242,6 +263,7 @@ struct Shown {
 #[derive(Resource, Default, Clone)]
 struct StageDrawn {
     dialogue: Option<Rect>,
+    dialogue_parts: Vec<Rect>,
     choices: HashMap<usize, Rect>,
 }
 
@@ -684,7 +706,9 @@ fn dialogue_text(world: &mut World, gui: &egui::Context, pose: SheetPose, before
             .insert(index, row.response.rect);
     }
     keep_afterimage(world, gui, drawn.rect);
-    world.resource_mut::<StageDrawn>().dialogue = Some(drawn.content);
+    let mut stage_drawn = world.resource_mut::<StageDrawn>();
+    stage_drawn.dialogue = Some(drawn.content);
+    stage_drawn.dialogue_parts = drawn.parts;
 }
 
 /// What the conversation on show puts on the sheet: its line as far as it has typed, and its

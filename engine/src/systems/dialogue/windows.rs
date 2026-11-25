@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use bevy::prelude::*;
 use ui::egui::{self, Pos2, Rect, Ui, Vec2};
+use ui::float::CoverPenalty;
 
 use super::stage;
 use crate::systems::area_map::minimap::MINIMAP;
@@ -85,27 +86,46 @@ pub(crate) fn seat(
 }
 
 /// Where a window of `size` starts when it should keep the conversation in sight: as near the middle
-/// of the screen as it can stand, at least a margin clear of all the dialogue shows for its step, of
-/// everyone in the conversation as the camera frames them once it comes to rest, and of the minimap,
-/// the quest tracker and the party's frames, and never off the screen. The camera may still be on its way, so the spot is worth working out once and
-/// keeping, never following the camera.
+/// of the screen as it can stand while covering as little as it can, a margin out, of all the
+/// dialogue shows for its step (which counts double), of everyone in the conversation as the camera
+/// frames them once it comes to rest, and of the minimap, the quest tracker and the party's frames,
+/// and while as much of it shows on the screen as can. The camera may still be on its way, so the
+/// spot is worth working out once and keeping, never following the camera.
 pub(crate) fn spot_in_sight(world: &mut World, gui: &egui::Context, size: Vec2) -> Pos2 {
     let screen = gui.content_rect();
-    let panels: Vec<Rect> = [MINIMAP, QUEST_TRACKER, PARTY_FRAMES]
+    let corners = |rect: Rect| {
+        [
+            rect.left_top(),
+            rect.right_top(),
+            rect.right_bottom(),
+            rect.left_bottom(),
+        ]
+        .to_vec()
+    };
+    let dialogue = CoverPenalty::over(
+        stage::dialogue_parts(world).into_iter().map(corners),
+        IN_SIGHT_MARGIN,
+        DIALOGUE_COVER_WEIGHT,
+    );
+    let panels: Vec<CoverPenalty> = [MINIMAP, QUEST_TRACKER, PARTY_FRAMES]
         .into_iter()
         .filter_map(|panel| hud::shown_widget_rect(world, panel))
+        .map(|panel| CoverPenalty::over([corners(panel)], IN_SIGHT_MARGIN, 1.0))
         .collect();
-    let kept_clear: Vec<Rect> = stage::dialogue_rect(world)
+    let bodies: Vec<CoverPenalty> = super::camera::bodies_at_rest(world)
         .into_iter()
-        .chain(super::camera::bodies_at_rest(world))
-        .chain(panels)
+        .map(|body| CoverPenalty::over(body, IN_SIGHT_MARGIN, 1.0))
         .collect();
-    ui::float::nearest_clear_spot(size, screen, &kept_clear, IN_SIGHT_MARGIN, screen.center())
+    let covers: Vec<CoverPenalty> = std::iter::once(dialogue)
+        .chain(panels)
+        .chain(bodies)
+        .collect();
+    ui::float::least_penalized_spot(size, screen, &covers, screen.center())
 }
 
-/// How far a window kept in sight of the conversation stands at least from the dialogue and from
-/// everyone in it.
+/// How far out of what a window kept in sight of the conversation covers it counts as covering it.
 const IN_SIGHT_MARGIN: f32 = 20.0;
+const DIALOGUE_COVER_WEIGHT: f32 = 2.0;
 
 /// What the windows drawn this pass stand to start at, which the next pass lays its row out by.
 #[derive(Resource, Default)]
