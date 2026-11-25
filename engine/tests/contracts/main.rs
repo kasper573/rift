@@ -16,6 +16,7 @@ mod daylight;
 mod effects;
 mod equipment;
 mod exchange;
+mod feet;
 mod friends;
 mod gathering;
 mod gestures;

@@ -72,7 +72,8 @@ pub fn layered(
                 step,
                 lead,
                 most_rise,
-                most_tilt,
+                most_pitch,
+                most_roll,
                 settle,
                 ..
             } => {
@@ -86,7 +87,8 @@ pub fn layered(
                     step: step.0,
                     lead: *lead,
                     most_rise: most_rise.0,
-                    most_tilt: *most_tilt,
+                    most_pitch: *most_pitch,
+                    most_roll: *most_roll,
                     settle: settle.0,
                 };
                 legs.map(|legs| JointLayer::Feet(Feet::new(&rig, &legs, *gait, stepping)))

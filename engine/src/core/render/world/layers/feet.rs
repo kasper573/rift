@@ -1,7 +1,13 @@
 //! Feet planted where they touched the ground. Each leg's foot stays put while the body moves on,
 //! and steps in an arc once the spot its clip would put it at has drifted a stride away: the legs of
-//! one group of the gait together, never while another group is in the air. The body rides its
-//! planted feet, raised, lowered and tilted with the ground beneath them.
+//! one group of the gait together, never while another group is in the air. A body come to rest
+//! steps each foot onto its spot once it stands further from it than it lifts, squaring them up.
+//!
+//! The body rides its planted feet, raised, lowered and tilted with the ground beneath them, while
+//! each foot keeps to the ground under where its clip has it, as legs stand plumb on a slope. A body
+//! moving on faster than a stride while a foot is in the air would leave its planted feet behind:
+//! its feet go as its clip moves them instead, each as high above the ground beneath it as the clip
+//! lifts it.
 
 use bevy_skeleton_modifiers::core::{
     BonePose, ChainIndices, IkSolver, IterateSettings, IterateState, SkeletonView, process_chain_ik,
@@ -26,8 +32,10 @@ pub struct Stepping {
     pub lead: f32,
     /// How far the planted feet may raise or lower the body, in metres.
     pub most_rise: f32,
-    /// How steeply the planted feet may tilt the body, as a slope.
-    pub most_tilt: f32,
+    /// How steeply the planted feet may tilt the body nose up or down, as a slope.
+    pub most_pitch: f32,
+    /// How steeply the planted feet may tilt the body to its side, as a slope.
+    pub most_roll: f32,
     /// How quickly the body settles onto its planted feet: the seconds it takes to go most of the
     /// way.
     pub settle: f32,
@@ -135,6 +143,14 @@ impl Feet {
     pub(super) fn run(&mut self, frame: &mut Frame) {
         let root = frame.view.root_global;
         let scale = root.matrix3.y_axis.length();
+        let clips: Vec<Vec3> = self
+            .legs
+            .iter()
+            .map(|leg| {
+                let foot = *leg.chain.as_slice().last().expect("a leg has a foot");
+                root.transform_point3(Vec3::from(frame.view.skeleton_pose(foot).translation))
+            })
+            .collect();
         self.settle(frame);
         let to_rig = root.inverse();
         let aloft: Vec<usize> = self
@@ -151,13 +167,20 @@ impl Feet {
             lead,
             ..
         } = self.stepping;
-        for leg in &mut self.legs {
-            let foot = *leg.chain.as_slice().last().expect("a leg has a foot");
-            let clip =
-                root.transform_point3(Vec3::from(frame.view.skeleton_pose(foot).translation));
+        let keeps_up = frame.speed * in_air <= stride * scale;
+        let still = frame.speed == 0.0;
+        for (leg, clip) in self.legs.iter_mut().zip(clips) {
             let spot = grounded(frame, clip, leg.rest_height * scale);
+            if !keeps_up {
+                leg.planted = Some(spot);
+                leg.step = None;
+            }
             let planted = *leg.planted.get_or_insert(spot);
             let target = match &mut leg.step {
+                None if !keeps_up => {
+                    let raised = clip.y - root.translation.y - leg.rest_height * scale;
+                    spot + Vec3::Y * raised
+                }
                 Some(step) => {
                     step.t += frame.dt / in_air.max(f32::EPSILON);
                     if step.t >= 1.0 {
@@ -173,9 +196,18 @@ impl Feet {
                 None => {
                     let drift = Vec2::new(spot.x - planted.x, spot.z - planted.z);
                     let free = lifting.is_none_or(|group| group == leg.group);
-                    if drift.length() > stride * scale && free {
+                    let due = if still {
+                        drift.length() > lift * scale
+                    } else {
+                        drift.length() > stride * scale
+                    };
+                    if due && free {
                         lifting = Some(leg.group);
-                        let ahead = drift.normalize_or_zero() * stride * scale * lead;
+                        let ahead = if still {
+                            Vec2::ZERO
+                        } else {
+                            drift.normalize_or_zero() * stride * scale * lead
+                        };
                         let to = grounded(
                             frame,
                             Vec3::new(spot.x + ahead.x, spot.y, spot.z + ahead.y),
@@ -194,11 +226,7 @@ impl Feet {
                 &mut frame.view,
                 &leg.chain,
                 IkSolver::Fabrik,
-                &IterateSettings {
-                    max_iterations: 8,
-                    deterministic: true,
-                    ..IterateSettings::default()
-                },
+                &LEG_REACH,
                 &[],
                 to_rig.transform_point3(target),
                 &mut leg.ik,
@@ -231,14 +259,15 @@ impl Feet {
         };
         let Stepping {
             most_rise,
-            most_tilt,
+            most_pitch,
+            most_roll,
             settle,
             ..
         } = self.stepping;
         let wanted = Vec3::new(
             wanted.x.clamp(-most_rise / scale, most_rise / scale),
-            wanted.y.clamp(-most_tilt, most_tilt),
-            wanted.z.clamp(-most_tilt, most_tilt),
+            wanted.y.clamp(-most_roll, most_roll),
+            wanted.z.clamp(-most_pitch, most_pitch),
         );
         self.body += (wanted - self.body) * (1.0 - (-frame.dt / settle.max(f32::EPSILON)).exp());
         let Some(base) =
@@ -260,6 +289,17 @@ impl Feet {
         };
     }
 }
+
+/// How a leg reaches for its foot's spot. Each frame starts from the clip's pose, so the reach
+/// must get there within the frame: a cap on how far a pass may turn a joint, as a solver eased
+/// toward its goal over many frames has, would leave a foot that the ground asks to bend further
+/// hanging short of it.
+const LEG_REACH: IterateSettings = IterateSettings {
+    max_iterations: 8,
+    min_distance: 0.001,
+    angular_delta_limit: std::f64::consts::PI,
+    deterministic: true,
+};
 
 /// `at` brought down onto the ground, `height` above it.
 fn grounded(frame: &Frame, at: Vec3, height: f32) -> Vec3 {

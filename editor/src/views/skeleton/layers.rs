@@ -422,7 +422,8 @@ fn fresh_layers(def: &SkeletonDef, rig: &NodeTree, from: &str) -> Vec<(&'static 
                 step: Seconds(0.2),
                 lead: 0.5,
                 most_rise: Meters(0.5),
-                most_tilt: 0.5,
+                most_pitch: 0.5,
+                most_roll: 0.0,
                 settle: Seconds(0.12),
                 during: vec![Action::Walk, Action::Run],
             },
@@ -529,7 +530,8 @@ fn fields(
                 step,
                 lead,
                 most_rise,
-                most_tilt,
+                most_pitch,
+                most_roll,
                 settle,
                 ..
             } => {
@@ -547,7 +549,8 @@ fn fields(
                 number(ui, "step · s", &mut step.0, 0.01..=2.0);
                 number(ui, "lead · strides", lead, 0.0..=2.0);
                 number(ui, "most rise · m", &mut most_rise.0, 0.0..=2.0);
-                number(ui, "most tilt", most_tilt, 0.0..=2.0);
+                number(ui, "most pitch", most_pitch, 0.0..=2.0);
+                number(ui, "most roll", most_roll, 0.0..=2.0);
                 number(ui, "settle · s", &mut settle.0, 0.0..=2.0);
                 ui.label(theme::muted("legs"));
                 ui.vertical(|ui| {
