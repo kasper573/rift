@@ -18,7 +18,7 @@ use engine::core::content::{Content, LoadPurpose};
 use engine::core::gui::{self, Band, GuiPlugin};
 use engine::core::text::{LineText, SpanText, TextFx, TextInk, TextMotion, TextVoice};
 use engine::systems::GameSettings;
-use engine::systems::dialogue::sheet::{self, DialogueSheet, SheetChoice};
+use engine::systems::dialogue::sheet::{self, DialogueSheet, SheetChoice, SheetToCome};
 use engine::systems::dialogue::{ChoiceChip, ChoiceTag, ChoiceView};
 use engine::systems::input::map::{InputAction, InputMap};
 use engine::systems::item::inline::InlineItem;
@@ -303,6 +303,7 @@ fn specimens(content: &Content) -> Vec<Specimen> {
         typed: None,
         waits: true,
         choices: Vec::new(),
+        to_come: SheetToCome::default(),
     };
     let lines = [
         (

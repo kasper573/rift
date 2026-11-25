@@ -6,6 +6,7 @@ use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::prelude::*;
+use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
@@ -27,15 +28,20 @@ use engine::core::time::UnixMillis;
 use engine::core::units::{
     Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
 };
-use engine::systems::actor::held::Held;
+use engine::systems::actor::held::{HandsAtWork, Held, ToolInHand};
 use engine::systems::actor::render::{self, HeldProp, Puppet, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Motion, Playing, Pose};
+use engine::systems::area::scenery::ShowsProp;
 use engine::systems::area::{self, AreaDef, AreaTag};
+use engine::systems::area::{PropDef, PropId};
 use engine::systems::identity::{self, GlobalId, Names};
-use engine::systems::item::ItemDef;
+use engine::systems::item::{Grip, ItemDef};
+use engine::systems::mount::render::MountRenderPlugin;
+use engine::systems::mount::{MountDef, Riding};
 use engine::systems::movement::RenderPosition;
+use engine::systems::screen::ClientScreen;
 use serde_json::json;
 use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, RUN_PACE, WALK_PACE, path, png};
 
@@ -674,6 +680,96 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
 }
 
 #[test]
+fn a_rider_lays_what_they_hold_on_their_mount_and_keeps_the_tool_they_work_with_in_hand() {
+    let mut clips = testkit::rig_clips();
+    clips.push(("sit", Seconds(0.4)));
+    let game = Game::new()
+        .skeleton_of(BODY, &clips, json!({}))
+        .edit("skeleton", BODY, |body| {
+            body["base"]["moves"] = json!({ "sit": testkit::clip("sit") });
+        })
+        .area("field", &Map::open(5, 5), json!([]))
+        .hero("field", 2.0, 2.0)
+        .sword()
+        .prop("rod", json!({ "type": "none" }))
+        .model("boat", 1.0, json!([]))
+        .row(
+            "mount",
+            "boat",
+            json!({
+                "name": "Boat",
+                "look": path("model", "boat"),
+                "travels": { "type": "riding" },
+                "reach": 3.0,
+                "rider": { "joint": "body", "rides": "sit", "may": ["gather", "items"] },
+                "barred": "refuse",
+                "gear": ["left"],
+            }),
+        );
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, content) = viewer_with(game, folder.path(), |app| {
+        app.add_plugins((StatesPlugin, MountRenderPlugin))
+            .insert_state(ClientScreen::Area);
+    });
+    let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
+    let rod = testkit::Declared::declared::<PropDef>(&content, "rod").expect("a rod");
+    let boat = testkit::Declared::declared::<MountDef>(&content, "boat").expect("a boat");
+    let rider = spawn_hero(&mut app, &content, Action::Idle);
+    app.world_mut().entity_mut(rider).insert((
+        Riding { mount: boat },
+        Held {
+            hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
+        },
+    ));
+    let mut steed = None;
+    testkit::until(&mut app, |app| {
+        app.world_mut()
+            .run_system_cached(render::dress)
+            .expect("dressed");
+        steed = app
+            .world_mut()
+            .query_filtered::<Entity, (With<Body>, Without<Riding>)>()
+            .iter(app.world())
+            .next();
+        steed.is_some() && joint_of(app, rider, "hand.r").is_some()
+    });
+    let steed = steed.expect("the boat stands under its rider");
+    let hand = joint_of(&mut app, rider, "hand.r").expect("the rider's rig stands");
+    let gear = joint_of(&mut app, steed, "hand.l").expect("the boat's rig stands");
+    let sword_look = sword.get(&content).look;
+    let hung_as = |app: &mut App| {
+        app.world_mut()
+            .run_system_cached(render::hang)
+            .expect("hung");
+        shown_props(app)
+    };
+
+    assert_eq!(
+        hung_as(&mut app),
+        vec![(gear, sword_look)],
+        "the rider's sword lies in the boat's gear place"
+    );
+    let at_work = ToolInHand {
+        prop: rod,
+        grip: Grip::default(),
+    };
+    app.world_mut().entity_mut(rider).insert(HandsAtWork {
+        tool: Some(at_work),
+    });
+    assert_eq!(
+        hung_as(&mut app),
+        vec![(hand, rod)],
+        "the rod the rider works with stays in their hand, and the sword is put away"
+    );
+    app.world_mut().entity_mut(rider).remove::<HandsAtWork>();
+    assert_eq!(
+        hung_as(&mut app),
+        vec![(gear, sword_look)],
+        "the work done, the sword lies in the boat again"
+    );
+}
+
+#[test]
 fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
@@ -956,6 +1052,15 @@ fn a_prop_strapped_to_the_arm_turns_with_the_arm_and_the_hand_holding_it_as_its_
 /// A client's world drawing `game`, written to `folder`: its bodies stand their rigs and skins,
 /// and play their skeletons' clips and layers.
 fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::Content) {
+    viewer_with(game, folder, |_| {})
+}
+
+/// As `viewer`, with `more` added to the app before it is finished.
+fn viewer_with(
+    game: Game,
+    folder: &std::path::Path,
+    more: impl FnOnce(&mut App),
+) -> (App, engine::core::content::Content) {
     game.write_to(folder);
     let content = game.load();
     let mut app = App::new();
@@ -976,6 +1081,7 @@ fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::
     .init_resource::<Animator>()
     .add_observer(render::adopt_character)
     .insert_resource(content.clone());
+    more(&mut app);
     app.finish();
     app.cleanup();
     (app, content)
@@ -1600,6 +1706,21 @@ fn prop_under(app: &mut App, above: Entity) -> Option<(Mat4, Mat4)> {
         at = world.get::<ChildOf>(at)?.parent();
     }
     Some((placed, in_hand))
+}
+
+/// The joint named `name` of the rig of `body`.
+fn joint_of(app: &mut App, body: Entity, name: &str) -> Option<Entity> {
+    app.world().get::<Body>(body)?.joint(name)
+}
+
+/// Every prop a body holds, wherever it hangs, by the joint it hangs from and the prop it shows.
+fn shown_props(app: &mut App) -> Vec<(Entity, PropId)> {
+    let world = app.world_mut();
+    world
+        .query_filtered::<(&ChildOf, &ShowsProp), With<HeldProp>>()
+        .iter(world)
+        .map(|(joint, shown)| (joint.parent(), shown.0))
+        .collect()
 }
 
 /// Every prop hanging from a hand, by the joint it hangs from and the item it shows.

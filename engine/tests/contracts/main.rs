@@ -13,6 +13,7 @@ mod conversation;
 mod cover;
 mod crafting;
 mod daylight;
+mod dialogue_sheet;
 mod effects;
 mod equipment;
 mod exchange;

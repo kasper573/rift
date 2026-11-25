@@ -8,7 +8,7 @@ use bevy_egui::EguiPrimaryContextPass;
 use ui::egui::{LayerId, Rect, Vec2};
 use ui::motion::SheetPose;
 
-use super::sheet::{self, DialogueSheet, SheetChoice};
+use super::sheet::{self, DialogueSheet, SheetChoice, SheetToCome};
 use super::{
     ChoiceChip, ChoiceView, Conversation, ConversationRequest, RefusedPick, Speaker, SpokenLine,
     WindowStep, windows,
@@ -685,7 +685,8 @@ fn dialogue_text(world: &mut World, gui: &egui::Context, pose: SheetPose, before
 }
 
 /// What the conversation on show puts on the sheet: its line as far as it has typed, and its
-/// choices once the last line is out.
+/// choices once the last line is out, with room kept for every line of its step and the choices
+/// that follow them.
 fn sheet_of(world: &World) -> Option<DialogueSheet> {
     let shown = world.resource::<Stage>().shown.as_ref()?;
     let spoken = shown.current();
@@ -719,6 +720,14 @@ fn sheet_of(world: &World) -> Option<DialogueSheet> {
         typed,
         waits: shown.typed_since.is_some() && !choosing,
         choices,
+        to_come: SheetToCome {
+            lines: shown
+                .lines
+                .iter()
+                .map(|line| (speaker_name(world, line.by), line.text.clone()))
+                .collect(),
+            choices: shown.choices.clone(),
+        },
     })
 }
 

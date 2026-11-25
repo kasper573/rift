@@ -38,6 +38,19 @@ pub struct DialogueSheet {
     /// Whether the line waits for the player to go on, which a mark under it asks.
     pub waits: bool,
     pub choices: Vec<SheetChoice>,
+    /// What else the sheet shows before the conversation moves on.
+    pub to_come: SheetToCome,
+}
+
+/// What a sheet keeps room for from the moment it shows, so it never grows or shrinks under the
+/// windows and cards set beside it: it stands as tall as the tallest of its lines over the choices
+/// that follow them.
+#[derive(Clone, Default)]
+pub struct SheetToCome {
+    /// Each line said in turn on the sheet, led by who says it.
+    pub lines: Vec<(Option<String>, LineText)>,
+    /// The choices that show once the last line is out.
+    pub choices: Vec<ChoiceView>,
 }
 
 pub struct SheetChoice {
@@ -105,19 +118,27 @@ pub fn draw(
                         ))
                         .layout(Layout::top_down(Align::Min)),
                     |ui| {
-                        ui.spacing_mut().item_spacing.y = 12.0;
-                        line(ui, world, sheet);
+                        ui.spacing_mut().item_spacing.y = ROW_GAP;
+                        line(
+                            ui,
+                            world,
+                            sheet.speaker.clone(),
+                            sheet.line.as_ref(),
+                            sheet.typed,
+                        );
                         rows = choices(ui, world, &sheet.choices);
                     },
                 )
                 .response
                 .rect;
-            let needed = written.bottom() - outer.top() + continue_mark_size(ui);
+            let mark = continue_mark_size(ui);
+            let needed = (written.bottom() - outer.top()).max(room(ui, world, sheet, outer)) + mark;
             if (needed - height).abs() > 0.5 {
                 gui.request_discard("the conversation grew or shrank");
             }
             if sheet.waits {
-                continue_mark(ui, outer);
+                let under_line = Pos2::new(outer.right(), written.bottom() + mark);
+                continue_mark(ui, Rect::from_min_max(outer.min, under_line));
             }
             let backing = Rect::from_min_max(
                 Pos2::new(
@@ -139,6 +160,8 @@ pub fn draw(
 }
 
 const TEXT_WIDTH: f32 = 800.0;
+/// How far apart the line and the choices under it stand.
+const ROW_GAP: f32 = 12.0;
 const SCREEN_SHARE: f32 = 0.94;
 /// How far above the bottom of the viewport the lowest line of the dialogue stands.
 const BOTTOM_SHARE: f32 = 0.12;
@@ -161,15 +184,69 @@ const LIT_MARK_GAP: f32 = 0.3;
 const LIT_MARK: &str = "\u{bb}";
 const LINE_MARGIN: egui::Margin = egui::Margin::symmetric(8, 4);
 
-fn line(ui: &mut Ui, world: &mut World, sheet: &DialogueSheet) {
-    let Some(words) = &sheet.line else {
+fn line(
+    ui: &mut Ui,
+    world: &mut World,
+    speaker: Option<String>,
+    words: Option<&LineText>,
+    typed: Option<usize>,
+) {
+    let Some(words) = words else {
         return;
     };
-    let styled = said(world, sheet.speaker.clone(), words);
+    let styled = said(world, speaker, words);
     egui::Frame::new().inner_margin(LINE_MARGIN).show(ui, |ui| {
         let look = text_look(ui, ink::DIALOGUE_LINE);
-        inline::show_styled(ui, world, &styled, look, sheet.typed);
+        inline::show_styled(ui, world, &styled, look, typed);
     });
+}
+
+/// How tall the sheet stands for all it shows before the conversation moves on: its tallest line,
+/// whole, over every choice to come, each laid out unseen at the width of `outer`.
+fn room(ui: &mut Ui, world: &mut World, sheet: &DialogueSheet, outer: Rect) -> f32 {
+    let unseen = |ui: &mut Ui, salt: usize| {
+        ui.new_child(
+            UiBuilder::new()
+                .id_salt(("room", salt))
+                .max_rect(Rect::from_min_size(
+                    outer.min,
+                    Vec2::new(outer.width(), f32::INFINITY),
+                ))
+                .layout(Layout::top_down(Align::Min))
+                .invisible(),
+        )
+    };
+    let tallest = std::iter::once((sheet.speaker.clone(), sheet.line.clone()))
+        .chain(
+            sheet
+                .to_come
+                .lines
+                .iter()
+                .map(|(speaker, words)| (speaker.clone(), Some(words.clone()))),
+        )
+        .enumerate()
+        .map(|(salt, (speaker, words))| {
+            let mut laid = unseen(ui, salt);
+            line(&mut laid, world, speaker, words.as_ref(), None);
+            laid.min_rect().height()
+        })
+        .fold(0.0, f32::max);
+    if sheet.to_come.choices.is_empty() {
+        return tallest;
+    }
+    let mut laid = unseen(ui, usize::MAX);
+    let to_come: Vec<SheetChoice> = sheet
+        .to_come
+        .choices
+        .iter()
+        .map(|view| SheetChoice {
+            view: view.clone(),
+            lit: false,
+            refused: false,
+        })
+        .collect();
+    choices(&mut laid, world, &to_come);
+    tallest + ROW_GAP + laid.min_rect().height()
 }
 
 /// The line as the player reads it, led by its speaker's name wherever the catalog's message puts

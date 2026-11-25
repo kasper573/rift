@@ -1043,7 +1043,8 @@ pub fn cue_sounds(
 /// Hangs from each hand of a dressed rig the prop of what it shows, moved by the hand's and the
 /// prop's grip, and takes it down the frame the hand empties. A two-hander hangs from the first or
 /// the last hand it takes, as its stance holds it. Hands at work show their tool alone, from the
-/// first of them. What a rider's mount carries hangs from the mount's hand that takes it instead.
+/// first of them. An item a rider holds hangs from the mount's hand that carries it instead, while
+/// a tool at work stays in the rider's hand, being used.
 pub fn hang(world: &mut World) {
     let content = world.resource::<Content>().clone();
     type Dressed<'a> = (
@@ -1079,7 +1080,8 @@ pub fn hang(world: &mut World) {
     for (entity, model, wanted) in dressed {
         let model = ActorModel::get(&content, model);
         let places = mount::render::gear_places(world, entity);
-        let laid_in = |hand: HandIndex| {
+        let laid_in = |hand: HandIndex, hung: Hung| {
+            hung.item()?;
             let places = places.as_ref()?;
             let at = *places.hands.get(hand.index())?;
             Some((places.steed, ActorModel::get(&content, places.look), at))
@@ -1092,17 +1094,18 @@ pub fn hang(world: &mut World) {
             .held
             .iter()
             .filter(|(hand, (hung, _, laid))| {
-                wanted.get(hand) != Some(hung) || *laid != laid_in(**hand).map(|(steed, ..)| steed)
+                wanted.get(hand) != Some(hung)
+                    || *laid != laid_in(**hand, *hung).map(|(steed, ..)| steed)
             })
             .map(|(&hand, &(_, prop, _))| (hand, prop))
             .collect();
         let new: Vec<Hanging> = wanted
             .iter()
             .filter(|(hand, hung)| {
-                let laid = laid_in(**hand).map(|(steed, ..)| steed);
+                let laid = laid_in(**hand, **hung).map(|(steed, ..)| steed);
                 puppet.held.get(hand).map(|(held, _, on)| (held, *on)) != Some((hung, laid))
             })
-            .filter_map(|(&hand, &hung)| match laid_in(hand) {
+            .filter_map(|(&hand, &hung)| match laid_in(hand, hung) {
                 Some((steed, look, at)) => {
                     let mount_hand = &look.hands()[at];
                     let joint = world.get::<Body>(steed)?.joint(&mount_hand.joint.0)?;
