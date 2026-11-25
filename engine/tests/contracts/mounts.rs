@@ -32,6 +32,9 @@ const BEACH: Pos<Meters> = Pos::new(10.0, 6.0);
 const ROCK: Pos<Meters> = Pos::new(3.0, 3.0);
 const OFFSHORE: Pos<Meters> = Pos::new(15.5, 6.0);
 const FAR_OUT: Pos<Meters> = Pos::new(21.0, 6.0);
+/// How long a call is given to seat its caster, in steps of the clock.
+const CALLING_STEPS: usize = 100;
+const CALLING_STEP: f32 = 0.02;
 /// How long a shoal takes to give once.
 const ANGLING: f32 = 1.0;
 
@@ -167,6 +170,45 @@ fn a_mount_goes_where_its_kind_travels_and_is_left_through_what_called_it() {
         (seat(&server, wren), at(&server, wren), jumps(&server)),
         (None, ashore, afloat_jumps),
         "the driver lands on the spot they picked, the boat is gone, and stepping off is no jump either"
+    );
+}
+
+/// A call that casts before it seats its caster seats them at once at the cast's apex: the cast,
+/// done on foot, ends there, so no client shows the rider casting on in the saddle.
+#[test]
+fn a_rider_called_onto_their_mount_by_a_cast_sits_at_once() {
+    let mut server = server_of(game().edit("script", "call_mare_used", |script| {
+        script["nodes"]["call"] =
+            json!({ "type": "animate", "move": "angle", "wait": "apex", "next": "seat" });
+        script["nodes"]["seat"] = json!({ "type": "mount", "mount": path("mount", "mare") });
+    }));
+    let wren = server.sign_in(1, "Wren", "village");
+    stand(&mut server, wren, BEACH);
+    server.village.give(wren, "bridle", 1);
+    let slot = server.village.slot_of(wren, "bridle");
+    server.send(1, UseItemRequest { slot });
+    let mut cast_on_foot = false;
+    for _ in 0..CALLING_STEPS {
+        server.later(CALLING_STEP);
+        if seat(&server, wren).is_some() {
+            break;
+        }
+        cast_on_foot |= server.village.world.get::<actor::Playing>(wren).is_some();
+    }
+    let refused = server.village.errors(1);
+    assert_eq!(
+        seat(&server, wren),
+        Some("mare"),
+        "the call seats its caster: {:?} {refused:?}",
+        server.village.world.get::<actor::Playing>(wren),
+    );
+    let world = &server.village.world;
+    assert!(cast_on_foot, "the call casts before it seats its caster");
+    assert!(
+        world.get::<actor::Playing>(wren).is_none()
+            && world.get::<actor::Actor>(wren).map(|shown| shown.action)
+                == Some(actor::Action::Idle),
+        "the tick its caster is seated, they cast no longer"
     );
 }
 
@@ -932,8 +974,8 @@ fn server() -> Server {
     server_of(game())
 }
 
-/// A server of `game` whose two worlds play what mounts take: walks, casts, items, and the scripts
-/// and statuses a mount's own script runs through.
+/// A server of `game` whose two worlds play what mounts take: walks, casts and what they play out,
+/// items, and the scripts and statuses a mount's own script runs through.
 fn server_of(game: Game) -> Server {
     let mut server = Server::of(game, request_sources());
     for sim in [&mut server.village, &mut server.forest] {
@@ -968,6 +1010,7 @@ fn server_of(game: Game) -> Server {
             .plan(mount::UnseatFallen::default())
             .plan(stat::SettleVitals::default())
             .add((
+                actor::playing::progress,
                 resource::gathering,
                 resource::work,
                 combat::defeats,

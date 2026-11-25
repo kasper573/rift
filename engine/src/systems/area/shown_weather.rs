@@ -17,7 +17,7 @@ use crate::core::render::world::gpu::draw::{GROUND_LIT_SHADER, ground_lit_shader
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{CameraRig, GroundHeights, ground_pos};
 use crate::core::vfx::board::{BOARD_WIDTH, ShaderBoardPlugin, ShaderBoardWrites};
-use crate::systems::mount::render::Steed;
+use crate::systems::mount::render::{Stalled, Steed};
 use crate::systems::movement::Position;
 use crate::systems::water::ripples::{RippleField, RippleSource, RipplesPlugin};
 
@@ -37,7 +37,12 @@ impl Plugin for ShownWeatherPlugin {
         .init_resource::<RainField>()
         .init_resource::<Shelter>()
         .init_resource::<Treading>()
-        .add_systems(Update, (tread, blow).chain())
+        .add_systems(
+            PostUpdate,
+            (tread, blow)
+                .chain()
+                .after(bevy::transform::TransformSystems::Propagate),
+        )
         .add_plugins(RipplesPlugin);
         let _ = app.world_mut().resource_mut::<Assets<Shader>>().insert(
             GROUND_LIT_SHADER.id(),
@@ -100,29 +105,28 @@ pub struct TreadingLimb {
     pub tail_girth: f32,
 }
 
+/// A body that may tread the ground: where it stands, its skeleton, and the water it floats on.
+type Treader = (
+    Entity,
+    &'static GlobalTransform,
+    &'static Body,
+    Option<&'static Afloat>,
+);
+
 /// Who treads the ground, and where the camera looks.
 #[derive(SystemParam)]
 pub(crate) struct TreadSources<'w, 's> {
     rig: Option<Res<'w, CameraRig>>,
     ground: Option<Res<'w, GroundHeights>>,
-    bodies: Query<
-        'w,
-        's,
-        (
-            Entity,
-            &'static GlobalTransform,
-            &'static Body,
-            Option<&'static Afloat>,
-        ),
-        Without<Aboard>,
-    >,
+    bodies: Query<'w, 's, Treader, (Without<Aboard>, Without<Stalled>)>,
     joints: Query<'w, 's, &'static GlobalTransform>,
     positions: Query<'w, 's, &'static Position>,
     steeds: Query<'w, 's, &'static Steed>,
 }
 
 /// Every frame, tells which bodies tread nearest the camera's subject, each as its skeleton
-/// holds its limbs.
+/// holds its limbs: as they stand this frame, once every body is placed and posed, so a body
+/// taken away or put elsewhere this frame breaks the water no longer where it stood.
 pub(crate) fn tread(sources: TreadSources, mut treading: ResMut<Treading>) {
     let TreadSources {
         rig,

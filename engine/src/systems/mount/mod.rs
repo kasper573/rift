@@ -30,7 +30,7 @@ use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::actor::model::{ActorModel, ModelId};
 use crate::systems::actor::skeleton::{self, Declared, JointName, MoveName, SkeletonDef};
-use crate::systems::actor::{Appearance, Hitbox};
+use crate::systems::actor::{Appearance, Hitbox, playing};
 use crate::systems::area::Place;
 use crate::systems::area::{self, AreaId, AreaTag, HeldMesh};
 use crate::systems::history::HistoryTopic;
@@ -659,8 +659,10 @@ fn welcome_in(content: &Content, area: AreaId, travels: Travels) -> bool {
 }
 
 /// Seats `rider` on the mount `riding` names, where they are: what a pointer lands on is the
-/// mount, and its script holds on them.
+/// mount, and its script holds on them. They take the seat at once, so whatever they were doing
+/// on foot, as the cast that called the mount, ends there.
 fn seat(world: &mut World, rider: Entity, riding: Riding) {
+    playing::cut_short(world, rider);
     let content = world.resource::<Content>().clone();
     let look = riding.mount.get(&content).look;
     let hitbox = Hitbox(ActorModel::get(&content, look).hitbox());

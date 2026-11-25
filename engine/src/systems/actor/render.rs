@@ -268,6 +268,8 @@ struct Play {
     struck: Option<u32>,
     said: Option<Entity>,
     pick: usize,
+    /// Whether the body makes its seat's move.
+    seated: bool,
 }
 
 impl Play {
@@ -752,6 +754,7 @@ pub fn pose(world: &mut World) {
             struck: flinching.then_some(blows),
             said: gesture.as_ref().map(|(line, ..)| *line),
             pick: 0,
+            seated: sitting,
         };
         let state = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -827,9 +830,16 @@ pub fn pose(world: &mut World) {
         let Some(mut puppet) = world.get_mut::<Puppet>(entity) else {
             continue;
         };
+        // A body that has played nothing yet has never been seen: it stands as it should at once,
+        // where easing would show it turning, and rising from its rig's rest, as it appears.
+        let fresh = puppet.playing.is_none();
         if puppet.turn.to != shown.facing {
             puppet.turn = Turn {
-                from: puppet.turn.shown(now),
+                from: if fresh {
+                    shown.facing
+                } else {
+                    puppet.turn.shown(now)
+                },
                 to: shown.facing,
                 started: now,
                 lasts: easing.turn,
@@ -852,6 +862,10 @@ pub fn pose(world: &mut World) {
         let restart = puppet.playing.as_ref() != Some(&play);
         if restart {
             puppet.blend = match puppet.playing.as_ref() {
+                None => Seconds(0.0),
+                // Getting on a seat or off it puts the body there at once, so it takes or leaves
+                // the seat's move at once too.
+                Some(last) if last.seated != play.seated => Seconds(0.0),
                 Some(last) if last.takes_turns_with(&play) => {
                     if cell.transits(last.pick) || cell.transits(play.pick) {
                         easing.crossfade

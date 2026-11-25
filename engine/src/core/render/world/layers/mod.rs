@@ -67,6 +67,13 @@ impl Plugin for JointLayersPlugin {
             run.after(bevy::app::AnimationSystems)
                 .in_set(super::BodiesPosed)
                 .before(bevy::transform::TransformSystems::Propagate),
+        )
+        .configure_sets(
+            PostUpdate,
+            super::BodiesOnJoints
+                .in_set(super::BodiesPosed)
+                .after(run)
+                .before(bevy::transform::TransformSystems::Propagate),
         );
     }
 }

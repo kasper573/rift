@@ -9,7 +9,7 @@ use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::mesh::VertexAttributeValues;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
-use bevy::world_serialization::WorldInstanceReady;
+use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
 use super::material::WorldMaterial;
 use super::paint::{Paint, Painter, Paints};
@@ -64,11 +64,13 @@ pub struct RigReady {
     pub entity: Entity,
 }
 
-/// A skin's scene, hidden until its meshes are bound to the rig and painted: at rest until then,
-/// it would stand apart from a rig already moving.
+/// A skin's scene, hidden until its file has loaded whole, its meshes are bound to the rig and
+/// painted: at rest until then, it would stand apart from a rig already moving, and its textures
+/// still loading would draw it bare.
 #[derive(Component)]
 pub(super) struct SkinOf {
     body: Entity,
+    file: Handle<WorldAsset>,
     paint: Option<Paint>,
     spawned: bool,
 }
@@ -86,6 +88,11 @@ impl Body {
     /// Every node of the rig by its name, once the rig stands.
     pub fn joints(&self) -> &HashMap<String, Entity> {
         &self.joints
+    }
+
+    /// Whether every skin of the body is drawn: loaded, bound to the rig and painted.
+    pub fn drawn(&self) -> bool {
+        self.skins.iter().all(|skin| self.worn.contains_key(skin))
     }
 
     /// The entity the rig's clips play on.
@@ -235,11 +242,12 @@ fn spawn_skin(world: &mut World, body: Entity, skin: &Skin) -> Entity {
         .load(GltfAssetLabel::Scene(0).from_asset(skin.mesh.clone()));
     world
         .spawn((
-            WorldAssetRoot(scene),
+            WorldAssetRoot(scene.clone()),
             Transform::default(),
             Visibility::Hidden,
             SkinOf {
                 body,
+                file: scene,
                 paint: skin.paint.clone(),
                 spawned: false,
             },
@@ -276,7 +284,7 @@ fn stand(ready: On<WorldInstanceReady>, mut skins: Query<&mut SkinOf>) {
     }
 }
 
-/// The meshes a skin's scene draws, and what binds them to joints.
+/// The meshes a skin's scene draws, what loads them, and what binds them to joints.
 #[derive(bevy::ecs::system::SystemParam)]
 struct SkinMeshes<'w, 's> {
     skinned: Query<
@@ -290,6 +298,7 @@ struct SkinMeshes<'w, 's> {
     >,
     meshes: Res<'w, Assets<Mesh>>,
     binds: Res<'w, Assets<SkinnedMeshInverseBindposes>>,
+    assets: Res<'w, AssetServer>,
 }
 
 /// Binds the skinned meshes of every spawned skin to its body's rig once the rig stands, learns
@@ -307,7 +316,10 @@ fn bind(
         let Ok(mut body) = bodies.get_mut(skin.body) else {
             continue;
         };
-        if !skin.spawned || body.joints.is_empty() {
+        if !skin.spawned
+            || body.joints.is_empty()
+            || !meshes.assets.is_loaded_with_dependencies(&skin.file)
+        {
             continue;
         }
         let texture = match &skin.paint {

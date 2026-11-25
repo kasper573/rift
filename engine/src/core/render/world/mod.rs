@@ -175,7 +175,7 @@ impl Plugin for WorldScenePlugin {
                 opacity::thin,
                 afloat::lid_the_floating,
                 plumb::hang
-                    .after(layers::run)
+                    .after(BodiesOnJoints)
                     .in_set(BodiesPosed)
                     .before(bevy::transform::TransformSystems::Propagate),
                 sky::rest_sky_light
@@ -190,6 +190,12 @@ impl Plugin for WorldScenePlugin {
 /// transforms propagate: what stands on a body's nodes reads them after these.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BodiesPosed;
+
+/// The systems that set a body on a joint of another as that body stands posed this frame, as a
+/// rider in their seat: after every body's clips and layers have posed it, before what hangs
+/// plumb from a body.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BodiesOnJoints;
 
 /// Every camera's depth can be read once its prepass is drawn, for the passes that sample it.
 fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {
