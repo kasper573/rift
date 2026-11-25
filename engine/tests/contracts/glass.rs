@@ -1,5 +1,8 @@
 use bevy::prelude::*;
-use engine::core::render::world::material::{Glass, SurfaceFinish, world_material};
+use engine::core::render::world::material::{
+    Glass, MaterialLook, SurfaceFinish, casts_shadow, world_material,
+};
+use engine::core::vfx::uniform::ParamsUniform;
 
 #[test]
 fn a_models_glass_keeps_its_own_finish_and_lets_light_through_where_it_is_seen_through() {
@@ -35,5 +38,30 @@ fn a_models_glass_keeps_its_own_finish_and_lets_light_through_where_it_is_seen_t
         (wood.specular_transmission, wood.perceptual_roughness),
         (0.0, finish.roughness),
         "what is no glass takes the world's finish"
+    );
+}
+
+#[test]
+fn glass_and_a_material_set_to_cast_no_shadow_let_light_through() {
+    let look = |shadow| MaterialLook {
+        material: "cage".to_owned(),
+        color: None,
+        normal: None,
+        wear: None,
+        shader: None,
+        params: ParamsUniform::default(),
+        translucency: 0.0,
+        shadow,
+    };
+    assert!(casts_shadow(None, false), "a model's own material casts");
+    assert!(!casts_shadow(None, true), "a pane of its glass doesn't");
+    assert!(casts_shadow(Some(&look(true)), false), "a look casts");
+    assert!(
+        !casts_shadow(Some(&look(false)), false),
+        "unless its material is set to cast none"
+    );
+    assert!(
+        casts_shadow(Some(&look(true)), true),
+        "and a look drawn over glass casts as its material says"
     );
 }

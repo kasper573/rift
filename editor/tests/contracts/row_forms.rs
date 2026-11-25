@@ -27,7 +27,6 @@ use engine::systems::memory::{MemoryDef, Resets};
 use engine::systems::notification::{NotificationDef, NotificationDefKind};
 use engine::systems::npc::NpcDef;
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
-use engine::systems::skill::{SkillDef, Targeting};
 use engine::systems::stat::StatKind;
 use serde_json::{Value, json};
 use testkit::{BODY, Game, Map, path};
@@ -955,63 +954,6 @@ fn a_place_moved_to_another_area_lands_on_walkable_ground_there() {
 }
 
 #[test]
-fn a_skills_target_and_area_change_together_from_either_side() {
-    for (click_first, then) in [("Single enemy", Some("Area enemy")), ("+ area", None)] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let game = support::game()
-            .file("icons/cap.png", testkit::png(16, 16))
-            .row(
-                "skill",
-                "lunge",
-                json!({
-                    "name": "Lunge",
-                    "icon": "icons/cap.png",
-                    "target": "single_enemy",
-                    "levels": [{ "cost": 1, "stats": {} }],
-                    "modules": [{ "type": "script", "script": path("script", "lunge_used") }],
-                }),
-            )
-            .script(
-                "lunge_used",
-                "skill",
-                json!({ "used": { "type": "on", "event": "used" } }),
-            );
-        let mut editor = support::open(game, &scratch);
-        let lunge = path("skill", "lunge");
-        let mut form = RowFrames::new("skill", &lunge);
-        form.run(&mut editor, Vec::new());
-        let first = form.run(&mut editor, Vec::new()).at(click_first);
-        for events in click(first) {
-            form.run(&mut editor, events);
-        }
-        if let Some(then) = then {
-            let option = form.run(&mut editor, Vec::new()).at(then);
-            for events in click(option) {
-                form.run(&mut editor, events);
-            }
-        }
-        form.run(&mut editor, Vec::new());
-        support::files(&mut editor);
-
-        let refused = editor
-            .project
-            .as_mut()
-            .and_then(|project| project.take_refused());
-        assert!(
-            refused.is_none(),
-            "{click_first}: {:?}",
-            refused.map(|t| t.refusal.sentence())
-        );
-        let skill = editor
-            .read::<SkillDef>(&lunge)
-            .expect("a project")
-            .expect("the skill reads");
-        assert_eq!(skill.target, Targeting::AreaEnemy, "{click_first}");
-        assert!(skill.area.is_some(), "{click_first}");
-    }
-}
-
-#[test]
 fn the_keys_walk_a_picker_list_past_what_it_shows_and_pick_what_they_reach() {
     let scratch = tempfile::tempdir().expect("scratch");
     let voice = json!([{ "type": "voice", "babble": path("babble", "crier") }]);
@@ -1206,7 +1148,7 @@ fn a_skill_requirement_added_to_a_tree_node_starts_at_a_node_it_may_require() {
             "name": name,
             "icon": "icons/cap.png",
             "kind": "passive",
-            "target": "self",
+            "target": { "type": "caster" },
             "levels": [{ "cost": 1, "stats": {} }],
         })
     };

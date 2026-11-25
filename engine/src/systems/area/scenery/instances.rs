@@ -1482,9 +1482,13 @@ fn prop_dress(
         .flatten()
         .map(|look| look.translucency)
         .fold(0.0, f32::max);
+    let shadows = looks
+        .iter()
+        .map(|look| def.shadow && material::casts_shadow(*look, false))
+        .collect();
     Some(DressedProp {
         materials: materials.into_iter().map(Handle::untyped).collect(),
-        shadow: def.shadow,
+        shadows,
         fades: def.fade,
         overhang,
         translucency,
@@ -1628,9 +1632,10 @@ fn copy_dress(
             cover::copy_material(world, &piece.material, material.as_ref()).map(Handle::untyped)
         })
         .collect();
+    let materials = materials?;
     Some(DressedProp {
-        materials: materials?,
-        shadow: false,
+        shadows: vec![false; materials.len()],
+        materials,
         fades: false,
         overhang: Meters(0.0),
         translucency: 0.0,

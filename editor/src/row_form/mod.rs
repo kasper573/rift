@@ -248,16 +248,6 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
         write(editor);
     } else if let Some(label) = changed.label(key) {
         let mut edit = ContentEdit::new(label);
-        if table == SkillDef::TABLE
-            && let Some(project) = editor.project.as_ref()
-            && let Ok(before) = project.read::<SkillDef>(key)
-            && let Ok(mut skill) = reader.from_json::<SkillDef>(&value)
-        {
-            skill::paired_targeting(&before, &mut skill);
-            if let Ok(paired) = reader.to_json(&skill) {
-                value = paired;
-            }
-        }
         if table == ItemDef::TABLE
             && let Some(project) = editor.project.as_ref()
             && let Ok(item) = reader.from_json::<ItemDef>(&value)

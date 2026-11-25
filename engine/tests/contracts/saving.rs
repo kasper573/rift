@@ -568,7 +568,7 @@ fn game(forest: Option<&Map>) -> Game {
             json!({
                 "name": "Guard",
                 "icon": "icons/hero.png",
-                "target": "self",
+                "target": { "type": "caster" },
                 "cooldown": 600.0,
                 "levels": [{ "cost": 1 }],
                 "modules": [{ "type": "script", "script": "mends.script.json" }],

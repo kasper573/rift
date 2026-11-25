@@ -948,7 +948,7 @@ fn a_props_material_draws_in_pictures_its_model_can_lay_or_by_a_prop_stage_shade
         )
     };
     let cases = [
-        ("a material that draws nothing", json!({})),
+        ("a material that changes nothing", json!({})),
         (
             "a value with no shader to fill",
             json!({ "color": "pictures/paint.png", "params": { "glow": 1.0 } }),
@@ -969,6 +969,7 @@ fn a_props_material_draws_in_pictures_its_model_can_lay_or_by_a_prop_stage_shade
     for material in [
         json!({ "color": "pictures/paint.png" }),
         json!({ "color": "pictures/paint.png", "shader": path("vfx_shader", "bark") }),
+        json!({ "shadow": false }),
     ] {
         painted(material).load();
     }

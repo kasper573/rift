@@ -175,16 +175,30 @@ impl PlacedShape {
         picks.into_iter().map(|pick| inside[pick]).collect()
     }
 
-    /// Where a cast from `from` toward `point` lays a shape down: a circle or a rectangle sits on
-    /// the point, a cone or a line reaches out from the caster toward it.
-    pub fn cast(shape: Shape, from: Pos<Meters>, point: Pos<Meters>) -> PlacedShape {
-        let at = match shape {
-            Shape::Cone { .. } | Shape::Line { .. } => from,
-            Shape::Circle { .. } | Shape::Rect { .. } => point,
+    /// A shape with its middle on `centre`, turned to `facing`: a cone's or a line's middle is
+    /// halfway along its length.
+    pub fn centred(shape: Shape, centre: Pos<Meters>, facing: Radians) -> PlacedShape {
+        let back = match shape {
+            Shape::Circle { .. } | Shape::Rect { .. } => 0.0,
+            Shape::Cone { length, .. } | Shape::Line { length, .. } => length.0 / 2.0,
         };
         PlacedShape {
-            at,
-            facing: facing_from(from, point),
+            at: centre - facing.heading() * back,
+            facing,
+            shape,
+        }
+    }
+
+    /// A shape reaching out from `start` toward `facing`: a circle round it, and a rectangle's
+    /// back edge, a cone's tip or a line's start on it.
+    pub fn from_start(shape: Shape, start: Pos<Meters>, facing: Radians) -> PlacedShape {
+        let ahead = match shape {
+            Shape::Rect { width, .. } => width.0 / 2.0,
+            Shape::Circle { .. } | Shape::Cone { .. } | Shape::Line { .. } => 0.0,
+        };
+        PlacedShape {
+            at: start + facing.heading() * ahead,
+            facing,
             shape,
         }
     }

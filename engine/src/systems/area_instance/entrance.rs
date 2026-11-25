@@ -487,8 +487,8 @@ fn draw(world: &mut World) {
     let opens = Opens {
         key: WindowKey::Entrance,
         of: Placed::Entrance,
-        size: SHEET,
-        min: SHEET_LEAST,
+        size: tray::making_room(&gui, SHEET),
+        min: tray::making_room(&gui, SHEET_LEAST),
     };
     let open = view(world);
     let title = |shown: &EntranceView| shown.area.get(&content).name.clone();
@@ -513,7 +513,7 @@ fn show(ui: &mut Ui, world: &mut World) {
         .show(ui, |ui| {
             let room = ui.available_rect_before_wrap();
             let inventory_at = Rect::from_min_max(
-                Pos2::new(room.max.x - tray::INVENTORY_WIDTH, room.min.y),
+                Pos2::new(room.max.x - tray::inventory_width(ui.ctx()), room.min.y),
                 room.max,
             );
             let entrance_at = if waiting {

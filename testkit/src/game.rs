@@ -259,7 +259,7 @@ impl Game {
                 "claims_last": 60.0,
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },
                 "mail": {
-                    "inbox": 20, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 6
+                    "inbox": 20, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 6
                 },
                 "drops": {
                     "last": 120.0,
@@ -339,7 +339,7 @@ impl Game {
             json!({
                 "name": "Strike",
                 "icon": "icons/strike.png",
-                "target": "single_enemy",
+                "target": { "type": "single", "affects": "enemy" },
                 "basic_attack": true,
                 "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
                 "modules": [{ "type": "script", "script": path("script", "strike") }],

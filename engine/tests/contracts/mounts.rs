@@ -889,21 +889,21 @@ fn game() -> Game {
             }),
         );
     let game = [
-        calls("call_mare", "mare", json!({ "target": "self" })),
+        calls("call_mare", "mare", json!({ "target": { "type": "caster" } })),
         calls(
             "call_crow",
             "crow",
-            json!({ "target": "self", "cooldown": 30.0 }),
+            json!({ "target": { "type": "caster" }, "cooldown": 30.0 }),
         ),
         calls(
             "call_boat",
             "boat",
-            json!({ "target": "spot", "range": 6.0 }),
+            json!({ "target": { "type": "spot", "range": 6.0 } }),
         ),
         calls(
             "call_raft",
             "boat",
-            json!({ "target": "spot", "range": 6.0, "cost": [{ "item": path("item", "raft") }] }),
+            json!({ "target": { "type": "spot", "range": 6.0 }, "cost": [{ "item": path("item", "raft") }] }),
         ),
     ]
     .into_iter()
@@ -911,7 +911,7 @@ fn game() -> Game {
         json!({
             "name": "tide",
             "icon": "icons/skill.png",
-            "target": "self",
+            "target": { "type": "caster" },
             "levels": [{ "cost": 1, "stats": {} }],
             "modules": [{ "type": "script", "script": path("script", "tide_used") }],
         }),

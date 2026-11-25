@@ -47,6 +47,11 @@ pub struct PropMaterialDef {
     pub overhang: Meters,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wear: Option<PropWear>,
+    /// Whether what is drawn in it blocks light, casting a shadow. Set false only where the shadow
+    /// looks wrong for the game, as a lantern's thin cage does around its flame: it still takes
+    /// light and shadow as before.
+    #[serde(default = "serial::yes", skip_serializing_if = "serial::is_true")]
+    pub shadow: bool,
 }
 
 /// Weathering over a material's colours, laid by its model's second texture coordinates so it
@@ -77,16 +82,17 @@ impl ContentFile for PropMaterialDef {
             translucency: 0.0,
             overhang: Meters(0.0),
             wear: None,
+            shadow: true,
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
-        if self.color.is_none() && self.normal.is_none() && self.shader.is_none() {
+        if self.color.is_none() && self.normal.is_none() && self.shader.is_none() && self.shadow {
             cx.error(
                 "",
-                "a material that draws nothing",
-                "no picture and no shader",
-                "a colour picture, a normal picture or a shader",
+                "a material that changes nothing",
+                "no picture, no shader and a shadow",
+                "a colour picture, a normal picture, a shader or no shadow",
             );
         }
         cx.range(

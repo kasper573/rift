@@ -69,6 +69,18 @@ pub enum Relation {
     Enemy,
 }
 
+impl Relation {
+    /// Whether one standing so is regarded as `regard`, oneself counting among one's allies.
+    pub fn regarded_as(self, regard: Regard) -> bool {
+        matches!(
+            (self, regard),
+            (Relation::Own | Relation::Ally, Regard::Ally)
+                | (Relation::Neutral, Regard::Neutral)
+                | (Relation::Enemy, Regard::Enemy)
+        )
+    }
+}
+
 pub fn relation(world: &World, from: Entity, to: Entity) -> Relation {
     if from == to {
         return Relation::Own;
@@ -126,7 +138,15 @@ fn side(world: &World, entity: Entity) -> Side {
 
 /// Whether a basic attack may land on the target: what a single-target enemy skill asks.
 pub fn attackable(world: &World, attacker: Entity, target: Entity) -> bool {
-    skill::casting::fits(world, attacker, target, Targeting::SingleEnemy)
+    skill::casting::fits(
+        world,
+        attacker,
+        target,
+        Targeting::Single {
+            affects: skill::Affects::Enemy,
+            range: None,
+        },
+    )
 }
 
 #[derive(JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]

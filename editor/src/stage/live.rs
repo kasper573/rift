@@ -8,7 +8,6 @@ use std::time::{Duration, SystemTime};
 
 use bevy::prelude::*;
 use engine::core::content::Content;
-use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::Pos;
 use engine::core::script::Expr;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
@@ -29,7 +28,7 @@ use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, SnapshotSkill};
 use engine::systems::player::{ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules};
 use engine::systems::skill::casting::{self, CastAim};
-use engine::systems::skill::{self, Rank, SkillDef, SkillId, Targeting};
+use engine::systems::skill::{self, Affects, Rank, SkillDef, SkillId, Targeting};
 use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::status::{self, StatusEffectId};
 use engine::systems::{GameSettings, TICK_HZ, from_client, server_app, start_server};
@@ -368,8 +367,11 @@ fn skill_setup(
     let beside = Pos::new(spawn.at.x + TARGET_REACH, spawn.at.y);
     let (targets, aim) = match def.target {
         Targeting::Caster => (Vec::new(), CastAim::None),
-        Targeting::Spot => (Vec::new(), CastAim::Point(beside)),
-        Targeting::SingleEnemy => {
+        Targeting::Spot { .. } => (Vec::new(), CastAim::Point(beside)),
+        Targeting::Single {
+            affects: Affects::Enemy,
+            ..
+        } => {
             let enemy = spawn_sturdy(
                 world,
                 content,
@@ -379,7 +381,10 @@ fn skill_setup(
             );
             (vec![enemy], CastAim::Actor(enemy))
         }
-        Targeting::SingleAlly => {
+        Targeting::Single {
+            affects: Affects::Ally,
+            ..
+        } => {
             let friend = join(
                 world,
                 ally(),
@@ -392,12 +397,10 @@ fn skill_setup(
             .actor;
             (vec![friend], CastAim::Actor(friend))
         }
-        Targeting::AreaEnemy | Targeting::AreaAlly => {
+        Targeting::RangedArea { affects, shape, .. }
+        | Targeting::MeleeArea { affects, shape, .. } => {
             let point = Pos::new(spawn.at.x + AREA_REACH, spawn.at.y);
-            let shape = def.area.unwrap_or(Shape::Circle {
-                radius: Meters(1.5),
-            });
-            let footprint = PlacedShape::cast(shape, spawn.at, point);
+            let footprint = def.target.place(shape, spawn.at, point);
             let mut targets = Vec::new();
             let spots: Vec<Pos<Meters>> = footprint
                 .spread(CROWD * 2)
@@ -407,7 +410,7 @@ fn skill_setup(
                 .collect();
             for (index, spot) in spots.into_iter().enumerate() {
                 let at = free(spot);
-                targets.push(if def.target == Targeting::AreaEnemy {
+                targets.push(if affects == Affects::Enemy {
                     spawn_sturdy(
                         world,
                         content,

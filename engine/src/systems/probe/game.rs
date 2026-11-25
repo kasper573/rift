@@ -13,7 +13,6 @@ use serde_json::Value;
 use crate::core::content::ContentId;
 use crate::core::content::media::GltfInfos;
 use crate::core::content::{Content, ContentScope, Fixture, with_content};
-use crate::core::geometry::Shape;
 use crate::core::ground::{TILE_SIDE, TileAt};
 use crate::core::math::{Pos, PosSchema, Rect, RectSchema, Size, SizeSchema};
 use crate::core::units::{Meters, Seconds};
@@ -31,7 +30,7 @@ use crate::systems::mount::{self, MountDef, MountId, MountKind};
 use crate::systems::movement::Bodies;
 use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
-use crate::systems::skill::{SkillDef, SkillId};
+use crate::systems::skill::{SkillDef, SkillId, Targeting};
 use crate::systems::spawner::{SpawnSurface, Spawns};
 use crate::systems::water::WaterId;
 
@@ -218,9 +217,8 @@ pub struct ProbeItem {
 pub struct ProbeSkill {
     pub skill: SkillId,
     pub name: String,
-    pub range: Option<Meters>,
-    /// The ground it strikes around where it lands.
-    pub area: Option<Shape>,
+    /// What it is aimed at, how far, and the shape it strikes.
+    pub target: Targeting,
 }
 
 /// A mount of the game: how it travels and so where it goes, how far off it its rider steps, and
@@ -534,8 +532,7 @@ fn game(content: &Content) -> ProbeGame {
                 ProbeSkill {
                     skill,
                     name: def.name.clone(),
-                    range: def.range,
-                    area: def.area,
+                    target: def.target,
                 }
             })
             .collect(),

@@ -1028,7 +1028,7 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
             });
             true
         }
-        Targeting::SingleAlly | Targeting::SingleEnemy => {
+        Targeting::Single { .. } => {
             let engaged = world
                 .get::<Engaged>(me)
                 .map(|engaged| engaged.0)
@@ -1044,7 +1044,7 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
                 None => aim_or_cast(world, skill, rank),
             }
         }
-        Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot => {
+        Targeting::RangedArea { .. } | Targeting::MeleeArea { .. } | Targeting::Spot { .. } => {
             aim_or_cast(world, skill, rank)
         }
     }

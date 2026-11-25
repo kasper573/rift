@@ -207,6 +207,7 @@ pub fn compiled_looks(
                     .unwrap_or_default(),
                 shader: shader.map(|(shader, _)| shader),
                 translucency: material.translucency,
+                shadow: material.shadow,
             })
         })
         .collect();

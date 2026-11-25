@@ -1630,7 +1630,7 @@ fn game(most: u32) -> Game {
                 "experience": { "split": "even", "bonus": 0.0 },
             });
             settings["mail"] = json!({
-                "inbox": 2, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
+                "inbox": 2, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 2
             });
         });
     let game = instanced(

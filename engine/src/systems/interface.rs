@@ -86,6 +86,7 @@ pub enum InterfaceIcon {
     History,
     Social,
     Settings,
+    Mail,
 }
 
 impl Fixture for InterfaceIcon {

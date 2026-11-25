@@ -625,19 +625,19 @@ pub fn check_all(loading: &mut Loading) {
         let mounts: Vec<MountId> = may_do.reaching::<Mounts>().map(|mounts| mounts.0).collect();
         for mount in mounts {
             let floats = matches!(mount.get(&content).travels, Travels::Floating { .. });
-            let wanted = if floats {
-                Targeting::Spot
+            let (aimed, wanted) = if floats {
+                (matches!(skill.target, Targeting::Spot { .. }), "spot")
             } else {
-                Targeting::Caster
+                (skill.target == Targeting::Caster, "caster")
             };
-            if skill.target != wanted {
+            if !aimed {
                 loading.row_error(
                     id,
                     "/target",
                     ContentProblem::new(
                         "aimed unlike its mount",
                         format!("{} calls {}", skill.target.label(), mount.path(&content)),
-                        format!("target {}", wanted.label()),
+                        format!("target {wanted}"),
                     ),
                 );
             }

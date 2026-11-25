@@ -459,7 +459,7 @@ fn game() -> Game {
         .edit_settings(|settings| {
             settings["lingers_for"] = json!(0.0);
             settings["mail"] = json!({
-                "inbox": 5, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
+                "inbox": 5, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 2
             });
             settings["market"] = json!({
                 "default_currency": testkit::path("item", "herb"),

@@ -17,7 +17,7 @@ use crate::core::render::Pointed;
 use crate::core::text::LineText;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::core::time::{self};
-use crate::core::units::Meters;
+use crate::core::units::{Meters, Radians};
 use crate::core::vfx::render::ShaderOverlay;
 use crate::core::vfx::{
     ParamKind, ParamValue, ShaderParam, Stage, VfxParams, VfxShaderDef, VfxSite,
@@ -92,7 +92,7 @@ impl Aimed {
     fn targeting(self, content: &Content) -> Targeting {
         match self {
             Aimed::Skill { skill, .. } => skill.get(content).target,
-            Aimed::Landing => Targeting::Spot,
+            Aimed::Landing => Targeting::Spot { range: None },
         }
     }
 }
@@ -123,14 +123,17 @@ pub fn arm_landing(world: &mut World) {
 pub fn spot_aim(world: &mut World) -> Option<SpotAim> {
     let aimed = aiming(world)?;
     let me = session::me(world)?;
-    if aimed.targeting(world.resource::<Content>()) != Targeting::Spot {
+    if !matches!(
+        aimed.targeting(world.resource::<Content>()),
+        Targeting::Spot { .. }
+    ) {
         return None;
     }
     let at = render::pointed(world)?.surface?;
     Some(SpotAim {
         aimed,
         at,
-        reach: reach_of(world, me, aimed),
+        reach: reach_of(world, me, aimed)?,
         refused: spot_refusal(world, me, aimed, at)
             .map(|why| why.plain_words(world.resource::<Content>())),
     })
@@ -143,7 +146,7 @@ pub fn cast_at_pointer(world: &mut World, skill: SkillId) -> bool {
     let def = skill.get(&content);
     let aim = render::pointed(world).and_then(|pointed| aim_at(world, &pointed, def.target));
     let refusal = match (aim, session::me(world)) {
-        (Some(CastAim::Point(spot)), Some(me)) if def.target == Targeting::Spot => {
+        (Some(CastAim::Point(spot)), Some(me)) if matches!(def.target, Targeting::Spot { .. }) => {
             casting::spot_refused(world, me, skill, spot)
         }
         _ => None,
@@ -269,7 +272,7 @@ impl Claimant for AimClaimant {
         };
         // A click on a spot that will not do says why and leaves the aim armed for a better one.
         let refusal = match (targeting, aim, session::me(world)) {
-            (Targeting::Spot, CastAim::Point(spot), Some(me)) => {
+            (Targeting::Spot { .. }, CastAim::Point(spot), Some(me)) => {
                 spot_refusal(world, me, aimed, spot)
             }
             _ => None,
@@ -312,20 +315,19 @@ pub fn draw_aim(world: &mut World) {
     let Some(from) = movement::position(world, me) else {
         return;
     };
-    let reach = PlacedShape::cast(
-        Shape::Circle {
-            radius: reach_of(world, me, aimed),
-        },
-        from,
-        from,
-    );
-    let ring = outline(world, &reach);
+    let ring = reach_of(world, me, aimed).and_then(|radius| {
+        let reach = PlacedShape::centred(Shape::Circle { radius }, from, Radians::default());
+        outline(world, &reach)
+    });
     let spot = spot_aim(world);
     let mark = spot.as_ref().and_then(|spot| {
         let shape = Shape::Circle {
             radius: SPOT_RADIUS,
         };
-        let ring = outline(world, &PlacedShape::cast(shape, spot.at, spot.at))?;
+        let ring = outline(
+            world,
+            &PlacedShape::centred(shape, spot.at, Radians::default()),
+        )?;
         let said = spot.refused.clone().or_else(|| good_spot(world, me, aimed));
         Some((ring, spot.refused.is_some(), said))
     });
@@ -362,7 +364,10 @@ pub fn draw_aim(world: &mut World) {
             dusk::lettering(painter, at.min, galley, dusk::EDGED, TSTransform::IDENTITY);
         }
     });
-    if aimed.targeting(world.resource::<Content>()) == Targeting::Spot {
+    if matches!(
+        aimed.targeting(world.resource::<Content>()),
+        Targeting::Spot { .. }
+    ) {
         prompt(world, &gui, me, aimed);
     }
 }
@@ -425,14 +430,17 @@ fn good_spot(world: &World, me: Entity, aimed: Aimed) -> Option<String> {
     }
 }
 
-/// How far from the character what is armed may be aimed: a skill's range, or for a rider
-/// leaving their mount how far the mount lets them step.
-fn reach_of(world: &World, me: Entity, aimed: Aimed) -> Meters {
+/// How far from the character what is armed may be aimed: a skill's range, none for a skill used
+/// where the character stands, or for a rider leaving their mount how far the mount lets them
+/// step.
+fn reach_of(world: &World, me: Entity, aimed: Aimed) -> Option<Meters> {
     match aimed {
         Aimed::Skill { skill, rank } if !mount::left_by(world, me, skill) => {
             super::range_of(world, me, skill, rank)
         }
-        Aimed::Skill { .. } | Aimed::Landing => mount::reach_of(world, me).unwrap_or_default(),
+        Aimed::Skill { .. } | Aimed::Landing => {
+            Some(mount::reach_of(world, me).unwrap_or_default())
+        }
     }
 }
 
@@ -464,15 +472,17 @@ fn outline(world: &mut World, shape: &PlacedShape) -> Option<Vec<egui::Pos2>> {
 /// nothing fitting.
 fn aim_at(world: &mut World, pointed: &Pointed, targeting: Targeting) -> Option<CastAim> {
     match targeting {
-        Targeting::SingleAlly | Targeting::SingleEnemy => {
+        Targeting::Single { .. } => {
             let me = session::me(world)?;
             actor::target_at(world, pointed, None, |world, entity| {
                 world.get::<Actor>(entity).is_some() && casting::fits(world, me, entity, targeting)
             })
             .map(CastAim::Actor)
         }
-        Targeting::AreaAlly | Targeting::AreaEnemy => Some(CastAim::Point(pointed.ground?)),
-        Targeting::Spot => Some(CastAim::Point(pointed.surface?)),
+        Targeting::RangedArea { .. } | Targeting::MeleeArea { .. } => {
+            Some(CastAim::Point(pointed.ground?))
+        }
+        Targeting::Spot { .. } => Some(CastAim::Point(pointed.surface?)),
         Targeting::Caster => None,
     }
 }
@@ -493,8 +503,8 @@ fn aimed_area(world: &mut World, aimed: Aimed) -> Option<(PlacedShape, bool)> {
         return None;
     };
     let def = skill.get(&content);
-    let shape = def.area_at(rank)?;
+    let shape = def.shape_at(rank)?;
     let from = movement::position(world, me)?;
     let point = render::cursor_ground(world)?;
-    Some((PlacedShape::cast(shape, from, point), def.target.hostile()))
+    Some((def.target.place(shape, from, point), def.target.hostile()))
 }

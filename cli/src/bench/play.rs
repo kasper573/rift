@@ -13,7 +13,9 @@ use engine::systems::movement::Position;
 use engine::systems::npc::Npc;
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin, start_of};
 use engine::systems::player::{ClientId, Players};
-use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
+use engine::systems::skill::{
+    Affects, CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest,
+};
 use engine::systems::visibility;
 
 /// Ticks between one player's casts: two seconds at the server's rate.
@@ -71,21 +73,40 @@ pub fn act(world: &mut World, content: &Content, roster: &[Entity], tick: usize)
         };
         let aim = match def.target {
             Targeting::Caster => CastAim::None,
-            Targeting::SingleEnemy => match nearest_npc(world, at) {
+            Targeting::Single {
+                affects: Affects::Enemy,
+                ..
+            } => match nearest_npc(world, at) {
                 Some((npc, _)) => CastAim::Actor(npc),
                 None => continue,
             },
-            Targeting::SingleAlly => {
+            Targeting::Single {
+                affects: Affects::Ally,
+                ..
+            } => {
                 let other = roster[(index + 1) % roster.len()];
                 match player_of(world, other) {
                     Some(ally) => CastAim::Actor(ally),
                     None => continue,
                 }
             }
-            Targeting::AreaEnemy => {
-                CastAim::Point(nearest_npc(world, at).map_or(at, |(_, pos)| pos))
+            Targeting::RangedArea {
+                affects: Affects::Enemy,
+                ..
             }
-            Targeting::AreaAlly | Targeting::Spot => CastAim::Point(at),
+            | Targeting::MeleeArea {
+                affects: Affects::Enemy,
+                ..
+            } => CastAim::Point(nearest_npc(world, at).map_or(at, |(_, pos)| pos)),
+            Targeting::RangedArea {
+                affects: Affects::Ally,
+                ..
+            }
+            | Targeting::MeleeArea {
+                affects: Affects::Ally,
+                ..
+            }
+            | Targeting::Spot { .. } => CastAim::Point(at),
         };
         from_client(world, conn, UseSkillRequest { skill, aim });
     }

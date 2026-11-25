@@ -682,7 +682,7 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
                 "name": "Bladework",
                 "icon": "icons/hero.png",
                 "kind": "passive",
-                "target": "self",
+                "target": { "type": "caster" },
                 "levels": [{ "cost": 1 }],
                 "masteries": [dagger],
             }),

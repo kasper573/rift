@@ -408,11 +408,12 @@ pub enum InstanceChange {
 }
 
 /// How a scenery draws a prop: each part of its model in its material, of whatever kind draws it,
-/// whether it casts a shadow, and whether it clears away where it hides the camera's subject.
+/// whether each part casts a shadow, and whether it clears away where it hides the camera's
+/// subject.
 #[derive(Clone, Debug)]
 pub struct DressedProp {
     pub materials: Vec<UntypedHandle>,
-    pub shadow: bool,
+    pub shadows: Vec<bool>,
     pub fades: bool,
     /// How far its shaders draw past its model at most, in the model's metres.
     pub overhang: Meters,

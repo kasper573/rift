@@ -398,7 +398,7 @@ fn a_skill_asking_for_a_move_no_skeleton_declares_is_refused() {
             json!({
                 "name": "Volley",
                 "icon": "icons/volley.png",
-                "target": "single_enemy",
+                "target": { "type": "single", "affects": "enemy" },
                 "levels": [{ "cost": 1 }],
                 "modules": [{ "type": "script", "script": testkit::path("script", "volley") }],
             }),

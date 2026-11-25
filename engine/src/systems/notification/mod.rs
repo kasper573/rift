@@ -120,7 +120,7 @@ impl NotificationKind {
 }
 
 /// What a row of the feed says beside its text: under which topic of history, with which icon,
-/// tally and sound, and whether it tells of a failure.
+/// tally and sound, whether it tells of a failure, and where its sender has it shown.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FeedRow {
     pub topic: HistoryTopic,
@@ -128,6 +128,17 @@ pub struct FeedRow {
     pub tally: Option<RecordTally>,
     pub failure: bool,
     pub sfx: Option<SfxId>,
+    pub layout: FeedLayout,
+}
+
+/// Where a row of the feed is shown: where the feed's own rule puts it, or always in one place.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FeedLayout {
+    /// Over the player's head while there is room there, else in the corner.
+    #[default]
+    Auto,
+    Overhead,
+    Corner,
 }
 
 /// A row of the feed being worded, a notification once sent.
@@ -154,6 +165,11 @@ impl FeedLine {
 
     pub fn sound(mut self, heard: SfxId) -> FeedLine {
         self.row.sfx = Some(heard);
+        self
+    }
+
+    pub fn layout(mut self, layout: FeedLayout) -> FeedLine {
+        self.row.layout = layout;
         self
     }
 }
@@ -288,6 +304,7 @@ impl Notification {
                 tally: None,
                 failure: false,
                 sfx: None,
+                layout: FeedLayout::Auto,
             },
             text: text.into(),
         }

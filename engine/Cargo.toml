@@ -60,6 +60,7 @@ bevy_platform.workspace = true
 slotmap.workspace = true
 dyn-clone = "1"
 erased-serde = "0.4"
+unicode-segmentation = "1"
 smallvec.workspace = true
 bevy_egui.workspace = true
 bevy_mod_outline.workspace = true

@@ -1,10 +1,8 @@
 use std::collections::BTreeMap;
 
-use engine::core::geometry::Shape;
-use engine::core::units::Meters;
 use engine::field;
 use engine::systems::class::SkillPoints;
-use engine::systems::skill::{SkillDef, SkillLevel, SkillStat, Targeting};
+use engine::systems::skill::{SkillDef, SkillLevel, SkillStat};
 use serde_json::Value;
 use ui::egui::Ui;
 
@@ -32,40 +30,6 @@ pub fn ranks(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
             (!summed.is_empty()).then(|| format!("at this rank: {}", summed.join(" · ")))
         },
     )
-}
-
-/// `skill` as an edit from `before` leaves it, with its target and area kept in step: a target
-/// aimed at a point takes an area and a single one gives its area up, and an area added or removed
-/// turns the target into its area or single kind. The game takes neither half without the other.
-pub(crate) fn paired_targeting(before: &SkillDef, skill: &mut SkillDef) {
-    let target_changed = before.target != skill.target;
-    match (skill.target.aimed_at_point(), skill.area.is_some()) {
-        (true, false) if target_changed => {
-            skill.area = Some(Shape::Circle {
-                radius: Meters(2.0),
-            })
-        }
-        (true, false) => skill.target = single_kind(skill.target),
-        (false, true) if target_changed => skill.area = None,
-        (false, true) => skill.target = area_kind(skill.target),
-        _ => {}
-    }
-}
-
-fn single_kind(target: Targeting) -> Targeting {
-    match target {
-        Targeting::AreaAlly => Targeting::SingleAlly,
-        Targeting::AreaEnemy => Targeting::SingleEnemy,
-        single => single,
-    }
-}
-
-fn area_kind(target: Targeting) -> Targeting {
-    match target {
-        Targeting::SingleEnemy => Targeting::AreaEnemy,
-        Targeting::SingleAlly | Targeting::Caster => Targeting::AreaAlly,
-        area => area,
-    }
 }
 
 fn skill_ranks(skill: &mut SkillDef) -> &mut Vec<SkillLevel> {

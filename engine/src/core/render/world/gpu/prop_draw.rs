@@ -783,7 +783,7 @@ impl PropQueue<'_, '_> {
                         progress.left_out();
                         return None;
                     };
-                    if light && !dressed.shadow {
+                    if light && dressed.shadows.get(bucket.part as usize) != Some(&true) {
                         return None;
                     }
                     let material = dressed.materials.get(bucket.part as usize)?;

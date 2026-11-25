@@ -353,8 +353,8 @@ pub struct ProbeSnapshot {
     #[entities]
     pub stage: Option<ProbeStage>,
     pub notifications: ProbeNotifications,
-    pub feed: Vec<String>,
-    pub feed_place: feed::FeedPlace,
+    /// The lines of the feed, the oldest first.
+    pub feed: Vec<feed::FeedShown>,
     /// What the interface shows of saving.
     pub saving: ShownSaving,
     /// The request cards on the HUD, the one in front first.
@@ -1140,8 +1140,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 .collect(),
         }),
         notifications: notifications(world),
-        feed: feed::rows(world),
-        feed_place: feed::place(world),
+        feed: feed::shown(world),
         saving: save::notice::shown(world),
         social_requests: social_request::card::shown(world),
         mail: mail::page::shown(world),

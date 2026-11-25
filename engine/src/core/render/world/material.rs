@@ -85,6 +85,8 @@ pub struct MaterialLook {
     pub shader: Option<Handle<Shader>>,
     pub params: ParamsUniform,
     pub translucency: f32,
+    /// Whether what is drawn in it casts a shadow.
+    pub shadow: bool,
 }
 
 /// Wear laid over a look's colours by the mesh's second texture coordinates: where `mask` shows
@@ -555,14 +557,23 @@ pub fn part_material(
     made
 }
 
+/// Whether a part drawn in `look` casts a shadow, `glass` telling whether its model's own material
+/// is a pane: light passes through glass and through what its look lets pass.
+pub fn casts_shadow(look: Option<&MaterialLook>, glass: bool) -> bool {
+    match look {
+        Some(look) => look.shadow,
+        None => !glass,
+    }
+}
+
 /// The looks a scene's materials are drawn in, each by the name its model gives the material: set
 /// on the scene's root before the scene spawns, so its meshes are dressed in them from the first.
 #[derive(Component, Clone, Debug, Default)]
 pub struct SceneLooks(pub Vec<MaterialLook>);
 
 /// Every scene that finishes spawning trades its standard materials for world ones, each in the
-/// look its root's [`SceneLooks`] gives its material, and otherwise its glass clear and casting no
-/// shadow: light passes through a pane.
+/// look its root's [`SceneLooks`] gives its material, casting a shadow only where the look does,
+/// and otherwise its glass clear and casting no shadow: light passes through a pane.
 pub(super) fn dress_scenes(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
@@ -586,7 +597,7 @@ pub(super) fn dress_scenes(
         let mut mesh = commands.entity(entity);
         mesh.remove::<MeshMaterial3d<StandardMaterial>>()
             .insert(MeshMaterial3d(dressed));
-        if glass {
+        if !casts_shadow(look, glass) {
             mesh.insert(NotShadowCaster);
         }
     }

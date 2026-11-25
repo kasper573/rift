@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "4cbcf49f",
+  "content_version": "612e43bd",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -350,6 +350,7 @@
     "inbox": 50,
     "attachments": 6,
     "title_length": 60,
+    "notice_title_length": 25,
     "text_length": 1000,
     "a_minute": 5
   },

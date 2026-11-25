@@ -3858,6 +3858,7 @@ dependencies = [
  "tiny-skia",
  "tokio",
  "ui",
+ "unicode-segmentation",
  "ureq",
  "walkdir",
  "webp",

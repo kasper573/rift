@@ -193,8 +193,8 @@ fn draw(world: &mut World) {
     let opens = Opens {
         key: WindowKey::Crafting,
         of: Placed::Crafting,
-        size: SHEET,
-        min: SHEET_LEAST,
+        size: tray::making_room(&gui, SHEET),
+        min: tray::making_room(&gui, SHEET_LEAST),
     };
     let open = view(world).and(prompt::view(world)).cloned();
     windows::window(
@@ -222,7 +222,7 @@ fn show(ui: &mut Ui, world: &mut World) {
             let room = ui.available_rect_before_wrap();
             let recipes = Rect::from_min_size(room.min, Vec2::new(RECIPES_WIDTH, room.height()));
             let inventory = Rect::from_min_max(
-                Pos2::new(room.max.x - tray::INVENTORY_WIDTH, room.min.y),
+                Pos2::new(room.max.x - tray::inventory_width(ui.ctx()), room.min.y),
                 room.max,
             );
             let bench = Rect::from_min_max(
