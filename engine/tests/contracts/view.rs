@@ -6,36 +6,48 @@ use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::gltf::GltfPlugin;
 use bevy::prelude::*;
+use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
+use bevy::transform::TransformPlugin;
 use bevy::world_serialization::WorldSerializationPlugin;
-use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
+use engine::core::audio::playback::{Listener, PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
 use engine::core::ground::{
     GroundSize, HeightRange, Heightfield, SAMPLES_PER_METER, TileAt, WaterSurface,
 };
 use engine::core::math::{Pos, Rect};
 use engine::core::render::camera::ground_hit;
+use engine::core::render::transition::WorldViewSystems;
 use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{
-    Animator, CameraPreferences, CameraRig, Orbit, Shot, capsule_hit, facing_rotation, ground_pos,
-    world_point,
+    Animator, CameraPreferences, CameraRig, GroundHeights, Orbit, Shot, capsule_hit,
+    facing_rotation, ground_pos, world_point,
 };
 use engine::core::text::Typewriter;
 use engine::core::time::UnixMillis;
 use engine::core::units::{
     Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
 };
-use engine::systems::actor::held::Held;
+use engine::systems::actor::held::{HandsAtWork, Held, ToolInHand};
 use engine::systems::actor::render::{self, HeldProp, Puppet, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Motion, Playing, Pose};
+use engine::systems::actor::{
+    Action, Actor, Aloft, Appearance, Hurt, ModelDef, Motion, Playing, Pose,
+};
+use engine::systems::area::scenery::ShowsProp;
 use engine::systems::area::{self, AreaDef, AreaTag};
+use engine::systems::area::{PropDef, PropId};
 use engine::systems::identity::{self, GlobalId, Names};
-use engine::systems::item::ItemDef;
-use engine::systems::movement::RenderPosition;
+use engine::systems::item::{Grip, ItemDef};
+use engine::systems::mount::render::{MountRenderPlugin, gear_places};
+use engine::systems::mount::{MountDef, Riding};
+use engine::systems::movement::{Position, RenderPosition};
+use engine::systems::player::session::MyCharacter;
+use engine::systems::screen::ClientScreen;
+use engine::systems::view::CameraFollowPlugin;
 use serde_json::json;
 use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, RUN_PACE, WALK_PACE, path, png};
 
@@ -130,6 +142,92 @@ fn the_camera_eases_toward_a_turn_and_comes_to_rest_on_it_at_any_frame_rate() {
         at_once.yaw().0 == wanted,
         "a player who turns smoothing off has the turn at once: {:?}",
         at_once.yaw()
+    );
+}
+
+/// A player put close by, as off a boat onto a pier, shows there at once, and the camera glides
+/// after them from the first frame: on its way it looks no lower than where they floated and no
+/// higher than where they stand, whatever ground lies under the water between.
+#[test]
+fn the_camera_glides_after_a_player_put_ashore_without_looking_down_into_the_water() {
+    let size = GroundSize {
+        width: 32,
+        height: 32,
+    };
+    let shore = 16.0;
+    let heights = Heightfield::from_fn(size, HEIGHTS, |column, _| {
+        let east = column as f32 / SAMPLES_PER_METER as f32;
+        Meters(if east < shore { 2.0 } else { -5.0 })
+    });
+    let content = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .load();
+    let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, StatesPlugin, CameraFollowPlugin))
+        .insert_state(ClientScreen::Area)
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f32(
+            1.0 / 60.0,
+        )))
+        .insert_resource(GroundHeights {
+            heights,
+            water: WaterSurface::dry(size, HEIGHTS),
+            bounds: size.bounds(),
+        })
+        .insert_resource(CameraRig::new(testkit::look().camera))
+        .init_resource::<Listener>();
+    let afloat = Pos::new(22.0, 16.0);
+    let pier = Pos::new(10.0, 16.0);
+    let player = app
+        .world_mut()
+        .spawn((
+            Position::at(afloat),
+            RenderPosition(afloat),
+            AreaTag { area: field },
+            Aloft(Meters(0.0)),
+        ))
+        .id();
+    app.insert_resource(MyCharacter(Some(player)));
+    for _ in 0..60 {
+        app.update();
+    }
+    let looked_at = |app: &App| app.world().resource::<CameraRig>().target();
+    let floated = looked_at(&app);
+
+    let mut put = app.world_mut().entity_mut(player);
+    let mut position = put.get_mut::<Position>().expect("a position");
+    position.pos = pier;
+    position.hops = position.hops.next();
+    put.insert(RenderPosition(pier)).remove::<Aloft>();
+    let glide: Vec<Vec3> = (0..120)
+        .map(|_| {
+            app.update();
+            looked_at(&app)
+        })
+        .collect();
+    let stands = *glide.last().expect("frames");
+
+    assert!(
+        glide[0].x < floated.x && glide[0].x > stands.x,
+        "the camera sets off toward the pier rather than cutting to it: from {floated} to {}",
+        glide[0]
+    );
+    assert!(
+        glide.windows(2).all(|pair| pair[1].x <= pair[0].x),
+        "it keeps gliding toward the pier: {glide:?}"
+    );
+    assert!(
+        glide
+            .iter()
+            .all(|at| at.y >= floated.y - 1e-3 && at.y <= stands.y + 1e-3),
+        "it looks no lower than where the player floated, {}, nor higher than where they stand, \
+         {}, on the way: {glide:?}",
+        floated.y,
+        stands.y
+    );
+    assert!(
+        (stands.x - pier.x).abs() < 1e-2 && stands.y > floated.y,
+        "given time, it looks at the player on the pier: {stands}"
     );
 }
 
@@ -674,6 +772,130 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
 }
 
 #[test]
+fn a_rider_lays_what_they_hold_on_their_mount_and_keeps_the_tool_they_work_with_in_hand() {
+    let game = boat_game();
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, content) = viewer_with(game, folder.path(), |app| {
+        app.add_plugins((StatesPlugin, MountRenderPlugin))
+            .insert_state(ClientScreen::Area);
+    });
+    let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
+    let rod = testkit::Declared::declared::<PropDef>(&content, "rod").expect("a rod");
+    let boat = testkit::Declared::declared::<MountDef>(&content, "boat").expect("a boat");
+    let rider = spawn_hero(&mut app, &content, Action::Idle);
+    app.world_mut().entity_mut(rider).insert((
+        Riding { mount: boat },
+        Held {
+            hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
+        },
+    ));
+    let mut steed = None;
+    testkit::until(&mut app, |app| {
+        app.world_mut()
+            .run_system_cached(render::dress)
+            .expect("dressed");
+        steed = gear_places(app.world_mut(), rider).map(|places| places.steed);
+        steed.is_some() && joint_of(app, rider, "hand.r").is_some()
+    });
+    let steed = steed.expect("the boat stands under its rider");
+    let hand = joint_of(&mut app, rider, "hand.r").expect("the rider's rig stands");
+    let gear = joint_of(&mut app, steed, "hand.l").expect("the boat's rig stands");
+    let sword_look = sword.get(&content).look;
+    let hung_as = |app: &mut App| {
+        app.world_mut()
+            .run_system_cached(render::hang)
+            .expect("hung");
+        shown_props(app)
+    };
+
+    assert_eq!(
+        hung_as(&mut app),
+        vec![(gear, sword_look)],
+        "the rider's sword lies in the boat's gear place"
+    );
+    let at_work = ToolInHand {
+        prop: rod,
+        grip: Grip::default(),
+    };
+    app.world_mut().entity_mut(rider).insert(HandsAtWork {
+        tool: Some(at_work),
+    });
+    assert_eq!(
+        hung_as(&mut app),
+        vec![(hand, rod)],
+        "the rod the rider works with stays in their hand, and the sword is put away"
+    );
+    app.world_mut().entity_mut(rider).remove::<HandsAtWork>();
+    assert_eq!(
+        hung_as(&mut app),
+        vec![(gear, sword_look)],
+        "the work done, the sword lies in the boat again"
+    );
+}
+
+/// The frame a rider mounts, their mount stands under them drawn whole, and they sit on its seat
+/// as it is posed that frame; the frame they step off, it is gone.
+#[test]
+fn a_rider_mounts_onto_a_mount_drawn_whole_in_its_seat_and_leaves_it_at_once() {
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, content) = viewer_with(boat_game(), folder.path(), |app| {
+        app.add_plugins((TransformPlugin, StatesPlugin, MountRenderPlugin))
+            .insert_state(ClientScreen::Area)
+            .add_systems(
+                Update,
+                (render::dress, render::pose)
+                    .chain()
+                    .in_set(WorldViewSystems),
+            );
+    });
+    let boat = testkit::Declared::declared::<MountDef>(&content, "boat").expect("a boat");
+    let look = boat.get(&content).look;
+    let rider = spawn_hero(&mut app, &content, Action::Idle);
+    for _ in 0..LOADING_FRAMES {
+        app.update();
+        let world = app.world_mut();
+        let ready = world
+            .query::<(&Appearance, &Body)>()
+            .iter(world)
+            .any(|(shown, body)| shown.model == look && body.drawn());
+        if ready && joint_of(&mut app, rider, "hand.r").is_some() {
+            break;
+        }
+    }
+
+    app.world_mut()
+        .entity_mut(rider)
+        .insert(Riding { mount: boat });
+    app.update();
+    let steed = gear_places(app.world_mut(), rider)
+        .expect("the boat stands under its rider")
+        .steed;
+    assert!(
+        app.world().get::<Body>(steed).is_some_and(Body::drawn),
+        "the boat is drawn whole the frame its rider mounts"
+    );
+    let seat = joint_of(&mut app, steed, "body").expect("the boat's seat");
+    let placed = |entity: Entity| {
+        app.world()
+            .get::<GlobalTransform>(entity)
+            .expect("placed")
+            .translation()
+    };
+    let off = placed(rider).distance(placed(seat));
+    assert!(
+        off < 1e-3,
+        "the rider sits on the boat's seat the frame they mount, not {off} m off it"
+    );
+
+    app.world_mut().entity_mut(rider).remove::<Riding>();
+    app.update();
+    assert!(
+        app.world().get_entity(steed).is_err(),
+        "the boat is gone the frame its rider steps off"
+    );
+}
+
+#[test]
 fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
@@ -956,15 +1178,22 @@ fn a_prop_strapped_to_the_arm_turns_with_the_arm_and_the_hand_holding_it_as_its_
 /// A client's world drawing `game`, written to `folder`: its bodies stand their rigs and skins,
 /// and play their skeletons' clips and layers.
 fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::Content) {
+    viewer_with(game, folder, |_| {})
+}
+
+/// As `viewer`, with `more` added to the app before it is finished.
+fn viewer_with(
+    game: Game,
+    folder: &std::path::Path,
+    more: impl FnOnce(&mut App),
+) -> (App, engine::core::content::Content) {
     game.write_to(folder);
     let content = game.load();
     let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, folder);
     app.add_plugins((
         MinimalPlugins,
-        AssetPlugin {
-            file_path: folder.display().to_string(),
-            ..Default::default()
-        },
+        AssetPlugin::default(),
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),
@@ -978,9 +1207,43 @@ fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::
     .init_resource::<Animator>()
     .add_observer(render::adopt_character)
     .insert_resource(content.clone());
+    more(&mut app);
     app.finish();
     app.cleanup();
     (app, content)
+}
+
+/// How many frames a test gives the game to load what it shows.
+const LOADING_FRAMES: usize = 600;
+
+/// A field with a hero, a sword and a rod, and a boat ridden from the joint of its body, the
+/// rider sitting, that lays its rider's gear in its left hand.
+fn boat_game() -> Game {
+    let mut clips = testkit::rig_clips();
+    clips.push(("sit", Seconds(0.4)));
+    Game::new()
+        .skeleton_of(BODY, &clips, json!({}))
+        .edit("skeleton", BODY, |body| {
+            body["base"]["moves"] = json!({ "sit": testkit::clip("sit") });
+        })
+        .area("field", &Map::open(5, 5), json!([]))
+        .hero("field", 2.0, 2.0)
+        .sword()
+        .prop("rod", json!({ "type": "none" }))
+        .model("boat", 1.0, json!([]))
+        .row(
+            "mount",
+            "boat",
+            json!({
+                "name": "Boat",
+                "look": path("model", "boat"),
+                "travels": { "type": "riding" },
+                "reach": 3.0,
+                "rider": { "joint": "body", "rides": "sit", "may": ["gather", "items"] },
+                "barred": "refuse",
+                "gear": ["left"],
+            }),
+        )
 }
 
 /// The declared hero, standing at the middle of the field doing `action`.
@@ -1602,6 +1865,21 @@ fn prop_under(app: &mut App, above: Entity) -> Option<(Mat4, Mat4)> {
         at = world.get::<ChildOf>(at)?.parent();
     }
     Some((placed, in_hand))
+}
+
+/// The joint named `name` of the rig of `body`.
+fn joint_of(app: &mut App, body: Entity, name: &str) -> Option<Entity> {
+    app.world().get::<Body>(body)?.joint(name)
+}
+
+/// Every prop a body holds, wherever it hangs, by the joint it hangs from and the prop it shows.
+fn shown_props(app: &mut App) -> Vec<(Entity, PropId)> {
+    let world = app.world_mut();
+    world
+        .query_filtered::<(&ChildOf, &ShowsProp), With<HeldProp>>()
+        .iter(world)
+        .map(|(joint, shown)| (joint.parent(), shown.0))
+        .collect()
 }
 
 /// Every prop hanging from a hand, by the joint it hangs from and the item it shows.

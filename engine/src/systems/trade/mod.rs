@@ -5,6 +5,9 @@
 
 pub mod window;
 
+use crate::core::time;
+use crate::systems::item::ItemId;
+use crate::systems::player::session;
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
@@ -111,18 +114,23 @@ pub struct TradeSettings {
 }
 
 /// Which change of what the two sides give a trade is at. Every change makes a new one.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TradeVersion(pub u32);
 
 /// A player's ask to walk into reach of the player `with` and ask them to trade.
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
+#[derive(
+    JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq,
+)]
 pub struct TradeAsk {
     #[entities]
+    #[schemars(with = "u64")]
     pub with: Entity,
 }
 
 /// What a player asks of a trade they are in.
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
+#[derive(
+    JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq,
+)]
 pub enum TradeRequest {
     /// Adds this many of an item from the bag to what the player gives.
     Give(ItemStack),
@@ -676,4 +684,73 @@ fn traders<'s>(
     let (world, other) = settling.reach(other)?;
     let one = *world.resource::<Players>().0.get(&one)?;
     Some((world, one, other))
+}
+
+/// The trade the player is in, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownTrade {
+    pub with: String,
+    /// What an acceptance of the deal as it stands names.
+    pub version: TradeVersion,
+    pub mine: Vec<ShownTradeStack>,
+    pub theirs: Vec<ShownTradeStack>,
+    pub i_accept: bool,
+    pub they_accept: bool,
+    /// Whether Accept is open now.
+    pub accept_open: bool,
+    /// The sentence above Accept that says where the trade stands.
+    pub status: String,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownTradeStack {
+    pub item: ItemId,
+    pub count: u32,
+}
+
+pub fn shown(world: &World) -> Option<ShownTrade> {
+    let view = my_trade(world)?;
+    let now = time::server_now(world)?;
+    let messages = messages::of(world.resource::<Content>());
+    let stacks = |stacks: &[ItemStack]| {
+        stacks
+            .iter()
+            .map(|stack| ShownTradeStack {
+                item: stack.item,
+                count: stack.count,
+            })
+            .collect()
+    };
+    Some(ShownTrade {
+        with: view.with.clone(),
+        version: view.version,
+        mine: stacks(&view.mine),
+        theirs: stacks(&view.theirs),
+        i_accept: view.i_accept,
+        they_accept: view.they_accept,
+        accept_open: !view.i_accept && view.open_at(now),
+        status: status(messages, view, now),
+    })
+}
+
+pub(crate) fn my_trade(world: &World) -> Option<&TradeView> {
+    session::my_character(world)?.get::<TradeView>()
+}
+
+/// Where the trade stands, in one sentence.
+pub(crate) fn status(messages: &messages::Messages, shown: &TradeView, now: UnixMillis) -> String {
+    let words = &messages.trade;
+    let with = &shown.with;
+    if shown.mine.is_empty() && shown.theirs.is_empty() {
+        return words.nothing_given().to_owned();
+    }
+    if now < shown.opens {
+        return words.opens_in(messages.time.rough(shown.opens.since(now)));
+    }
+    match (shown.i_accept, shown.they_accept) {
+        (false, false) => words.none_accepted().to_owned(),
+        (false, true) => words.they_accepted(with),
+        (true, false) => words.you_accepted(with),
+        (true, true) => words.both_accepted().to_owned(),
+    }
 }

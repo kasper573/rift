@@ -495,7 +495,7 @@ fn skill(game: Game, name: &str, motion: Value) -> Game {
             json!({
                 "name": name,
                 "icon": format!("icons/{name}.png"),
-                "target": "single_enemy",
+                "target": { "type": "single", "affects": "enemy" },
                 "basic_attack": true,
                 "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
                 "modules": [{ "type": "script", "script": path("script", name) }],

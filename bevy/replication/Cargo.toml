@@ -13,7 +13,9 @@ bevy_ecs = { workspace = true }
 bevy_platform = { workspace = true }
 postcard = { workspace = true }
 rayon = { workspace = true }
+schemars = "1"
 serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

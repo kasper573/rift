@@ -56,12 +56,24 @@ fn what_a_server_saved_as_it_stopped_is_what_the_next_one_plays_on() {
         origin: JoinOrigin::Staged,
     };
     village.sign_in(2, "hale", Some(staged));
+    let kept = JoinAs {
+        snapshot: CharacterSnapshot::of_def(&content, "Kept", player::def(&content)),
+        start: content.built::<GameSettings>().initial_spawn,
+        origin: JoinOrigin::Kept,
+    };
+    let ivy = village.sign_in(3, "ivy", Some(kept));
+    village.world.get_mut::<Xp>(ivy).expect("xp").gain(25);
     let left = state(&village, wren);
 
     let now = village.world.resource::<WallClock>().now;
     save::save_all(&mut [Some(&mut village.world)], &mut above.checkpoints, now)
         .expect("the store takes the game");
     assert_eq!(saves.character("hale"), None, "a stand-in is never saved");
+    let ivy = saves
+        .character("ivy")
+        .expect("a staged character kept as the account's own is saved");
+    let ivy = load::load(&content, &ivy).expect("a character this build saved");
+    assert_eq!(ivy.saved.character.xp, 25);
     let held = saves.character("wren").expect("the account's own is");
 
     let content = game(Some(&Map::open(9, 9))).load();
@@ -556,7 +568,7 @@ fn game(forest: Option<&Map>) -> Game {
             json!({
                 "name": "Guard",
                 "icon": "icons/hero.png",
-                "target": "self",
+                "target": { "type": "caster" },
                 "cooldown": 600.0,
                 "levels": [{ "cost": 1 }],
                 "modules": [{ "type": "script", "script": "mends.script.json" }],

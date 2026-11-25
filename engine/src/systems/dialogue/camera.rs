@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use super::stage;
 use crate::core::content::RowCheck;
 use crate::core::geometry::Capsule;
+use crate::core::render::world::body::Body as DrawnBody;
 use crate::core::render::{
-    CameraRig, CameraRigSystems, GroundHeights, Shot, ground_height, window_size, world_point,
+    CameraRig, CameraRigSystems, GroundHeights, Shot, View, ground_height, window_size, world_point,
 };
 use crate::core::script::DialogueCamera;
 use crate::core::units::{Degrees, Meters};
@@ -116,6 +117,37 @@ impl Plugin for DialogueCameraPlugin {
     }
 }
 
+/// Where everyone in the conversation shows on the screen once the camera has come to rest on the
+/// shot it frames them in: for each, the corners of the boxes that keep close to all their body
+/// draws, posed as it stands now. The camera may still be gliding there.
+pub(crate) fn bodies_at_rest(world: &mut World) -> Vec<Vec<Vec<ui::egui::Pos2>>> {
+    let (Some(cast), Some(me), Some(viewport)) =
+        (stage::cast(world), session::me(world), window_size(world))
+    else {
+        return Vec::new();
+    };
+    let Some(rig) = world.get_resource::<CameraRig>().copied() else {
+        return Vec::new();
+    };
+    let view = View::new(rig.resting().transform(), viewport, rig.framing().fov);
+    cast.everyone(me)
+        .into_iter()
+        .filter_map(|entity| world.get::<DrawnBody>(entity))
+        .map(|body| {
+            body.drawn_boxes(world)
+                .into_iter()
+                .map(|corners| {
+                    corners
+                        .into_iter()
+                        .filter_map(|corner| view.project(corner))
+                        .map(|at| ui::egui::pos2(at.x, at.y))
+                        .collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
 fn leave_shot(rig: Option<ResMut<CameraRig>>) {
     if let Some(mut rig) = rig {
         rig.unstage();
@@ -153,10 +185,9 @@ fn shot(world: &mut World) -> Option<Shot> {
         shots.shoulder.shot(spoken_to, speaks, tall, kept)
     };
     let everyone = |world: &mut World| {
-        let bodies: Vec<Body> = [me]
+        let bodies: Vec<Body> = cast
+            .everyone(me)
             .into_iter()
-            .chain(cast.with)
-            .chain(cast.speakers.iter().copied())
             .filter_map(|body| Body::of(world, body))
             .collect();
         let front = match with {

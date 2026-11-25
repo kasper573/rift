@@ -12,8 +12,8 @@ use crate::core::gui;
 use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
 use crate::systems::area_map::minimap;
+use crate::systems::equipment::Belongings;
 use crate::systems::hud::{self, HudWidget};
-use crate::systems::item::Inventory;
 use crate::systems::player::session;
 use crate::systems::settings::UserSettings;
 
@@ -176,14 +176,14 @@ fn entries(world: &World) -> Vec<Entry> {
     let Some(log) = seen.and_then(|seen| world.get::<QuestLog>(seen)) else {
         return Vec::new();
     };
-    let inventory = seen.and_then(|seen| world.get::<Inventory>(seen));
+    let belongings = Belongings::by(world, seen);
     log.tracked
         .iter()
         .filter_map(|&quest| {
             let def = quest.get(content);
             if let Some(active) = log.active(quest) {
                 let timed = active.deadline.is_some();
-                if active.ready(content, parties, inventory) && def.decision().is_none() {
+                if active.ready(content, parties, belongings) && def.decision().is_none() {
                     return Some(Entry {
                         quest,
                         mark: Some(ready_mark(def).get(content).icon.clone()),
@@ -195,7 +195,7 @@ fn entries(world: &World) -> Vec<Entry> {
                         )],
                     });
                 }
-                let progress = def.progress(content, parties, active, inventory);
+                let progress = def.progress(content, parties, active, belongings);
                 let rows = progress
                     .into_iter()
                     .map(|progress| {

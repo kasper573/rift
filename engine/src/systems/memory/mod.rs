@@ -202,7 +202,7 @@ impl EffectDef for Remember {
         let to = cx.opt_expr(self.to.as_ref(), ty)?;
         let memory = self.memory;
         Ok(Box::new(move |world, flow, cx| {
-            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let aimed = effects::aimed_record_anywhere(world, cx, &who);
             let value = match &to {
                 Some(to) => to(world, cx),
                 None => Value::Bool(true).widened(ty),
@@ -234,7 +234,7 @@ impl EffectDef for Forget {
         let who = effects::aim_anywhere(cx, &self.who)?;
         let memories = self.memories.clone();
         Ok(Box::new(move |world, flow, cx| {
-            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let aimed = effects::aimed_record_anywhere(world, cx, &who);
             let memories = memories.clone();
             effects::reach(
                 world,

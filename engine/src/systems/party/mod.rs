@@ -8,6 +8,8 @@ pub mod query;
 pub mod share;
 
 use crate::core::script::Vocabulary;
+use crate::systems::player::session;
+use crate::systems::society::RequestCard;
 use std::collections::{BTreeMap, HashMap};
 
 use bevy_app::App;
@@ -16,18 +18,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
+use crate::core::math::Pos;
 use crate::core::store::{Record, RecordId};
 use crate::core::time::UnixMillis;
-use crate::core::units::{Meters, Seconds};
+use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::area::AreaId;
 use crate::systems::chat::{self, ChatChannel, ChatChannelSource, ChatSaid, ChatSpeaker};
 use crate::systems::history::HistoryTopic;
 use crate::systems::messages::{self, messages};
+use crate::systems::movement::position;
 use crate::systems::notification::Notification;
 use crate::systems::player::RequestNeeds;
-use crate::systems::player::{self, ClientId, PlayedBy};
+use crate::systems::player::{self, Away, ClientId, PlayedBy, Players};
 use crate::systems::social_request::{
     self, RequestUnaccepted, RequestUnsent, SocialRequest, SocialRequestAsk, SocialRequestKind,
     SocialRequestSource, SocialRequestWords,
@@ -35,6 +39,7 @@ use crate::systems::social_request::{
 use crate::systems::society::{
     self, AccountNumber, Settling, Society, SocietyAsk, SocietyMember, SocietyView,
 };
+use crate::systems::stat;
 
 messages! {
     /// What the game says of parties.
@@ -161,6 +166,8 @@ pub struct PartySettings {
     pub call_lasts: Seconds,
     /// How long a member whose player is gone stays in the party.
     pub absent_for: Seconds,
+    /// How far from where a foe fell or a task was done a member still shares in it.
+    pub range: Meters,
     pub experience: SharedExperience,
 }
 
@@ -169,8 +176,6 @@ pub struct PartySettings {
 #[serde(deny_unknown_fields)]
 pub struct SharedExperience {
     pub split: ExperienceSplit,
-    /// How far from where a foe fell a member still shares in it.
-    pub range: Meters,
     /// Percent added to a kill's worth for each member who shares in it past the first.
     pub bonus: f32,
 }
@@ -305,7 +310,7 @@ impl CharacterParties {
 }
 
 /// What a player asks of parties beyond an invitation.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PartyRequest {
     /// A party of their own, with them as its leader.
     Create,
@@ -381,6 +386,34 @@ pub fn companions(world: &World, character: Entity) -> Vec<ClientId> {
         .and_then(|view| view.party.as_ref())
         .map(|party| party.clients().collect())
         .unwrap_or_default()
+}
+
+/// The characters who share in what `character` did at `at`: `character` alone, or with a party
+/// every member of it who stands in this world within the game's range of `at`, alive and with
+/// their player at them. `character` shares from however far they did it.
+pub fn sharers(world: &World, character: Entity, at: Option<Pos<Meters>>) -> Vec<Entity> {
+    let Some(rules) = world.resource::<GameSettings>().party else {
+        return vec![character];
+    };
+    let players = world.resource::<Players>();
+    let members: Vec<Entity> = companions(world, character)
+        .iter()
+        .filter_map(|client| players.0.get(client).copied())
+        .collect();
+    if members.is_empty() {
+        return vec![character];
+    }
+    let shares = |member: Entity| {
+        let near = member == character
+            || at
+                .zip(position(world, member))
+                .is_some_and(|(at, stands)| at.distance(stands) <= rules.range);
+        near && !stat::is_dead(world, member) && world.get::<Away>(member).is_none()
+    };
+    members
+        .into_iter()
+        .filter(|&member| shares(member))
+        .collect()
 }
 
 /// Whether the player of `character` is in a party.
@@ -755,4 +788,67 @@ fn record_id(id: PartyId) -> RecordId {
 
 pub fn scripting(vocabulary: &mut Vocabulary) {
     query::scripting(vocabulary);
+}
+
+/// What the player sees of parties, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
+pub struct ShownParty {
+    /// The members of the party the player is in, in the order they joined, the player among
+    /// them.
+    pub members: Vec<ShownPartyMember>,
+    /// Who invites the player to a party.
+    pub invitations: Vec<String>,
+    /// Who the player invited and waits for.
+    pub invited: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownPartyMember {
+    pub name: String,
+    pub leads: bool,
+    /// The area they play in, while their player is at their character.
+    pub area: Option<String>,
+}
+
+pub fn shown(world: &World) -> ShownParty {
+    let Some(view) = society(world) else {
+        return ShownParty::default();
+    };
+    let content = world.resource::<Content>();
+    let names =
+        |cards: Vec<&RequestCard>| cards.iter().map(|card| card.other.name.clone()).collect();
+    ShownParty {
+        members: view
+            .party
+            .iter()
+            .flat_map(|party| party.members.iter().map(move |member| (party, member)))
+            .map(|(party, member)| ShownPartyMember {
+                name: member.character.name.clone(),
+                leads: party.leader == member.character.account,
+                area: member.area.map(|area| area.get(content).name.clone()),
+            })
+            .collect(),
+        invitations: names(invitations(&view).collect()),
+        invited: names(invited(&view).collect()),
+    }
+}
+
+pub(crate) fn society(world: &World) -> Option<SocietyView> {
+    session::my_character(world)?.get::<SocietyView>().cloned()
+}
+
+pub(crate) fn invitation(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
+    view.requests
+        .iter()
+        .filter(|card| card.kind == SocialRequestKind::PartyInvitation)
+}
+
+/// The invitations the player is asked.
+pub(crate) fn invitations(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
+    invitation(view).filter(|card| !card.mine)
+}
+
+/// The invitations the player sent.
+pub(crate) fn invited(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
+    invitation(view).filter(|card| card.mine)
 }

@@ -460,7 +460,7 @@ impl Shelters {
                     return None;
                 }
                 let model = models.0.get(&def.model.path())?;
-                let placed = prop_transform(&area.heights, placed);
+                let placed = prop_transform(&area.heights, &area.snap_surfaces, placed);
                 Some(Sheltering {
                     into: placed.compute_affine().inverse(),
                     placed,

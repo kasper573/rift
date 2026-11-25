@@ -1,5 +1,5 @@
 //! What a chat line holds in its text beside words: one of the things the game is made of, or
-//! where its speaker stood, shown as the interface mentions such a thing anywhere.
+//! a spot in one of its areas, shown as the interface mentions such a thing anywhere.
 
 use bevy_ecs::prelude::*;
 use bevy_terminal::TerminalEmbed;
@@ -10,8 +10,8 @@ use super::ChatMessages;
 use crate::core::content::{Content, ContentFile};
 use crate::core::math::Pos;
 use crate::core::text::LineText;
-use crate::core::units::Meters;
-use crate::systems::area::{AreaId, AreaTag};
+use crate::core::units::{MeterSize, Meters};
+use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::item::{ItemDef, ItemId};
 use crate::systems::mention::{Mention, ShownMention};
 use crate::systems::messages;
@@ -94,7 +94,8 @@ pub enum ChatEmbed {
     Location(ChatLocation),
 }
 
-/// Where a speaker stood as they said a line: the area, and the spot in it to the metre.
+/// A spot in one of the game's areas, to the metre: where a speaker stands, or one they picked on
+/// the map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ChatLocation {
     pub area: AreaId,
@@ -183,11 +184,13 @@ impl ChatEmbed {
         }
     }
 
-    /// What a line `speaker` says holds in place of this: a location is where the speaker
-    /// stands as the server knows it, whatever their client sent, and anything else is itself.
-    pub fn said_by(self, world: &World, speaker: Entity) -> Option<ChatEmbed> {
+    /// What a line a player sends may hold of this: a location only on the ground of its area,
+    /// and anything else as itself.
+    pub fn held(self, content: &Content) -> Option<ChatEmbed> {
         match self {
-            ChatEmbed::Location(_) => ChatLocation::of(world, speaker).map(ChatEmbed::Location),
+            ChatEmbed::Location(location) => area::loaded(content, location.area)
+                .is_some_and(|area| area.size.bounds().contains(location.at()))
+                .then_some(self),
             thing => Some(thing),
         }
     }

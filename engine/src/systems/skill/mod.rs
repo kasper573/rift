@@ -35,7 +35,7 @@ use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
     Nearby, RowCheck, serial,
 };
-use crate::core::geometry::{PlacedShape, Shape};
+use crate::core::geometry::{PlacedShape, Shape, facing_from};
 use crate::core::math::Pos;
 use crate::core::script::FlowCx;
 use crate::core::script::{
@@ -46,6 +46,7 @@ use crate::core::time::UnixMillis;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::AreaTag;
 use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
+use crate::systems::combat::Regard;
 use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind, ItemStack};
@@ -255,6 +256,10 @@ messages! {
         target_area_ally,
         /// How a skill that lands on enemies in an area is described.
         target_area_enemy,
+        /// How a skill that lands on allies in an area from where its caster stands is described.
+        target_melee_ally,
+        /// How a skill that lands on enemies in an area from where its caster stands is described.
+        target_melee_enemy,
         /// How a skill aimed at a spot is described.
         target_spot,
         /// How a skill that lands on its caster is described.
@@ -367,15 +372,6 @@ pub struct SkillDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sfx: Option<SfxId>,
     pub target: Targeting,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("default" = 4.0))]
-    pub range: Option<Meters>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub area: Option<Shape>,
-    /// How many of those inside its area a cast lands on, the nearest first; without a cap, on
-    /// every one of them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_targets: Option<u32>,
     #[serde(default, skip_serializing_if = "Seconds::is_zero")]
     pub cooldown: Seconds,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -408,10 +404,10 @@ impl ContentFile for SkillDef {
             icon: near.image()?,
             kind: SkillKind::Active,
             sfx: None,
-            target: Targeting::SingleEnemy,
-            range: None,
-            area: None,
-            max_targets: None,
+            target: Targeting::Single {
+                affects: Affects::Enemy,
+                range: None,
+            },
             cooldown: Seconds(0.0),
             requires: None,
             cost: Vec::new(),
@@ -435,12 +431,6 @@ impl ContentFile for SkillDef {
                     self.target.label(),
                     "self",
                 );
-            }
-            if self.area.is_some() {
-                check.error("/area", "passive with an area", "an area", passive);
-            }
-            if self.range.is_some() {
-                check.error("/range", "passive with a range", "a range", passive);
             }
             if self.cooldown.0 > 0.0 {
                 check.error(
@@ -482,28 +472,30 @@ impl ContentFile for SkillDef {
                 );
             }
         }
-        match (self.target.covers_area(), self.area.is_some()) {
-            (true, false) => check.error(
-                "/area",
-                "area kind without an area",
-                self.target.label(),
-                "a shape the skill covers at the aimed point",
-            ),
-            (false, true) => check.error(
-                "/area",
-                "area on a single kind",
-                self.target.label(),
-                "no area: a single or self skill has no shape",
-            ),
-            _ => {}
-        }
         if self.cooldown.0 < 0.0 {
             check.error("/cooldown", "out of range", self.cooldown.0, "0 or more");
         }
-        if let Some(range) = self.range
+        if let Some(Some(range)) = self.target.range()
             && range.0 <= 0.0
         {
-            check.error("/range", "out of range", range.0, "more than 0 m");
+            check.error("/target/range", "out of range", range.0, "more than 0 m");
+        }
+        for (index, level) in self.levels.iter().enumerate() {
+            let unused = |stat: &SkillStat| match stat {
+                SkillStat::Range => self.target.range().is_none(),
+                SkillStat::Radius => self.target.shape().is_none(),
+                SkillStat::Power | SkillStat::Cooldown | SkillStat::Duration | SkillStat::Mana => {
+                    false
+                }
+            };
+            for stat in level.stats.keys().filter(|stat| unused(stat)) {
+                check.error(
+                    format!("/levels/{index}/stats/{}", stat.key()),
+                    "stat the targeting doesn't use",
+                    self.target.label(),
+                    "a targeting with a range for range, or with a shape for radius",
+                );
+            }
         }
         for (index, stack) in self.cost.iter().enumerate() {
             if stack.count == 0 {
@@ -590,49 +582,144 @@ impl SkillKind {
     }
 }
 
-#[derive(
-    JsonSchema,
-    Serialize,
-    Deserialize,
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    VariantArray,
-    IntoStaticStr,
-)]
-#[serde(rename_all = "snake_case")]
+/// What a skill is aimed at, and so whether its caster walks before using it, with only what
+/// that kind of aim uses.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, IntoStaticStr)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 #[strum(serialize_all = "snake_case")]
 pub enum Targeting {
-    SingleAlly,
-    SingleEnemy,
-    AreaAlly,
-    AreaEnemy,
-    /// A spot within the skill's range of where the caster stands, which they are never walked
-    /// toward: nothing is hit there, and what comes of it is the skill's script's to say.
-    Spot,
-    #[serde(rename = "self")]
-    #[strum(serialize = "self")]
+    /// The casting actor themselves.
     Caster,
+    /// A single actor it affects, walked into range of.
+    Single {
+        affects: Affects,
+        /// Left out, the caster's Range stat.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = 4.0))]
+        range: Option<Meters>,
+    },
+    /// A shape centred on a point, walked into range of.
+    RangedArea {
+        affects: Affects,
+        /// Left out, the caster's Range stat.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = 4.0))]
+        range: Option<Meters>,
+        shape: Shape,
+        /// How many of those inside the shape a cast lands on, the nearest its centre first;
+        /// without a cap, on every one of them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_targets: Option<u32>,
+    },
+    /// A shape from where the caster stands, toward the point aimed at, which is never walked
+    /// toward: however far off, it only says which way the caster turns.
+    MeleeArea {
+        affects: Affects,
+        shape: Shape,
+        /// How many of those inside the shape a cast lands on, the nearest the caster first;
+        /// without a cap, on every one of them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_targets: Option<u32>,
+    },
+    /// A spot within range of where the caster stands, which they are never walked toward:
+    /// nothing is hit there, and what comes of it is the skill's script's to say.
+    Spot {
+        /// Left out, the caster's Range stat.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = 4.0))]
+        range: Option<Meters>,
+    },
+}
+
+/// Whom a skill lands on, by how its caster regards them: the part of `Regard` a skill may name.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum Affects {
+    /// The caster's allies, and the caster.
+    Ally,
+    Enemy,
+}
+
+impl From<Affects> for Regard {
+    fn from(affects: Affects) -> Regard {
+        match affects {
+            Affects::Ally => Regard::Ally,
+            Affects::Enemy => Regard::Enemy,
+        }
+    }
 }
 
 impl Targeting {
-    /// Whether the skill takes whoever stands in a shape at the point it is aimed at.
-    pub fn covers_area(self) -> bool {
-        matches!(self, Targeting::AreaAlly | Targeting::AreaEnemy)
+    pub fn affects(self) -> Option<Affects> {
+        match self {
+            Targeting::Single { affects, .. }
+            | Targeting::RangedArea { affects, .. }
+            | Targeting::MeleeArea { affects, .. } => Some(affects),
+            Targeting::Caster | Targeting::Spot { .. } => None,
+        }
+    }
+
+    /// How far from the caster it may be aimed, for the kinds aimed within a range: as the skill
+    /// sets it, or left to the caster's Range stat.
+    pub fn range(self) -> Option<Option<Meters>> {
+        match self {
+            Targeting::Single { range, .. }
+            | Targeting::RangedArea { range, .. }
+            | Targeting::Spot { range } => Some(range),
+            Targeting::Caster | Targeting::MeleeArea { .. } => None,
+        }
+    }
+
+    /// Whether the caster walks until what it is aimed at is in range.
+    pub fn walks(self) -> bool {
+        matches!(
+            self,
+            Targeting::Single { .. } | Targeting::RangedArea { .. }
+        )
+    }
+
+    pub fn shape(self) -> Option<Shape> {
+        match self {
+            Targeting::RangedArea { shape, .. } | Targeting::MeleeArea { shape, .. } => Some(shape),
+            Targeting::Caster | Targeting::Single { .. } | Targeting::Spot { .. } => None,
+        }
+    }
+
+    pub fn max_targets(self) -> Option<u32> {
+        match self {
+            Targeting::RangedArea { max_targets, .. }
+            | Targeting::MeleeArea { max_targets, .. } => max_targets,
+            Targeting::Caster | Targeting::Single { .. } | Targeting::Spot { .. } => None,
+        }
     }
 
     pub fn aimed_at_point(self) -> bool {
         matches!(
             self,
-            Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot
+            Targeting::RangedArea { .. } | Targeting::MeleeArea { .. } | Targeting::Spot { .. }
         )
     }
 
     pub fn hostile(self) -> bool {
-        matches!(self, Targeting::SingleEnemy | Targeting::AreaEnemy)
+        self.affects() == Some(Affects::Enemy)
+    }
+
+    /// Where a cast toward `point` by a caster standing at `from` lays the shape down.
+    pub fn place(self, shape: Shape, from: Pos<Meters>, point: Pos<Meters>) -> PlacedShape {
+        let facing = facing_from(from, point);
+        match self {
+            Targeting::MeleeArea { .. } => PlacedShape::from_start(shape, from, facing),
+            _ => PlacedShape::centred(shape, point, facing),
+        }
+    }
+
+    /// What those a cast lands on are counted nearest to, for a cast toward `point` by a caster
+    /// standing at `from`.
+    pub fn anchor(self, from: Pos<Meters>, point: Pos<Meters>) -> Pos<Meters> {
+        match self {
+            Targeting::MeleeArea { .. } => from,
+            _ => point,
+        }
     }
 
     pub fn label(self) -> &'static str {
@@ -641,11 +728,31 @@ impl Targeting {
 
     pub fn named(self, words: &SkillMessages) -> &str {
         match self {
-            Targeting::SingleAlly => words.target_single_ally(),
-            Targeting::SingleEnemy => words.target_single_enemy(),
-            Targeting::AreaAlly => words.target_area_ally(),
-            Targeting::AreaEnemy => words.target_area_enemy(),
-            Targeting::Spot => words.target_spot(),
+            Targeting::Single {
+                affects: Affects::Ally,
+                ..
+            } => words.target_single_ally(),
+            Targeting::Single {
+                affects: Affects::Enemy,
+                ..
+            } => words.target_single_enemy(),
+            Targeting::RangedArea {
+                affects: Affects::Ally,
+                ..
+            } => words.target_area_ally(),
+            Targeting::RangedArea {
+                affects: Affects::Enemy,
+                ..
+            } => words.target_area_enemy(),
+            Targeting::MeleeArea {
+                affects: Affects::Ally,
+                ..
+            } => words.target_melee_ally(),
+            Targeting::MeleeArea {
+                affects: Affects::Enemy,
+                ..
+            } => words.target_melee_enemy(),
+            Targeting::Spot { .. } => words.target_spot(),
             Targeting::Caster => words.target_caster(),
         }
     }
@@ -893,8 +1000,9 @@ impl SkillDef {
             .any(|level| level.stats.contains_key(&SkillStat::Mana))
     }
 
-    pub fn area_at(&self, rank: Rank) -> Option<Shape> {
-        self.area
+    pub fn shape_at(&self, rank: Rank) -> Option<Shape> {
+        self.target
+            .shape()
             .map(|shape| shape.grown(Meters(self.stat(rank, SkillStat::Radius))))
     }
 }
@@ -1056,30 +1164,34 @@ pub fn first_flagged_grant(
 
 /// The reach of a skill from an actor: the row's range, or the actor's Range stat when unset,
 /// plus whatever its ranks add.
-pub fn range_of(world: &World, actor: Entity, skill: SkillId, rank: Rank) -> Meters {
+/// How far from where `actor` stands the skill may be aimed at `rank`; none for a skill used
+/// where its caster stands.
+pub fn range_of(world: &World, actor: Entity, skill: SkillId, rank: Rank) -> Option<Meters> {
     let def = skill.get(world.resource::<Content>());
     let base = def
-        .range
+        .target
+        .range()?
         .unwrap_or_else(|| Meters(stat::effective(world, actor, StatKind::Range)));
-    Meters((base.0 + def.stat(rank, SkillStat::Range)).max(0.0))
+    Some(Meters((base.0 + def.stat(rank, SkillStat::Range)).max(0.0)))
 }
 
 /// Whom a cast lands on, read from the use that raised the running script: the caster, the aimed
-/// actor when it still stands where the skill may reach it, or the nearest actors inside the area.
+/// actor when it still stands where the skill may reach it, or the actors inside the shape, the
+/// nearest its anchor first.
 pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
     let Some(caster) = cx.subject else {
         return Vec::new();
     };
-    let def = skill.get(world.resource::<Content>());
-    match def.target {
+    let target = skill.get(world.resource::<Content>()).target;
+    match target {
         Targeting::Caster => vec![caster],
-        Targeting::Spot => Vec::new(),
-        Targeting::SingleAlly | Targeting::SingleEnemy => used_target(world, cx)
-            .filter(|who| casting::fits(world, caster, *who, def.target))
+        Targeting::Spot { .. } => Vec::new(),
+        Targeting::Single { .. } => used_target(world, cx)
+            .filter(|who| casting::fits(world, caster, *who, target))
             .into_iter()
             .collect(),
-        Targeting::AreaAlly | Targeting::AreaEnemy => {
-            let Some(footprint) = footprint(world, cx, skill) else {
+        Targeting::RangedArea { max_targets, .. } | Targeting::MeleeArea { max_targets, .. } => {
+            let Some((footprint, anchor)) = laid(world, cx, skill) else {
                 return Vec::new();
             };
             let Some(roster) = world.get_resource::<TickRoster>() else {
@@ -1091,40 +1203,46 @@ pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
             let mut inside: Vec<(Entity, Meters)> = roster
                 .near(Among::Anyone, footprint.at, footprint.reach())
                 .filter(|listed| listed.area == area && footprint.contains(listed.at))
-                .filter(|listed| casting::fits(world, caster, listed.entity, def.target))
-                .map(|listed| (listed.entity, listed.at.distance(footprint.at)))
+                .filter(|listed| casting::fits(world, caster, listed.entity, target))
+                .map(|listed| (listed.entity, listed.at.distance(anchor)))
                 .collect();
             inside.sort_by(|(a, da), (b, db)| da.0.total_cmp(&db.0).then(a.cmp(b)));
             inside
                 .into_iter()
-                .take(def.max_targets.map_or(usize::MAX, |most| most as usize))
+                .take(max_targets.map_or(usize::MAX, |most| most as usize))
                 .map(|(entity, _)| entity)
                 .collect()
         }
     }
 }
 
-/// The ground a cast covers, from the caster toward the aimed point.
+/// The ground a cast covers, laid as its targeting lays it toward the aimed point.
 pub fn footprint(world: &World, cx: &FlowCx, skill: SkillId) -> Option<PlacedShape> {
-    let caster = cx.subject?;
-    let def = skill.get(world.resource::<Content>());
-    let shape = def.area_at(used_rank(cx))?;
-    let from = movement::position(world, caster)?;
-    let point = aimed_point(world, cx, skill).unwrap_or(from);
-    Some(PlacedShape::cast(shape, from, point))
+    laid(world, cx, skill).map(|(footprint, _)| footprint)
 }
 
 pub fn aimed_point(world: &World, cx: &FlowCx, skill: SkillId) -> Option<Pos<Meters>> {
     let caster = cx.subject?;
     match skill.get(world.resource::<Content>()).target {
         Targeting::Caster => movement::position(world, caster),
-        Targeting::SingleAlly | Targeting::SingleEnemy => {
-            movement::position(world, used_target(world, cx)?)
-        }
-        Targeting::AreaAlly | Targeting::AreaEnemy | Targeting::Spot => {
+        Targeting::Single { .. } => movement::position(world, used_target(world, cx)?),
+        Targeting::RangedArea { .. } | Targeting::MeleeArea { .. } | Targeting::Spot { .. } => {
             cx.event.get(USED_POINT)?.as_point()
         }
     }
+}
+
+/// The ground a cast covers, with the point those it lands on are counted nearest to.
+fn laid(world: &World, cx: &FlowCx, skill: SkillId) -> Option<(PlacedShape, Pos<Meters>)> {
+    let caster = cx.subject?;
+    let def = skill.get(world.resource::<Content>());
+    let shape = def.shape_at(used_rank(cx))?;
+    let from = movement::position(world, caster)?;
+    let point = aimed_point(world, cx, skill).unwrap_or(from);
+    Some((
+        def.target.place(shape, from, point),
+        def.target.anchor(from, point),
+    ))
 }
 
 fn used_target(world: &World, cx: &FlowCx) -> Option<Entity> {

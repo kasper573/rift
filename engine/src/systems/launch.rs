@@ -11,11 +11,12 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::core::content::version;
+use crate::core::content::{Content, version};
 use crate::core::net::auth::TokenClaims;
 use crate::core::store::RecordStoreAddress;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
 use crate::core::units::{HourOfDay, Seconds};
+use crate::systems::GameSettings;
 use crate::systems::area::Place;
 use crate::systems::player::SpawnPolicy;
 use crate::systems::staging::Staging;
@@ -143,6 +144,11 @@ pub struct TestCharacterRequest {
     pub test_character: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<Place>,
+    /// Whether the character is kept as the account's own from then on, saved like any played
+    /// one, so later sign-ins play it as it was last saved. Left out, it only stands in for the
+    /// account's own and is never saved.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub kept: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -162,7 +168,8 @@ pub struct ServerConfig {
     pub character_spawn_policy: SpawnPolicy,
     pub characters_immortal: bool,
     pub daylight: ServerDaylight,
-    /// The hour of the day a fixed daylight holds at, 0 to 24.
+    /// The hour of the day a fixed daylight holds at, or a turning one starts from in place of the
+    /// game's own start, 0 to 24.
     pub hour: Option<HourOfDay>,
     pub weather: ServerWeather,
     pub rng_seed: Option<u64>,
@@ -218,7 +225,8 @@ impl ServerConfig {
 const LOCAL_STORE: &str = "records.sqlite";
 const LOCAL_CHECKPOINT_EVERY: Seconds = Seconds(30.0);
 
-/// How a server runs the game's day: as its daylight says, held at `hour` where that is fixed.
+/// How a server runs the game's day: as its daylight says, held at `hour` where that is fixed, and
+/// starting from it where the day turns.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ServerDay {
     pub daylight: ServerDaylight,
@@ -230,6 +238,16 @@ impl ServerDay {
         daylight: ServerDaylight::Turning,
         hour: None,
     };
+
+    /// The course the day of `content` runs on a server that starts it `now`, the same in every
+    /// world the server makes: none for a game with no day cycle.
+    pub fn course(self, content: &Content, now: UnixMillis) -> Option<TimeCourse<HourOfDay>> {
+        content
+            .built::<GameSettings>()
+            .daylight
+            .as_ref()
+            .map(|cycle| cycle.course(self, now))
+    }
 }
 
 /// Whether a game's day turns on the server, holds at its start hour, or holds at the hour the

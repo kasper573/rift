@@ -1,4 +1,6 @@
+use bevy::prelude::{App, MinimalPlugins};
 use bevy_ecs::prelude::*;
+use engine::core::content::Content;
 use engine::core::content::Fixture;
 use engine::core::math::{Offset, Pos};
 use engine::core::script::DialogueCamera;
@@ -11,12 +13,15 @@ use engine::systems::actor::render::RenderActor;
 use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
+use engine::systems::identity::Names;
 use engine::systems::interact::Interacted;
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, moving, position};
 use engine::systems::player::commands_locked;
-use engine::systems::player::session::MyCharacter;
+use engine::systems::player::session::{ClientSessionPlugin, MyCharacter, MyClient};
+use engine::systems::player::{ClientId, PlayedBy};
+use engine::systems::probe;
 use engine::systems::region;
 use engine::systems::stat::{self, Immortal, StatKind};
 use engine::systems::{combat, npc};
@@ -39,6 +44,56 @@ fn a_conversation_reaches_the_client_as_the_world_holds_it() {
             .any(|line| line.gesture.is_some() && line.camera.is_some())
     );
     assert_eq!(received, opened);
+}
+
+#[test]
+fn a_client_with_no_window_sees_its_conversation_and_answers_it() {
+    let mut sim = inn();
+    let player = sim.join(1);
+    sim.give(player, "gold", 30);
+    let opened = sim.talk(1, "keeper");
+
+    let mut client = App::new();
+    client
+        .add_plugins((MinimalPlugins, ClientSessionPlugin))
+        .insert_resource(sim.world.resource::<Content>().clone())
+        .insert_resource(MyClient(Some(MINE)));
+    client.world_mut().spawn((
+        Names::for_world(0).give(),
+        PlayedBy { client: MINE },
+        opened.clone(),
+    ));
+    client.update();
+    let seen = probe::sight(client.world_mut())
+        .conversation
+        .expect("the client sees the conversation its character is in");
+    let said: Vec<String> = seen.lines.iter().map(|line| line.text.clone()).collect();
+    let offered: Vec<String> = seen
+        .choices
+        .iter()
+        .map(|choice| choice.label.clone())
+        .collect();
+    assert_eq!(said, sim.lines(&opened));
+    assert_eq!(offered, sim.labels(&opened));
+
+    let round = offered
+        .iter()
+        .position(|label| label == "Buy a round for the room.")
+        .expect("the round is offered");
+    let conn = sim.conn(1);
+    sim.send(
+        conn,
+        ConversationRequest::Pick {
+            step: seen.step,
+            choice: round as u32,
+        },
+    );
+    sim.run(0.5);
+    let answered = sim.conversation(1).expect("still talking");
+    assert_ne!(
+        answered.step, opened.step,
+        "the answer the client saw how to give was taken"
+    );
 }
 
 #[test]
@@ -513,6 +568,7 @@ fn crying() -> Value {
                 "event": "came_near",
                 "within": 3.0,
                 "by": "characters",
+                "fliers": false,
                 "next": "news_due",
             },
             "news_due": {
@@ -547,3 +603,5 @@ fn choice(sim: &Sim, conversation: &Conversation, label: &str) -> u32 {
         .position(|choice| choice.label.plain_words(sim.content()) == label)
         .expect("the choice") as u32
 }
+
+const MINE: ClientId = ClientId(1);

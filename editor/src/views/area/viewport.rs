@@ -28,20 +28,21 @@ use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::{CameraFocus, Look, camera, world_point};
 use engine::core::units::{HourOfDay, Meters, Seconds};
-use engine::systems::actor::Action;
-use engine::systems::actor::layering::{self, Layering};
+use engine::systems::actor::layering::{self, HandHold, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::{HandIndex, StanceId};
+use engine::systems::actor::{Action, Pose};
+use engine::systems::area::prop::PropId;
 use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::ShapedGround;
-use engine::systems::area::scenery::{self, Eyes, Sight};
+use engine::systems::area::scenery::{self, Eyes, ShowsProp, Sight};
 use engine::systems::area::sky;
 use engine::systems::area::sky::Sky;
 use engine::systems::area::{Area, Picture, Weather};
-use engine::systems::item::PropHold;
+use engine::systems::item::{PropHold, Steady};
 use engine::systems::water::{WaterDef, WaterId};
 use ui::egui;
 
@@ -96,7 +97,7 @@ pub struct StrokeTerrain {
 /// placed, or a resource of a spawner's preview.
 #[derive(Clone, PartialEq)]
 pub struct Ghost {
-    pub model: String,
+    pub prop: PropId,
     pub transform: Transform,
 }
 
@@ -157,16 +158,17 @@ struct StageLayering {
 }
 
 /// A prop a standing rig holds in `hand`, as `hold` has the hand carry it: the scene of `model` under
-/// the rig's joint `joint`, placed there by `transform`, and hanging plumb from there by `plumb` if
-/// it does.
+/// the rig's joint `joint`, placed there by `transform`, hanging plumb from there by `plumb` if it
+/// does, and held out by `steady` if it is.
 #[derive(Clone, PartialEq)]
 pub struct StandingProp {
     pub hand: HandIndex,
     pub joint: String,
-    pub model: String,
+    pub prop: PropId,
     pub transform: Transform,
     pub plumb: Option<Plumb>,
     pub hold: PropHold,
+    pub steady: Option<Steady>,
 }
 
 /// The props a stood rig holds, and those hung so far.
@@ -211,7 +213,7 @@ struct RenderedView {
     scene: StandingScene,
     /// The stroke whose terrain is laid, and whether it is laid bare of water.
     shaped: (Option<u64>, bool),
-    ghost: Option<(String, Entity)>,
+    ghost: Option<(PropId, Entity)>,
     stood: Option<(Arc<[Ghost]>, Vec<Entity>)>,
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
     picked: Option<StagePick>,
@@ -504,19 +506,15 @@ impl RenderedView {
             return;
         };
         let entity = match &self.ghost {
-            Some((model, entity)) if *model == ghost.model => *entity,
+            Some((prop, entity)) if *prop == ghost.prop => *entity,
             _ => {
                 if let Some((_, entity)) = self.ghost.take() {
                     world.despawn(entity);
                 }
-                let scene = engine::core::assets::model_scene(
-                    world.resource::<AssetServer>(),
-                    ghost.model.clone(),
-                );
                 let entity = world
-                    .spawn((WorldAssetRoot(scene), ghost.transform, ChildOf(self.root)))
+                    .spawn((ShowsProp(ghost.prop), ghost.transform, ChildOf(self.root)))
                     .id();
-                self.ghost = Some((ghost.model.clone(), entity));
+                self.ghost = Some((ghost.prop, entity));
                 entity
             }
         };
@@ -541,13 +539,9 @@ impl RenderedView {
         }
         let entities = stood
             .iter()
-            .map(|model| {
-                let scene = engine::core::assets::model_scene(
-                    world.resource::<AssetServer>(),
-                    model.model.clone(),
-                );
+            .map(|ghost| {
                 world
-                    .spawn((WorldAssetRoot(scene), model.transform, ChildOf(self.root)))
+                    .spawn((ShowsProp(ghost.prop), ghost.transform, ChildOf(self.root)))
                     .id()
             })
             .collect();
@@ -666,7 +660,7 @@ fn rehang(world: &mut World, rig: Entity, props: &[StandingProp]) {
             .props
             .iter()
             .zip(props)
-            .all(|(old, new)| old.joint == new.joint && old.model == new.model);
+            .all(|(old, new)| old.joint == new.joint && old.prop == new.prop);
     if same {
         held.props = props.to_vec();
         let moved: Vec<(Entity, Transform, Option<Plumb>)> = held
@@ -720,12 +714,8 @@ fn hang_props(world: &mut World) {
             .iter()
             .zip(joints.into_iter().flatten())
             .map(|(prop, joint)| {
-                let scene = engine::core::assets::model_scene(
-                    world.resource::<AssetServer>(),
-                    prop.model.clone(),
-                );
                 let mut hung = world.spawn((
-                    WorldAssetRoot(scene),
+                    ShowsProp(prop.prop),
                     prop.transform,
                     Visibility::default(),
                     ChildOf(joint),
@@ -801,15 +791,16 @@ fn run_layers(world: &mut World) {
         .query::<(&mut Layered, &Layering, &StageLayering, Option<&StageProps>)>()
         .iter_mut(world)
     {
-        let holding: Vec<(HandIndex, PropHold)> = props
+        let holding: Vec<HandHold> = props
             .map_or(&[][..], |props| props.props.as_slice())
             .iter()
-            .map(|prop| (prop.hand, prop.hold))
+            .map(|prop| (prop.hand, prop.hold, prop.steady))
             .collect();
         layering::drive(
             &mut layered,
             layering,
             stage.asked.action,
+            Pose::Idle,
             stage.asked.stance,
             &holding,
             stage.asked.stepped,

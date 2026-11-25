@@ -6,10 +6,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::animation::{AnimatedBy, AnimationTargetId};
+use bevy::camera::primitives::Aabb;
+use bevy::math::Affine3A;
 use bevy::mesh::VertexAttributeValues;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
-use bevy::world_serialization::WorldInstanceReady;
+use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
 use super::material::WorldMaterial;
 use super::paint::{Paint, Painter, Paints};
@@ -64,11 +66,13 @@ pub struct RigReady {
     pub entity: Entity,
 }
 
-/// A skin's scene, hidden until its meshes are bound to the rig and painted: at rest until then,
-/// it would stand apart from a rig already moving.
+/// A skin's scene, hidden until its file has loaded whole, its meshes are bound to the rig and
+/// painted: at rest until then, it would stand apart from a rig already moving, and its textures
+/// still loading would draw it bare.
 #[derive(Component)]
 pub(super) struct SkinOf {
     body: Entity,
+    file: Handle<WorldAsset>,
     paint: Option<Paint>,
     spawned: bool,
 }
@@ -86,6 +90,30 @@ impl Body {
     /// Every node of the rig by its name, once the rig stands.
     pub fn joints(&self) -> &HashMap<String, Entity> {
         &self.joints
+    }
+
+    /// Whether every skin of the body is drawn: loaded, bound to the rig and painted.
+    pub fn drawn(&self) -> bool {
+        self.skins.iter().all(|skin| self.worn.contains_key(skin))
+    }
+
+    /// Where everything the body's skins draw stands as they are posed now, as the corners of
+    /// boxes in the world: one round all each joint moves of a skinned mesh, as the joint holds it,
+    /// and one round each other mesh. Together they keep close to what the body draws, where a box
+    /// round a whole skinned mesh would reach far past it.
+    pub fn drawn_boxes(&self, world: &World) -> Vec<[Vec3; 8]> {
+        let mut boxes = Vec::new();
+        let mut left = self.skins.clone();
+        while let Some(node) = left.pop() {
+            match skinned_boxes(world, node) {
+                Some(skinned) => boxes.extend(skinned),
+                None => boxes.extend(mesh_box(world, node)),
+            }
+            if let Some(children) = world.get::<Children>(node) {
+                left.extend(children.iter());
+            }
+        }
+        boxes
     }
 
     /// The entity the rig's clips play on.
@@ -235,11 +263,12 @@ fn spawn_skin(world: &mut World, body: Entity, skin: &Skin) -> Entity {
         .load(GltfAssetLabel::Scene(0).from_asset(skin.mesh.clone()));
     world
         .spawn((
-            WorldAssetRoot(scene),
+            WorldAssetRoot(scene.clone()),
             Transform::default(),
             Visibility::Hidden,
             SkinOf {
                 body,
+                file: scene,
                 paint: skin.paint.clone(),
                 spawned: false,
             },
@@ -276,7 +305,7 @@ fn stand(ready: On<WorldInstanceReady>, mut skins: Query<&mut SkinOf>) {
     }
 }
 
-/// The meshes a skin's scene draws, and what binds them to joints.
+/// The meshes a skin's scene draws, what loads them, and what binds them to joints.
 #[derive(bevy::ecs::system::SystemParam)]
 struct SkinMeshes<'w, 's> {
     skinned: Query<
@@ -290,6 +319,7 @@ struct SkinMeshes<'w, 's> {
     >,
     meshes: Res<'w, Assets<Mesh>>,
     binds: Res<'w, Assets<SkinnedMeshInverseBindposes>>,
+    assets: Res<'w, AssetServer>,
 }
 
 /// Binds the skinned meshes of every spawned skin to its body's rig once the rig stands, learns
@@ -307,7 +337,10 @@ fn bind(
         let Ok(mut body) = bodies.get_mut(skin.body) else {
             continue;
         };
-        if !skin.spawned || body.joints.is_empty() {
+        if !skin.spawned
+            || body.joints.is_empty()
+            || !meshes.assets.is_loaded_with_dependencies(&skin.file)
+        {
             continue;
         }
         let texture = match &skin.paint {
@@ -506,4 +539,46 @@ fn girth_between(laid: &[(f32, f32)], from: f32, to: f32) -> Option<f32> {
 fn from_bone(at: Vec3, tail: Vec3) -> f32 {
     let share = (at.dot(tail) / tail.length_squared()).clamp(0.0, 1.0);
     at.distance(tail * share)
+}
+
+fn skinned_boxes(world: &World, node: Entity) -> Option<Vec<[Vec3; 8]>> {
+    let skinned = world.get::<SkinnedMesh>(node)?;
+    let mesh = world
+        .resource::<Assets<Mesh>>()
+        .get(&world.get::<Mesh3d>(node)?.0)?;
+    let bindposes = world
+        .resource::<Assets<SkinnedMeshInverseBindposes>>()
+        .get(&skinned.inverse_bindposes)?;
+    let boxes = mesh
+        .skinned_mesh_bounds()?
+        .iter()
+        .filter_map(|(joint, bounds)| {
+            let index = usize::from(joint.0);
+            let placed = world.get::<GlobalTransform>(*skinned.joints.get(index)?)?;
+            let from_model = placed.affine() * Affine3A::from_mat4(*bindposes.get(index)?);
+            Some(
+                box_corners(bounds.center, bounds.half_size)
+                    .map(|corner| from_model.transform_point3(corner)),
+            )
+        })
+        .collect();
+    Some(boxes)
+}
+
+fn mesh_box(world: &World, node: Entity) -> Option<[Vec3; 8]> {
+    let (bounds, placed) = (
+        world.get::<Aabb>(node)?,
+        world.get::<GlobalTransform>(node)?,
+    );
+    Some(
+        box_corners(bounds.center.into(), bounds.half_extents.into())
+            .map(|corner| placed.transform_point(corner)),
+    )
+}
+
+fn box_corners(center: Vec3, half: Vec3) -> [Vec3; 8] {
+    std::array::from_fn(|corner| {
+        let side = |bit: usize| if corner & bit == 0 { -1.0 } else { 1.0 };
+        center + half * Vec3::new(side(1), side(2), side(4))
+    })
 }

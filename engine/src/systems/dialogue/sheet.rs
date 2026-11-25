@@ -5,6 +5,7 @@
 use ui::egui;
 
 use bevy::prelude::*;
+use ui::dusk::Tally;
 use ui::egui::emath::TSTransform;
 use ui::egui::{
     Align, Color32, FontId, Id, LayerId, Layout, Pos2, Rect, Response, Sense, Shape, Ui, UiBuilder,
@@ -37,6 +38,19 @@ pub struct DialogueSheet {
     /// Whether the line waits for the player to go on, which a mark under it asks.
     pub waits: bool,
     pub choices: Vec<SheetChoice>,
+    /// What else the sheet shows before the conversation moves on.
+    pub to_come: SheetToCome,
+}
+
+/// What a sheet keeps room for from the moment it shows, so it never grows or shrinks under the
+/// windows and cards set beside it: it stands as tall as the tallest of its lines over the choices
+/// that follow them.
+#[derive(Clone, Default)]
+pub struct SheetToCome {
+    /// Each line said in turn on the sheet, led by who says it.
+    pub lines: Vec<(Option<String>, LineText)>,
+    /// The choices that show once the last line is out.
+    pub choices: Vec<ChoiceView>,
 }
 
 pub struct SheetChoice {
@@ -55,6 +69,13 @@ pub struct SheetDrawn {
     pub rows: Vec<RowDrawn>,
     /// How tall the sheet stood, which the next pass lays it out at.
     pub height: f32,
+    /// Where everything the sheet shows before the conversation moves on stands: every line of its
+    /// step, the choices that end it with the mark beside the one the player is on, and the mark
+    /// that asks the player to go on, as they will stand from the step's first letter.
+    pub content: Rect,
+    /// Where within `content` something stands: each row of every line's letters, each choice's
+    /// with the mark beside it and its tags, and the mark that asks the player to go on.
+    pub parts: Vec<Rect>,
 }
 
 pub struct RowDrawn {
@@ -104,19 +125,28 @@ pub fn draw(
                         ))
                         .layout(Layout::top_down(Align::Min)),
                     |ui| {
-                        ui.spacing_mut().item_spacing.y = 12.0;
-                        line(ui, world, sheet);
-                        rows = choices(ui, world, &sheet.choices);
+                        ui.spacing_mut().item_spacing.y = ROW_GAP;
+                        line(
+                            ui,
+                            world,
+                            sheet.speaker.clone(),
+                            sheet.line.as_ref(),
+                            sheet.typed,
+                        );
+                        rows = choices(ui, world, &sheet.choices).0;
                     },
                 )
                 .response
                 .rect;
-            let needed = written.bottom() - outer.top() + continue_mark_size(ui);
+            let mark = continue_mark_size(ui);
+            let (room, parts) = room(ui, world, sheet, outer);
+            let needed = (written.bottom() - outer.top()).max(room) + mark;
             if (needed - height).abs() > 0.5 {
                 gui.request_discard("the conversation grew or shrank");
             }
             if sheet.waits {
-                continue_mark(ui, outer);
+                let under_line = Pos2::new(outer.right(), written.bottom() + mark);
+                continue_mark(ui, Rect::from_min_max(outer.min, under_line));
             }
             let backing = Rect::from_min_max(
                 Pos2::new(
@@ -127,17 +157,27 @@ pub fn draw(
             );
             ui.painter()
                 .set(scrim, paint::fade_up(backing, ink::DIALOGUE_BACKING));
+            let chooses = !sheet.choices.is_empty() || !sheet.to_come.choices.is_empty();
+            let beside = if chooses { lit_mark_reach(ui) } else { 0.0 };
+            let content = Rect::from_min_max(
+                Pos2::new(rect.left() - beside, rect.top()),
+                Pos2::new(rect.right(), rect.top() + needed),
+            );
             SheetDrawn {
                 rect,
                 held,
                 rows,
                 height: needed,
+                content,
+                parts,
             }
         });
     drawn.inner
 }
 
 const TEXT_WIDTH: f32 = 800.0;
+/// How far apart the line and the choices under it stand.
+const ROW_GAP: f32 = 12.0;
 const SCREEN_SHARE: f32 = 0.94;
 /// How far above the bottom of the viewport the lowest line of the dialogue stands.
 const BOTTOM_SHARE: f32 = 0.12;
@@ -150,20 +190,100 @@ const TAG_GAP: f32 = 1.1;
 /// ems.
 const TAG_MARK: f32 = 0.8;
 const TAG_MARK_GAP: f32 = 0.1;
+/// How far apart the chips of a choice's trade stand, how far what it takes stands from what it
+/// gives, and how wide a chip's sign stands, in the dialogue's ems.
+const TALLY_GAP: f32 = 0.3;
+const TALLY_GROUPS_GAP: f32 = 1.1;
+const TALLY_SIGN: f32 = 0.6;
 /// How far left of a choice the mark of the one the player is on stands, in the dialogue's ems.
 const LIT_MARK_GAP: f32 = 0.3;
 const LIT_MARK: &str = "\u{bb}";
 const LINE_MARGIN: egui::Margin = egui::Margin::symmetric(8, 4);
 
-fn line(ui: &mut Ui, world: &mut World, sheet: &DialogueSheet) {
-    let Some(words) = &sheet.line else {
-        return;
+fn line(
+    ui: &mut Ui,
+    world: &mut World,
+    speaker: Option<String>,
+    words: Option<&LineText>,
+    typed: Option<usize>,
+) -> Vec<Rect> {
+    let Some(words) = words else {
+        return Vec::new();
     };
-    let styled = said(world, sheet.speaker.clone(), words);
-    egui::Frame::new().inner_margin(LINE_MARGIN).show(ui, |ui| {
-        let look = text_look(ui, ink::DIALOGUE_LINE);
-        inline::show_styled(ui, world, &styled, look, sheet.typed);
-    });
+    let styled = said(world, speaker, words);
+    egui::Frame::new()
+        .inner_margin(LINE_MARGIN)
+        .show(ui, |ui| {
+            let look = text_look(ui, ink::DIALOGUE_LINE);
+            inline::show_styled(ui, world, &styled, look, typed).rows
+        })
+        .inner
+}
+
+/// How tall the sheet stands for all it shows before the conversation moves on, and where each
+/// part of that stands: its tallest line, whole, over every choice to come, each laid out unseen at
+/// the width of `outer`. Each line waits under itself with the mark that asks the player to go on,
+/// but for the last when choices follow it, which stand under it.
+fn room(ui: &mut Ui, world: &mut World, sheet: &DialogueSheet, outer: Rect) -> (f32, Vec<Rect>) {
+    let unseen = |ui: &mut Ui, salt: usize| {
+        ui.new_child(
+            UiBuilder::new()
+                .id_salt(("room", salt))
+                .max_rect(Rect::from_min_size(
+                    outer.min,
+                    Vec2::new(outer.width(), f32::INFINITY),
+                ))
+                .layout(Layout::top_down(Align::Min))
+                .invisible(),
+        )
+    };
+    let mark = continue_mark_size(ui);
+    let chooses = !sheet.to_come.choices.is_empty();
+    let lines: Vec<_> = std::iter::once((sheet.speaker.clone(), sheet.line.clone()))
+        .chain(
+            sheet
+                .to_come
+                .lines
+                .iter()
+                .map(|(speaker, words)| (speaker.clone(), Some(words.clone()))),
+        )
+        .collect();
+    let count = lines.len();
+    let mut parts = Vec::new();
+    let mut tallest: f32 = 0.0;
+    let mut last = 0.0;
+    for (salt, (speaker, words)) in lines.into_iter().enumerate() {
+        let mut laid = unseen(ui, salt);
+        parts.extend(line(&mut laid, world, speaker, words.as_ref(), None));
+        let height = laid.min_rect().height();
+        let under = outer.top() + height;
+        if !(chooses && salt + 1 == count) && words.is_some() {
+            parts.push(Rect::from_min_max(
+                Pos2::new(outer.right() - mark, under),
+                Pos2::new(outer.right(), under + mark),
+            ));
+        }
+        tallest = tallest.max(height);
+        last = height;
+    }
+    if !chooses {
+        return (tallest, parts);
+    }
+    let mut laid = unseen(ui, usize::MAX);
+    let to_come: Vec<SheetChoice> = sheet
+        .to_come
+        .choices
+        .iter()
+        .map(|view| SheetChoice {
+            view: view.clone(),
+            lit: false,
+            refused: false,
+        })
+        .collect();
+    let (_, chosen) = choices(&mut laid, world, &to_come);
+    let below_last = Vec2::new(0.0, last + ROW_GAP);
+    parts.extend(chosen.into_iter().map(|part| part.translate(below_last)));
+    (tallest + ROW_GAP + laid.min_rect().height(), parts)
 }
 
 /// The line as the player reads it, led by its speaker's name wherever the catalog's message puts
@@ -199,38 +319,66 @@ fn text_size(ui: &Ui) -> f32 {
     ui.ctx().content_rect().height() * face::DIALOGUE_SIZE_SHARE
 }
 
-fn choices(ui: &mut Ui, world: &mut World, choices: &[SheetChoice]) -> Vec<RowDrawn> {
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        choices
-            .iter()
-            .enumerate()
-            .map(|(index, choice)| {
-                let color = match (choice.refused, choice.view.locked, choice.lit) {
-                    (true, ..) => dusk::DANGER,
-                    (false, true, _) => ink::DIALOGUE_CHOICE_LOCKED,
-                    (false, false, true) => ink::DIALOGUE_CHOICE_LIT,
-                    (false, false, false) => ink::DIALOGUE_CHOICE,
-                };
-                let row = ui.push_id(("choice", index), |ui| {
-                    choice_frame(ui, |ui| choice_row(ui, world, &choice.view, index, color))
-                });
-                let (label, pointed_item) = row.inner.inner;
-                let response = row.inner.response;
-                if choice.lit {
-                    lit_mark(ui, response.rect, color);
-                }
-                response.widget_info(|| {
-                    WidgetInfo::selected(WidgetType::SelectableLabel, true, choice.lit, &label)
-                });
-                RowDrawn {
-                    response,
-                    pointed_item,
-                }
-            })
-            .collect()
-    })
-    .inner
+/// Draws the choices, and tells where each part of them stands: the rows of each choice's words,
+/// the first reaching left over where the mark of the one the player is on stands, and its tags.
+fn choices(ui: &mut Ui, world: &mut World, choices: &[SheetChoice]) -> (Vec<RowDrawn>, Vec<Rect>) {
+    let beside = lit_mark_reach(ui);
+    let mut parts = Vec::new();
+    let rows = ui
+        .vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            choices
+                .iter()
+                .enumerate()
+                .map(|(index, choice)| {
+                    let color = match (choice.refused, choice.view.locked, choice.lit) {
+                        (true, ..) => dusk::DANGER,
+                        (false, true, _) => ink::DIALOGUE_CHOICE_LOCKED,
+                        (false, false, true) => ink::DIALOGUE_CHOICE_LIT,
+                        (false, false, false) => ink::DIALOGUE_CHOICE,
+                    };
+                    let row = ui.push_id(("choice", index), |ui| {
+                        choice_frame(ui, |ui| choice_row(ui, world, &choice.view, index, color))
+                    });
+                    let ChoiceDrawn {
+                        label,
+                        pointed_item,
+                        words,
+                        tags,
+                    } = row.inner.inner;
+                    let response = row.inner.response;
+                    parts.extend(words.into_iter().enumerate().map(|(at, row)| match at {
+                        0 => Rect::from_min_max(
+                            Pos2::new(response.rect.left() - beside, row.top()),
+                            row.max,
+                        ),
+                        _ => row,
+                    }));
+                    parts.extend(tags);
+                    if choice.lit {
+                        lit_mark(ui, response.rect, color);
+                    }
+                    response.widget_info(|| {
+                        WidgetInfo::selected(WidgetType::SelectableLabel, true, choice.lit, &label)
+                    });
+                    RowDrawn {
+                        response,
+                        pointed_item,
+                    }
+                })
+                .collect()
+        })
+        .inner;
+    (rows, parts)
+}
+
+/// A choice as drawn: what it reads out as, the item of the tag under the pointer, and where the
+/// rows of its words and each of its tags stand.
+struct ChoiceDrawn {
+    label: String,
+    pointed_item: Option<(ItemId, Rect)>,
+    words: Vec<Rect>,
+    tags: Vec<Rect>,
 }
 
 /// A row of choices that takes the pointer, with nothing painted behind it.
@@ -252,7 +400,7 @@ fn choice_row(
     choice: &ChoiceView,
     index: usize,
     color: Color32,
-) -> (String, Option<(ItemId, Rect)>) {
+) -> ChoiceDrawn {
     let content = world.resource::<Content>().clone();
     let pictured = match &choice.icon {
         Some(icon) => LineText(
@@ -266,32 +414,32 @@ fn choice_row(
         .dialogue
         .choice(index as u32 + 1, pictured);
     let label = choice.label.words(&content, world.resource::<KeyNames>());
-    let mut chip_item = None;
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
             ui.spacing_mut().item_spacing.x = text_size(ui) * TAG_GAP;
-            chip_item = tags(ui, world, choice);
-            ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
-                inline::show_line_with_tooltips(ui, world, &listed, text_look(ui, color));
-            });
-        });
-    });
-    (label, chip_item)
+            let (pointed_item, tags) = tags(ui, world, choice);
+            let words = ui
+                .with_layout(Layout::left_to_right(Align::Min), |ui| {
+                    inline::show_line_with_tooltips(ui, world, &listed, text_look(ui, color)).rows
+                })
+                .inner;
+            ChoiceDrawn {
+                label,
+                pointed_item,
+                words,
+                tags,
+            }
+        })
+        .inner
+    })
+    .inner
 }
 
 /// The mark left of the choice the player is on, drawn outside the column so lighting a row moves
 /// nothing.
 fn lit_mark(ui: &Ui, row: Rect, color: Color32) {
     let size = text_size(ui);
-    let font = FontId::new(size, face::Face::Book.family());
-    let galley = ui
-        .painter()
-        .layout_no_wrap(LIT_MARK.to_owned(), font, color);
-    let drawn = if galley.mesh_bounds.is_positive() {
-        galley.mesh_bounds
-    } else {
-        galley.rect
-    };
+    let (galley, drawn) = lit_mark_galley(ui, color);
     let first_line = row.top() + f32::from(LINE_MARGIN.top) + size * face::DIALOGUE_LEADING / 2.0;
     let centre = Pos2::new(
         row.left() - size * LIT_MARK_GAP - drawn.width() / 2.0,
@@ -307,18 +455,46 @@ fn lit_mark(ui: &Ui, row: Rect, color: Color32) {
     );
 }
 
-/// What a choice needs, pays and gets, as coloured tags set in the dialogue's own outlined text.
-fn tags(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId, Rect)> {
+/// How far left of the column the mark of the choice the player is on reaches.
+fn lit_mark_reach(ui: &Ui) -> f32 {
+    let (_, drawn) = lit_mark_galley(ui, ink::DIALOGUE_CHOICE_LIT);
+    text_size(ui) * LIT_MARK_GAP + drawn.width()
+}
+
+/// The mark of the choice the player is on, laid out, and the part of it its letter covers.
+fn lit_mark_galley(ui: &Ui, color: Color32) -> (std::sync::Arc<egui::Galley>, Rect) {
+    let font = FontId::new(text_size(ui), face::Face::Book.family());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(LIT_MARK.to_owned(), font, color);
+    let drawn = if galley.mesh_bounds.is_positive() {
+        galley.mesh_bounds
+    } else {
+        galley.rect
+    };
+    (galley, drawn)
+}
+
+/// What a choice needs, pays and gets, as tags set in the dialogue's own outlined text: what it
+/// needs as a mark and its words, and what it trades as chips, what it takes kept apart from what
+/// it gives.
+fn tags(
+    ui: &mut Ui,
+    world: &mut World,
+    choice: &ChoiceView,
+) -> (Option<(ItemId, Rect)>, Vec<Rect>) {
     let mut pointed = None;
+    let mut drawn = Vec::new();
     if let Some(warn) = &choice.warn {
-        tag(
+        drawn.push(tag(
             ui,
             world,
             None,
             &LineText::plain(warn.clone()),
             dusk::DANGER,
-        );
+        ));
     }
+    let mut gets_laid = false;
     for shown in choice.chips.iter().rev() {
         match shown {
             ChoiceChip::Needs { what, met } => {
@@ -327,42 +503,72 @@ fn tags(ui: &mut Ui, world: &mut World, choice: &ChoiceView) -> Option<(ItemId, 
                 } else {
                     (Mark::Lock, dusk::DANGER)
                 };
-                tag(ui, world, Some(mark), what, color);
+                drawn.push(tag(ui, world, Some(mark), what, color));
             }
             ChoiceChip::Pays { item, count, have } => {
-                let color = if have >= count {
-                    Prose::Item.on(Ground::Dusk)
+                if std::mem::take(&mut gets_laid) {
+                    ui.add_space(text_size(ui) * (TALLY_GROUPS_GAP - TALLY_GAP));
+                }
+                let tally = if have >= count {
+                    Tally::Gives
                 } else {
-                    dusk::DANGER
+                    Tally::Lacks
                 };
-                let paid = InlineItem::of(*item).count(*count).nameless();
-                tag(ui, world, None, &paid.into(), color);
+                let paid = InlineItem::of(*item).count(*count).tallied();
+                drawn.push(tallied(ui, world, tally, &paid.into()).rect);
             }
             ChoiceChip::Gets { item, count } => {
-                let got = InlineItem::of(*item).count(*count).nameless();
-                let color = Prose::Name.on(Ground::Dusk);
-                let response = tag(ui, world, Some(Mark::Plus), &got.into(), color);
+                gets_laid = true;
+                let got = InlineItem::of(*item).count(*count).tallied();
+                let response = tallied(ui, world, Tally::Gets, &got.into());
                 if response.contains_pointer() {
                     pointed = Some((*item, response.rect));
                 }
+                drawn.push(response.rect);
             }
         }
     }
-    pointed
+    (pointed, drawn)
 }
 
-/// A tag laid from the right, as the row's tags are: its line, then its mark before it.
+/// A chip of what a choice trades, laid from the right as the row's tags are: its line, then its
+/// sign before it, in its tally's colour.
+fn tallied(ui: &mut Ui, world: &mut World, tally: Tally, line: &LineText) -> Response {
+    let size = text_size(ui);
+    let color = tally.ink();
+    let look = text_look(ui, color);
+    let outline = outline(ui);
+    let gap = ui.spacing().item_spacing.x;
+    ui.spacing_mut().item_spacing.x = size * TALLY_GAP;
+    let response = dusk::tally(ui, tally, size, |ui| {
+        ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.x = size * TAG_MARK_GAP;
+            inline::show_line_with_tooltips(ui, world, line, look);
+            let height = size * face::DIALOGUE_LEADING;
+            let (rect, _) =
+                ui.allocate_exact_size(Vec2::new(size * TALLY_SIGN, height), Sense::hover());
+            let sign = Rect::from_center_size(rect.center(), Vec2::splat(size * TALLY_SIGN));
+            dusk::mark(ui.painter(), tally.mark(), sign, color, &outline);
+        });
+    })
+    .response;
+    ui.spacing_mut().item_spacing.x = gap;
+    response
+}
+
+/// A tag laid from the right, as the row's tags are: its line, then its mark before it. Tells
+/// where it stands.
 fn tag(
     ui: &mut Ui,
     world: &mut World,
     mark: Option<Mark>,
     line: &LineText,
     color: Color32,
-) -> Response {
+) -> Rect {
     let size = text_size(ui);
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
         ui.spacing_mut().item_spacing.x = size * TAG_MARK_GAP;
-        let response = inline::show_line_with_tooltips(ui, world, line, text_look(ui, color));
+        inline::show_line_with_tooltips(ui, world, line, text_look(ui, color));
         if let Some(mark) = mark {
             let height = size * face::DIALOGUE_LEADING;
             let room = Vec2::new(size * TAG_MARK, height);
@@ -370,9 +576,9 @@ fn tag(
             let rect = Rect::from_center_size(rect.center(), Vec2::splat(size));
             dusk::mark(ui.painter(), mark, rect, color, &outline(ui));
         }
-        response
     })
-    .inner
+    .response
+    .rect
 }
 
 fn continue_mark_size(ui: &Ui) -> f32 {

@@ -274,7 +274,8 @@ impl CloudReading {
 
     /// How much of a light shining from `toward` reaches `at` through the field carried `drift`.
     fn lit(&self, at: Vec3, toward: Vec3, drift: Vec2) -> f32 {
-        let over = at + toward * (self.look.height.0 - at.y) / toward.y;
+        let rise = toward.y.max(LOWEST_LIGHT.to_radians().sin());
+        let over = at + toward * (self.look.height.0 - at.y) / rise;
         let under = (Vec2::new(over.x, over.z) - drift) / CLOUD_TILE.0;
         let cloudy = self.cloudiness(under);
         let held = if cloudy > 0.0 {

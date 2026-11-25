@@ -3,30 +3,24 @@
 //! are. Leaving is for good, so the way out asks first. Once the instance is cleared it says so,
 //! and a dialog tells the player what that gave them.
 
+use super::instance;
 use bevy::prelude::*;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use ui::egui::emath::TSTransform;
 use ui::egui::{Align, Align2, Color32, Id, Layout, Pos2, Rect, Ui, UiBuilder, Vec2};
 use ui::face::TextRole;
 use ui::tracker::{self, TrackerLine, TrackerTone};
 use ui::{controls, dusk};
 
-use super::{
-    AreaInstanceGiven, AreaInstanceGoalShown, AreaInstanceShown, LeaveInstance, RosterPlace,
-};
+use super::{AreaInstanceGoalShown, AreaInstanceShown, LeaveInstance, RosterPlace};
 use crate::core::content::Content;
 use crate::core::text::LineText;
 use crate::core::time::{self, UnixMillis};
-use crate::core::units::Seconds;
 use crate::systems::hud::{self, Confirm};
 use crate::systems::item::deliver;
 use crate::systems::mention::Mention;
 use crate::systems::messages;
-use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::UserSettings;
-use crate::systems::society::SocietyView;
 
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Lettered>()
@@ -51,60 +45,8 @@ pub fn under_title(ui: &mut Ui, world: &mut World, top: f32, right: f32, center:
     world.resource_mut::<Lettered>().0 = lettered;
 }
 
-/// The instance the player is inside, as the plate shows it, for a driver of the client.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownAreaInstance {
-    pub area: String,
-    pub goals: Vec<AreaInstanceGoalShown>,
-    /// Its roster, in the order they were taken.
-    pub roster: Vec<ShownRosterMember>,
-    /// How long it has left uncleared, in an area whose instances only last so long.
-    pub left: Option<Seconds>,
-    /// Once it is cleared: what that gave the player.
-    pub cleared: Option<AreaInstanceGiven>,
-    /// How long until a cleared one closes and everyone is returned.
-    pub returned_in: Option<Seconds>,
-}
-
-/// A member of the roster, as the plate lists them.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownRosterMember {
-    pub name: String,
-    pub place: RosterPlace,
-    pub me: bool,
-}
-
-pub fn shown(world: &World) -> Option<ShownAreaInstance> {
-    let instance = instance(world)?;
-    let now = time::server_now(world)?;
-    let closes = instance.cleared.as_ref().map(|cleared| cleared.closes);
-    Some(ShownAreaInstance {
-        area: instance.area.get(world.resource::<Content>()).name.clone(),
-        goals: instance.goals.clone(),
-        roster: instance
-            .roster
-            .iter()
-            .map(|row| ShownRosterMember {
-                name: row.character.name.clone(),
-                place: row.place,
-                me: row.me,
-            })
-            .collect(),
-        left: instance.ends.map(|ends| ends.since(now)),
-        cleared: instance.cleared.map(|cleared| cleared.given),
-        returned_in: closes.map(|at| at.since(now)),
-    })
-}
-
 #[derive(Resource, Default)]
 struct Lettered(f32);
-
-fn instance(world: &World) -> Option<AreaInstanceShown> {
-    session::my_character(world)?
-        .get::<SocietyView>()?
-        .instance
-        .clone()
-}
 
 /// Letters the instance from `right_top` down, on the trackers' plate, and tells where it ends.
 fn lettered(

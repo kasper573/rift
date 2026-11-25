@@ -79,13 +79,14 @@ pub(crate) fn has_size(module: &AreaModule) -> bool {
 }
 
 /// Turns `module` a quarter turn, clockwise or counter, when it has a way to face: a placement, a
-/// prop or a resident.
+/// prop, an object or a resident.
 pub fn turn(module: &mut AreaModule, clockwise: bool) {
     let quarter = Degrees(if clockwise { 90.0 } else { -90.0 });
     let turned = |yaw: Degrees| Degrees((yaw.0 + quarter.0).rem_euclid(360.0));
     match module {
         AreaModule::Blueprint(placement) => placement.yaw = turned(placement.yaw),
         AreaModule::Prop(prop) => prop.yaw = turned(prop.yaw),
+        AreaModule::Object(object) => object.yaw = turned(object.yaw),
         AreaModule::Resident(resident) => resident.facing = turned(resident.facing),
         _ => {}
     }

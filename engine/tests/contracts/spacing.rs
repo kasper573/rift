@@ -121,22 +121,51 @@ fn a_pack_from_one_side_fills_distinct_berths_where_its_target_stops() {
 
 #[test]
 fn berths_hold_while_the_target_steps_within_reach() {
-    let mut arena = Arena::new();
-    let player = arena.player();
-    let fighter = arena.fighter(arena.at(0.0, 3.0));
-    arena.attack(fighter, player);
-    arena.run(4.0);
-    let berth = at(arena.world(), fighter);
+    let cases = [
+        ("a step toward the fighter", Step::Toward),
+        (
+            "a step back, past the reach by less than a body's radius",
+            Step::BackPastReach,
+        ),
+    ];
+    for (case, step) in cases {
+        let mut arena = Arena::new();
+        let player = arena.player();
+        let fighter = arena.fighter(arena.at(0.0, 3.0));
+        arena.attack(fighter, player);
+        arena.run(4.0);
+        let berth = at(arena.world(), fighter);
 
-    let step = arena.origin.lerp(berth, 0.3);
-    arena.send(MoveRequest {
-        pos: step,
-        seq: MoveSeq(1),
-    });
-    let held = arena.watch(3.0, |world| position(world, fighter) == Some(berth));
+        let radius = arena.world().resource::<movement::Bodies>().radius;
+        let apart = berth.distance(arena.origin);
+        let step = match step {
+            Step::Toward => arena.origin.lerp(berth, 0.3),
+            Step::BackPastReach => berth.lerp(arena.origin, (REACH.0 + radius.0 * 0.5) / apart.0),
+        };
+        arena.send(MoveRequest {
+            pos: step,
+            seq: MoveSeq(1),
+        });
+        arena.watch_until(3.0, |world| position(world, player) == Some(step));
+        let blows = blows_on(arena.world(), player);
+        let held = arena.watch(3.0, |world| position(world, fighter) == Some(berth));
 
-    assert!(held, "the fighter left a berth still in reach");
-    assert_eq!(position(arena.world(), player), Some(step));
+        assert!(held, "{case}: the fighter left a berth still in reach");
+        assert_eq!(position(arena.world(), player), Some(step), "{case}");
+        assert!(
+            blows_on(arena.world(), player) > blows,
+            "{case}: the fighter strikes on from its berth"
+        );
+    }
+}
+
+enum Step {
+    Toward,
+    BackPastReach,
+}
+
+fn blows_on(world: &World, actor: Entity) -> u32 {
+    world.get::<actor::Hurt>(actor).map_or(0, |hurt| hurt.0)
 }
 
 #[test]

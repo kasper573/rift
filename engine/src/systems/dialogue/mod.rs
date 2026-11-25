@@ -48,6 +48,7 @@ use crate::systems::stat;
 use crate::systems::visibility;
 use crate::systems::window::{WindowStep, WindowSteps};
 pub use line::{ScriptLine, Speaker};
+use schemars::JsonSchema;
 use span::ScriptSpan;
 
 messages! {
@@ -168,7 +169,7 @@ impl ChoiceChip {
     }
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum ConversationRequest {
     Pick { step: WindowStep, choice: u32 },
     Leave { step: WindowStep },

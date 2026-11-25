@@ -128,6 +128,7 @@ pub struct CullView {
     orthographic: u32,
     test_near: u32,
     casting_sine: f32,
+    floor: f32,
     grain_pixels: f32,
     stray_pixels: f32,
     near: f32,
@@ -160,6 +161,7 @@ impl CullView {
             orthographic: u32::from(orthographic),
             test_near: u32::from(!light),
             casting_sine: 0.0,
+            floor: 0.0,
             grain_pixels: GRAIN_PIXELS,
             stray_pixels: DRAWN_STRAY_PIXELS,
             near: NEAR_PLANE.0,
@@ -208,9 +210,10 @@ impl CullView {
         }
     }
 
-    /// The view an extracted view culls through, a light's when `light`: through `frustum`, a
-    /// light's with the near half-space its projection puts there (see [`lit_frustum`]).
-    pub fn of(view: &ExtractedView, frustum: &Frustum, light: bool) -> CullView {
+    /// The view an extracted view culls through, a light's when `light` names the lowest ground
+    /// its shadows fall on: through `frustum`, a light's with the near half-space its projection
+    /// puts there (see [`lit_frustum`]).
+    pub fn of(view: &ExtractedView, frustum: &Frustum, light: Option<Meters>) -> CullView {
         let orthographic = view.clip_from_view.w_axis.w == 1.0;
         let pixels_at_a_meter = view.viewport.w as f32 / 2.0 * view.clip_from_view.y_axis.y;
         let culled = CullView::new(
@@ -218,25 +221,27 @@ impl CullView {
             view.world_from_view.translation(),
             pixels_at_a_meter,
             orthographic,
-            light,
+            light.is_some(),
         );
-        if light {
-            culled.lit_from(sun_sine(view))
-        } else {
-            culled
+        match light {
+            Some(floor) => culled.lit_from(sun_sine(view), floor),
+            None => culled,
         }
     }
 
-    /// A light's view whose sun stands `sine` of the way up the sky: a caster farther toward the
-    /// sun than its height over that sine throws its shadow short of what the view sees, so the
-    /// view leaves it out, as far as the near half-space those casters lie behind tells.
-    pub fn lit_from(self, sine: f32) -> CullView {
+    /// A light's view whose sun stands `sine` of the way up the sky, over ground no lower than
+    /// `floor`: a caster farther toward the sun than its top stands over that ground, over the
+    /// sine, throws its shadow short of what the view sees, so the view leaves it out, as far as
+    /// the near half-space those casters lie behind tells. The ground under a caster may lie
+    /// higher than `floor`, but its shadow may run down a slope to ground as low.
+    pub fn lit_from(self, sine: f32, floor: Meters) -> CullView {
         if sine <= SUN_RIM {
             return self;
         }
         CullView {
             test_near: 1,
             casting_sine: sine,
+            floor: floor.0,
             ..self
         }
     }
@@ -245,11 +250,11 @@ impl CullView {
         self.test_near != 0
     }
 
-    /// How far behind the near half-space a caster `height` tall may still throw its shadow into
-    /// the view, in metres: without end for a view that keeps all behind it.
-    fn casting_from(&self, height: f32) -> f32 {
+    /// How far behind the near half-space a caster whose top stands at `top` may still throw its
+    /// shadow into the view, in metres: without end for a view that keeps all behind it.
+    fn casting_from(&self, top: f32) -> f32 {
         if self.casting_sine > 0.0 {
-            height / self.casting_sine
+            (top - self.floor).max(0.0) / self.casting_sine
         } else {
             f32::INFINITY
         }
@@ -700,6 +705,9 @@ pub struct ViewCull {
     kept: Buffer,
     occlusion: Option<UniformBuffer<Occlusion>>,
     occluding: Option<BindGroup>,
+    /// The props standing in the chunks the view sees, by their place in the table: no other's
+    /// listings draw anything in it.
+    props_seen: HashSet<u32>,
 }
 
 impl ViewCull {
@@ -716,7 +724,13 @@ impl ViewCull {
             kept: drawn_buffer(device, 1),
             occlusion: None,
             occluding: None,
+            props_seen: HashSet::new(),
         }
+    }
+
+    /// Whether the view sees any chunk the prop at `prop` in the table stands in.
+    pub fn sees(&self, prop: u32) -> bool {
+        self.props_seen.contains(&prop)
     }
 
     /// Keeps for the lit passes only the listings whose instances the depth the prepass drew,
@@ -840,6 +854,7 @@ impl ViewCull {
         }
         self.occluding = None;
         self.groups = seen.instances.div_ceil(THREADS);
+        self.props_seen = seen.props;
         let view = CullView {
             chunks_seen: seen.spans.len() as u32,
             ..view
@@ -1000,6 +1015,8 @@ pub struct ListedInstance {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SeenChunks {
     pub spans: Vec<UVec4>,
+    /// The props standing in the chunks, by their place in the table.
+    pub props: HashSet<u32>,
     /// How many instances the chunks hold together.
     pub instances: u32,
     pub listed: u32,
@@ -1013,6 +1030,7 @@ pub fn seen_chunks(
     view: &CullView,
 ) -> SeenChunks {
     let mut listed = 0;
+    let mut props = HashSet::new();
     let mut seen: Vec<(u32, UVec4)> = chunks
         .iter()
         .filter(|(_, chunk)| {
@@ -1026,12 +1044,13 @@ pub fn seen_chunks(
             let low = chunk.contents.low - Vec3::splat(reach);
             let high = chunk.contents.high + Vec3::splat(reach);
             let bounds = Aabb::from_min_max(low, high);
-            let casting = casting_frustum(frustum, view.casting_from(high.y - low.y));
+            let casting = casting_frustum(frustum, view.casting_from(high.y));
             casting.intersects_obb(&bounds, &Affine3A::IDENTITY, view.intersect_near(), true)
         })
         .map(|(&key, chunk)| {
             for &(prop, _, instances) in &chunk.contents.props {
                 listed += instances * table.listings_of(prop);
+                props.insert(prop);
             }
             (
                 key,
@@ -1056,6 +1075,7 @@ pub fn seen_chunks(
         .collect();
     SeenChunks {
         spans,
+        props,
         instances,
         listed,
     }
@@ -1192,7 +1212,7 @@ pub(super) fn prepare_culls(
             }
             let lit = light.then(|| lit_frustum(&clip_from_world_of(view), frustum));
             let frustum = lit.as_ref().unwrap_or(frustum);
-            let mut culled = CullView::of(view, frustum, light);
+            let mut culled = CullView::of(view, frustum, light.then_some(drawn.floor));
             if !light {
                 culled = culled
                     .within(video.view_distance.horizon())

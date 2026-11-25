@@ -4,6 +4,7 @@ pub mod tray;
 use crate::core::script::Reach;
 use crate::core::script::ReachDef;
 use crate::core::script::Vocabulary;
+use crate::systems::player::session;
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
@@ -175,7 +176,7 @@ pub enum PromptKind {
     Hosted,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum PromptRequest {
     Submit {
         step: WindowStep,
@@ -393,4 +394,9 @@ pub fn scripting(vocabulary: &mut Vocabulary) {
     vocabulary
         .effect::<ItemPrompt>("item_prompt")
         .effect::<TakeOffer>("take_offer");
+}
+
+/// The prompt before the player, if one is open.
+pub fn view(world: &World) -> Option<&PromptView> {
+    session::me(world).and_then(|me| world.get::<PromptView>(me))
 }

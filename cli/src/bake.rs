@@ -36,61 +36,58 @@ pub fn maps(folder: &Path, profile: Option<&Path>) {
     let baking = content.clone();
     let written = folder.clone();
     let mut told = Instant::now();
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    ..default()
-                })
-                .set(AssetPlugin {
-                    file_path: folder.display().to_string(),
-                    ..default()
-                })
-                .disable::<bevy::winit::WinitPlugin>(),
-        )
-        .add_plugins(ScheduleRunnerPlugin::run_loop(FRAME))
-        .insert_resource(Rng::from_entropy())
-        .insert_resource(Handoff::NextFrame)
-        .insert_resource(profile)
-        .add_plugins((
-            WorldScenePlugin,
-            VfxMaterialsPlugin,
-            SceneryPlugin,
-            MapBakePlugin,
-        ))
-        .insert_resource(content.built::<GameSettings>().look)
-        .insert_resource(content.clone())
-        .insert_resource(VideoPreferences::default())
-        .init_resource::<RainField>()
-        .init_resource::<Shelter>()
-        .init_resource::<Listener>()
-        .add_systems(Startup, move |world: &mut World| {
-            let areas = areas.take().expect("startup runs once");
-            bake::begin(world, baking.clone(), areas);
-        })
-        .add_systems(Update, move |world: &mut World| {
-            if let Some(progress) = bake::progress(world)
-                && told.elapsed() >= TOLD_EVERY
-            {
-                told = Instant::now();
-                match progress {
-                    MapBakeProgress::Planning { come, total } => {
-                        println!("finding the props' plans from above: {come} of {total}");
-                    }
-                    MapBakeProgress::Drawing { drawn, total } => {
-                        println!("drawing the squares: {drawn} of {total}");
-                    }
+    let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, &folder);
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            })
+            .disable::<bevy::winit::WinitPlugin>(),
+    )
+    .add_plugins(ScheduleRunnerPlugin::run_loop(FRAME))
+    .insert_resource(Rng::from_entropy())
+    .insert_resource(Handoff::NextFrame)
+    .insert_resource(profile)
+    .add_plugins((
+        WorldScenePlugin,
+        VfxMaterialsPlugin,
+        SceneryPlugin,
+        MapBakePlugin,
+    ))
+    .insert_resource(content.built::<GameSettings>().look)
+    .insert_resource(content.clone())
+    .insert_resource(VideoPreferences::default())
+    .init_resource::<RainField>()
+    .init_resource::<Shelter>()
+    .init_resource::<Listener>()
+    .add_systems(Startup, move |world: &mut World| {
+        let areas = areas.take().expect("startup runs once");
+        bake::begin(world, baking.clone(), areas);
+    })
+    .add_systems(Update, move |world: &mut World| {
+        if let Some(progress) = bake::progress(world)
+            && told.elapsed() >= TOLD_EVERY
+        {
+            told = Instant::now();
+            match progress {
+                MapBakeProgress::Planning { come, total } => {
+                    println!("finding the props' plans from above: {come} of {total}");
+                }
+                MapBakeProgress::Drawing { drawn, total } => {
+                    println!("drawing the squares: {drawn} of {total}");
                 }
             }
-            if let Some(baked) = bake::take_baked(world) {
-                let content = world.resource::<Content>().clone();
-                write(&written, &content, &baked);
-                world.write_message(AppExit::Success);
-            }
-        })
-        .run();
+        }
+        if let Some(baked) = bake::take_baked(world) {
+            let content = world.resource::<Content>().clone();
+            write(&written, &content, &baked);
+            world.write_message(AppExit::Success);
+        }
+    })
+    .run();
 }
 
 /// Writes the maps `baked` of the game in `folder`, as `content` names its areas: only the

@@ -420,14 +420,25 @@ pub fn cut(world: &mut World, actor: Entity, motion: &Motion) {
         .get::<Playing>(actor)
         .is_some_and(|playing| playing.motion == *motion)
     {
-        let now = world.resource::<WallClock>().now;
-        interrupt(world, actor);
-        world.entity_mut(actor).insert(LastAction { at: now });
-        if let Some(mut shown) = world.get_mut::<Actor>(actor)
-            && shown.action == motion.action()
-        {
-            super::set_action(&mut shown, Action::Idle);
-        }
+        cut_short(world, actor);
+    }
+}
+
+/// Cuts short whatever the actor plays, as [`cut`] does.
+pub fn cut_short(world: &mut World, actor: Entity) {
+    let Some(motion) = world
+        .get::<Playing>(actor)
+        .map(|playing| playing.motion.clone())
+    else {
+        return;
+    };
+    let now = world.resource::<WallClock>().now;
+    interrupt(world, actor);
+    world.entity_mut(actor).insert(LastAction { at: now });
+    if let Some(mut shown) = world.get_mut::<Actor>(actor)
+        && shown.action == motion.action()
+    {
+        super::set_action(&mut shown, Action::Idle);
     }
 }
 

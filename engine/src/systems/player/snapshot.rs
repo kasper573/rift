@@ -591,6 +591,9 @@ pub enum JoinOrigin {
     /// Staged from the game's content: it stands in for the account's own character, its
     /// snapshot counts from the moment it joins, and it is never saved.
     Staged,
+    /// Staged from the game's content to be the account's own character from then on: its
+    /// snapshot counts from the moment it joins, and it is saved as the account's own.
+    Kept,
     /// The account's own, as it was saved `at` that moment, its player `told` this much of what
     /// the game changing did to it.
     Saved {

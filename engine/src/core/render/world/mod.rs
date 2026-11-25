@@ -33,8 +33,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering}
 
 use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
-use bevy::light::DirectionalLightShadowMap;
+use bevy::light::cascade::build_directional_light_cascades;
 use bevy::light::cluster::GlobalClusterSettings;
+use bevy::light::{DirectionalLightShadowMap, SimulationLightSystems};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, ScreenSpaceTransmission};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
@@ -68,6 +69,7 @@ impl Plugin for WorldScenePlugin {
 
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "shade.wesl");
+        bevy::shader::load_shader_library!(app, "wear.wesl");
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::shader::load_shader_library!(app, "clearing.wesl");
         bevy::shader::load_shader_library!(app, "opacity.wesl");
@@ -126,6 +128,7 @@ impl Plugin for WorldScenePlugin {
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
+        .init_resource::<material::MaterialPictures>()
         .init_resource::<afloat::LidMaterial>()
         .init_resource::<cover::CoverVariants>()
         .add_observer(material::dress_scenes)
@@ -151,6 +154,12 @@ impl Plugin for WorldScenePlugin {
         )
         .add_systems(
             PostUpdate,
+            lights::turn_cascades_in_place
+                .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
+                .after(build_directional_light_cascades),
+        )
+        .add_systems(
+            PostUpdate,
             (
                 decal::lay_decals.run_if(resource_exists::<super::GroundHeights>),
                 billboard::face_camera,
@@ -166,7 +175,8 @@ impl Plugin for WorldScenePlugin {
                 opacity::thin,
                 afloat::lid_the_floating,
                 plumb::hang
-                    .after(layers::run)
+                    .after(BodiesOnJoints)
+                    .in_set(BodiesPosed)
                     .before(bevy::transform::TransformSystems::Propagate),
                 sky::rest_sky_light
                     .after(bevy::transform::TransformSystems::Propagate)
@@ -175,6 +185,17 @@ impl Plugin for WorldScenePlugin {
         );
     }
 }
+
+/// The systems that pose every body for the frame, its layers and what hangs from it, before
+/// transforms propagate: what stands on a body's nodes reads them after these.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BodiesPosed;
+
+/// The systems that set a body on a joint of another as that body stands posed this frame, as a
+/// rider in their seat: after every body's clips and layers have posed it, before what hangs
+/// plumb from a body.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct BodiesOnJoints;
 
 /// Every camera's depth can be read once its prepass is drawn, for the passes that sample it.
 fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {

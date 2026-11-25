@@ -3,7 +3,6 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use bevy::app::PluginsState;
-use bevy::asset::AssetPlugin;
 use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
 use bevy::image::ImageSampler;
@@ -197,15 +196,12 @@ fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<I
         .expect("the field is pictured")
         .area;
     let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, folder);
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: None,
                 exit_condition: ExitCondition::DontExit,
-                ..default()
-            })
-            .set(AssetPlugin {
-                file_path: folder.display().to_string(),
                 ..default()
             })
             .disable::<bevy::winit::WinitPlugin>(),

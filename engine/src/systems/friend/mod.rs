@@ -12,7 +12,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use search::{CharactersFound, FindCharacters};
+pub use search::{CharactersFound, FindCharacters, FoundCharacters};
 
 use crate::core::content::Content;
 use crate::core::store::{Record, RecordId};
@@ -22,12 +22,14 @@ use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::messages::{self, messages};
 use crate::systems::player::RequestNeeds;
-use crate::systems::player::{self, PlayedBy};
+use crate::systems::player::{self, PlayedBy, session};
 use crate::systems::social_request::{
-    RequestUnaccepted, RequestUnsent, SocialRequest, SocialRequestAsk, SocialRequestKind,
-    SocialRequestSource, SocialRequestWords,
+    RequestUnaccepted, RequestUnsent, SocialRequest, SocialRequestAsk, SocialRequestId,
+    SocialRequestKind, SocialRequestSource, SocialRequestWords,
 };
-use crate::systems::society::{self, AccountNumber, Settling, Society, SocietyAsk};
+use crate::systems::society::{
+    self, AccountNumber, RequestCard, Settling, Society, SocietyAsk, SocietyMember, SocietyView,
+};
 
 messages! {
     /// What the game says of friends.
@@ -228,11 +230,11 @@ pub enum FriendAsk {
 }
 
 /// A player asking another to be their friend.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AskFriendship(pub AccountNumber);
 
 /// A player ending a friendship.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RemoveFriend(pub AccountNumber);
 
 /// Friendship as a kind of request: it reaches a player who is gone and waits for them, and a
@@ -400,4 +402,135 @@ fn accepted(
             .put(Friendship::between(one, other, settling.now));
     }
     Ok(())
+}
+
+/// What the Friends page shows, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
+pub struct ShownFriends {
+    pub friends: Vec<ShownFriend>,
+    /// Who asks the player to be their friend.
+    pub asking: Vec<String>,
+    /// Who the player asked and waits for.
+    pub asked: Vec<String>,
+    pub blocked: Vec<String>,
+    /// What the latest search by name found, once the server has answered it.
+    pub found: Option<ShownSearch>,
+}
+
+/// What a search by name found: the start of a name it was for, and the first of the players
+/// whose names start so.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownSearch {
+    pub starts: String,
+    pub characters: Vec<FoundCharacter>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownFriend {
+    pub name: String,
+    /// The area they play in, while they do.
+    pub online_in: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct FoundCharacter {
+    pub name: String,
+    pub standing: CharacterStanding,
+}
+
+/// What a player found by name is to the player who searched.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CharacterStanding {
+    You,
+    Friend,
+    /// They have a request for friendship from the player, waiting.
+    Asked,
+    /// They ask the player to be their friend.
+    Asking,
+    Blocked,
+    Stranger,
+}
+
+pub fn shown(world: &World) -> ShownFriends {
+    let Some(view) = society(world) else {
+        return ShownFriends::default();
+    };
+    let content = world.resource::<Content>();
+    let names =
+        |cards: Vec<&RequestCard>| cards.iter().map(|card| card.other.name.clone()).collect();
+    ShownFriends {
+        friends: view
+            .friends
+            .iter()
+            .map(|friend| ShownFriend {
+                name: friend.character.name.clone(),
+                online_in: friend.online_in.map(|area| area.get(content).name.clone()),
+            })
+            .collect(),
+        asking: names(asked_of_me(&view).collect()),
+        asked: names(asked_by_me(&view).collect()),
+        blocked: view
+            .blocked
+            .iter()
+            .map(|player| player.name.clone())
+            .collect(),
+        found: world
+            .resource::<FoundCharacters>()
+            .0
+            .as_ref()
+            .map(|found| ShownSearch {
+                starts: found.starts.clone(),
+                characters: found
+                    .characters
+                    .iter()
+                    .map(|player| FoundCharacter {
+                        name: player.name.clone(),
+                        standing: standing(&view, player).0,
+                    })
+                    .collect(),
+            }),
+    }
+}
+
+pub(crate) fn society(world: &World) -> Option<SocietyView> {
+    session::my_character(world)?.get::<SocietyView>().cloned()
+}
+
+pub(crate) fn friendship(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
+    view.requests
+        .iter()
+        .filter(|card| card.kind == SocialRequestKind::Friendship)
+}
+
+pub(crate) fn asked_of_me(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
+    friendship(view).filter(|card| !card.mine)
+}
+
+pub(crate) fn asked_by_me(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
+    friendship(view).filter(|card| card.mine)
+}
+
+/// What `player` is to the player `view` is of, and the request between the two that waits.
+pub(crate) fn standing(
+    view: &SocietyView,
+    player: &SocietyMember,
+) -> (CharacterStanding, Option<SocialRequestId>) {
+    let is = |other: &SocietyMember| other.account == player.account;
+    if view.account == player.account {
+        return (CharacterStanding::You, None);
+    }
+    if view.blocked.iter().any(is) {
+        return (CharacterStanding::Blocked, None);
+    }
+    if view.friends.iter().any(|friend| is(&friend.character)) {
+        return (CharacterStanding::Friend, None);
+    }
+    if let Some(card) = asked_of_me(view).find(|card| is(&card.other)) {
+        return (CharacterStanding::Asking, Some(card.id));
+    }
+    if asked_by_me(view).any(|card| is(&card.other)) {
+        return (CharacterStanding::Asked, None);
+    }
+    (CharacterStanding::Stranger, None)
 }

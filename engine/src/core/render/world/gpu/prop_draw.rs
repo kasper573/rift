@@ -177,8 +177,9 @@ struct PropBindings {
     /// Each view's instances of each scenery: for the depth passes, and for the lit ones.
     instances: HashMap<(Entity, RetainedViewEntity, bool), BindGroup>,
     drawn: HashMap<(Entity, RetainedViewEntity, PropPass), Vec<PartDraw>>,
-    /// The impostor atlas, bound where a part's material would be.
-    atlas: Option<BindGroup>,
+    /// The impostor atlas, bound where a part's material would be, and how often it had grown
+    /// when it was bound.
+    atlas: Option<(u64, BindGroup)>,
 }
 
 /// A part a view draws: its pipeline, its material's bind group, and its levels' commands.
@@ -253,6 +254,7 @@ fn start(
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]])
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32; 3]])
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, vec![[0.0f32; 2]])
     .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32; 4]]);
     let instances = BindGroupLayoutDescriptor::new(
         "prop_instances",
@@ -325,6 +327,7 @@ fn start(
         prop: 0,
         seed: 0,
         chunk: 0,
+        lean: [0.0, 0.0],
     };
     let whole = [0u32, 1.0f32.to_bits(), 1.0f32.to_bits(), 65535 << 1];
     let bake = BakeBindings {
@@ -407,18 +410,21 @@ fn bind_props(
     ) else {
         return;
     };
-    if bindings.atlas.is_none()
-        && let Some(atlas) = atlas
+    if let Some(atlas) = atlas
+        && bindings.atlas.as_ref().map(|(grown, _)| *grown) != Some(atlas.grown)
     {
-        bindings.atlas = Some(device.create_bind_group(
-            "impostor_atlas",
-            &cache.get_bind_group_layout(&pipeline.impostors.atlas),
-            &BindGroupEntries::with_indices((
-                (100, &atlas.albedo_view),
-                (101, &atlas.normal_view),
-                (102, &atlas.depth_view),
-                (103, &atlas.sampler),
-            )),
+        bindings.atlas = Some((
+            atlas.grown,
+            device.create_bind_group(
+                "impostor_atlas",
+                &cache.get_bind_group_layout(&pipeline.impostors.atlas),
+                &BindGroupEntries::with_indices((
+                    (100, &atlas.albedo_view),
+                    (101, &atlas.normal_view),
+                    (102, &atlas.depth_view),
+                    (103, &atlas.sampler),
+                )),
+            ),
         ));
     }
     for (scenery, cull) in &culls.0 {
@@ -757,9 +763,9 @@ impl PropQueue<'_, '_> {
                 }
                 continue;
             };
-            if !cull.views.contains_key(&view) {
+            let Some(seen) = cull.views.get(&view) else {
                 continue;
-            }
+            };
             let Some(table) = cull.table.as_ref() else {
                 if !arena.chunks.is_empty() {
                     self.progress.left_out();
@@ -771,12 +777,13 @@ impl PropQueue<'_, '_> {
                 .table()
                 .buckets
                 .iter()
+                .filter(|bucket| seen.sees(bucket.prop))
                 .filter_map(|bucket| {
                     let Some(dressed) = arena.dressed.get(&bucket.prop) else {
                         progress.left_out();
                         return None;
                     };
-                    if light && !dressed.shadow {
+                    if light && dressed.shadows.get(bucket.part as usize) != Some(&true) {
                         return None;
                     }
                     let material = dressed.materials.get(bucket.part as usize)?;
@@ -812,7 +819,7 @@ impl PropQueue<'_, '_> {
                     })
                 })
                 .collect();
-            if let Some(atlas) = &self.bindings.atlas {
+            if let Some((_, atlas)) = &self.bindings.atlas {
                 let table = table.table();
                 let singled = matches!(pass, PropPass::Ids | PropPass::Marks);
                 for (proxy, commands) in [(false, &table.impostors), (true, &table.proxies)] {

@@ -10,9 +10,12 @@ use crate::core::math::{Pos, Rect};
 use crate::core::units::{MeterSize, Meters};
 use crate::systems::GameSettings;
 use crate::systems::area::{self, AreaId};
+use crate::systems::chat::{ChatEmbed, ChatLocation};
 use crate::systems::hud::menu::{self, MenuTab, MenuTabName};
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
+use crate::systems::messages;
+use crate::systems::terminal::chat;
 
 pub struct MapMenuTab;
 
@@ -25,6 +28,13 @@ impl MenuTab for MapMenuTab {
     }
     fn opens(&self) -> InputAction {
         InputAction::OpenMap
+    }
+    fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
+        let words = &messages::of(world.resource::<Content>()).terminal;
+        chat::takes_embeds(world)
+            .then(|| (InputAction::AddToChat, words.add_to_chat().to_owned()))
+            .into_iter()
+            .collect()
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let room = ui.available_rect_before_wrap();
@@ -142,7 +152,7 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
     let per_meter = view.per_meter();
     let covered =
         |at: Pos<Meters>| bounds.map_or(at, |bounds| covering(at, bounds, sheet, per_meter));
-    let whole = ui.interact(sheet, ui.id().with("sheet"), Sense::drag());
+    let whole = ui.interact(sheet, ui.id().with("sheet"), Sense::click_and_drag());
     let reach = view.reach.0;
     whole.widget_info(|| {
         let said = view.messages().map_of(&area_name, reach);
@@ -167,6 +177,18 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
         CursorIcon::Grabbing
     });
     super::chart(ui, world, &view, sight.as_ref().and_then(MapSight::pin));
+    let picked = whole
+        .hover_pos()
+        .map(|pointer| view.ground(pointer))
+        .filter(|at| bounds.is_some_and(|bounds| bounds.contains(*at)))
+        .map(|at| {
+            ChatEmbed::Location(ChatLocation {
+                area: view.area,
+                x: at.x.round() as i32,
+                y: at.y.round() as i32,
+            })
+        });
+    chat::shortcut(world, &whole, picked);
     super::north_bead(ui, world, sheet.center_top() + Vec2::new(0.0, INSET));
     let corner = sheet.right_bottom() - Vec2::splat(INSET);
     let along = Vec2::new(2.0 * BUTTON + BUTTON_GAP, 0.0);

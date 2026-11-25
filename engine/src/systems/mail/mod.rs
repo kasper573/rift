@@ -8,25 +8,30 @@ pub mod reads;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
-use bevy_app::App;
+use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
+use bevy_ecs::schedule::common_conditions::resource_removed;
+use bevy_replication::ServerLink;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
 
 pub use reads::InboxReads;
 
-use crate::core::content::{Content, SavedList};
+use crate::core::content::{Content, Fixture, SavedList};
 use crate::core::store::{Record, RecordId, RecordOwner};
 use crate::core::time::UnixMillis;
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::account::AccountId;
 use crate::systems::history::HistoryTopic;
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::deliver::{self, Delivered, DeliveryReason};
 use crate::systems::item::{self, ExchangeRefusal, Inventory, ItemStack};
 use crate::systems::messages::{self, messages};
-use crate::systems::notification::{self, Notification};
+use crate::systems::notification::{self, FeedLayout, Notification};
 use crate::systems::player::RequestNeeds;
+use crate::systems::player::session::{self, MyCharacter};
 use crate::systems::player::snapshot::KeptAside;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::save::Unwritten;
@@ -49,6 +54,9 @@ messages! {
         sent(name: Text),
         /// What a player is told as a letter titled `{title}` arrives from `{name}`.
         arrived(name: Text, title: Text),
+        /// What a player is told as a letter arrives from `{name}` whose title is longer than the
+        /// notice shows, `{title}` being as much of it as it does.
+        arrived_cut(name: Text, title: Text),
         /// What a player is told taking what is attached to a letter, as `{taken}` of `{attached}`
         /// stacks fit their bag.
         took_some(attached: Number, taken: Number),
@@ -155,6 +163,31 @@ pub fn register(app: &mut App) {
         .add_server_message::<LetterAnswered>();
 }
 
+/// Keeps a client's [`LetterTexts`] as the server sends them, until the session ends.
+pub struct LetterTextsPlugin;
+
+impl Plugin for LetterTextsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<LetterTexts>().add_systems(
+            Update,
+            (
+                read_texts,
+                forget_texts.run_if(resource_removed::<ServerLink>),
+            ),
+        );
+    }
+}
+
+/// The texts of the letters the client has opened, of those still in the inbox.
+#[derive(Resource, Default)]
+pub struct LetterTexts(HashMap<LetterId, String>);
+
+impl LetterTexts {
+    pub fn of(&self, letter: LetterId) -> Option<&str> {
+        self.0.get(&letter).map(String::as_str)
+    }
+}
+
 /// How a game has letters work. A game without it has none.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -165,6 +198,9 @@ pub struct MailSettings {
     pub attachments: u32,
     /// How many characters a title is long at the most.
     pub title_length: u32,
+    /// How many characters of a title the notice of its letter's arrival shows; a longer title is
+    /// cut there.
+    pub notice_title_length: u32,
     /// How many characters a text is long at the most.
     pub text_length: u32,
     /// How many letters a player sends within a minute at the most.
@@ -428,7 +464,7 @@ pub enum InboxAsk {
 }
 
 /// A player sending a letter, with stacks of their bag attached.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct SendLetter {
     pub to: AccountNumber,
     pub title: String,
@@ -437,25 +473,25 @@ pub struct SendLetter {
 }
 
 /// A player opening a letter, which marks it read and has the server send its text.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OpenLetter(pub LetterId);
 
 /// A player taking what is attached to a letter: some of one stack, or every stack.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TakeAttached {
     pub letter: LetterId,
     pub stack: Option<TakenStack>,
 }
 
 /// `count` of the stack at `index` of what is attached to a letter.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TakenStack {
     pub index: u32,
     pub count: u32,
 }
 
 /// A player deleting a letter nothing is attached to.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeleteLetter(pub LetterId);
 
 /// The text of a letter its receiver opened.
@@ -704,8 +740,19 @@ fn send(
     society.inboxes.deliver(letter, settling.unwritten);
     let sent = messages.sent(&name);
     settling.tell(by, Notification::feed(HistoryTopic::Notification, sent));
-    let arrived = messages.arrived(&sender, title);
-    settling.tell(&to, Notification::feed(HistoryTopic::Notification, arrived));
+    let shown: String = title
+        .graphemes(true)
+        .take(rules.notice_title_length as usize)
+        .collect();
+    let arrived = if shown.len() < title.len() {
+        messages.arrived_cut(&sender, &shown)
+    } else {
+        messages.arrived(&sender, title)
+    };
+    let notice = Notification::feed(HistoryTopic::Notification, arrived)
+        .icon(InterfaceIcon::Mail.get(content).image.clone())
+        .layout(FeedLayout::Corner);
+    settling.tell(&to, notice);
     true
 }
 
@@ -794,4 +841,29 @@ fn row(society: &Society, letter: &Letter) -> Option<InboxRow> {
 
 fn record_id(id: LetterId) -> RecordId {
     RecordId(id.0.to_string())
+}
+
+fn read_texts(
+    mut sent: MessageReader<LetterText>,
+    mut texts: ResMut<LetterTexts>,
+    inboxes: Query<&InboxView>,
+    me: Res<MyCharacter>,
+) {
+    for LetterText { id, text } in sent.read() {
+        texts.0.insert(*id, text.clone());
+    }
+    let inbox = me.0.and_then(|me| inboxes.get(me).ok());
+    if let Some(inbox) = inbox.filter(|inbox| inbox.whole) {
+        texts
+            .0
+            .retain(|id, _| inbox.rows.iter().any(|row| row.id == *id));
+    }
+}
+
+fn forget_texts(mut texts: ResMut<LetterTexts>) {
+    texts.0.clear();
+}
+
+pub fn inbox(world: &World) -> Option<&InboxView> {
+    session::my_character(world)?.get::<InboxView>()
 }

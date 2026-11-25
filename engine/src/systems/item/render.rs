@@ -23,6 +23,7 @@ use crate::core::vfx::render::SiteExtent;
 use crate::core::vfx::standing::StandingVfx;
 use crate::core::vfx::{VfxInstance, VfxSite};
 use crate::systems::GameSettings;
+use crate::systems::area::scenery::ShowsProp;
 use crate::systems::area::shown_weather::PartsCover;
 use crate::systems::identity::Lingering;
 use crate::systems::item::plates::Landed;
@@ -126,14 +127,13 @@ fn dress_drop(
     add: On<Add<DroppedItem>>,
     drops: Query<&DroppedItem, Without<Lingering>>,
     content: Res<Content>,
-    assets: Res<AssetServer>,
     mut commands: Commands,
 ) {
     let Ok(dropped) = drops.get(add.entity) else {
         return;
     };
-    let look = dropped.item.get(&content).look.get(&content);
-    let scene = crate::core::assets::model_scene(&assets, look.model.path());
+    let shown = dropped.item.get(&content).look;
+    let look = shown.get(&content);
     let least = content.built::<GameSettings>().drops.least_size;
     let bounds = content
         .built::<GltfInfos>()
@@ -155,7 +155,7 @@ fn dress_drop(
         },
     );
     commands.entity(add.entity).insert((
-        WorldAssetRoot(scene),
+        ShowsProp(shown),
         Transform::from_scale(Vec3::splat(scale)),
         Visibility::default(),
         extent,

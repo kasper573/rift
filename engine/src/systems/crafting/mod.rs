@@ -27,7 +27,7 @@ use crate::core::script::{
     EffectCall, EventKind, Expr, FlowKey, Instances, Owner, RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::core::text::LineText;
-use crate::core::time::{UnixMillis, WallClock};
+use crate::core::time::{self, UnixMillis, WallClock};
 use crate::core::units::{Percent, PlaybackRate, Seconds};
 use crate::systems::actor::HandsAtWork;
 use crate::systems::actor::held::ToolInHand;
@@ -38,12 +38,12 @@ use crate::systems::aim::Reaching;
 use crate::systems::attention::AttentionId;
 use crate::systems::dialogue;
 use crate::systems::dialogue::span::ScriptSpan;
-use crate::systems::item::{Inventory, ItemId, ItemStack};
+use crate::systems::item::{self, Inventory, ItemId, ItemStack};
 use crate::systems::messages::{self, messages};
 use crate::systems::notification;
 use crate::systems::notification::pop::PopShader;
 use crate::systems::player::RequestNeeds;
-use crate::systems::player::player_requests;
+use crate::systems::player::{player_requests, session};
 use crate::systems::prompt::{self, Asked, PromptKind};
 use crate::systems::shop::ShopDef;
 use crate::systems::skill;
@@ -674,7 +674,7 @@ pub struct CraftUnderWay {
     pub until: UnixMillis,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum CraftingRequest {
     /// Begins crafting `recipe` from `placed`: the one meant, where what is placed is several
     /// recipes.
@@ -1223,4 +1223,62 @@ pub fn scripting(vocabulary: &mut Vocabulary) {
         .event::<ItemCrafted>("crafted")
         .effect::<MasterRecipe>("master_recipe")
         .effect::<OpenCrafting>("open_crafting");
+}
+
+/// A recipe as the prompt lists it: which materials the bag lacks, whether it covers them all,
+/// and whether the recipe requires a mastery the player lacks.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListedRecipe {
+    pub recipe: Recipe,
+    pub lacking: Vec<bool>,
+    pub can_make: bool,
+    pub locked: bool,
+}
+
+/// The crafting prompt before the player, if one is open.
+pub fn view(world: &World) -> Option<&CraftingView> {
+    prompt::view(world).filter(|prompt| prompt.kind == PromptKind::Hosted)?;
+    world.get::<CraftingView>(session::me(world)?)
+}
+
+/// How far through the craft under way the prompt is, from none to all of it.
+pub fn progress(world: &World) -> Option<f32> {
+    let making = view(world)?.making.as_ref()?;
+    let whole = making.until.since(making.since).0;
+    let done = time::server_now(world)?.since(making.since).0;
+    Some(if whole > 0.0 {
+        (done / whole).clamp(0.0, 1.0)
+    } else {
+        1.0
+    })
+}
+
+/// Every recipe the prompt makes, as it lists them.
+pub fn listed(world: &World) -> Vec<ListedRecipe> {
+    let Some(view) = view(world) else {
+        return Vec::new();
+    };
+    let bag = item::my_bag(world);
+    let held = |item: ItemId| bag.map_or(0, |bag| bag.count(item));
+    craftables(world.resource::<Content>(), &view.recipes)
+        .into_iter()
+        .map(|craftable| {
+            let lacking: Vec<bool> = craftable
+                .recipe
+                .from
+                .iter()
+                .map(|stack| held(stack.item) < stack.count)
+                .collect();
+            ListedRecipe {
+                recipe: craftable.recipe.clone(),
+                can_make: !lacking.contains(&true),
+                lacking,
+                locked: lacks_mastery(world, &craftable),
+            }
+        })
+        .collect()
+}
+
+fn lacks_mastery(world: &World, craftable: &Craftable) -> bool {
+    session::me(world).is_some_and(|me| locked(world, me, craftable))
 }

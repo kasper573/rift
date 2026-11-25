@@ -53,14 +53,19 @@ impl Plugin for ModelArenaPlugin {
     }
 }
 
-/// A scenery whose props are drawn from its arena, on its root.
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct PropArena;
+/// A scenery whose props are drawn from its arena, on its root, over ground no lower than
+/// `floor`.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct PropArena {
+    pub floor: Meters,
+}
 
-/// A scenery's arena as the render world draws it: on the layers the scenery shows on.
+/// A scenery's arena as the render world draws it: on the layers the scenery shows on, over
+/// ground no lower than `floor`.
 #[derive(Component, Clone, Debug)]
 pub struct ExtractedPropArena {
     pub layers: RenderLayers,
+    pub floor: Meters,
 }
 
 impl SyncComponent<RenderApp> for PropArena {
@@ -68,29 +73,35 @@ impl SyncComponent<RenderApp> for PropArena {
 }
 
 impl ExtractComponent<RenderApp> for PropArena {
-    type QueryData = Option<&'static RenderLayers>;
-    type QueryFilter = With<PropArena>;
+    type QueryData = (&'static PropArena, Option<&'static RenderLayers>);
+    type QueryFilter = ();
     type Out = ExtractedPropArena;
 
-    fn extract_component(layers: QueryItem<'_, '_, Self::QueryData>) -> Option<ExtractedPropArena> {
+    fn extract_component(
+        (arena, layers): QueryItem<'_, '_, Self::QueryData>,
+    ) -> Option<ExtractedPropArena> {
         Some(ExtractedPropArena {
             layers: layers.cloned().unwrap_or_default(),
+            floor: arena.floor,
         })
     }
 }
 
 /// A vertex of a model as the slab holds it: where it stands in the model, the way it faces, its
-/// texture coordinates and its colour, white where the model gives none.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// two sets of texture coordinates, the second naught where the model gives none, and its colour,
+/// white where the model gives none.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ModelVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
+    pub uv_b: [f32; 2],
     pub color: [f32; 4],
 }
 
 impl ModelVertex {
-    pub const BYTES: u64 = 48;
+    pub const BYTES: u64 = std::mem::size_of::<ModelVertex>() as u64;
 }
 
 /// The bytes an index takes in the index slab.
@@ -155,6 +166,7 @@ impl PreparedModel {
                             position: positions[vertex],
                             normal: normals[vertex],
                             uv: vertices.uvs[vertex],
+                            uv_b: vertices.uvs_b.as_ref().map_or([0.0; 2], |uvs| uvs[vertex]),
                             color: vertices
                                 .colors
                                 .as_ref()
@@ -208,11 +220,12 @@ pub struct LevelRange {
     pub strays: f32,
 }
 
-/// What the slabs' buffers take in for a model just placed: bytes, each at its offset.
+/// What the slabs' buffers take in for a model just placed: the bytes of each part's vertices,
+/// and of each of its levels' indices, each at its offset.
 #[derive(Default)]
-pub struct SlabWrites {
-    pub vertices: Vec<(u64, Vec<u8>)>,
-    pub indices: Vec<(u64, Vec<u8>)>,
+pub struct SlabWrites<'a> {
+    pub vertices: Vec<(u64, &'a [u8])>,
+    pub indices: Vec<(u64, &'a [u8])>,
 }
 
 /// Where the models lie in a vertex slab and an index slab, each model by its `K`: a part's
@@ -257,16 +270,16 @@ pub const BOX_INDICES: std::ops::Range<u32> = 6..42;
 
 impl<K: Eq + Hash> ModelSlabs<K> {
     /// Places `model` as `key`, in place of the model `key` held before: the bytes to write for it.
-    pub fn insert(&mut self, key: K, model: &PreparedModel) -> SlabWrites {
+    pub fn insert<'a>(&mut self, key: K, model: &'a PreparedModel) -> SlabWrites<'a> {
         self.remove(&key);
         let mut writes = SlabWrites::default();
         let mut parts = Vec::new();
         let mut blocks = Vec::new();
         for part in &model.parts {
-            let vertex_bytes = vertex_bytes(&part.vertices);
+            let vertex_bytes: &[u8] = bytemuck::cast_slice(&part.vertices);
             let vertex_block = self.vertices.alloc(vertex_bytes.len() as u64);
-            let index_bytes = index_bytes(&part.levels);
-            let index_block = self.indices.alloc(index_bytes.len() as u64);
+            let index_count: usize = part.levels.iter().map(|level| level.indices.len()).sum();
+            let index_block = self.indices.alloc(index_count as u64 * INDEX_BYTES);
             let (Some(vertex_range), Some(index_range)) = (
                 self.vertices.range(vertex_block),
                 self.indices.range(index_block),
@@ -278,6 +291,10 @@ impl<K: Eq + Hash> ModelSlabs<K> {
                 .levels
                 .iter()
                 .map(|level| {
+                    writes.indices.push((
+                        u64::from(first_index) * INDEX_BYTES,
+                        bytemuck::cast_slice(&level.indices),
+                    ));
                     let range = LevelRange {
                         first_index,
                         indices: level.indices.len() as u32,
@@ -294,7 +311,6 @@ impl<K: Eq + Hash> ModelSlabs<K> {
                 levels,
             });
             writes.vertices.push((vertex_range.start, vertex_bytes));
-            writes.indices.push((index_range.start, index_bytes));
             blocks.push((vertex_block, index_block));
         }
         let placed = PlacedModel {
@@ -328,8 +344,9 @@ impl<K: Eq + Hash> ModelSlabs<K> {
 }
 
 /// A prop standing in the world as the arenas hold it: where it stands, its turn about the up axis
-/// and its size, the prop it is by its place among the content's props, a seed of its own, and
-/// the chunk of its scenery it stands in, by the scenery's own key for it.
+/// and its size, the prop it is by its place among the content's props, a seed of its own, the
+/// chunk of its scenery it stands in, by the scenery's own key for it, and how far its up axis
+/// leans east and south once turned, as a prop lying along a slope does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InstanceRecord {
     pub position: [f32; 3],
@@ -338,10 +355,11 @@ pub struct InstanceRecord {
     pub prop: u32,
     pub seed: u32,
     pub chunk: u32,
+    pub lean: [f32; 2],
 }
 
 impl InstanceRecord {
-    pub const BYTES: u64 = 32;
+    pub const BYTES: u64 = 36;
 
     /// The record as the slab holds it.
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -350,7 +368,10 @@ impl InstanceRecord {
             .into_iter()
             .chain([self.yaw, self.scale])
             .flat_map(f32::to_le_bytes);
-        let words = [self.prop, self.seed, self.chunk]
+        let lean = self
+            .lean
+            .map(|way| (way.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16 as u16 as u32);
+        let words = [self.prop, self.seed, self.chunk, lean[0] | lean[1] << 16]
             .into_iter()
             .flat_map(u32::to_le_bytes);
         floats.chain(words).collect()
@@ -395,11 +416,12 @@ pub enum InstanceChange {
 }
 
 /// How a scenery draws a prop: each part of its model in its material, of whatever kind draws it,
-/// whether it casts a shadow, and whether it clears away where it hides the camera's subject.
+/// whether each part casts a shadow, and whether it clears away where it hides the camera's
+/// subject.
 #[derive(Clone, Debug)]
 pub struct DressedProp {
     pub materials: Vec<UntypedHandle>,
-    pub shadow: bool,
+    pub shadows: Vec<bool>,
     pub fades: bool,
     /// How far its shaders draw past its model at most, in the model's metres.
     pub overhang: Meters,
@@ -703,14 +725,14 @@ fn prepare_models(
     gltfs: Res<Assets<Gltf>>,
     nodes: Res<Assets<GltfNode>>,
     gltf_meshes: Res<Assets<GltfMesh>>,
-    meshes: Res<Assets<Mesh>>,
+    mut meshes: ResMut<Assets<Mesh>>,
 ) {
     for state in models.models.values_mut() {
         match state {
             ModelState::Loading(gltf) if assets.is_loaded_with_dependencies(gltf.id()) => {
                 let Some(pieces) = gltfs
                     .get(gltf.id())
-                    .and_then(|loaded| model::pieces_of(loaded, &nodes, &gltf_meshes, &meshes))
+                    .and_then(|loaded| model::pieces_of(loaded, &nodes, &gltf_meshes, &mut meshes))
                 else {
                     continue;
                 };
@@ -780,12 +802,13 @@ pub(super) fn write_models(
         incoming,
         ..
     } = &mut *arena;
+    let incoming = std::mem::take(incoming);
     let mut writes = Vec::new();
-    for (id, model) in incoming.drain(..) {
+    for (id, model) in &incoming {
         match model {
-            Some(model) => writes.push(slabs.insert(id, &model)),
+            Some(model) => writes.push(slabs.insert(*id, model)),
             None => {
-                slabs.remove(&id);
+                slabs.remove(id);
             }
         }
     }
@@ -805,10 +828,10 @@ pub(super) fn write_models(
     }
     for written in writes {
         for (offset, bytes) in written.vertices {
-            vertices.write(&queue, offset, &bytes);
+            vertices.write(&queue, offset, bytes);
         }
         for (offset, bytes) in written.indices {
-            indices.write(&queue, offset, &bytes);
+            indices.write(&queue, offset, bytes);
         }
     }
 }
@@ -899,27 +922,4 @@ fn shown_bytes(bytes: u64) -> u64 {
 
 fn instance_bytes(records: &[InstanceRecord]) -> Vec<u8> {
     records.iter().flat_map(InstanceRecord::to_bytes).collect()
-}
-
-fn vertex_bytes(vertices: &[ModelVertex]) -> Vec<u8> {
-    vertices
-        .iter()
-        .flat_map(|vertex| {
-            vertex
-                .position
-                .into_iter()
-                .chain(vertex.normal)
-                .chain(vertex.uv)
-                .chain(vertex.color)
-        })
-        .flat_map(f32::to_le_bytes)
-        .collect()
-}
-
-fn index_bytes(levels: &[PreparedLevel]) -> Vec<u8> {
-    levels
-        .iter()
-        .flat_map(|level| level.indices.iter().copied())
-        .flat_map(u32::to_le_bytes)
-        .collect()
 }

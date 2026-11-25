@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::chunk::{Chunk, InChunk};
 use crate::core::content::{Content, RowCheck};
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
+use crate::core::math::PosSchema;
 use crate::core::math::{Offset, Pos};
 use crate::core::par;
 use crate::core::render::Pointed;
@@ -72,14 +73,17 @@ impl Position {
     }
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MoveRequest {
+    #[schemars(with = "PosSchema")]
     pub pos: Pos<Meters>,
     pub seq: MoveSeq,
 }
 
 /// A client numbers its [`MoveRequest`]s in the order it sends them.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub struct MoveSeq(pub u32);
 
 /// The latest [`MoveRequest`] the server has heard from a player, heeded or not, so its client can
@@ -526,6 +530,15 @@ pub fn mesh_of(content: &Content, world: &World, entity: Entity) -> Option<HeldM
         Some(Travels::Flying { .. }) => Some(area.mesh_for(false, true)),
         Some(Travels::Floating { draught }) => area.water_mesh(draught),
         None => Some(area.mesh_for(area::wild(world, entity), airborne(world, entity))),
+    }
+}
+
+/// Whether the actor goes through the air: on a mount that flies, or riding nothing, with a body
+/// that flies.
+pub fn aloft(content: &Content, world: &World, entity: Entity) -> bool {
+    match mount::travels(content, world, entity) {
+        Some(travels) => matches!(travels, Travels::Flying { .. }),
+        None => airborne(world, entity),
     }
 }
 

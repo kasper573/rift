@@ -448,6 +448,11 @@ pub struct Hand {
     pub strap: Option<HandStrap>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clasp: Option<Clasp>,
+    /// The joint a prop held steady keeps the hand off (see `Steady`): one above the arm, so the
+    /// hand's joint, its forearm and its upper arm lie under it. A hand with none holds nothing
+    /// steady.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chest: Option<JointName>,
 }
 
 impl Hand {
@@ -797,8 +802,12 @@ pub enum Layer {
         lead: f32,
         /// How far the planted feet may raise or lower the body.
         most_rise: Meters,
-        /// How steeply the planted feet may tilt the body, as a slope.
-        most_tilt: f32,
+        /// How steeply the planted feet may tilt the body nose up or down, as a slope: a body
+        /// on four legs leans with a hill it climbs.
+        most_pitch: f32,
+        /// How steeply the planted feet may tilt the body to its side, as a slope: none keeps it
+        /// upright across a hill, as a horse stands, and a spider clings to the ground with more.
+        most_roll: f32,
         /// How quickly the body settles onto its planted feet: the time it takes to go most of the
         /// way.
         settle: Seconds,
@@ -1343,7 +1352,8 @@ fn check_layer(pointer: &str, layer: &Layer, cx: &mut RowCheck) {
             step,
             lead,
             most_rise,
-            most_tilt,
+            most_pitch,
+            most_roll,
             settle,
             ..
         } => {
@@ -1363,8 +1373,15 @@ fn check_layer(pointer: &str, layer: &Layer, cx: &mut RowCheck) {
             cx.range(format!("{pointer}/lead"), *lead, 0.0, 2.0, "strides");
             cx.range(format!("{pointer}/most_rise"), most_rise.0, 0.0, 2.0, "m");
             cx.range(
-                format!("{pointer}/most_tilt"),
-                *most_tilt,
+                format!("{pointer}/most_pitch"),
+                *most_pitch,
+                0.0,
+                2.0,
+                "a slope",
+            );
+            cx.range(
+                format!("{pointer}/most_roll"),
+                *most_roll,
                 0.0,
                 2.0,
                 "a slope",

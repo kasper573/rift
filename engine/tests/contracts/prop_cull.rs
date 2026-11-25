@@ -448,6 +448,7 @@ fn instance(rng: &mut Rng, chunk: u32) -> InstanceRecord {
         prop: rng.rand_range(0..PROPS),
         seed: rng.rand_range(0..u32::MAX),
         chunk,
+        lean: [0.0, 0.0],
     }
 }
 
@@ -584,6 +585,7 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
         prop,
         seed: 0,
         chunk,
+        lean: [0.0, 0.0],
     };
     let near = [
         standing_at(
@@ -815,7 +817,9 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
 
 /// A light's view keeps the casters behind its near half-space whose shadows can still fall
 /// into what it sees: with the sun `sine` of the way up the sky, a caster no farther behind than
-/// its height over that sine, and leaves out one farther; a light at the horizon keeps them all.
+/// its top stands over the lowest ground, over that sine, and leaves out one farther. A caster up
+/// a hill throws its shadow down onto the low ground, so it reaches farther than one standing on
+/// that ground. A light at the horizon keeps them all.
 #[test]
 fn a_lights_view_leaves_out_the_casters_whose_shadows_fall_short_of_it() {
     let _gpu = crate::gpu::exclusive();
@@ -854,17 +858,27 @@ fn a_lights_view_leaves_out_the_casters_whose_shadows_fall_short_of_it() {
         &clip_from_world,
         &Frustum(ViewFrustum::from_clip_from_world(&clip_from_world)),
     );
-    let radius = Vec3::ONE.length();
-    let caster_at = |behind: f32| InstanceRecord {
-        position: (eye + sun * behind - Vec3::new(0.0, 1.0, 0.0)).to_array(),
+    let lowest = 0.0;
+    let toward_sun = Vec3::new(sun.x, 0.0, sun.z).normalize();
+    let on_the_near_plane = Vec3::new(0.0, lowest, eye.dot(sun) / sun.z);
+    let caster_at = |behind: f32, up: f32| InstanceRecord {
+        position: (on_the_near_plane + toward_sun * (behind / toward_sun.dot(sun)) + Vec3::Y * up)
+            .to_array(),
         yaw: 0.0,
         scale: 1.0,
         prop: DRESSED_WITH_IMPOSTOR,
         seed: 0,
         chunk: NEAR_CHUNK,
+        lean: [0.0, 0.0],
     };
-    let reach = 2.0 * radius / sine;
-    let casters = [caster_at(reach * 0.5), caster_at(reach * 2.0)];
+    let top = 2.0;
+    let reach = top / sine;
+    let hill = 10.0;
+    let casters = [
+        caster_at(reach * 0.5, 0.0),
+        caster_at(reach * 3.0, 0.0),
+        caster_at(reach * 3.0, hill),
+    ];
     let mut arena = InstanceArena::default();
     let mut slab = Slab::new("instances", BufferUsages::STORAGE);
     let Some(InstanceChange::Placed {
@@ -943,13 +957,13 @@ fn a_lights_view_leaves_out_the_casters_whose_shadows_fall_short_of_it() {
     let at_the_rim = CullView::new(&frustum, eye, PIXELS_AT_A_METER, true, true);
     assert_eq!(
         listed(at_the_rim),
-        vec![first, first + 1],
+        vec![first, first + 1, first + 2],
         "a light at the horizon keeps every caster behind it"
     );
     assert_eq!(
-        listed(at_the_rim.lit_from(sine)),
-        vec![first],
-        "a light up the sky keeps the caster whose shadow reaches it and leaves out the one whose shadow falls short"
+        listed(at_the_rim.lit_from(sine, Meters(lowest))),
+        vec![first, first + 2],
+        "a light up the sky keeps the casters whose shadows reach it, the one up a hill among them, and leaves out the one on the low ground whose shadow falls short"
     );
 }
 
@@ -1020,6 +1034,7 @@ fn the_lit_passes_leave_out_what_the_prepass_depth_hides() {
         prop: 0,
         seed: 0,
         chunk: NEAR_CHUNK,
+        lean: [0.0, 0.0],
     };
     let table_of = |records: &[InstanceRecord]| {
         DrawTable::of(records.iter().take(1).map(|record| {

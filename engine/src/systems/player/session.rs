@@ -8,16 +8,29 @@ use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::clouds::CloudDrift;
 use crate::core::time::{self, DayClock, ServerClock, WeatherClock};
+use crate::systems::chat::log::ChatLogPlugin;
+use crate::systems::friend::search::FoundCharactersPlugin;
+use crate::systems::history::HistoryBookPlugin;
 use crate::systems::identity::{self, Lingering};
+use crate::systems::mail::LetterTextsPlugin;
 use crate::systems::stat;
 
+/// The core of every client, with a window or none: its session with the server, the world the
+/// server replicates to it and everything else the server tells it. A window only presents what
+/// this holds.
 pub struct ClientSessionPlugin;
 
 impl Plugin for ClientSessionPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ClientReplicationPlugin);
         crate::systems::protocol(app);
-        app.add_plugins(identity::ClientIdentityPlugin);
+        app.add_plugins((
+            identity::ClientIdentityPlugin,
+            ChatLogPlugin,
+            HistoryBookPlugin,
+            LetterTextsPlugin,
+            FoundCharactersPlugin,
+        ));
         app.init_resource::<MyClient>()
             .init_resource::<ServerClock>()
             .init_resource::<DayClock>()

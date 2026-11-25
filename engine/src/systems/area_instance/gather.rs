@@ -2,13 +2,12 @@
 //! and the call card, where each member answers.
 
 use bevy::prelude::*;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, Vec2};
 use ui::face::TextRole;
 use ui::{controls, dialog, face, ink, sheet};
 
 use super::InstanceMessages;
+use super::call;
 use super::roster::{
     CallAnswer, CallReply, CallRequest, CallRowShown, InstanceCallShown, RosterRowShown,
 };
@@ -24,11 +23,9 @@ use crate::systems::input::scope;
 use crate::systems::item::inline;
 use crate::systems::mention::Mention;
 use crate::systems::messages;
-use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::Placed;
 use crate::systems::social_request::card::time_left;
-use crate::systems::society::SocietyView;
 
 pub const INSTANCE_CALL: &str = "instance_call";
 
@@ -242,107 +239,6 @@ pub fn call_off(world: &mut World) -> bool {
     }
     world.write_message(CallRequest::CallOff);
     true
-}
-
-/// A call as the roster window or the card shows it, for a driver of the client.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownInstanceCall {
-    pub area: String,
-    pub leader: String,
-    /// Whether the player leads it, and sees the roster window rather than the card.
-    pub leads: bool,
-    pub left: Seconds,
-    pub least: u32,
-    pub most: u32,
-    /// How many slots are taken: the leader and everyone picked.
-    pub taken: u32,
-    /// How many would go if the leader entered now.
-    pub ready: u32,
-    /// The leader first, then the members; to a member, only their own row.
-    pub rows: Vec<ShownCallRow>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownCallRow {
-    pub name: String,
-    pub state: CallRowState,
-    /// The area they play in, while they are too far.
-    pub area: Option<String>,
-    pub answer: ShownCallAnswer,
-    pub picked: bool,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CallRowState {
-    Leading,
-    Going,
-    Benched,
-    Deciding,
-    NotGoing,
-    TooFar,
-    Away,
-    Fallen,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShownCallAnswer {
-    Deciding,
-    Joined,
-    Declined,
-}
-
-pub fn shown(world: &World) -> Option<ShownInstanceCall> {
-    let call = call(world)?;
-    let now = time::server_now(world)?;
-    let content = world.resource::<Content>();
-    Some(ShownInstanceCall {
-        area: call.area.get(content).name.clone(),
-        leader: call.leader.name.clone(),
-        leads: call.leads,
-        left: call.ends.since(now),
-        least: call.players.least,
-        most: call.players.most,
-        taken: call.taken,
-        ready: call.ready,
-        rows: call
-            .rows
-            .iter()
-            .map(|row| {
-                let (state, area) = match row.shown {
-                    RosterRowShown::Leading => (CallRowState::Leading, None),
-                    RosterRowShown::Going => (CallRowState::Going, None),
-                    RosterRowShown::Benched => (CallRowState::Benched, None),
-                    RosterRowShown::Deciding { .. } => (CallRowState::Deciding, None),
-                    RosterRowShown::NotGoing => (CallRowState::NotGoing, None),
-                    RosterRowShown::TooFar { area } => {
-                        (CallRowState::TooFar, Some(area.get(content).name.clone()))
-                    }
-                    RosterRowShown::Away => (CallRowState::Away, None),
-                    RosterRowShown::Fallen => (CallRowState::Fallen, None),
-                };
-                ShownCallRow {
-                    name: row.character.name.clone(),
-                    state,
-                    area,
-                    answer: match row.answer {
-                        CallAnswer::Deciding => ShownCallAnswer::Deciding,
-                        CallAnswer::Joined { .. } => ShownCallAnswer::Joined,
-                        CallAnswer::Declined => ShownCallAnswer::Declined,
-                    },
-                    picked: matches!(row.answer, CallAnswer::Joined { picked: true }),
-                }
-            })
-            .collect(),
-    })
-}
-
-fn call(world: &World) -> Option<InstanceCallShown> {
-    session::my_character(world)?
-        .get::<SocietyView>()?
-        .call
-        .clone()
 }
 
 /// One row of the roster window: the member's name, their state in words, and the button that

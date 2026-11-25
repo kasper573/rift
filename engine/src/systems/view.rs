@@ -32,9 +32,11 @@ impl Plugin for CameraFollowPlugin {
     }
 }
 
-/// The camera's smoothed ground point, eased toward the player each frame.
+/// Where the camera looks, eased toward the player each frame: the point on the ground and how
+/// high the player's feet stand there, eased together, so a player put somewhere higher or lower,
+/// as onto a boat, is followed there as smoothly as along the ground.
 #[derive(Resource, Default)]
-struct FollowCenter(Option<(Followed, Pos<Meters>)>);
+struct FollowCenter(Option<(Followed, Pos<Meters>, Meters)>);
 
 /// Who the camera follows, where: the camera glides after them only while this stays the same, and
 /// cuts to them when it changes, as they jump, cross into another area, or someone else is followed.
@@ -67,17 +69,20 @@ fn track_player(
         area: tag.area,
         jumps: server.jumps,
     };
-    let center = match follow.0 {
-        Some((before, prev)) if before == followed => {
-            let caught = 1.0 - 0.5_f32.powf(time.delta_secs() / CAMERA_HALF_LIFE.0);
-            prev.lerp(at, caught)
-        }
-        _ => at,
-    };
-    follow.0 = Some((followed, center));
-    let underfoot = aloft.map_or_else(
-        || ground.map_or(Meters(0.0), |ground| ground.height_at(center)),
+    let feet = aloft.map_or_else(
+        || ground.map_or(Meters(0.0), |ground| ground.height_at(at)),
         |aloft| aloft.0,
     );
+    let (center, underfoot) = match follow.0 {
+        Some((before, prev, prev_feet)) if before == followed => {
+            let caught = 1.0 - 0.5_f32.powf(time.delta_secs() / CAMERA_HALF_LIFE.0);
+            (
+                prev.lerp(at, caught),
+                Meters(prev_feet.0 + (feet.0 - prev_feet.0) * caught),
+            )
+        }
+        _ => (at, feet),
+    };
+    follow.0 = Some((followed, center, underfoot));
     rig.look_at(center, underfoot + FOCUS_HEIGHT);
 }

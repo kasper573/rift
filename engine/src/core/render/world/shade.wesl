@@ -1,3 +1,4 @@
+import engine::core::render::world::wear::worn;
 import bevy_pbr::render::{
     forward_io::VertexOutput,
     mesh_view_bindings::{lights, view},
@@ -48,11 +49,11 @@ fn caster_way() -> vec3<f32> {
 // colour when its vertices say so; fogged and finished the way every pixel of the world is.
 fn lit_color(in: VertexOutput, is_front: bool) -> vec4<f32> {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    pbr_input.material.base_color = alpha_discard(
+    pbr_input.material.base_color = worn(alpha_discard(
         pbr_input.material.flags,
         pbr_input.material.alpha_cutoff,
         pbr_input.material.base_color
-    );
+    ), in);
     let base = pbr_input.material.base_color;
     var color: vec4<f32>;
     if base.a < GLOWING {

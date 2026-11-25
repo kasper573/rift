@@ -7,6 +7,8 @@ use egui::{
     Align2, Area, Context, Id, InnerResponse, LayerId, Order, Pos2, Rect, Response, Ui, Vec2,
 };
 
+use geo::ConvexHull;
+
 use crate::slip;
 
 /// A widget's tooltip opens once the pointer has been on it a moment, however the pointer moves or
@@ -158,6 +160,123 @@ pub fn toast(gui: &Context, text: &str, which: impl Hash) {
         });
 }
 
+/// Lays labels that float over the scene apart, so none overlaps another: each, in the order
+/// given, keeps its place unless it comes nearer than `apart` to one laid before it, and then
+/// rises until it is `apart` above every one it came near. The first keep their places.
+pub fn lay_apart(rects: &mut [Rect], apart: f32) {
+    for at in 0..rects.len() {
+        let (laid, rest) = rects.split_at_mut(at);
+        let rect = &mut rest[0];
+        let mut below = laid.to_vec();
+        loop {
+            let (near, clear): (Vec<Rect>, Vec<Rect>) = below
+                .into_iter()
+                .partition(|other| comes_near(*other, *rect, apart));
+            below = clear;
+            // Rising over the highest it comes near puts it over all of them, so each one it
+            // rises over is passed for good and the rise ends.
+            let Some(top) = near.iter().map(|other| other.top()).reduce(f32::min) else {
+                break;
+            };
+            *rect = rect.translate(Vec2::new(0.0, top - apart - rect.bottom()));
+        }
+    }
+}
+
+/// What one set down by `least_penalized_spot` had rather not cover: the outline all of some
+/// parts take, each part the convex outline round its points, grown a margin out each way, and
+/// counted once where parts overlap, so the room between them stays free. Covering all of the one
+/// set down with it costs `weight`.
+#[derive(Clone, Debug)]
+pub struct CoverPenalty {
+    rings: Vec<Ring>,
+    weight: f32,
+}
+
+impl CoverPenalty {
+    pub fn over<Part: IntoIterator<Item = Pos2>>(
+        parts: impl IntoIterator<Item = Part>,
+        margin: f32,
+        weight: f32,
+    ) -> CoverPenalty {
+        let hulls: Vec<geo::Polygon<f64>> = parts
+            .into_iter()
+            .map(|part| {
+                let grown: Vec<geo::Coord<f64>> = part
+                    .into_iter()
+                    .flat_map(|point| {
+                        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(x, y)| {
+                            geo::coord! {
+                                x: f64::from(point.x + x * margin),
+                                y: f64::from(point.y + y * margin),
+                            }
+                        })
+                    })
+                    .collect();
+                geo::MultiPoint::from(grown).convex_hull()
+            })
+            .collect();
+        let rings = geo::unary_union(&hulls)
+            .into_iter()
+            .flat_map(|polygon| {
+                let (exterior, interiors) = polygon.into_inner();
+                std::iter::once(Ring::of(&exterior, 1.0))
+                    .chain(interiors.iter().map(|hole| Ring::of(hole, -1.0)))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        CoverPenalty { rings, weight }
+    }
+
+    fn covered(&self, rect: Rect) -> f32 {
+        self.rings.iter().map(|ring| ring.covered(rect)).sum()
+    }
+}
+
+/// The spot for a rect of `size` that is penalized least, its penalties added up from how far its
+/// centre stands from `toward`, as a share of half the diagonal of `screen`; how much of it covers
+/// each of `covers`, as a share of its own area times that one's weight; and how much of it lies off
+/// `screen`, as a share of its own area times `OFF_SCREEN_WEIGHT`.
+pub fn least_penalized_spot(
+    size: Vec2,
+    screen: Rect,
+    covers: &[CoverPenalty],
+    toward: Pos2,
+) -> Pos2 {
+    let area = size.x * size.y;
+    let reach = screen.size().length() / 2.0;
+    let penalty = |at: Pos2| {
+        let placed = Rect::from_min_size(at, size);
+        let off_centre = placed.center().distance(toward) / reach;
+        let covering: f32 = covers
+            .iter()
+            .map(|cover| cover.weight * cover.covered(placed))
+            .sum();
+        let shown = placed.intersect(screen);
+        let off_screen = area - shown.width().max(0.0) * shown.height().max(0.0);
+        CENTRE_WEIGHT * off_centre + (covering + OFF_SCREEN_WEIGHT * off_screen) / area
+    };
+    let least = |from: Pos2, to: Pos2, step: f32| {
+        let steps = ((to - from) / step).floor();
+        (0..=steps.x as usize)
+            .flat_map(|i| (0..=steps.y as usize).map(move |j| (i, j)))
+            .map(|(i, j)| from + Vec2::new(i as f32, j as f32) * step)
+            .map(|at| (penalty(at), at))
+            .min_by(|(a, _), (b, _)| a.total_cmp(b))
+            .map_or(from, |(_, at)| at)
+    };
+    // The penalty changes gently between neighbouring spots, so a coarse sweep of every spot that
+    // shows any of the rect lands beside the least penalized one, which a fine sweep around it
+    // finds.
+    let near = least(screen.min - size, screen.max, COARSE_STEP);
+    let around = Vec2::splat(COARSE_STEP);
+    least(near - around, near + around, 1.0)
+}
+
+const CENTRE_WEIGHT: f32 = 0.5;
+const OFF_SCREEN_WEIGHT: f32 = 4.0;
+const COARSE_STEP: f32 = 8.0;
+
 /// The layer drawn at `at`, leaving out the root layer egui keeps under the whole screen for panels
 /// to catch clicks on.
 pub fn layer_at(gui: &Context, at: Pos2) -> Option<LayerId> {
@@ -189,8 +308,88 @@ impl Afterimage {
     }
 }
 
+fn comes_near(a: Rect, b: Rect, apart: f32) -> bool {
+    a.left() - apart < b.right()
+        && b.left() - apart < a.right()
+        && a.top() - apart < b.bottom()
+        && b.top() - apart < a.bottom()
+}
+
 #[derive(Clone, Copy)]
 struct Hovered {
     since: f64,
     pass: u64,
+}
+
+/// A ring of an outline: one that bounds it, counted as `sign` 1, or a hole in it, as -1.
+#[derive(Clone, Debug)]
+struct Ring {
+    points: Vec<Pos2>,
+    bounds: Rect,
+    area: f32,
+    sign: f32,
+}
+
+impl Ring {
+    fn of(ring: &geo::LineString<f64>, sign: f32) -> Ring {
+        let mut points: Vec<Pos2> = ring
+            .coords()
+            .map(|coord| Pos2::new(coord.x as f32, coord.y as f32))
+            .collect();
+        points.pop();
+        Ring {
+            bounds: Rect::from_points(&points),
+            area: shoelace(&points),
+            points,
+            sign,
+        }
+    }
+
+    fn covered(&self, rect: Rect) -> f32 {
+        let area = if !self.bounds.intersects(rect) {
+            0.0
+        } else if rect.contains_rect(self.bounds) {
+            self.area
+        } else {
+            shoelace(&clipped(&self.points, rect))
+        };
+        self.sign * area
+    }
+}
+
+/// The part of the outline through `points` within `rect`, cut by each of its sides in turn:
+/// where the outline bends inward the cut may run along an edge both ways, which adds no area.
+fn clipped(points: &[Pos2], rect: Rect) -> Vec<Pos2> {
+    let sides = [
+        (Vec2::X, rect.min.x),
+        (-Vec2::X, -rect.max.x),
+        (Vec2::Y, rect.min.y),
+        (-Vec2::Y, -rect.max.y),
+    ];
+    sides
+        .into_iter()
+        .fold(points.to_vec(), |kept, (inward, edge)| {
+            let inside = |at: Pos2| at.to_vec2().dot(inward) - edge;
+            let mut cut = Vec::with_capacity(kept.len() + 1);
+            for (i, &at) in kept.iter().enumerate() {
+                let next = kept[(i + 1) % kept.len()];
+                let (here, there) = (inside(at), inside(next));
+                if here >= 0.0 {
+                    cut.push(at);
+                }
+                if (here >= 0.0) != (there >= 0.0) {
+                    cut.push(at + (next - at) * (here / (here - there)));
+                }
+            }
+            cut
+        })
+}
+
+fn shoelace(outline: &[Pos2]) -> f32 {
+    let twice: f32 = outline
+        .iter()
+        .zip(outline.iter().cycle().skip(1))
+        .map(|(a, b)| a.x * b.y - b.x * a.y)
+        .sum();
+    twice.abs() / 2.0
 }

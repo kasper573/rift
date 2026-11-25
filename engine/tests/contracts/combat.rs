@@ -10,7 +10,7 @@ use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, skill};
 use serde_json::json;
 use strum::VariantArray;
-use testkit::{APEX, BODY, CLIP, Game, Map, Sim, clip, rig_clips};
+use testkit::{APEX, BODY, CLIP, Game, Map, Sim, clip, hunting, path, rig_clips};
 
 #[test]
 fn an_attack_walks_into_range_and_strikes() {
@@ -134,13 +134,42 @@ fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
 
 #[test]
 fn an_attacked_monster_is_fought_until_it_falls() {
-    let (mut sim, player) = fight();
-    let brute = brute(&mut sim, player, Offset::new(1.0, 0.0));
+    let cases = [
+        (
+            "a monster that never strikes back",
+            Foe::Brute,
+            Offset::new(1.0, 0.0),
+            1.0,
+        ),
+        (
+            "a monster coming for the player, with a longer reach",
+            Foe::Hunter,
+            Offset::new(4.0, 0.0),
+            1.0,
+        ),
+        (
+            "a monster already striking from its longer reach",
+            Foe::Hunter,
+            Offset::new(4.0, 0.0),
+            4.0,
+        ),
+    ];
+    for (case, foe, offset, before) in cases {
+        let (mut sim, player) = fight();
+        let foe = match foe {
+            Foe::Brute => brute(&mut sim, player, offset),
+            Foe::Hunter => hunter(&mut sim, player, offset),
+        };
 
-    let conn = sim.conn(1);
-    sim.send(conn, AttackRequest { target: brute });
+        sim.run_until(before, |_| false);
+        let conn = sim.conn(1);
+        sim.send(conn, AttackRequest { target: foe });
 
-    assert!(sim.run_until(60.0, |world| stat::is_dead(world, brute)));
+        assert!(
+            sim.run_until(60.0, |world| stat::is_dead(world, foe)),
+            "{case}"
+        );
+    }
 }
 
 #[test]
@@ -184,6 +213,16 @@ fn fight() -> (Sim, Entity) {
         .hero("field", 5.0, 5.0)
         .sword()
         .npc("brute", 25.0, json!([]))
+        .npc(
+            "hunter",
+            25.0,
+            json!([{ "type": "script", "script": "hunter_hunt.script.json" }]),
+        )
+        .row("script", "hunter_hunt", hunting(8.0))
+        .edit("npc", "hunter", |hunter| {
+            hunter["basic_attack"] = json!(path("skill", "strike"));
+            hunter["stats"]["range"] = json!(2.5);
+        })
         .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
@@ -196,6 +235,7 @@ fn fight() -> (Sim, Entity) {
         .plan((
             engine::systems::roster::ListRoster::default(),
             engine::core::script::run::FlowRunner::default(),
+            npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
@@ -216,4 +256,17 @@ fn brute(sim: &mut Sim, player: Entity, offset: Offset<Meters>) -> Entity {
     let brute = npc::spawn(&mut sim.world, brute, at, area, None);
     sim.world.entity_mut(brute).insert(Attitude::Hostile);
     brute
+}
+
+enum Foe {
+    Brute,
+    Hunter,
+}
+
+/// A monster that comes for the nearest player and strikes from a longer reach than a sword's.
+fn hunter(sim: &mut Sim, player: Entity, offset: Offset<Meters>) -> Entity {
+    let at: Pos<Meters> = position(&sim.world, player).expect("the player") + offset;
+    let area = sim.id::<AreaDef>("field");
+    let hunter = sim.id::<NpcDef>("hunter");
+    npc::spawn(&mut sim.world, hunter, at, area, None)
 }

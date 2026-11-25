@@ -1,8 +1,12 @@
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+
 use bevy_app::App;
 use bevy_ecs::component::{ComponentId, Immutable, Mutable};
 use bevy_ecs::entity::{EntityMapper, MapEntities};
 use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::*;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -29,12 +33,10 @@ pub trait AppReplicationExt {
 /// the order numbers each kind on the wire.
 pub trait AppMessageExt {
     /// Clients send `M`, which the server reads as `FromClient<M>`.
-    fn add_client_message<M: Message + Serialize + DeserializeOwned>(&mut self) -> &mut Self;
+    fn add_client_message<M: ClientMessage>(&mut self) -> &mut Self;
 
     /// Clients send `M`, its entities named as the server knows them.
-    fn add_mapped_client_message<M>(&mut self) -> &mut Self
-    where
-        M: Message + Serialize + DeserializeOwned + MapEntities;
+    fn add_mapped_client_message<M: ClientMessage + MapEntities>(&mut self) -> &mut Self;
 
     /// The server sends `M` as `ToClient<M>`, which its client reads as `M`.
     fn add_server_message<M: Message + Serialize + DeserializeOwned>(&mut self) -> &mut Self;
@@ -44,6 +46,13 @@ pub trait AppMessageExt {
     where
         M: Message + Serialize + DeserializeOwned + MapEntities;
 }
+
+/// A message a client can send: it crosses the wire, and JSON too, so whoever drives a client
+/// from outside its process can hand it any message of the protocol (see
+/// [`write_client_message`]).
+pub trait ClientMessage: Message + Serialize + DeserializeOwned + JsonSchema {}
+
+impl<M: Message + Serialize + DeserializeOwned + JsonSchema> ClientMessage for M {}
 
 /// A component that can cross the wire.
 pub trait Replicable:
@@ -145,23 +154,26 @@ impl AppReplicationExt for App {
 }
 
 impl AppMessageExt for App {
-    fn add_client_message<M: Message + Serialize + DeserializeOwned>(&mut self) -> &mut Self {
+    fn add_client_message<M: ClientMessage>(&mut self) -> &mut Self {
         add_client_message::<M>(
             self,
             ClientMessageRule {
+                name: M::schema_name(),
+                schema: SchemaGenerator::subschema_for::<M>,
+                read: read_client_message_as::<M>,
                 send: send_client_message::<M>,
                 receive: receive_client_message::<M>,
             },
         )
     }
 
-    fn add_mapped_client_message<M>(&mut self) -> &mut Self
-    where
-        M: Message + Serialize + DeserializeOwned + MapEntities,
-    {
+    fn add_mapped_client_message<M: ClientMessage + MapEntities>(&mut self) -> &mut Self {
         add_client_message::<M>(
             self,
             ClientMessageRule {
+                name: M::schema_name(),
+                schema: SchemaGenerator::subschema_for::<M>,
+                read: read_mapped_client_message_as::<M>,
                 send: send_mapped_client_message::<M>,
                 receive: receive_client_message::<M>,
             },
@@ -191,6 +203,103 @@ impl AppMessageExt for App {
         )
     }
 }
+
+/// Writes the client message `json` holds, as the client whose world this is would write it
+/// itself, so it goes to the server with the client's next send. `json` is an object of one key,
+/// the message's name, over the message as serde writes it: `{"Pick": {"what": 7}}`. An entity in
+/// it is named as the server knows it, and must be one the server has shown this client.
+pub fn write_client_message(
+    world: &mut World,
+    json: serde_json::Value,
+) -> Result<(), ClientMessageRefusal> {
+    read_client_message(world, json).map(|message| message.write(world))
+}
+
+/// As [`write_client_message`], stopping once the message is read: whoever has more to check of
+/// what was read (a name in it that serde resolved against a registry of theirs) writes it only
+/// once that holds too.
+pub fn read_client_message(
+    world: &World,
+    json: serde_json::Value,
+) -> Result<ReadClientMessage, ClientMessageRefusal> {
+    let named: BTreeMap<String, serde_json::Value> =
+        serde_json::from_value(json).map_err(ClientMessageRefusal::Unreadable)?;
+    let mut named = named.into_iter();
+    let (Some((name, message)), None) = (named.next(), named.next()) else {
+        return Err(ClientMessageRefusal::NotOneMessage);
+    };
+    let read = world
+        .get_resource::<Protocol>()
+        .and_then(|protocol| {
+            protocol
+                .client_messages
+                .iter()
+                .find(|rule| rule.name == name)
+        })
+        .map(|rule| rule.read)
+        .ok_or(ClientMessageRefusal::Unknown(name))?;
+    read(world, message)
+}
+
+/// A client message read from JSON, yet to be written to its client's world.
+pub struct ReadClientMessage(Box<dyn FnOnce(&mut World)>);
+
+impl ReadClientMessage {
+    /// Writes the message in `world`, the client's it was read in.
+    pub fn write(self, world: &mut World) {
+        (self.0)(world);
+    }
+}
+
+/// The JSON Schema of what [`write_client_message`] takes of the protocol `world` holds: one of
+/// its client messages, under its name. What the messages are made of goes to `generator`.
+pub fn client_message_schema(world: &World, generator: &mut SchemaGenerator) -> Schema {
+    let messages: Vec<serde_json::Value> = world
+        .get_resource::<Protocol>()
+        .into_iter()
+        .flat_map(|protocol| &protocol.client_messages)
+        .map(|rule| {
+            let named = json_schema!({
+                "type": "object",
+                "properties": { rule.name.as_ref(): (rule.schema)(generator) },
+                "required": [rule.name],
+                "additionalProperties": false,
+            });
+            named.to_value()
+        })
+        .collect();
+    json_schema!({ "oneOf": messages })
+}
+
+/// Why [`write_client_message`] wrote nothing.
+#[derive(Debug)]
+pub enum ClientMessageRefusal {
+    /// The JSON is not one message under its name.
+    NotOneMessage,
+    /// The protocol has no client message of this name.
+    Unknown(String),
+    /// The JSON does not read as the message it names.
+    Unreadable(serde_json::Error),
+    /// The message names an entity the server has not shown this client.
+    Unseen,
+}
+
+impl std::fmt::Display for ClientMessageRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClientMessageRefusal::NotOneMessage => {
+                write!(f, "not one message under its name")
+            }
+            ClientMessageRefusal::Unknown(name) => write!(f, "no client message named {name}"),
+            ClientMessageRefusal::Unreadable(error) => write!(f, "unreadable: {error}"),
+            ClientMessageRefusal::Unseen => {
+                write!(f, "names an entity the server has not shown this client")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ClientMessageRefusal {}
 
 /// Which ends of the protocol an app is, so it holds each message only as its end handles it: a
 /// server as `FromClient` and `ToClient`, a client as the message itself. Every world updates
@@ -237,6 +346,9 @@ pub(crate) struct ComponentRule {
 }
 
 pub(crate) struct ClientMessageRule {
+    pub name: Cow<'static, str>,
+    pub schema: fn(&mut SchemaGenerator) -> Schema,
+    pub read: fn(&World, serde_json::Value) -> Result<ReadClientMessage, ClientMessageRefusal>,
     pub send: fn(&mut World, &ServerEntities, &mut Vec<Vec<u8>>),
     pub receive: fn(&mut World, Entity, &[u8]) -> postcard::Result<()>,
 }
@@ -286,10 +398,16 @@ fn add_client_message<M: Message>(app: &mut App, rule: ClientMessageRule) -> &mu
     if side.serves {
         app.add_message::<FromClient<M>>();
     }
-    app.world_mut()
-        .get_resource_or_init::<Protocol>()
-        .client_messages
-        .push(rule);
+    let mut protocol = app.world_mut().get_resource_or_init::<Protocol>();
+    assert!(
+        protocol
+            .client_messages
+            .iter()
+            .all(|declared| declared.name != rule.name),
+        "two client messages are named {}",
+        rule.name,
+    );
+    protocol.client_messages.push(rule);
     app
 }
 
@@ -349,6 +467,36 @@ fn send_mapped_client_message<M: Message + Serialize + MapEntities>(
     }
 }
 
+fn read_client_message_as<M: ClientMessage>(
+    _: &World,
+    json: serde_json::Value,
+) -> Result<ReadClientMessage, ClientMessageRefusal> {
+    let message: M = serde_json::from_value(json).map_err(ClientMessageRefusal::Unreadable)?;
+    Ok(ReadClientMessage(Box::new(move |world| {
+        world.write_message(message);
+    })))
+}
+
+// The message is written as the client's own systems write it, its entities the client's, so it
+// is sent like any other.
+fn read_mapped_client_message_as<M: ClientMessage + MapEntities>(
+    world: &World,
+    json: serde_json::Value,
+) -> Result<ReadClientMessage, ClientMessageRefusal> {
+    let mut message: M = serde_json::from_value(json).map_err(ClientMessageRefusal::Unreadable)?;
+    let mut seen = SeenEntities {
+        entities: world.resource::<ServerEntities>(),
+        all: true,
+    };
+    message.map_entities(&mut seen);
+    if !seen.all {
+        return Err(ClientMessageRefusal::Unseen);
+    }
+    Ok(ReadClientMessage(Box::new(move |world| {
+        world.write_message(message);
+    })))
+}
+
 fn receive_client_message<M: Message + DeserializeOwned>(
     world: &mut World,
     client: Entity,
@@ -385,6 +533,22 @@ fn receive_mapped_server_message<M: Message + DeserializeOwned + MapEntities>(
     message.map_entities(&mut ToClientEntities { world, entities });
     world.write_message(message);
     Ok(())
+}
+
+/// Names the server's entities as a client knows them, and whether it knew them all.
+struct SeenEntities<'a> {
+    entities: &'a ServerEntities,
+    all: bool,
+}
+
+impl EntityMapper for SeenEntities<'_> {
+    fn get_mapped(&mut self, source: Entity) -> Entity {
+        let seen = self.entities.client_of(source);
+        self.all &= seen.is_some();
+        seen.unwrap_or(Entity::PLACEHOLDER)
+    }
+
+    fn set_mapped(&mut self, _source: Entity, _target: Entity) {}
 }
 
 /// Names a client's entities as its server knows them; one the server never sent is no entity

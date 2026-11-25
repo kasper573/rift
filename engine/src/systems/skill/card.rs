@@ -323,10 +323,10 @@ fn use_line(words: &SkillMessages, def: &SkillDef, rank: Rank) -> String {
     }
     let rank = rank.max(Rank::FIRST);
     let mut parts = vec![def.target.named(words).to_owned()];
-    if let Some(shape) = def.area_at(rank) {
+    if let Some(shape) = def.shape_at(rank) {
         parts.push(area_words(words, shape));
     }
-    if let Some(range) = def.range {
+    if let Some(Some(range)) = def.target.range() {
         parts.push(words.range_of(range.0 + def.stat(rank, SkillStat::Range)));
     }
     let cooldown = def.cooldown_at(rank);

@@ -5,15 +5,9 @@
 
 use std::time::{Duration, Instant};
 
-use bevy_app::{App, Update};
-use bevy_ecs::prelude::*;
-use engine::core::content::sync::{MANIFEST, Manifest};
-use engine::core::net::SessionRequest;
-use engine::core::net::transport::{ClientTransportPlugin, Connection, read_token};
 use engine::systems::TICK_HZ;
 use engine::systems::launch::{TICK_METRIC, fake_token};
-use engine::systems::player::JoinRequest;
-use engine::systems::player::session::{self, ClientSessionPlugin};
+use engine::systems::player::headless::HeadlessClient;
 
 use crate::search::{Search, budget_ms, verdict};
 
@@ -36,7 +30,7 @@ pub fn run(http_url: &str, count: Option<usize>) -> Result<(), String> {
 fn run_fixed(http_url: &str, count: usize) -> ! {
     println!("[loadtest] connecting {count} clients to {http_url} (fake tokens)");
     let started = Instant::now();
-    let mut clients: Vec<App> = Vec::new();
+    let mut clients: Vec<HeadlessClient> = Vec::new();
     let mut next_id = 0usize;
     set_player_count(&mut clients, http_url, &mut next_id, count);
     println!(
@@ -66,7 +60,7 @@ pub fn run_dyn(http_url: &str) -> Result<Pool, String> {
         "[loadtest] root-finding the {:.1}ms/tick player equilibrium ({http_url})",
         budget_ms()
     );
-    let mut clients: Vec<App> = Vec::new();
+    let mut clients: Vec<HeadlessClient> = Vec::new();
     let mut next_id = 0usize;
     let mut search = Search::up_to(MAX_PLAYERS);
     let mut next = Some(1usize);
@@ -103,7 +97,7 @@ pub fn run_dyn(http_url: &str) -> Result<Pool, String> {
 }
 
 /// Simulated players, connected for as long as it's kept and pumped.
-pub struct Pool(Vec<App>);
+pub struct Pool(Vec<HeadlessClient>);
 
 impl Pool {
     /// `count` players connected to the server at `http_url`, as many as it let in.
@@ -129,7 +123,12 @@ impl Pool {
 /// connect in batches, pumping the pool between batches so already-connected ones keep draining; a batch that
 /// opens nothing means a connection ceiling was hit. Fake ids are monotonic so a reconnecting slot is
 /// never mistaken for a still-connected account.
-fn set_player_count(clients: &mut Vec<App>, http_url: &str, next_id: &mut usize, target: usize) {
+fn set_player_count(
+    clients: &mut Vec<HeadlessClient>,
+    http_url: &str,
+    next_id: &mut usize,
+    target: usize,
+) {
     clients.truncate(target);
     while clients.len() < target {
         let want = CONNECT_BATCH.min(target - clients.len());
@@ -149,7 +148,7 @@ fn set_player_count(clients: &mut Vec<App>, http_url: &str, next_id: &mut usize,
     pump(clients, STABILIZE);
 }
 
-fn pump(clients: &mut [App], duration: Duration) {
+fn pump(clients: &mut [HeadlessClient], duration: Duration) {
     let deadline = Instant::now() + duration;
     loop {
         let frame = Instant::now();
@@ -165,7 +164,11 @@ fn pump(clients: &mut [App], duration: Duration) {
     }
 }
 
-fn measure_tick_ms(http_url: &str, clients: &mut [App], window: Duration) -> Result<f64, String> {
+fn measure_tick_ms(
+    http_url: &str,
+    clients: &mut [HeadlessClient],
+    window: Duration,
+) -> Result<f64, String> {
     let before = scrape_tick(http_url);
     pump(clients, window);
     let after = scrape_tick(http_url);
@@ -200,62 +203,13 @@ fn scrape_tick(http_url: &str) -> Option<(f64, f64)> {
     ))
 }
 
-fn connected_count(clients: &[App]) -> usize {
+fn connected_count(clients: &[HeadlessClient]) -> usize {
     clients
         .iter()
-        .filter(|app| {
-            app.world()
-                .get_resource::<Connection>()
-                .is_some_and(Connection::is_connected)
-        })
+        .filter(|client| client.is_connected())
         .count()
 }
 
-fn build_client(http_url: &str, index: usize) -> Option<App> {
-    let token = fetch_token(http_url, &format!("loadtest-{index}"))?;
-    let connection = Connection::open(read_token(&token)?).ok()?;
-
-    let mut app = App::new();
-    app.add_plugins(bevy_time::TimePlugin);
-    app.add_plugins((ClientSessionPlugin, ClientTransportPlugin));
-    app.init_resource::<Joined>();
-    app.add_systems(Update, announce_join);
-    app.insert_resource(connection);
-    app.finish();
-    app.cleanup();
-    Some(app)
-}
-
-fn fetch_token(http_url: &str, account: &str) -> Option<String> {
-    let manifest = ureq::get(format!("{http_url}{MANIFEST}"))
-        .call()
-        .ok()?
-        .body_mut()
-        .read_to_string()
-        .ok()?;
-    let manifest: Manifest = serde_json::from_str(&manifest).ok()?;
-    let request = SessionRequest {
-        build: manifest.build,
-        rows: manifest.rows.hash,
-    };
-    let mut response = ureq::post(format!("{http_url}/session"))
-        .header("Authorization", format!("Bearer {}", fake_token(account)))
-        .header("Content-Type", "application/json")
-        .send(serde_json::to_string(&request).ok()?)
-        .ok()?;
-    response.body_mut().read_to_string().ok()
-}
-
-// Once the server's welcome arrives (`MyClient` set), announce the join exactly as the real client
-// does — without it the client connects but no player character is ever spawned server-side, so the
-// simulation runs with zero real players.
-#[derive(Resource, Default)]
-struct Joined(bool);
-
-fn announce_join(world: &mut World) {
-    if world.resource::<Joined>().0 || session::my_id(world).is_none() {
-        return;
-    }
-    world.write_message(JoinRequest);
-    world.resource_mut::<Joined>().0 = true;
+fn build_client(http_url: &str, index: usize) -> Option<HeadlessClient> {
+    HeadlessClient::connect(http_url, &fake_token(&format!("loadtest-{index}"))).ok()
 }

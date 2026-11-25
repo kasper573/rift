@@ -1,7 +1,7 @@
 //! A body's layers as its skeleton lists them, over the joints of its rig as its scene spawned
 //! them, each let run while an action it lists plays, one that carries only in its stance; each
-//! hand's clasp, held while the hand holds an item; and each hand's strap, held while what it holds
-//! is strapped to its arm.
+//! hand's clasp, held while the hand holds an item; each hand's strap, held while what it holds
+//! is strapped to its arm; and each hand's steadying, while it holds something out steady.
 
 use std::collections::HashMap;
 
@@ -9,12 +9,12 @@ use bevy::prelude::*;
 
 use super::skeleton::{JointName, Layer};
 use super::stance::{HandIndex, StanceId};
-use super::{Action, ActorModel};
+use super::{Action, ActorModel, Pose};
 use crate::core::content::gltf::NodeTree;
 use crate::core::render::world::layers::{
-    Chain, Feet, HeldPose, JointLayer, Layered, Rig, Squash, Stepping, Wave,
+    Chain, Feet, HeldPose, JointLayer, Layered, Rig, Squash, Steady, SteadyHand, Stepping, Wave,
 };
-use crate::systems::item::PropHold;
+use crate::systems::item::{self, PropHold};
 
 /// When each of a body's layers runs, in the order of its layers.
 #[derive(Component)]
@@ -27,7 +27,11 @@ enum Runs {
     Carrying(StanceId, Vec<Action>),
     Holding(HandIndex),
     Strapped(HandIndex),
+    Steadying(HandIndex),
 }
+
+/// What a hand holds and how it carries it: its hold, and how it holds it out steady, if it does.
+pub type HandHold = (HandIndex, PropHold, Option<item::Steady>);
 
 /// The layers of `model`'s skeleton over the joints of its spawned scene, found by name, and the
 /// clasps and straps of its hands, if it has any. A layer naming a joint the scene lacks is left out; the
@@ -38,7 +42,8 @@ pub fn layered(
 ) -> Option<(Layered, Layering)> {
     let skeleton = model.skeleton();
     let mut of_hands = skeleton.clasps.iter().chain(&skeleton.straps);
-    if skeleton.def.layers.is_empty() && of_hands.all(Vec::is_empty) {
+    let steadies = skeleton.def.hands.iter().any(|hand| hand.chest.is_some());
+    if skeleton.def.layers.is_empty() && of_hands.all(Vec::is_empty) && !steadies {
         return None;
     }
     let (rig, index) = rig(&skeleton.rig, joints)?;
@@ -67,7 +72,8 @@ pub fn layered(
                 step,
                 lead,
                 most_rise,
-                most_tilt,
+                most_pitch,
+                most_roll,
                 settle,
                 ..
             } => {
@@ -81,7 +87,8 @@ pub fn layered(
                     step: step.0,
                     lead: *lead,
                     most_rise: most_rise.0,
-                    most_tilt: *most_tilt,
+                    most_pitch: *most_pitch,
+                    most_roll: *most_roll,
                     settle: settle.0,
                 };
                 legs.map(|legs| JointLayer::Feet(Feet::new(&rig, &legs, *gait, stepping)))
@@ -146,27 +153,69 @@ pub fn layered(
             runs.push(Runs::Strapped(HandIndex(hand as u8)));
         }
     }
+    for (hand, def) in skeleton.def.hands.iter().enumerate() {
+        let joints = def.chest.as_ref().and_then(at).zip(at(&def.joint));
+        let arm = joints.and_then(|(chest, held)| {
+            let forearm = rig.parents[held as usize]?;
+            Some((chest, rig.parents[forearm as usize]?, forearm, held))
+        });
+        if let Some((chest, upper_arm, forearm, held)) = arm {
+            let ease = skeleton.def.easing.clasp.0;
+            layers.push(JointLayer::Steady(Steady::new(
+                chest, upper_arm, forearm, held, ease,
+            )));
+            runs.push(Runs::Steadying(HandIndex(hand as u8)));
+        }
+    }
     Some((Layered::new(rig, layers), Layering { runs }))
 }
 
 /// Lets each layer run while the action shown is one it lists, one that carries only while the body
 /// is in its stance, the hand it clasps with holds an item as `holding` has each hand hold its own,
-/// or the hand it straps holds one strapped to its arm, and tells them a foot came down.
+/// the hand it straps holds one strapped to its arm, or the hand it steadies holds one out steady
+/// while the body stands and neither attacks, flinches nor lies dead; and tells them a foot came
+/// down.
 pub fn drive(
     layered: &mut Layered,
     layering: &Layering,
     action: Action,
+    pose: Pose,
     stance: Option<StanceId>,
-    holding: &[(HandIndex, PropHold)],
+    holding: &[HandHold],
     stepped: bool,
 ) {
-    for (on, runs) in layered.on.iter_mut().zip(&layering.runs) {
-        *on = match runs {
+    let steady = |hand: HandIndex| {
+        holding
+            .iter()
+            .find(|(held, ..)| *held == hand)
+            .and_then(|(.., steady)| *steady)
+    };
+    let standing = pose == Pose::Idle
+        && matches!(
+            action,
+            Action::Idle | Action::Walk | Action::Run | Action::Talk
+        );
+    for (index, runs) in layering.runs.iter().enumerate() {
+        let on = match runs {
             Runs::During(during) => during.contains(&action),
             Runs::Carrying(carried, during) => stance == Some(*carried) && during.contains(&action),
-            Runs::Holding(hand) => holding.iter().any(|(held, _)| held == hand),
-            Runs::Strapped(hand) => holding.contains(&(*hand, PropHold::Strapped)),
+            Runs::Holding(hand) => holding.iter().any(|(held, ..)| held == hand),
+            Runs::Strapped(hand) => holding
+                .iter()
+                .any(|(held, hold, _)| held == hand && *hold == PropHold::Strapped),
+            Runs::Steadying(hand) => {
+                let held = steady(*hand).map(|steady| SteadyHand {
+                    at: glam::Vec3::from_array(steady.at.map(|meters| meters.0)),
+                    hz: steady.sway.hz.0,
+                    damping: steady.sway.damping,
+                });
+                if let Some(JointLayer::Steady(layer)) = layered.layer_mut(index) {
+                    layer.hold(held);
+                }
+                held.is_some() && standing
+            }
         };
+        layered.on[index] = on;
     }
     layered.stepped |= stepped;
 }

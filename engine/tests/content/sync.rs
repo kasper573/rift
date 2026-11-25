@@ -2,12 +2,18 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bevy::asset::AssetPlugin;
+use bevy::gltf::{Gltf, GltfMaterial, GltfPlugin};
+use bevy::prelude::*;
 use bevy::tasks::futures_lite::future::block_on;
+use bevy::world_serialization::WorldSerializationPlugin;
+use engine::core::assets::loader::PngLoader;
+use engine::core::assets::{self, SyncedAssetReader};
 use engine::core::content::FileHash;
 use engine::core::content::store::ContentStore;
 use engine::core::content::sync::{
     ContentSource, FILES, MANIFEST, ServedContent, SyncError, SyncPolicy, SyncStatus,
-    SyncedContent, sync,
+    SyncedContent, is_content_of, sync,
 };
 use engine::core::content::version;
 use engine::core::os::FetchFailure;
@@ -16,7 +22,7 @@ use engine::core::units::Seconds;
 use engine::systems::messages::{self, Messages};
 use futures_util::future::BoxFuture;
 use serde_json::json;
-use testkit::{Game, Map, wav};
+use testkit::{Game, Map, glb_naming_image, png, wav};
 
 use crate::store::TestStore;
 use crate::support::game;
@@ -333,6 +339,102 @@ fn a_streamed_part_is_fetched_as_it_is_first_read_and_kept() {
 
     run(&server, &store).expect("the next visit syncs");
     assert!(store.hashes().contains(&tile.held.hash), "a visit keeps it");
+}
+
+#[test]
+fn whoever_holds_a_game_folder_knows_whether_a_server_runs_that_game() {
+    let manifest = served(sounding()).manifest;
+    let holds = |game: Game| {
+        let folder = game.folder();
+        let registry = game.registry();
+        let content = game.load();
+        is_content_of(&manifest, registry, &content, &folder).expect("the folder reads")
+    };
+
+    assert!(holds(sounding()));
+    assert!(
+        !holds(sounding().edit("class", "hero", |row| row["name"] = "Wanderer".into())),
+        "a row that differs is another game"
+    );
+    assert!(
+        !holds(sounding().part("sfx", "slash", "clip.wav", longer_slash())),
+        "media that differs is another game"
+    );
+}
+
+/// Every prop bundle keeps its own copy of the images its model names, and models naming copies
+/// of the same bytes draw them from one texture: the copies load once, and an image of other
+/// bytes loads apart.
+#[test]
+fn models_naming_copies_of_one_image_draw_it_from_one_texture() {
+    let bark = png(4, 4);
+    let prop = |game: Game, name: &str, image: &str, bytes: &[u8]| {
+        game.prop(name, json!({ "type": "none" }))
+            .part("prop", name, "model.glb", glb_naming_image(image))
+            .part("prop", name, image, bytes.to_vec())
+    };
+    let game = prop(game(), "oak", "textures/bark.png", &bark);
+    let game = prop(game, "elm", "textures/elm-bark.png", &bark);
+    let game = prop(game, "ash", "textures/bark.png", &png(8, 8));
+    let store = TestStore::default();
+    let synced = run(&FakeServer::new(served(game)), &store).expect("it syncs");
+
+    let mut app = App::new();
+    let files = SyncedAssetReader::default();
+    files.replace(synced.assets);
+    files.register(&mut app);
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin::default(),
+        WorldSerializationPlugin,
+        bevy::mesh::MeshPlugin,
+        GltfPlugin::default(),
+    ))
+    .init_asset::<Image>()
+    .register_asset_loader(PngLoader);
+    app.finish();
+    app.cleanup();
+    let model = |name: &str| format!("{}/model.glb", testkit::path("prop", name));
+    let assets = app.world().resource::<AssetServer>();
+    let models: Vec<Handle<Gltf>> = ["oak", "elm", "ash"]
+        .into_iter()
+        .map(|name| assets::model(assets, model(name)))
+        .collect();
+    testkit::until(&mut app, |app| {
+        let assets = app.world().resource::<AssetServer>();
+        models.iter().all(|model| {
+            let state = assets.recursive_dependency_load_state(model);
+            assert!(!state.is_failed(), "a model fails to load: {state:?}");
+            state.is_loaded()
+        })
+    });
+    let world = app.world();
+    let textures: Vec<AssetId<Image>> = models
+        .iter()
+        .map(|model| {
+            let model = world
+                .resource::<Assets<Gltf>>()
+                .get(model)
+                .expect("a loaded model");
+            let material = world
+                .resource::<Assets<GltfMaterial>>()
+                .get(&model.materials[0])
+                .expect("the model's material");
+            material
+                .base_color_texture
+                .as_ref()
+                .expect("a coloured material")
+                .id()
+        })
+        .collect();
+    assert_eq!(
+        textures[0], textures[1],
+        "copies of one image are one texture"
+    );
+    assert_ne!(
+        textures[0], textures[2],
+        "an image of other bytes is a texture of its own"
+    );
 }
 
 /// A small game with a sound to fetch.

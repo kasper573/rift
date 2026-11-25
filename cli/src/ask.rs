@@ -12,10 +12,11 @@ pub fn run(game: &Path) {
     let content =
         folder::load(game, "ask", LoadPurpose::Play).unwrap_or_else(|report| panic!("{report}"));
     let mut out = std::io::stdout().lock();
+    let mut answers = probe::GameAnswers::default();
     for line in std::io::stdin().lock().lines().map_while(Result::ok) {
         let question = probe::read_question(&content, &line)
             .unwrap_or_else(|error| panic!("asked {line}: {error}"));
-        let answer = probe::answer(&content, &question);
+        let answer = answers.answer(&content, &question);
         writeln!(out, "{answer}").expect("stdout takes answers");
         out.flush().expect("stdout takes answers");
     }

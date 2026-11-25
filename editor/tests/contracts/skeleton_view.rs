@@ -147,6 +147,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         mirrored: false,
         strap: None,
         clasp: None,
+        chest: None,
     });
     hands.swap(0, 2);
     assert!(skeleton::edits::set_hands(&mut editor, &key, hands));
@@ -182,7 +183,8 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         step: Seconds(0.2),
         lead: 0.5,
         most_rise: Meters(0.5),
-        most_tilt: 0.5,
+        most_pitch: 0.5,
+        most_roll: 0.0,
         settle: Seconds(0.12),
         during: vec![Action::Walk],
     };

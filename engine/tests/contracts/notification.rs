@@ -431,7 +431,7 @@ fn game() -> Content {
             "chief_taunt",
             "npc",
             json!({
-                "came_near": { "type": "on", "event": "came_near", "within": 8.0, "by": "characters", "next": "hunting_me" },
+                "came_near": { "type": "on", "event": "came_near", "within": 8.0, "by": "characters", "fliers": true, "next": "hunting_me" },
                 "hunting_me": {
                     "type": "if",
                     "test": { "type": "all", "of": [

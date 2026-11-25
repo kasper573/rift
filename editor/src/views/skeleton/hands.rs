@@ -132,6 +132,7 @@ fn list(
             mirrored: hands.len() == 1,
             strap: None,
             clasp: None,
+            chest: None,
         });
         if super::edits::set_hands(editor, key, more) {
             pick = Some(hands.len());

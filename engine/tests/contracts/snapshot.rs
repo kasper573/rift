@@ -491,7 +491,7 @@ fn returning_to(area: &str) -> Sim {
             json!({
                 "name": "Guard",
                 "icon": "icons/hero.png",
-                "target": "self",
+                "target": { "type": "caster" },
                 "cooldown": 600.0,
                 "levels": [{ "cost": 1 }],
                 "modules": [{ "type": "script", "script": "mends.script.json" }],
@@ -524,7 +524,7 @@ fn returning_to(area: &str) -> Sim {
             json!({
                 "name": "Punch",
                 "icon": "icons/hero.png",
-                "target": "single_enemy",
+                "target": { "type": "single", "affects": "enemy" },
                 "basic_attack": true,
                 "levels": [{ "cost": 1 }],
                 "modules": [{ "type": "script", "script": "strikes.script.json" }],

@@ -9,7 +9,7 @@ use engine::systems::player::Xp;
 use engine::systems::quest::{self, QuestDef, QuestLog, QuestRequest, QuestResult};
 use engine::systems::region;
 use engine::systems::shop::{self, ShopRequest};
-use engine::systems::{combat, movement, npc, reward, stat, window};
+use engine::systems::{combat, equipment, movement, npc, reward, stat, window};
 use serde_json::{Value, json};
 use testkit::{BODY, Game, Map, Sim, dialogue, path, said};
 
@@ -49,6 +49,38 @@ fn abandoning_takes_the_quest_items_back_and_accepting_again_returns_them() {
     sim.pick(1, "A Letter");
     sim.pick(1, "I'll take it.");
     assert_eq!(sim.count(player, "letter"), 1);
+}
+
+#[test]
+fn a_quest_counts_and_takes_what_its_player_wears_as_it_does_their_bag() {
+    let mut sim = harbour();
+    let cap = sim.id::<ItemDef>("cap");
+    let tide = sim.id::<QuestDef>("low_tide");
+    let [finisher, quitter] = [1, 2].map(|client| {
+        let player = sim.join(client);
+        accept(&mut sim, player, "low_tide");
+        equipment::equip_from_bag(&mut sim.world, player, cap).expect("the cap is put on");
+        player
+    });
+
+    sim.give(finisher, "steak", 3);
+    sim.run(0.5);
+    sim.talk(1, "giver");
+    sim.pick(1, "Low Tide");
+    sim.pick(1, "Here are the steaks.");
+    assert_eq!(
+        log(&sim, finisher).finished(tide).map(|done| done.result),
+        Some(QuestResult::Completed),
+        "the cap worn is handed in with the steaks"
+    );
+
+    let conn = sim.conn(2);
+    sim.send(conn, QuestRequest::Abandon { quest: tide });
+    sim.tick();
+    for player in [finisher, quitter] {
+        assert!(!equipment::wears(&sim.world, player, cap));
+        assert_eq!(sim.count(player, "cap"), 0);
+    }
 }
 
 #[test]
@@ -282,6 +314,10 @@ fn an_item_starts_its_quest_and_offers_it_again_after_abandoning() {
     sim.pick(1, "Accept");
     assert!(log(&sim, player).active(quest).is_some());
     assert_eq!(sim.count(player, "map"), 1);
+    assert!(
+        sim.conversation(1).is_none(),
+        "accepting the offer ends the conversation it was the last of"
+    );
 
     sim.send(conn, QuestRequest::Abandon { quest });
     sim.tick();
@@ -414,6 +450,7 @@ fn harbour() -> Sim {
         .item("helm", json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }))
         .item("cutlass", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "sword.stance.json" } }))
         .item("letter", quest_item("resource"))
+        .item("cap", json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" }, "modules": [{ "type": "quest_item" }] }))
         .item("key", quest_item("resource"))
         .item("map", {
             let mut map = quest_item("usable");
@@ -425,8 +462,7 @@ fn harbour() -> Sim {
             "item",
             json!({
                 "used": { "type": "on", "event": "used", "next": "read" },
-                "read": { "type": "if", "test": on_quest("x_marks"), "yes": "waiting", "no": "offer" },
-                "offer": said("A cross is scrawled beside a standing stone.", "card"),
+                "read": { "type": "if", "test": on_quest("x_marks"), "yes": "waiting", "no": "card" },
                 "card": { "type": "offer_quest", "quest": "x_marks.quest.json" },
                 "waiting": dialogue("The cross sits beside a standing stone.", json!([{ "label": ["Fold it away."] }])),
             }),
@@ -575,8 +611,9 @@ fn harbour() -> Sim {
             quest(
                 "Low Tide",
                 json!([
+                    { "type": "grants", "items": [{ "item": "cap.item.json" }] },
                     { "type": "hold", "item": "steak.item.json", "count": 3 },
-                    { "type": "hand_in", "items": [{ "item": "steak.item.json", "count": 3 }] },
+                    { "type": "hand_in", "items": [{ "item": "steak.item.json", "count": 3 }, { "item": "cap.item.json" }] },
                     { "type": "hand_over", "text": ["Here are the steaks."] },
                     { "type": "reward", "items": [{ "item": "gold.item.json", "amount": 15 }] },
                     { "type": "time_limit", "seconds": 600.0 },

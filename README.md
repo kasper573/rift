@@ -71,6 +71,7 @@ folder, and starts the other binaries from its own binaries folder when a comman
 | [`rift render dialogue <game> <out>`](#rendering-the-dialogue) | Draws the dialogue in every style it sets, over many grounds. |
 | [`rift bench [game]`](#benching) | Measures the server's capacity, and on a game also the client's and the editor's frame rates and memory. |
 | [`rift loadtest --http <url> [count]`](#load-testing-a-server) | Connects simulated players to a running game server. |
+| [`rift play <game> --http <url>`](#playing-without-a-window) | Plays characters on a running game server with no window, doing what it is told on stdin. |
 | [`rift profile --out <dir> [game]`](#profiling-the-server) | Samples the game server under load. |
 | [`rift records push <game> --store <address>`](#pushing-the-records) | Brings what a game server keeps to the shapes this build reads, dropping what no longer fits. |
 | [`rift schema <protocol>`](#schemas) | Prints the JSON Schema of a protocol the binaries speak. |
@@ -286,6 +287,43 @@ client's own transport. The server must take any account's sign-in (`AUTH` set t
 count, that many players connect and stay until `rift` is stopped. Without one, `rift` searches for
 the highest player count the server holds within its tick budget.
 
+### Playing without a window
+
+```sh
+rift play <game> --http <url>
+```
+
+Plays any number of characters on a game server that is already running, each through a headless
+client: a client that signs in, joins and holds its session like a player's, so its character is in
+the world as any other is, but that opens no window and draws nothing. What the characters do is up
+to whoever runs it: a bot, a load of its own, a film's supporting cast.
+
+`<game>` is the game folder the server runs, which `rift play` names content by; it refuses a server
+that runs another game. Every line of stdin is one JSON object telling a client, by a name of your
+choosing, what to do:
+
+```json
+{"join": {"player": "ada", "token": "<access token>"}}
+{"request": {"player": "ada", "request": {"MoveRequest": {"pos": [12.5, 40.0], "seq": 1}}}}
+{"look": {"player": "ada"}}
+{"leave": {"player": "ada"}}
+```
+
+- `join` signs a client in with an access token and joins the game as its account's character.
+- `request` sends the server a request, exactly as a game client sends it: any of the requests a
+  game client can make, under its name. The server answers it as it answers a player's.
+- `look` asks what the client sees around its character: the part of the probe's snapshot that
+  takes no screen to tell (the character, who and what stands near it, what lies on the ground,
+  its bag).
+- `leave` closes the client, as a player leaving the game does.
+
+Whatever stands in the world is named by its id, the same in every client's eyes: the ids a `look`
+and a game client's probe report are the ones a request takes. Content is named by its path in the
+game folder. Stdout says how it goes, one JSON line each: `in_world` once a character stands in the
+world and `out_of_world` when it leaves it (as it does between areas), `sight` in answer to a `look`,
+`dropped` when the server closes a connection, and `refused` for a line that could not be done.
+`rift play` runs until stdin closes. `rift schema play` prints the schema of both sides.
+
 ### Profiling the server
 
 ```sh
@@ -342,6 +380,7 @@ rift records push <game> --store postgres://<user>:<password>@127.0.0.1:5432/<da
 rift schema probe    # what a game client started with a probe address answers on it
 rift schema server   # what a game server prints once ready, and what its test routes take
 rift schema bench    # the report `rift bench` writes
+rift schema play     # what `rift play` takes on stdin, every request of a game client among it, and what it prints
 ```
 
 Each prints the JSON Schema of one of the [protocols](#protocols) the binaries speak, for whatever
@@ -429,10 +468,12 @@ The runtimes know no infrastructure, only protocols:
   window, or where the game's things are and how its ground walks. `rift ask <game>` answers the questions about the game
   itself the same way, without a client. The editor started with `--probe <host:port>` answers its
   own: a frame's snapshot (its input, interface, panels, stage and selection), the rows its trees
-  drew, and its frames. `rift schema probe` prints the protocol's schema.
+  drew, and its frames. `rift schema probe` prints the protocol's schema. An id a snapshot gives
+  someone or something in the world is the server's, so it means the same to every client.
 - **Test routes.** A game server with `TEST_CHARACTERS` set hands the game's test characters out
   over HTTP, to whoever drives it: `/test/character` makes the asking account's next sign-in play
-  one, and `/test/stage` has the character that account plays walk, fight, talk or move.
+  one, and `/test/stage` has the character that account plays walk, fight or move, and sets the day
+  and the weather.
   `rift schema server` prints their schema.
 
 ## Development

@@ -77,7 +77,7 @@ impl Plugin for RipplesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ShaderFieldPlugin { side: RIPPLE_SIDE })
             .init_resource::<RippleField>()
-            .add_systems(Update, stir.after(tread).before(blow));
+            .add_systems(PostUpdate, stir.after(tread).before(blow));
     }
 }
 

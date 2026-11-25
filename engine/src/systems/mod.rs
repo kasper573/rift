@@ -220,7 +220,7 @@ pub fn area_state(world: &mut World, content: &Content) {
 
 /// The content, its settings and the scripts and parties built from it, as every world playing it
 /// reads them.
-fn insert_content(world: &mut World, content: &Content) {
+pub fn insert_content(world: &mut World, content: &Content) {
     let settings = content.built::<GameSettings>();
     world.insert_resource(settings.look);
     world.insert_resource(settings.cards);
@@ -422,12 +422,18 @@ pub fn start_clocks(world: &mut World, clocks: ServerClocks) {
     world.insert_resource(clocks);
 }
 
+/// Runs the world's day on `day` from now on, and tells every player in it.
+pub fn run_day(world: &mut World, day: Option<TimeCourse<HourOfDay>>) {
+    world.insert_resource(DayClock(day));
+    player::tell_clocks(world);
+}
+
 pub fn server_app(
     area: AreaId,
     ordinal: u64,
     rng_seed: u64,
     clock: WallClock,
-    day: launch::ServerDay,
+    day: Option<TimeCourse<HourOfDay>>,
     weather: TimeCourse<usize>,
     content: &Content,
 ) -> App {
@@ -436,19 +442,9 @@ pub fn server_app(
     use bevy_replication::{Sending, ServerReplicationPlugin};
 
     let mut app = App::new();
-    let settings = content.built::<GameSettings>();
     app.insert_resource(WorldArea(area));
     app.insert_resource(clock);
-    start_clocks(
-        app.world_mut(),
-        ServerClocks {
-            day: settings
-                .daylight
-                .as_ref()
-                .map(|cycle| cycle.course(day, clock.now)),
-            weather,
-        },
-    );
+    start_clocks(app.world_mut(), ServerClocks { day, weather });
     app.insert_resource(input::map::InputMap::new(content));
     app.add_plugins(bevy_time::TimePlugin);
     // Every tick steps the same span of game time however long it took, so a seeded world plays out
@@ -648,12 +644,8 @@ pub fn client_app(
     let files = SyncedAssetReader::default();
     app.insert_resource(files.clone());
     app.insert_resource(Rng::from_entropy());
-    bevy::asset::AssetApp::register_asset_source(
-        &mut app,
-        bevy::asset::io::AssetSourceId::Default,
-        files.source(),
-    )
-    .add_plugins(
+    files.register(&mut app);
+    app.add_plugins(
         DefaultPlugins
             .set(bevy::log::LogPlugin {
                 filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
@@ -804,10 +796,7 @@ pub fn install_content(world: &mut World, synced: SyncedContent, content: Conten
     if let Some(changed) = changed {
         let assets = world.resource::<bevy::asset::AssetServer>();
         for path in changed {
-            let path = bevy::asset::AssetPath::from(path);
-            if assets.get_path_id(path.clone()).is_some() {
-                assets.reload(path);
-            }
+            crate::core::assets::reload(assets, &path);
         }
     }
     insert_content(world, &content);
@@ -1052,12 +1041,7 @@ fn check_settings(loading: &mut Loading) {
         check.at_least("/party/invite_lasts", party.invite_lasts.0, 0.0, "seconds");
         check.at_least("/party/call_lasts", party.call_lasts.0, 1.0, "seconds");
         check.at_least("/party/absent_for", party.absent_for.0, 0.0, "seconds");
-        check.at_least(
-            "/party/experience/range",
-            party.experience.range.0,
-            0.0,
-            "meters",
-        );
+        check.at_least("/party/range", party.range.0, 0.0, "meters");
         check.at_least(
             "/party/experience/bonus",
             party.experience.bonus,

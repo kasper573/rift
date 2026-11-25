@@ -5,7 +5,6 @@ use engine::systems::mail::InboxView;
 use engine::systems::market::{
     self, ListingRow, ListingSort, MarketAsk, MarketQuery, MarketRequest, MarketView, SortBy,
 };
-use engine::systems::staging::{Staging, stage};
 use engine::systems::{request_sources, window};
 use serde_json::json;
 use testkit::{Game, Map};
@@ -116,6 +115,7 @@ fn a_listing_holds_its_goods_until_the_first_buyer_pays_its_price() {
         price: listing.price,
     };
     host.search(3, "sword");
+    let buyer_told = host.server.told(2);
     host.server.send(2, MarketRequest::Ask(buy.clone()));
     host.server.send(3, MarketRequest::Ask(buy));
     host.server.step();
@@ -160,26 +160,16 @@ fn a_listing_holds_its_goods_until_the_first_buyer_pays_its_price() {
         ),
         "the seller gets the whole price, and the deposit back"
     );
+    assert_eq!(
+        host.server.told(2),
+        buyer_told,
+        "the buyer bought it themselves, so the market tells them nothing past what they gained and gave"
+    );
 
     host.give(marrow, "potion", 5);
     host.list(2, &[("potion", 2)], &[("gold", 30)]);
     host.list(3, &[("potion", 4)], &[("gold", 40)]);
-    host.server.send(3, MarketRequest::Close);
-    host.server.step();
-    let staged = Staging::List {
-        goods: host.stacks(&[("potion", 1)]),
-        price: host.stacks(&[("gold", 1), ("herb", 1)]),
-        duration: Seconds(3600.0),
-    };
-    let conn = host.server.village.conn(3);
-    stage(&mut host.server.village.world, conn, staged).expect("a listing staged");
-    host.server.step();
-    host.server.step();
-    assert_eq!(
-        host.mine(3).len(),
-        2,
-        "a bench stages a listing through the seller's own request, the market opened for them"
-    );
+    host.list(3, &[("potion", 1)], &[("gold", 1), ("herb", 1)]);
     let deals = |host: &mut Host, sort: Option<(Side, &str, bool)>| {
         host.sorted(1, "potion", sort)
             .into_iter()
@@ -475,7 +465,7 @@ fn game() -> Game {
         .edit_settings(|settings| {
             settings["lingers_for"] = json!(0.0);
             settings["mail"] = json!({
-                "inbox": 5, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
+                "inbox": 5, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 2
             });
             settings["market"] = json!({
                 "default_currency": testkit::path("item", "herb"),

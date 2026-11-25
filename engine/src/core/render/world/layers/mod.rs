@@ -4,16 +4,19 @@
 //! joint transforms only. Nothing the game reasons about comes from them (a body's place, its
 //! reach, the moment a hit lands), so they need not agree between clients and keep no seed.
 
+mod blend;
 mod chain;
 mod feet;
 mod held_pose;
 mod squash;
+mod steady;
 mod wave;
 
 pub use chain::Chain;
 pub use feet::{Feet, Gait, Stepping};
 pub use held_pose::HeldPose;
 pub use squash::Squash;
+pub use steady::{Steady, SteadyHand};
 pub use wave::Wave;
 
 use bevy::camera::primitives::{Frustum, Sphere};
@@ -62,6 +65,14 @@ impl Plugin for JointLayersPlugin {
         app.add_systems(
             PostUpdate,
             run.after(bevy::app::AnimationSystems)
+                .in_set(super::BodiesPosed)
+                .before(bevy::transform::TransformSystems::Propagate),
+        )
+        .configure_sets(
+            PostUpdate,
+            super::BodiesOnJoints
+                .in_set(super::BodiesPosed)
+                .after(run)
                 .before(bevy::transform::TransformSystems::Propagate),
         );
     }
@@ -74,16 +85,32 @@ pub enum JointLayer {
     Wave(Wave),
     Squash(Squash),
     HeldPose(HeldPose),
+    Steady(Steady),
 }
 
 impl JointLayer {
-    fn run(&mut self, frame: &mut Frame) {
+    /// Moves the layer on a frame: one that is `on` acts, and one that isn't eases out of what it
+    /// still shows.
+    fn run(&mut self, frame: &mut Frame, on: bool) {
         match self {
             JointLayer::Feet(feet) => feet.run(frame),
             JointLayer::Chain(chain) => chain.run(frame),
             JointLayer::Wave(wave) => wave.run(frame),
             JointLayer::Squash(squash) => squash.run(frame),
-            JointLayer::HeldPose(held) => held.run(frame),
+            JointLayer::HeldPose(held) => held.run(frame, on),
+            JointLayer::Steady(steady) => steady.run(frame, on),
+        }
+    }
+
+    /// Whether a layer that is off shows nothing anymore, rather than still easing out.
+    fn resting(&self) -> bool {
+        match self {
+            JointLayer::HeldPose(held) => held.resting(),
+            JointLayer::Steady(steady) => steady.resting(),
+            JointLayer::Feet(_)
+            | JointLayer::Chain(_)
+            | JointLayer::Wave(_)
+            | JointLayer::Squash(_) => true,
         }
     }
 
@@ -94,6 +121,7 @@ impl JointLayer {
             JointLayer::Wave(_) => {}
             JointLayer::Squash(squash) => squash.reset(),
             JointLayer::HeldPose(held) => held.reset(),
+            JointLayer::Steady(steady) => steady.reset(),
         }
     }
 }
@@ -123,6 +151,11 @@ impl Layered {
             last: None,
             skipped: false,
         }
+    }
+
+    /// The layer at `index` of the order the body was layered in.
+    pub fn layer_mut(&mut self, index: usize) -> Option<&mut JointLayer> {
+        self.layers.get_mut(index)
     }
 
     /// Whether any layer is moving joints.
@@ -195,7 +228,12 @@ pub(super) fn run(
             eye.translation().distance(Vec3::new(at.x, at.y, at.z))
         });
         let stepped = std::mem::take(&mut body.stepped);
-        if !seen || distance > FAR || !body.on.iter().any(|on| *on) {
+        let idle = body
+            .layers
+            .iter()
+            .zip(&body.on)
+            .all(|(layer, on)| !on && layer.resting());
+        if !seen || distance > FAR || idle {
             for layer in &mut body.layers {
                 layer.reset();
             }
@@ -229,10 +267,14 @@ pub(super) fn run(
         };
         body.last = Some((now, at));
         let input = local.clone();
+        let scaled = Scaled::of(&body.rig, &input);
+        let mut local = scaled.unscaled(&input);
+        let unmoved = local.clone();
         let rest = body.rig.rest_poses();
+        let rest = Scaled::of(&body.rig, &rest).unscaled(&rest);
         let root = affine(root_global);
         for (layer, on) in body.layers.iter_mut().zip(&body.on) {
-            if !*on {
+            if !*on && layer.resting() {
                 layer.reset();
                 continue;
             }
@@ -249,15 +291,92 @@ pub(super) fn run(
                 speed,
                 stepped,
             };
-            layer.run(&mut frame);
+            layer.run(&mut frame, *on);
         }
+        let shown = scaled.rescaled(&input, &unmoved, &local);
         write(
             &mut transforms,
             &body.rig,
             &input,
-            &local,
+            &shown,
             &mut body.written,
         );
+    }
+}
+
+/// How far each joint's parent and the parents above it scale what lies under them. The library
+/// the layers reach for reads a bone's length from its child's own translation, as a rig's joints
+/// were all of scale one; a rig made at another scale (a glTF exported in other units) carries
+/// scale on its joints, which would have every chain and leg reckoned at the wrong length. So
+/// the layers are handed the rig with every joint's scale moved into the translations under it,
+/// as long as they stand in the world, and the scales are put back on what they leave.
+struct Scaled(Vec<f32>);
+
+impl Scaled {
+    /// Of a rig posed as `local`, its joints' scales taken as uniform.
+    fn of(rig: &Rig, local: &[BonePose]) -> Scaled {
+        let mut whole: Vec<Option<f32>> = vec![None; local.len()];
+        fn whole_of(at: usize, rig: &Rig, local: &[BonePose], whole: &mut [Option<f32>]) -> f32 {
+            if let Some(known) = whole[at] {
+                return known;
+            }
+            let above =
+                rig.parents[at].map_or(1.0, |parent| whole_of(parent as usize, rig, local, whole));
+            let scaled = above * local[at].scale.x;
+            whole[at] = Some(scaled);
+            scaled
+        }
+        Scaled(
+            (0..local.len())
+                .map(|at| {
+                    rig.parents[at].map_or(1.0, |parent| {
+                        whole_of(parent as usize, rig, local, &mut whole)
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    /// The rig as the layers are handed it: every joint of scale one, standing where it stood.
+    fn unscaled(&self, local: &[BonePose]) -> Vec<BonePose> {
+        local
+            .iter()
+            .zip(&self.0)
+            .map(|(pose, above)| BonePose {
+                translation: pose.translation * *above,
+                rotation: pose.rotation,
+                scale: glam::Vec3::ONE,
+            })
+            .collect()
+    }
+
+    /// The pose the layers left, `moved` from `unmoved`, with the scales of `given` put back: a
+    /// joint no layer moved keeps the pose it was given as it was.
+    fn rescaled(
+        &self,
+        given: &[BonePose],
+        unmoved: &[BonePose],
+        moved: &[BonePose],
+    ) -> Vec<BonePose> {
+        given
+            .iter()
+            .zip(unmoved.iter().zip(moved))
+            .zip(&self.0)
+            .map(|((given, (unmoved, moved)), above)| {
+                if moved == unmoved {
+                    return *given;
+                }
+                BonePose {
+                    translation: if moved.translation == unmoved.translation {
+                        given.translation
+                    } else {
+                        moved.translation / *above
+                    },
+                    rotation: moved.rotation,
+                    scale: given.scale * moved.scale,
+                }
+            })
+            .collect()
     }
 }
 

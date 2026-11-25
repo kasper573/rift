@@ -11,7 +11,7 @@ use engine::core::content::{
     MemoryFolder, SETTINGS_FILE, content_path, name_of, table_of, version,
 };
 use engine::core::ground::{
-    GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER, WaterSurface,
+    GroundSize, HeightRange, Heightfield, MIN_SIDE, PaintMap, SAMPLES_PER_METER, WaterSurface,
 };
 use engine::core::math::Rgb;
 use engine::core::render::{
@@ -259,7 +259,7 @@ impl Game {
                 "claims_last": 60.0,
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },
                 "mail": {
-                    "inbox": 20, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 6
+                    "inbox": 20, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 6
                 },
                 "drops": {
                     "last": 120.0,
@@ -339,7 +339,7 @@ impl Game {
             json!({
                 "name": "Strike",
                 "icon": "icons/strike.png",
-                "target": "single_enemy",
+                "target": { "type": "single", "affects": "enemy" },
                 "basic_attack": true,
                 "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
                 "modules": [{ "type": "script", "script": path("script", "strike") }],
@@ -817,6 +817,30 @@ impl Game {
             Some(bytes) => game.part("area", name, &area::PAINT_OVERVIEW.named("", "png"), bytes),
             None => game,
         }
+    }
+
+    /// Raises the ground of the area `area` to `heights`, which span the heights every declared
+    /// area's ground does.
+    pub fn ground(self, area: &str, heights: &Heightfield) -> Game {
+        let game = heights
+            .size()
+            .each_tile()
+            .filter_map(|at| Some((at, heights.encode_tile(at)?)))
+            .fold(self, |game, (at, bytes)| {
+                game.part(
+                    "area",
+                    area,
+                    &area::HEIGHT.named(&at.key(), "png"),
+                    bytes.to_vec(),
+                )
+            });
+        let overview = heights.encode_overview().expect("ground that isn't flat");
+        game.part(
+            "area",
+            area,
+            &area::HEIGHT_OVERVIEW.named("", "png"),
+            overview,
+        )
     }
 
     /// Lays `water` on the area `area`, as the one water the area names: the pond.

@@ -1220,9 +1220,10 @@ fn everyone_standing(
     let mut everyone = Vec::new();
     let mut stood = Vec::new();
     let stand_prop = |prop: PropId, at: Pos<Meters>, yaw: Degrees| Ghost {
-        model: prop.get(content).model.path(),
+        prop,
         transform: prop_transform(
             &area.heights,
+            &area.snap_surfaces,
             &PropPlacement {
                 prop,
                 at,
@@ -1254,7 +1255,7 @@ fn everyone_standing(
                     .and_then(|look| frame.reader.path_of(look))
                     .and_then(|look| content.by_path::<PropDef>(look));
                 if let Some(look) = look {
-                    stood.push(stand_prop(look, object.shape.center(), Degrees(0.0)));
+                    stood.push(stand_prop(look, object.shape.center(), object.yaw));
                 }
             }
             _ => {}
@@ -1322,10 +1323,10 @@ fn everyone_standing(
                         .reader
                         .path_of(resource)
                         .and_then(|resource| content.by_path::<ResourceDef>(resource))
-                        .map(|resource| resource.get(content).look.get(content));
+                        .map(|resource| resource.get(content).look);
                     if let Some(look) = look {
                         stood.push(Ghost {
-                            model: look.model.path(),
+                            prop: look,
                             transform: Transform::from_translation(world_point(
                                 at,
                                 area.heights.height_at(at),

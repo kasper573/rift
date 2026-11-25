@@ -10,6 +10,7 @@ pub mod seat;
 use crate::core::script::ReachDef;
 use crate::core::script::RunnerSpec;
 use crate::core::script::Vocabulary;
+use crate::systems::player::session;
 use std::collections::BTreeSet;
 
 use bevy_app::App;
@@ -29,7 +30,7 @@ use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::actor::model::{ActorModel, ModelId};
 use crate::systems::actor::skeleton::{self, Declared, JointName, MoveName, SkeletonDef};
-use crate::systems::actor::{Appearance, Hitbox};
+use crate::systems::actor::{Appearance, Hitbox, playing};
 use crate::systems::area::Place;
 use crate::systems::area::{self, AreaId, AreaTag, HeldMesh};
 use crate::systems::history::HistoryTopic;
@@ -87,6 +88,13 @@ pub struct MountDef {
     pub rider: MountSeat,
     /// What comes of a rider doing what their seat does not let them.
     pub barred: BarredAct,
+    /// Where the mount carries what its rider holds while they ride: the hands of its model's
+    /// skeleton, by name, the first taking what the rider's first hand holds and so on, each
+    /// holding it as a hand holds it. The rider's hands are then free, and what they hold stays
+    /// theirs, held. A hand of the rider's past the last keeps what it holds, as every hand does on
+    /// a mount that names none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gear: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<MountModule>,
 }
@@ -188,6 +196,7 @@ impl ContentFile for MountDef {
                 may: Vec::new(),
             },
             barred: BarredAct::Refuse,
+            gear: Vec::new(),
             modules: Vec::new(),
         })
     }
@@ -570,8 +579,8 @@ impl Planner for UnseatFallen {
 }
 
 /// What every mount must hold against the rest of the game: its rider seated on a joint of its own
-/// model, riding with a move some skeleton declares, and a skill that calls it aimed as it
-/// travels.
+/// model, their gear carried on hands of it, riding with a move some skeleton declares, and a
+/// skill that calls it aimed as it travels.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let declared = content.built::<Declared>();
@@ -588,6 +597,15 @@ pub fn check_all(loading: &mut Loading) {
                     "a joint of the mount's model",
                 ),
             );
+        }
+        for (index, hand) in mount.gear.iter().enumerate() {
+            if !model.is_none_or(|model| model.hands().iter().any(|held| held.name == *hand)) {
+                loading.row_error(
+                    id,
+                    &format!("/gear/{index}"),
+                    ContentProblem::new("unknown hand", hand, "a hand of the mount's model"),
+                );
+            }
         }
         if !declared.moves.contains(&seat.rides) {
             loading.row_error(
@@ -607,19 +625,19 @@ pub fn check_all(loading: &mut Loading) {
         let mounts: Vec<MountId> = may_do.reaching::<Mounts>().map(|mounts| mounts.0).collect();
         for mount in mounts {
             let floats = matches!(mount.get(&content).travels, Travels::Floating { .. });
-            let wanted = if floats {
-                Targeting::Spot
+            let (aimed, wanted) = if floats {
+                (matches!(skill.target, Targeting::Spot { .. }), "spot")
             } else {
-                Targeting::Caster
+                (skill.target == Targeting::Caster, "caster")
             };
-            if skill.target != wanted {
+            if !aimed {
                 loading.row_error(
                     id,
                     "/target",
                     ContentProblem::new(
                         "aimed unlike its mount",
                         format!("{} calls {}", skill.target.label(), mount.path(&content)),
-                        format!("target {}", wanted.label()),
+                        format!("target {wanted}"),
                     ),
                 );
             }
@@ -641,8 +659,10 @@ fn welcome_in(content: &Content, area: AreaId, travels: Travels) -> bool {
 }
 
 /// Seats `rider` on the mount `riding` names, where they are: what a pointer lands on is the
-/// mount, and its script holds on them.
+/// mount, and its script holds on them. They take the seat at once, so whatever they were doing
+/// on foot, as the cast that called the mount, ends there.
 fn seat(world: &mut World, rider: Entity, riding: Riding) {
+    playing::cut_short(world, rider);
     let content = world.resource::<Content>().clone();
     let look = riding.mount.get(&content).look;
     let hitbox = Hitbox(ActorModel::get(&content, look).hitbox());
@@ -708,4 +728,47 @@ pub fn scripting(vocabulary: &mut Vocabulary) {
         )
         .binder(|loading, content, bind| bind.bind_table::<MountDef>(loading, content));
     effect::scripting(vocabulary);
+}
+
+/// The mount the player's character rides, as the plate shows it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownMount {
+    pub mount: MountId,
+    pub kind: MountKind,
+    /// Why they cannot step off where they are, in the game's words.
+    pub step_off_shut: Option<String>,
+}
+
+pub fn shown(world: &mut World) -> Option<ShownMount> {
+    let me = session::me(world)?;
+    let riding = riding(world)?;
+    let def = riding.mount.get(world.resource::<Content>());
+    Some(ShownMount {
+        mount: riding.mount,
+        kind: MountKind::from(def.travels),
+        step_off_shut: step_off_shut(world, me)
+            .map(|why| why.plain_words(world.resource::<Content>())),
+    })
+}
+
+pub(crate) fn riding(world: &World) -> Option<Riding> {
+    session::my_character(world)?.get::<Riding>().copied()
+}
+
+/// Whether `rider` floats where no walker could stand, and so picks the ground they leave for.
+pub(crate) fn afloat(world: &World, rider: Entity) -> bool {
+    let content = world.resource::<Content>();
+    matches!(
+        travels(content, world, rider),
+        Some(Travels::Floating { .. })
+    ) && !over_ground(world, rider)
+}
+
+/// Why `rider` cannot step off where they are, in the game's words: nothing afloat, where the
+/// ground is theirs to pick.
+pub(crate) fn step_off_shut(world: &World, rider: Entity) -> Option<LineText> {
+    if afloat(world, rider) {
+        return None;
+    }
+    landing(world, rider, None).err()
 }

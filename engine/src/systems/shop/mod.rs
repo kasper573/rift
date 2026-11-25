@@ -7,6 +7,7 @@ use crate::core::script::RunnerSpec;
 use crate::core::script::Scripts;
 use crate::core::script::ValueType;
 use crate::core::script::Vocabulary;
+use crate::systems::player::session;
 use crate::systems::requirement;
 use std::collections::{HashMap, VecDeque};
 
@@ -434,7 +435,7 @@ impl ShopLedger {
     }
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ShopRequest {
     Buy {
         ware: u32,
@@ -1132,4 +1133,8 @@ pub fn scripting(vocabulary: &mut Vocabulary) {
         .event::<Bought>("bought")
         .event::<Sold>("sold")
         .effect::<OpenShop>("open_shop");
+}
+
+pub fn view(world: &World) -> Option<&ShopView> {
+    session::me(world).and_then(|seen| world.get::<ShopView>(seen))
 }

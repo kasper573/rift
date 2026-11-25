@@ -528,6 +528,22 @@ fn check_joints(def: &SkeletonDef, tree: &NodeTree, cx: &mut RowCheck) {
                 _ => {}
             }
         }
+        if let Some(chest) = &hand.chest {
+            let pointer = format!("/hands/{index}/chest");
+            let upper_arm = joint(&hand.joint)
+                .and_then(|held| tree.nodes[held].parent)
+                .and_then(|forearm| tree.nodes[forearm].parent);
+            match (joint(chest), upper_arm) {
+                (None, _) => unknown(cx, pointer, chest),
+                (Some(above), Some(upper)) if above != upper && tree.descends(upper, above) => {}
+                _ => cx.error(
+                    pointer,
+                    "chest not above the arm",
+                    format!("{}'s upper arm is not under {chest}", hand.joint),
+                    "a joint the hand's upper arm lies under",
+                ),
+            }
+        }
         let fingers = hand.clasp.iter().flat_map(|clasp| &clasp.fingers);
         for (at, finger) in fingers.enumerate() {
             unknown(cx, format!("/hands/{index}/clasp/fingers/{at}"), finger);

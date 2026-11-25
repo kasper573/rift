@@ -379,13 +379,13 @@ pub enum SocialRequestAsk {
 
 /// A player's answer to a request on their card: accepting or denying by the one asked, or the asker
 /// taking it back.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AnswerSocialRequest {
     pub request: SocialRequestId,
     pub answer: RequestAnswer,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestAnswer {
     Accept,
     Deny,
@@ -393,14 +393,14 @@ pub enum RequestAnswer {
 }
 
 /// A player blocking another, or undoing it.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BlockCharacter {
     pub account: AccountNumber,
     pub blocked: bool,
 }
 
 /// A player choosing who they take requests from.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ChooseAcceptsRequests(pub AcceptsRequestsFrom);
 
 /// Hands what players of this world asked of requests, blocks and their setting to society.

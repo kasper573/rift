@@ -20,7 +20,7 @@ const PLACED: usize = 30;
 const AREA_SCATTERS: usize = 20;
 
 /// A chunk's scenery is worked out from the chunk alone: the props an area stands in a chunk, and
-/// those a scatter strews there, come out the same, bit for bit and in order, as the whole area's
+/// those a scatter strews there clear of the ground the area's placed props take, come out the same, bit for bit and in order, as the whole area's
 /// or the whole scatter's that stand there, every prop in one chunk; and a cover's copies in a chunk
 /// come out the same whatever the ground around the chunk holds.
 #[test]
@@ -46,8 +46,8 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
         }));
     }
     let content = Game::new()
-        .prop("pine", json!({ "type": "none" }))
-        .prop("rock", json!({ "type": "none" }))
+        .prop("pine", json!({ "type": "circle", "radius": 0.5 }))
+        .prop("rock", json!({ "type": "box", "width": 3.0, "depth": 2.0 }))
         .area(
             "field",
             &Map::open(GROUND.width as usize, GROUND.height as usize),
@@ -67,7 +67,12 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
     };
     let filed = SourcesByChunk::of(modules(), field_ground);
     let whole = SceneryChunk::within(field_ground, field_ground);
-    let over_the_whole = filed.sourced_props_within(&field.prop_sources, field_ground, &whole);
+    let over_the_whole = filed.sourced_props_within(
+        &field.prop_sources,
+        &field.scatter_clearing,
+        field_ground,
+        &whole,
+    );
     let mut found = 0;
     for chunk in SceneryChunk::all(field_ground) {
         let held: Vec<_> = field
@@ -77,7 +82,12 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
             .cloned()
             .collect();
         let from_filed: Vec<_> = filed
-            .sourced_props_in(&field.prop_sources, field_ground, chunk)
+            .sourced_props_in(
+                &field.prop_sources,
+                &field.scatter_clearing,
+                field_ground,
+                chunk,
+            )
             .into_iter()
             .map(|(_, placed)| placed)
             .collect();
@@ -116,7 +126,7 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
             seed: seed_of(&mut rng),
             scale: ScaleRange { min: 0.5, max: 2.0 },
         };
-        let whole: Vec<_> = scatter.expand().collect();
+        let whole: Vec<_> = scatter.expand(&field.scatter_clearing).collect();
         let mut found = 0;
         for chunk in SceneryChunk::all(ground) {
             let held: Vec<_> = whole
@@ -124,7 +134,7 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
                 .filter(|placed| chunk.holds(ground, placed.at))
                 .cloned()
                 .collect();
-            let worked_out = scattered_in(&scatter, ground, chunk);
+            let worked_out = scattered_in(&scatter, &field.scatter_clearing, ground, chunk);
             assert_eq!(
                 worked_out, held,
                 "the scatter seeded {} strews the same in chunk {chunk:?} (test seed {seed})",

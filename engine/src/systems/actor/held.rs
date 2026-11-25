@@ -16,7 +16,7 @@ use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::core::script::{EffectCall, RunnerKind};
 use crate::systems::area::PropId;
-use crate::systems::item::{Grip, ItemId, PropAxis, PropHold};
+use crate::systems::item::{Grip, ItemId, PropAxis, PropHold, Steady};
 use crate::systems::npc::NPC_RUNNER;
 
 /// The item each hand of a body shows; a two-hander sits under both hands it takes.
@@ -198,12 +198,28 @@ fn hand_at(index: usize) -> HandIndex {
 // A file leaves out the parts of a grip that are none, which a binary format cannot tell from
 // missing ones, so the wire carries every part.
 #[derive(Serialize, Deserialize)]
-struct HandsOnTheWire(Option<(PropId, LocalOffset, LocalTurn, PropAxis, PropHold)>);
+struct HandsOnTheWire(
+    Option<(
+        PropId,
+        LocalOffset,
+        LocalTurn,
+        PropAxis,
+        PropHold,
+        Option<Steady>,
+    )>,
+);
 
 impl From<HandsAtWork> for HandsOnTheWire {
     fn from(hands: HandsAtWork) -> HandsOnTheWire {
         HandsOnTheWire(hands.tool.map(|ToolInHand { prop, grip }| {
-            (prop, grip.offset, grip.turn, grip.symmetry, grip.hold)
+            (
+                prop,
+                grip.offset,
+                grip.turn,
+                grip.symmetry,
+                grip.hold,
+                grip.steady,
+            )
         }))
     }
 }
@@ -211,13 +227,14 @@ impl From<HandsAtWork> for HandsOnTheWire {
 impl From<HandsOnTheWire> for HandsAtWork {
     fn from(HandsOnTheWire(tool): HandsOnTheWire) -> HandsAtWork {
         HandsAtWork {
-            tool: tool.map(|(prop, offset, turn, symmetry, hold)| ToolInHand {
+            tool: tool.map(|(prop, offset, turn, symmetry, hold, steady)| ToolInHand {
                 prop,
                 grip: Grip {
                     offset,
                     turn,
                     symmetry,
                     hold,
+                    steady,
                 },
             }),
         }

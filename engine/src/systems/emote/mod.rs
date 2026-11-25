@@ -45,7 +45,7 @@ pub enum EmoteMotion {
     Pose(Pose),
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct EmoteRequest {
     pub emote: EmoteId,
 }

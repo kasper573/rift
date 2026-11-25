@@ -48,7 +48,7 @@ use crate::core::script::{
 };
 use crate::core::text::LineText;
 use crate::core::time::{self, UnixMillis, WallClock};
-use crate::core::units::{MeterPos, Meters, Percent, Seconds};
+use crate::core::units::{Hertz, MeterPos, Meters, Percent, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::part::ModelPartId;
 use crate::systems::actor::skeleton::{
@@ -224,10 +224,6 @@ messages! {
         no_bag,
         /// What a script is told moving no items.
         nothing_to_move,
-        /// Whose a dropped item is while it is kept for them: `{name}`'s.
-        reserved_for(name: Text),
-        /// Whose a dropped item is while it is kept for the party `{name}` is in.
-        reserved_for_party(name: Text),
         /// How many more kinds of items, `{count}`, lie where a pile's plate can't name them all.
         more_kinds(count: Number),
         /// The name of each category of items.
@@ -842,7 +838,7 @@ pub struct DroppedItem {
     pub until: UnixMillis,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UseItemRequest {
     pub slot: u32,
 }
@@ -853,13 +849,13 @@ pub struct ItemShown {
     pub item: ItemId,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DropItemRequest {
     pub slot: u32,
 }
 
 /// Some of what a slot of the bag holds: `stack.count` of the stack in `slot`.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SlotStack {
     pub slot: u32,
     pub stack: ItemStack,
@@ -867,7 +863,7 @@ pub struct SlotStack {
 
 /// Splits `count` off the stack in the bag's slot `slot`, into a stack of its own in the next
 /// empty slot.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SplitStackRequest {
     pub slot: u32,
     pub count: u32,
@@ -875,7 +871,7 @@ pub struct SplitStackRequest {
 
 /// Moves the stack in the bag's slot `from` to its slot `to`, as `Inventory::move_stack` does.
 /// `item` is what the player saw in `from`: the move is refused when it holds something else.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MoveStackRequest {
     pub from: u32,
     pub to: u32,
@@ -883,14 +879,15 @@ pub struct MoveStackRequest {
 }
 
 /// Sorts the whole bag once, in the order `by`.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SortBagRequest {
     pub by: BagSort,
 }
 
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct PickupRequest {
     #[entities]
+    #[schemars(with = "u64")]
     pub target: Entity,
 }
 
@@ -953,6 +950,30 @@ impl ContentFile for ItemDef {
             kind: ItemKind::Resource,
             modules: Vec::new(),
         })
+    }
+
+    fn check(&self, cx: &mut RowCheck) {
+        let steady = self
+            .wear()
+            .and_then(Wear::grasp)
+            .and_then(|(_, grip)| grip.steady);
+        if let Some(Steady { sway, .. }) = steady {
+            let pointer = "/kind/grip/steady/sway";
+            cx.range(
+                format!("{pointer}/hz"),
+                sway.hz.0,
+                f32::EPSILON,
+                f32::MAX,
+                "a rate",
+            );
+            cx.range(
+                format!("{pointer}/damping"),
+                sway.damping,
+                0.0,
+                1.0,
+                "a damping",
+            );
+        }
     }
 }
 
@@ -1275,6 +1296,30 @@ pub struct Grip {
     pub symmetry: PropAxis,
     #[serde(default, skip_serializing_if = "PropHold::is_gripped")]
     pub hold: PropHold,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steady: Option<Steady>,
+}
+
+/// A prop held out steady, as a lantern is: while the body stands and neither attacks nor lies
+/// dead, its hand is kept at `at` off the chest of the hand's skeleton (see `Hand`), whatever the
+/// body's clips swing the arm through, and follows the chest there on a spring that `sway` tunes.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Steady {
+    /// Where the hand rests off the chest, in the body's frame: out toward the hand's own side, up,
+    /// and ahead.
+    pub at: [Meters; 3],
+    pub sway: Sway,
+}
+
+/// A spring a held hand follows its rest point on: how often it swings back and forth when let
+/// go, and how much of each swing it loses, 0 for none and 1 for all, so it comes to rest without
+/// passing the point.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sway {
+    pub hz: Hertz,
+    pub damping: f32,
 }
 
 /// How the hand that holds a prop carries it.
@@ -1362,6 +1407,7 @@ impl Grip {
             && self.turn.is_zero()
             && self.symmetry.is_z()
             && self.hold.is_gripped()
+            && self.steady.is_none()
     }
 }
 

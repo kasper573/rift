@@ -6,6 +6,9 @@
 pub mod effect;
 pub mod window;
 
+use crate::core::time;
+use crate::systems::player::session;
+use crate::systems::society::SocietyView;
 use std::collections::{BTreeMap, BTreeSet};
 
 use bevy_app::App;
@@ -37,8 +40,6 @@ messages! {
     pub struct MarketMessages {
         /// What the player is told once their listing of `{goods}` is up on the market.
         listed[goods: Line],
-        /// What a player is told as they get `{goods}` for `{price}` on the market.
-        bought[goods: Line, price: Line],
         /// What a seller is told as their listing of `{goods}` is bought and they get `{price}`.
         sold[goods: Line, price: Line],
         /// What a seller is told as their listing of `{goods}` ends unbought.
@@ -564,7 +565,7 @@ impl PartialEq for Ranked {
 impl Eq for Ranked {}
 
 /// What a player asks of the market.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum MarketAsk {
     Search(MarketQuery),
     List {
@@ -582,7 +583,7 @@ pub enum MarketAsk {
 }
 
 /// What a player asks of the market window.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum MarketRequest {
     Ask(MarketAsk),
     Close,
@@ -949,11 +950,6 @@ fn buy(
     };
     settling.unwritten.remove::<Listing>(listing.id());
     deliver::to_account(settling, content, by, &goods, DeliveryReason::MarketBought);
-    let said = messages.market.bought(
-        ItemStack::listed(&messages.interface, &goods),
-        ItemStack::listed(&messages.interface, &price),
-    );
-    settling.tell(by, Notification::feed(HistoryTopic::Item, said));
     let paid: Vec<ItemStack> = price
         .iter()
         .chain(listing.deposit.iter())
@@ -1038,4 +1034,108 @@ fn row(listing: &Listing, viewer: &AccountId) -> Option<ListingRow> {
         ends: listing.ends,
         mine: listing.seller == *viewer,
     })
+}
+
+/// The market as it is open to the player: what their searches found, and their own listings.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownMarket {
+    /// The page of listings the latest search found, none before the first.
+    pub results: Option<Vec<ShownListing>>,
+    pub sort: Option<ListingSort>,
+    /// Every way the listings that match can be sorted.
+    pub sorts: Vec<SortBy>,
+    pub page: u32,
+    pub pages: u32,
+    /// How many listings match.
+    pub found: u32,
+    /// The listings the player has up.
+    pub mine: Vec<ShownListing>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownListing {
+    pub id: ListingId,
+    pub goods: Vec<ShownMarketStack>,
+    pub price: Vec<ShownMarketStack>,
+    pub left: Seconds,
+    pub mine: bool,
+    /// Whether someone else bought it before the player's purchase settled.
+    pub gone: bool,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
+pub struct ShownMarketStack {
+    pub item: ItemId,
+    pub count: u32,
+}
+
+pub fn shown(world: &World) -> Option<ShownMarket> {
+    let view = view(world)?;
+    let now = time::server_now(world)?;
+    Some(ShownMarket {
+        results: found(world),
+        page: view
+            .results
+            .as_ref()
+            .map_or(0, |results| results.query.page),
+        pages: view.results.as_ref().map_or(0, |results| results.pages),
+        found: view.results.as_ref().map_or(0, |results| results.found),
+        sort: view.results.as_ref().and_then(|results| results.query.sort),
+        sorts: view
+            .results
+            .as_ref()
+            .map(|results| results.sorts.clone())
+            .unwrap_or_default(),
+        mine: my_listings(world)
+            .iter()
+            .map(|row| shown_listing(row, view, now))
+            .collect(),
+    })
+}
+
+/// The page of listings the player's latest search of the market found: none while the market is
+/// shut, and none before the first search.
+pub fn found(world: &World) -> Option<Vec<ShownListing>> {
+    let view = view(world)?;
+    let now = time::server_now(world)?;
+    let results = view.results.as_ref()?;
+    Some(
+        results
+            .rows
+            .iter()
+            .map(|row| shown_listing(row, view, now))
+            .collect(),
+    )
+}
+
+pub(crate) fn shown_listing(row: &ListingRow, view: &MarketView, now: UnixMillis) -> ShownListing {
+    ShownListing {
+        id: row.id,
+        goods: shown_stacks(&row.goods),
+        price: shown_stacks(&row.price),
+        left: row.ends.since(now),
+        mine: row.mine,
+        gone: view.gone.contains(&row.id),
+    }
+}
+
+pub(crate) fn view(world: &World) -> Option<&MarketView> {
+    session::my_character(world)?.get::<MarketView>()
+}
+
+pub(crate) fn my_listings(world: &World) -> Vec<ListingRow> {
+    session::my_character(world)
+        .and_then(|me| me.get::<SocietyView>())
+        .map(|view| view.listings.clone())
+        .unwrap_or_default()
+}
+
+pub(crate) fn shown_stacks(stacks: &[ItemStack]) -> Vec<ShownMarketStack> {
+    stacks
+        .iter()
+        .map(|stack| ShownMarketStack {
+            item: stack.item,
+            count: stack.count,
+        })
+        .collect()
 }

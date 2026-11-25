@@ -1,19 +1,26 @@
-use bevy::math::Vec3;
 use bevy::math::proj::perspective_infinite_reverse;
-use bevy::transform::components::Transform;
+use bevy::math::{Vec2, Vec3};
+use bevy::prelude::*;
+use bevy::window::{PrimaryWindow, WindowResolution};
 use engine::core::content::{Content, ContentScope, with_content};
-use engine::core::ground::{GroundSize, WaterSurface};
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, WaterSurface};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::sample::{GpuReport, RenderReport};
-use engine::core::units::{Bytes, Meters, Millis, Radians};
-use engine::systems::area::AreaDef;
+use engine::core::render::{CameraPreferences, CameraRig, GroundHeights, Shot};
+use engine::core::units::{Bytes, MeterSize, Meters, Millis, Radians, Seconds};
+use engine::systems::area::{self, AreaDef};
+use engine::systems::input::claims::{self, ClickClaim};
+use engine::systems::item::plates::PointedItem;
+use engine::systems::player::ClientId;
+use engine::systems::player::session::{MyCharacter, MyClient};
 use engine::systems::probe::{
-    FrameSample, FrameSamples, HITCH, MissingParts, ProbeFrames, ProbeGame, ProbeGameQuestion,
-    ProbeSystem, ProbeView, ProbeWater, answer,
+    FrameSample, FrameSamples, GameAnswers, HITCH, MissingParts, ProbeFrames, ProbeGame,
+    ProbeGameQuestion, ProbeSystem, ProbeView, ProbeWater, show,
 };
+use engine::systems::skill::aim::Aiming;
 use serde::de::DeserializeOwned;
 use serde_json::json;
-use testkit::{Game, HEIGHTS, Map, POND, path};
+use testkit::{Game, HEIGHTS, Map, POND, Sim, path};
 
 #[test]
 fn a_driver_finds_the_games_things_through_the_probe() {
@@ -121,7 +128,7 @@ fn a_driver_finds_the_games_things_through_the_probe() {
 }
 
 fn ask<Answer: DeserializeOwned>(content: &Content, question: &ProbeGameQuestion) -> Answer {
-    let line = answer(content, question);
+    let line = GameAnswers::default().answer(content, question);
     with_content(ContentScope::of(content), || serde_json::from_str(&line))
         .0
         .unwrap_or_else(|error| panic!("an unreadable answer {line}: {error}"))
@@ -153,6 +160,93 @@ fn a_driver_finds_in_the_window_only_what_lies_before_the_camera() {
     ] {
         assert_eq!(view.window_point(at, height), None, "{where_it_lies}");
     }
+}
+
+#[test]
+fn a_driver_clicks_the_ground_where_the_probe_shows_it_and_finds_what_the_eye_cannot_reach_shown_nowhere()
+ {
+    const RIDGE: std::ops::Range<f32> = 14.0..16.0;
+    let size = GroundSize {
+        width: 30,
+        height: 10,
+    };
+    let heights = Heightfield::from_fn(size, HEIGHTS, |column, _| {
+        let east = column as f32 / SAMPLES_PER_METER as f32;
+        Meters(if RIDGE.contains(&east) { 4.0 } else { 0.0 })
+    });
+    let content = Game::new()
+        .area(
+            "valley",
+            &Map::of(&[
+                "..............................",
+                "..............................",
+                "..............................",
+                "..............................",
+                "..............................",
+                "..............................",
+                "........#.....................",
+                "..............................",
+                "..............................",
+                "..............................",
+            ]),
+            json!([]),
+        )
+        .ground("valley", &heights)
+        .hero("valley", 1.0, 5.0)
+        .load();
+    let mut sim = Sim::new(content);
+    sim.serve("valley");
+    let player = sim.join(1);
+    sim.world.insert_resource(MyClient(Some(ClientId(1))));
+    sim.world.insert_resource(MyCharacter(Some(player)));
+    sim.world.init_resource::<Aiming>();
+    sim.world.init_resource::<PointedItem>();
+    let valley = area::shared(sim.content(), sim.id::<AreaDef>("valley")).clone();
+    sim.world.insert_resource(GroundHeights {
+        heights: valley.heights.clone(),
+        water: valley.water.clone(),
+        bounds: valley.size.bounds(),
+    });
+    let mut rig = CameraRig::new(testkit::look().camera);
+    rig.stage(Some(Shot {
+        eye: Vec3::new(2.0, 2.5, 5.0),
+        target: Vec3::new(12.0, 0.0, 5.0),
+    }));
+    for _ in 0..600 {
+        rig.ease(Seconds(1.0 / 60.0), &CameraPreferences::default());
+    }
+    sim.world.insert_resource(rig);
+    sim.world.spawn((
+        Window {
+            resolution: WindowResolution::new(1280, 720),
+            ..default()
+        },
+        PrimaryWindow,
+    ));
+
+    let before_the_ridge = Pos::new(9.0, 5.0);
+    let spots = [before_the_ridge, Pos::new(22.0, 5.0), Pos::new(8.5, 6.5)];
+    let [before, behind, blocked] = show(&mut sim.world, &spots)
+        .try_into()
+        .expect("an answer for each spot");
+    assert_eq!(behind, None, "ground the ridge hides from the eye");
+    assert_eq!(blocked, None, "ground nobody walks on");
+    let before = before.expect("open ground before the ridge");
+    assert!(
+        before.lands.distance_to(before_the_ridge) <= before.span.0,
+        "{before:?}"
+    );
+    let mut window = sim
+        .world
+        .query_filtered::<&mut Window, With<PrimaryWindow>>()
+        .single_mut(&mut sim.world)
+        .expect("the window");
+    window.set_cursor_position(Some(Vec2::new(before.at.x, before.at.y)));
+    assert_eq!(
+        claims::claim(&mut sim.world),
+        ClickClaim::Walk(before.lands),
+        "the pointer resting where the probe shows the spot walks the player where it said"
+    );
 }
 
 #[test]

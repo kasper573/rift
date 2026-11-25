@@ -799,10 +799,6 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
                     ui.painter()
                         .add(Shape::convex_polygon(diamond, fill(color), edge));
                     if kind == MapMarkKind::PartyMember {
-                        ui.painter().circle_stroke(at, DIAMOND * 1.5, halo);
-                        ui.painter().circle_stroke(at, DIAMOND * 1.5, edge);
-                    }
-                    if kind == MapMarkKind::PartyMember {
                         view.messages().party_member_on(view.key(), &mark.name)
                     } else {
                         view.messages().player_on(view.key(), &mark.name)

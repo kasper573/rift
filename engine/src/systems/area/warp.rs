@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::object::Entered;
 use super::transition::Crossing;
 use super::{AreaId, AreaTag, ObjectShape, Warps};
 use crate::core::content::{Content, SchemaMark};
@@ -28,11 +29,7 @@ pub struct WarpObject {
 pub fn warp_objects(content: &Content, scripts: &Scripts, area: AreaId) -> Vec<WarpObject> {
     super::objects(super::placed(content, area))
         .filter_map(|(index, object)| {
-            let to = scripts
-                .may_do(OwnerRow::of_object(area, index))
-                .reaching::<Warps>()
-                .next()
-                .map(|warps| warps.0)?;
+            let to = doorway(scripts, OwnerRow::of_object(area, index))?;
             Some(WarpObject {
                 name: object.name.clone().unwrap_or_default(),
                 shape: object.shape,
@@ -40,6 +37,17 @@ pub fn warp_objects(content: &Content, scripts: &Scripts, area: AreaId) -> Vec<W
             })
         })
         .collect()
+}
+
+/// Where an object surely takes whoever steps onto it, if it is a doorway: an object whose
+/// script may only send someone off after a test or a question (a guard turning people back) is
+/// none.
+pub fn doorway(scripts: &Scripts, object: OwnerRow) -> Option<Place> {
+    scripts
+        .may_do(object)
+        .surely_on::<Entered, Warps>()
+        .next()
+        .map(|warps| warps.0)
 }
 
 /// Moves an actor to a place, setting its spawn point.

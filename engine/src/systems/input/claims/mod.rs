@@ -8,6 +8,7 @@ mod pickup;
 mod walk;
 
 use crate::core::math::PosSchema;
+use bevy::ecs::entity::MapEntities;
 use bevy::prelude::*;
 use bevy::window::{
     CursorIcon, CursorOptions, CustomCursor, CustomCursorImage, PrimaryWindow, SystemCursorIcon,
@@ -32,16 +33,36 @@ use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::aim::AimClaimant;
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, JsonSchema, MapEntities, Clone, Copy, PartialEq, Debug)]
 pub enum ClickClaim {
     Interface,
     Locked,
-    Attack(#[schemars(with = "u64")] Entity),
-    Aim(#[schemars(with = "u64")] Entity),
+    Attack(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
+    Aim(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
     AimAt(#[schemars(with = "PosSchema")] Pos<Meters>),
-    Pickup(#[schemars(with = "u64")] Entity),
-    Gather(#[schemars(with = "u64")] Entity),
-    Interact(#[schemars(with = "u64")] Entity),
+    Pickup(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
+    Gather(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
+    Interact(
+        #[entities]
+        #[schemars(with = "u64")]
+        Entity,
+    ),
     Walk(#[schemars(with = "PosSchema")] Pos<Meters>),
     Nothing,
 }

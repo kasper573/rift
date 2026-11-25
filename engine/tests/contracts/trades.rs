@@ -467,7 +467,7 @@ fn game() -> Game {
             settings["lingers_for"] = json!(30.0);
             settings["slots"]["bag"] = json!(4);
             settings["mail"] = json!({
-                "inbox": 5, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
+                "inbox": 5, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 2
             });
             settings["trade"] = json!({ "reach": 6.0, "slots": 2, "accept_waits": 3.0 });
         })

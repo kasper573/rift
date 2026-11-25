@@ -10,8 +10,9 @@ pub use client::{
     ClientReplicationPlugin, ClientSystems, Remote, ReplicatedDespawn, ServerEntities, ServerLink,
 };
 pub use protocol::{
-    AppMessageExt, AppReplicationExt, FromClient, MAX_COMPONENT_KINDS, Overwrite, Replicable,
-    ToClient, over_the_wire,
+    AppMessageExt, AppReplicationExt, ClientMessage, ClientMessageRefusal, FromClient,
+    MAX_COMPONENT_KINDS, Overwrite, ReadClientMessage, Replicable, ToClient, client_message_schema,
+    over_the_wire, read_client_message, write_client_message,
 };
 pub use server::{
     ClientLink, Interest, InterestInAll, Replicated, ReplicationInterest, Sender, Sending,

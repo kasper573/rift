@@ -20,11 +20,11 @@ use super::playtest::Playtest;
 /// Where the player stands once the client shows it in the world.
 pub fn settled_in_world(me: &mut Playtest) -> Place {
     let seen = me.wait_until("the player in the world", |snapshot| {
-        snapshot.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle
+        snapshot.sight.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle
     });
     Place {
-        area: seen.area.expect("the player is in an area"),
-        at: seen.me.expect("the player").at,
+        area: seen.sight.area.expect("the player is in an area"),
+        at: seen.sight.me.expect("the player").at,
     }
 }
 
@@ -34,8 +34,8 @@ pub fn away_from(content: &Content, home: Place) -> Option<Place> {
 }
 
 pub fn arrived(snapshot: &ProbeSnapshot, place: Place) -> bool {
-    snapshot.area == Some(place.area)
-        && snapshot.me.is_some()
+    snapshot.sight.area == Some(place.area)
+        && snapshot.sight.me.is_some()
         && snapshot.transition == ScreenTransitionPhase::Idle
 }
 

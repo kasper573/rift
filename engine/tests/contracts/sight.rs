@@ -2,14 +2,14 @@ use bevy_ecs::prelude::*;
 use bevy_replication::Interest;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
-use engine::systems::area::AreaDef;
+use engine::systems::area::{self, AreaDef};
 use engine::systems::area_map::{self, MapMarkKind};
 use engine::systems::movement::{self, Position, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::ClientId;
 use engine::systems::visibility::{self, ClientSight};
 use serde_json::json;
-use testkit::{Game, Map, Sim};
+use testkit::{Game, Map, Sim, path};
 
 #[test]
 fn a_player_is_shown_what_stands_in_sight_and_is_there_for_them() {
@@ -19,6 +19,10 @@ fn a_player_is_shown_what_stands_in_sight_and_is_there_for_them() {
     let sight = visibility::sight(&sim.world);
     let near = spawn(&mut sim, hero, Offset::new(sight.0 - 4.0, 0.0));
     let far = spawn(&mut sim, hero, Offset::new(sight.0 + 40.0, 0.0));
+    let gate =
+        area::object::named(&sim.world, sim.id::<AreaDef>("field"), "gate").expect("the gate");
+    let watch =
+        area::object::named(&sim.world, sim.id::<AreaDef>("field"), "watch").expect("the watch");
     let crow = sim.id::<NpcDef>("crow");
     let theirs = npc::summon(
         &mut sim.world,
@@ -33,6 +37,11 @@ fn a_player_is_shown_what_stands_in_sight_and_is_there_for_them() {
 
     let (shown, owned) = shown_to(&mut sim, 1);
     assert!(shown.contains(&hero) && shown.contains(&near));
+    assert!(shown.contains(&gate), "a warp, though nothing stands on it");
+    assert!(
+        !shown.contains(&watch),
+        "ground that sends only some back is no warp"
+    );
     assert!(!shown.contains(&far), "beyond sight");
     assert!(!shown.contains(&theirs), "there for another player alone");
     assert!(owned.contains(&hero) && !owned.contains(&other));
@@ -95,7 +104,45 @@ fn spawn(sim: &mut Sim, near: Entity, offset: Offset<Meters>) -> Entity {
 
 fn field() -> Sim {
     let content = Game::new()
-        .area("field", &Map::open(120, 12), json!([]))
+        .area(
+            "field",
+            &Map::open(120, 12),
+            json!([
+                {
+                    "type": "object",
+                    "name": "gate",
+                    "shape": { "type": "rect", "x": 8.0, "y": 5.0, "w": 2.0, "h": 2.0 },
+                    "scripts": [{ "script": path("script", "gate") }],
+                },
+                {
+                    "type": "object",
+                    "name": "watch",
+                    "shape": { "type": "rect", "x": 12.0, "y": 5.0, "w": 2.0, "h": 2.0 },
+                    "scripts": [{ "script": path("script", "watch") }],
+                },
+            ]),
+        )
+        .script(
+            "gate",
+            "object",
+            json!({
+                "entered": { "type": "on", "event": "entered", "by": "characters", "next": "warp" },
+                "warp": { "type": "warp", "to": { "area": path("area", "field"), "x": 60.0, "y": 6.0 } },
+            }),
+        )
+        .script(
+            "watch",
+            "object",
+            json!({
+                "entered": { "type": "on", "event": "entered", "by": "characters", "next": "seasoned" },
+                "seasoned": {
+                    "type": "if",
+                    "test": { "type": "at_least", "a": { "type": "level" }, "b": 3 },
+                    "no": "turn_back",
+                },
+                "turn_back": { "type": "warp", "to": { "area": path("area", "field"), "x": 4.0, "y": 6.0 } },
+            }),
+        )
         .hero("field", 4.0, 6.0)
         .npc("crow", 5.0, json!([]))
         .npc("wolf", 5.0, json!([]))
@@ -103,5 +150,6 @@ fn field() -> Sim {
         .load();
     let mut sim = Sim::new(content);
     sim.serve("field").add(movement::file_by_chunk);
+    engine::systems::spawn_scripts(&mut sim.world);
     sim
 }

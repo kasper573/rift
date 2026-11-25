@@ -229,9 +229,12 @@ fn moor() -> Sim {
             json!({
                 "name": "Pitch a fire",
                 "icon": "icons/fire.png",
-                "target": "area_ally",
-                "range": 4.0,
-                "area": { "type": "circle", "radius": 0.5 },
+                "target": {
+                    "type": "ranged_area",
+                    "affects": "ally",
+                    "range": 4.0,
+                    "shape": { "type": "circle", "radius": 0.5 },
+                },
                 "cost": [{ "item": path("item", "kit"), "count": 1 }],
                 "levels": [{ "cost": 1 }],
                 "modules": [{ "type": "script", "script": path("script", "pitch_fire_stand") }],

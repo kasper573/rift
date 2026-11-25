@@ -2,14 +2,14 @@
 //! kept away, and the list of friends with what can be done with the one chosen.
 
 use bevy::prelude::*;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Sense, Ui};
 use ui::face::TextRole;
 use ui::{controls, face, form, ink, input, sheet};
 
-use super::search::{self, CharactersFound, FindCharacters};
-use super::{AskFriendship, RemoveFriend};
+use super::search::{self, CharactersFound, FindCharacters, FoundCharacters};
+use super::{
+    AskFriendship, CharacterStanding, RemoveFriend, asked_by_me, asked_of_me, society, standing,
+};
 use crate::core::content::Content;
 use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
@@ -19,11 +19,10 @@ use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::InputAction;
 use crate::systems::mention::Mention;
 use crate::systems::messages;
-use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card as request_card;
 use crate::systems::social_request::{
-    AnswerSocialRequest, BlockCharacter, RequestAnswer, SocialRequestId, SocialRequestKind,
+    AnswerSocialRequest, BlockCharacter, RequestAnswer, SocialRequestId,
 };
 use crate::systems::society::tab::{self, SocialPage};
 use crate::systems::society::{AccountNumber, FriendRow, RequestCard, SocietyMember, SocietyView};
@@ -44,12 +43,12 @@ impl SocialPage for FriendsPage {
     }
 
     fn waiting(&self, world: &World) -> u32 {
-        view(world).map_or(0, |view| asked_of_me(&view).count() as u32)
+        society(world).map_or(0, |view| asked_of_me(&view).count() as u32)
     }
 
     fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
         let messages = messages::of(world.resource::<Content>());
-        let listed = view(world).is_some_and(|view| !view.friends.is_empty());
+        let listed = society(world).is_some_and(|view| !view.friends.is_empty());
         listed
             .then(|| {
                 (
@@ -62,10 +61,10 @@ impl SocialPage for FriendsPage {
     }
 
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let Some(view) = view(world) else {
+        let Some(view) = society(world) else {
             return;
         };
-        hear(world);
+        ask(world);
         let content = world.resource::<Content>().clone();
         let words = messages::of(&content);
         let room = ui.available_rect_before_wrap();
@@ -89,83 +88,6 @@ impl SocialPage for FriendsPage {
     }
 }
 
-/// What the Friends page shows, for a driver of the client.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
-pub struct ShownFriends {
-    pub friends: Vec<ShownFriend>,
-    /// Who asks the player to be their friend.
-    pub asking: Vec<String>,
-    /// Who the player asked and waits for.
-    pub asked: Vec<String>,
-    pub blocked: Vec<String>,
-    /// What the search found for what is typed, once the server has answered.
-    pub found: Option<Vec<FoundCharacter>>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownFriend {
-    pub name: String,
-    /// The area they play in, while they do.
-    pub online_in: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct FoundCharacter {
-    pub name: String,
-    pub standing: CharacterStanding,
-}
-
-/// What a player found by name is to the player who searched.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum CharacterStanding {
-    You,
-    Friend,
-    /// They have a request for friendship from the player, waiting.
-    Asked,
-    /// They ask the player to be their friend.
-    Asking,
-    Blocked,
-    Stranger,
-}
-
-pub fn shown(world: &World) -> ShownFriends {
-    let Some(view) = view(world) else {
-        return ShownFriends::default();
-    };
-    let content = world.resource::<Content>();
-    let names =
-        |cards: Vec<&RequestCard>| cards.iter().map(|card| card.other.name.clone()).collect();
-    let finding = world.resource::<Finding>();
-    ShownFriends {
-        friends: view
-            .friends
-            .iter()
-            .map(|friend| ShownFriend {
-                name: friend.character.name.clone(),
-                online_in: friend.online_in.map(|area| area.get(content).name.clone()),
-            })
-            .collect(),
-        asking: names(asked_of_me(&view).collect()),
-        asked: names(asked_by_me(&view).collect()),
-        blocked: view
-            .blocked
-            .iter()
-            .map(|player| player.name.clone())
-            .collect(),
-        found: finding.answer().map(|found| {
-            found
-                .characters
-                .iter()
-                .map(|player| FoundCharacter {
-                    name: player.name.clone(),
-                    standing: standing(&view, player).0,
-                })
-                .collect()
-        }),
-    }
-}
-
 pub(crate) fn plugin(app: &mut App) {
     app.init_resource::<Finding>()
         .add_systems(OnExit(ClientScreen::Area), forget);
@@ -178,17 +100,17 @@ struct Finding {
     /// When what is typed last changed, on the interface's clock.
     typed_at: f64,
     asked: Option<String>,
-    found: Option<CharactersFound>,
     chosen: Option<AccountNumber>,
 }
 
-impl Finding {
-    /// What the server found for what is typed now.
-    fn answer(&self) -> Option<&CharactersFound> {
-        self.found
-            .as_ref()
-            .filter(|found| found.starts == self.typed)
-    }
+/// What the server found for what is typed now.
+fn answer(world: &World) -> Option<&CharactersFound> {
+    let typed = &world.resource::<Finding>().typed;
+    world
+        .resource::<FoundCharacters>()
+        .0
+        .as_ref()
+        .filter(|found| found.starts == *typed)
 }
 
 fn forget(mut finding: ResMut<Finding>) {
@@ -228,61 +150,12 @@ impl Done {
     }
 }
 
-fn view(world: &World) -> Option<SocietyView> {
-    session::my_character(world)?.get::<SocietyView>().cloned()
-}
-
-fn friendship(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
-    view.requests
-        .iter()
-        .filter(|card| card.kind == SocialRequestKind::Friendship)
-}
-
-fn asked_of_me(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
-    friendship(view).filter(|card| !card.mine)
-}
-
-fn asked_by_me(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
-    friendship(view).filter(|card| card.mine)
-}
-
-/// What `player` is to the player `view` is of, and the request between the two that waits.
-fn standing(
-    view: &SocietyView,
-    player: &SocietyMember,
-) -> (CharacterStanding, Option<SocialRequestId>) {
-    let is = |other: &SocietyMember| other.account == player.account;
-    if view.account == player.account {
-        return (CharacterStanding::You, None);
-    }
-    if view.blocked.iter().any(is) {
-        return (CharacterStanding::Blocked, None);
-    }
-    if view.friends.iter().any(|friend| is(&friend.character)) {
-        return (CharacterStanding::Friend, None);
-    }
-    if let Some(card) = asked_of_me(view).find(|card| is(&card.other)) {
-        return (CharacterStanding::Asking, Some(card.id));
-    }
-    if asked_by_me(view).any(|card| is(&card.other)) {
-        return (CharacterStanding::Asked, None);
-    }
-    (CharacterStanding::Stranger, None)
-}
-
-/// Takes what the server found, and asks it for what is typed once the typing has paused.
-fn hear(world: &mut World) {
-    let found = world
-        .resource_mut::<Messages<CharactersFound>>()
-        .drain()
-        .last();
+/// Asks the server for what is typed once the typing has paused.
+fn ask(world: &mut World) {
     let now = world.resource::<Time<Real>>().elapsed_secs_f64();
     let content = world.resource::<Content>().clone();
     let mut finding = world.resource_mut::<Finding>();
     let searches = search::searches(&content, &finding.typed);
-    if let Some(found) = found {
-        finding.found = Some(found);
-    }
     let paused = now - finding.typed_at >= TYPING_PAUSE;
     let unasked = finding.asked.as_deref() != Some(finding.typed.as_str());
     if paused && unasked && searches {
@@ -320,7 +193,7 @@ fn find(
         caption(ui, &words.type_more(search::least_letters(&content)));
         return None;
     }
-    let Some(found) = finding.answer() else {
+    let Some(found) = answer(world) else {
         caption(ui, words.looking());
         ui.ctx().request_repaint();
         return None;

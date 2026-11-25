@@ -4,9 +4,10 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::{Deserialize, Serialize};
 
 use crate::terminal::{MAX_INPUT_LEN, command_line};
+use schemars::JsonSchema;
 
 /// What a connection has typed and not yet sent, asking how it may go on.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TerminalCompletionRequest {
     pub text: String,
 }

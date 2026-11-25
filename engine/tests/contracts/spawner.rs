@@ -7,7 +7,7 @@ use engine::core::units::{HourOfDay, Meters};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::spawner::{self, Spawned};
-use engine::systems::{actor, area, combat, region, sleep, stat};
+use engine::systems::{GameSettings, actor, area, combat, region, sleep, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -75,7 +75,7 @@ fn a_freed_entry_is_filled_again_after_the_spawners_wait_by_a_fresh_draw_from_it
 }
 
 #[test]
-fn a_spawner_turns_with_the_sky_from_one_share_to_the_next_out_of_sight_and_over_its_wait() {
+fn a_spawner_turns_with_the_sky_from_one_share_to_the_next_over_its_wait_but_for_a_fight() {
     const LONG: usize = 160;
     const SIGHT: f32 = 24.0;
     let during = |time: &str| json!({ "type": "during", "time": time });
@@ -103,11 +103,6 @@ fn a_spawner_turns_with_the_sky_from_one_share_to_the_next_out_of_sight_and_over
     let by_day = standing(&mut sim);
     assert_eq!(by_day.len(), COUNT);
     assert_eq!(kinds(&mut sim, &by_day), [false, true], "by day");
-    let watched: Vec<Entity> = by_day
-        .iter()
-        .copied()
-        .filter(|&boar| seen(&sim, boar))
-        .collect();
     let boar = sim.id::<NpcDef>("boar");
     let boars = |sim: &mut Sim| -> Vec<Entity> {
         standing(sim)
@@ -115,13 +110,15 @@ fn a_spawner_turns_with_the_sky_from_one_share_to_the_next_out_of_sight_and_over
             .filter(|&npc| sim.world.get::<Npc>(npc).is_some_and(|npc| npc.def == boar))
             .collect()
     };
+    let fighting = boars(&mut sim)[0];
+    combat::inflict(&mut sim.world, fighting, Some(player), 1.0);
 
     hold(&mut sim, MIDNIGHT);
     sim.run(0.5);
     assert_eq!(
         boars(&mut sim),
-        watched,
-        "at nightfall the boars nobody sees leave, and those in sight stay"
+        [fighting],
+        "at nightfall every boar leaves, seen or not, but the one in a fight"
     );
     assert!(
         standing(&mut sim).len() < COUNT,
@@ -134,27 +131,26 @@ fn a_spawner_turns_with_the_sky_from_one_share_to_the_next_out_of_sight_and_over
         COUNT,
         "the freed entries fill over the wait"
     );
-    for &npc in by_night.iter().filter(|npc| !watched.contains(npc)) {
+    for &npc in by_night.iter().filter(|&&npc| npc != fighting) {
         assert_eq!(kinds(&mut sim, &[npc]), [true, false], "by night");
         assert!(!seen(&sim, npc), "a wolf arrived in the player's sight");
     }
 
-    movement::relocate(&mut sim.world, player, Pos::new(LONG as f32 - 2.0, 2.0));
-    sim.run(WAIT + 1.0);
+    let fight_lasts = sim.world.resource::<GameSettings>().claims_last.0;
+    sim.run(fight_lasts + WAIT + 1.0);
     let wolves = standing(&mut sim);
     assert_eq!(wolves.len(), COUNT);
     assert_eq!(
         kinds(&mut sim, &wolves),
         [true, false],
-        "the boars leave once the player has gone"
+        "the boar leaves once its fight is over"
     );
 
     hold(&mut sim, DUSK);
-    sim.run(WAIT + 1.0);
-    let lingering = standing(&mut sim);
+    sim.run(0.5);
     assert!(
-        lingering.len() < COUNT && lingering.iter().all(|&wolf| seen(&sim, wolf)),
-        "under a sky none of its shares holds a spawner stands empty out of sight"
+        standing(&mut sim).is_empty(),
+        "under a sky none of its shares holds a spawner stands empty"
     );
     hold(&mut sim, NOON);
     sim.run(0.5);

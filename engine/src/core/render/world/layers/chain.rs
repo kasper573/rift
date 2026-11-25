@@ -3,22 +3,42 @@
 //! before it along the path the first went.
 
 use bevy_skeleton_modifiers::core::{
-    ChainIndices, SkeletonView, SpringBoneSettings, SpringBoneState, process_spring_bones,
+    BonePose, ChainIndices, SkeletonView, SpringBoneSettings, SpringBoneState, process_spring_bones,
 };
-use glam::{Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 
 use super::{Frame, Rig};
 
 /// How far the first joint moves before the path it went takes another point.
 const TRAIL_STEP: f32 = 0.02;
 
+/// The step a sprung chain's stiffness, drag and gravity are given for. A frame is gone through
+/// in a whole number of even steps near it, and the chain keeps the number it took while each
+/// step stays within half of this of it: frames come a hair longer or shorter than it at random,
+/// and a number that flipped with them would swing the chain a little differently frame by frame.
+const SPRING_STEP: f32 = 1.0 / 60.0;
+
 pub struct Chain {
     chain: ChainIndices,
     follow: bool,
+    /// What the spring loses of its swing, and how hard it is pulled back toward its pose and
+    /// down, over a step of `SPRING_STEP`.
+    drag: f32,
+    stiffness: f32,
+    gravity: f32,
     spring: Box<SpringBoneSettings>,
     state: Box<SpringBoneState>,
     /// Where the first joint has been in the world, the latest first.
     trail: Vec<Vec3>,
+    stood: Option<Stood>,
+}
+
+/// Where the body stood when the spring last moved on, and how it was stepped there.
+#[derive(Clone, Copy)]
+struct Stood {
+    at: Affine3A,
+    steps: u32,
+    step: f32,
 }
 
 impl Chain {
@@ -45,6 +65,9 @@ impl Chain {
         Some(Chain {
             chain,
             follow,
+            drag,
+            stiffness,
+            gravity,
             spring: Box::new(SpringBoneSettings {
                 stiffness,
                 drag,
@@ -53,18 +76,55 @@ impl Chain {
             }),
             state: Box::default(),
             trail: Vec::new(),
+            stood: None,
         })
     }
 
     pub(super) fn reset(&mut self) {
         self.state.reset();
         self.trail.clear();
+        self.stood = None;
     }
 
     pub(super) fn run(&mut self, frame: &mut Frame) {
         if self.follow {
             self.follow(frame);
         } else {
+            self.spring(frame);
+        }
+    }
+
+    /// Moves the spring on through the frame in even steps near `SPRING_STEP`, each
+    /// from the pose the body's clips gave the chain this frame, with the body carried through the
+    /// steps from where it stood to where it stands: a spring that met all of a frame's travel in
+    /// its first step would take it as a jolt.
+    fn spring(&mut self, frame: &mut Frame) {
+        let stands = frame.view.root_global;
+        let kept = self
+            .stood
+            .map(|stood| stood.steps)
+            .filter(|&steps| (frame.dt / steps as f32 - SPRING_STEP).abs() <= SPRING_STEP / 2.0);
+        let steps = kept.unwrap_or((frame.dt / SPRING_STEP).round().max(1.0) as u32);
+        let step = frame.dt / steps as f32;
+        let stood = self.stood.unwrap_or(Stood {
+            at: stands,
+            steps,
+            step,
+        });
+        let mut last = stood.step;
+        let joints = self.chain.as_slice().to_vec();
+        let posed: Vec<BonePose> = joints
+            .iter()
+            .map(|&joint| frame.view.local[joint as usize])
+            .collect();
+        for nth in 0..steps {
+            if nth > 0 {
+                for (&joint, pose) in joints.iter().zip(&posed) {
+                    frame.view.local[joint as usize] = *pose;
+                }
+            }
+            self.pace(step, last);
+            frame.view.root_global = carried(stood.at, stands, (nth + 1) as f32 / steps as f32);
             process_spring_bones(
                 &mut frame.view,
                 &self.chain,
@@ -72,9 +132,29 @@ impl Chain {
                 &mut self.state,
                 &[],
                 Vec3::ZERO,
-                frame.dt,
+                step,
             );
+            last = step;
         }
+        self.stood = Some(Stood {
+            at: stands,
+            steps,
+            step,
+        });
+    }
+
+    /// Gives the spring what it loses and is pulled by over a step of `step` after one of `last`.
+    /// The spring carries its tail on by as far as it went the step before, and pulls it by as
+    /// much each step however long the step is: so a step's carry is scaled to how much longer it
+    /// is than the last, and its pull to its length and the last's, as time-corrected Verlet
+    /// does. Otherwise, as frames take one step and then two, the swing would halve and double
+    /// and the chain jitter.
+    fn pace(&mut self, step: f32, last: f32) {
+        let kept = (1.0 - self.drag).powf(step / SPRING_STEP) * step / last;
+        let pulled = (step + last) / 2.0 / SPRING_STEP;
+        self.spring.drag = 1.0 - kept;
+        self.spring.stiffness = self.stiffness * pulled;
+        self.spring.gravity = self.gravity * pulled;
     }
 
     /// Lays every joint after the first on the path the first went, as far along it as the chain
@@ -126,6 +206,17 @@ impl Chain {
         }
         self.trail.truncate(keep);
     }
+}
+
+/// Where a body that stood at `from` and stands at `to` is `share` of the way between them.
+fn carried(from: Affine3A, to: Affine3A, share: f32) -> Affine3A {
+    let (from_scale, from_turn, from_at) = from.to_scale_rotation_translation();
+    let (to_scale, to_turn, to_at) = to.to_scale_rotation_translation();
+    Affine3A::from_scale_rotation_translation(
+        from_scale.lerp(to_scale, share),
+        from_turn.slerp(to_turn, share),
+        from_at.lerp(to_at, share),
+    )
 }
 
 /// The point `distance` along the path `trail` from its first point, if it is that long.

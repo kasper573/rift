@@ -13,6 +13,7 @@ pub mod scenery;
 pub mod script;
 pub mod shown_weather;
 pub mod sky;
+pub mod snap;
 pub mod spawnable;
 pub mod stages;
 pub mod terrain;
@@ -28,11 +29,12 @@ pub use fog::{FogBank, FogShafts, LaidFog};
 
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
-pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
+pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter, ScatterClearing};
 pub use scene::SceneNode;
 pub use script::{
     AREA_RUNNER, BLUEPRINT_RUNNER, OBJECT_RUNNER, PLACED_RUNNERS, Place, Started, Warps,
 };
+pub use snap::SnapSurfaces;
 pub use terrain::{SurfaceDef, SurfaceId, TerrainDef, TerrainId, Walk};
 pub use walk::{GroundHold, HeldMesh, Survey, SurveyAnswer, SurveyIsland, SurveyQuestion};
 pub use weather::{
@@ -119,6 +121,7 @@ pub fn content(registry: &mut ContentRegistry) {
         .hook(LoadStep::Across, vfx::check_sites)
         .hook(LoadStep::Across, terrain::check_pictures)
         .hook(LoadStep::Across, prop_material::check_all)
+        .hook(LoadStep::Across, prop::check_pictured)
         .hook(LoadStep::Across, lighting::check_area_shaders)
         .hook(LoadStep::Expand, flatten_all)
         .hook(LoadStep::Assemble, build_all)
@@ -932,13 +935,7 @@ pub fn warp_objects(content: &Content, area: AreaId) -> Vec<(u32, &ObjectDef)> {
     }
     let scripts = content.built::<Scripts>();
     objects(placed(content, area))
-        .filter(|(index, _)| {
-            scripts
-                .may_do(OwnerRow::of_object(area, *index))
-                .reaching::<Warps>()
-                .next()
-                .is_some()
-        })
+        .filter(|(index, _)| warp::doorway(scripts, OwnerRow::of_object(area, *index)).is_some())
         .collect()
 }
 
@@ -978,6 +975,11 @@ pub struct Area {
     /// The props the area's objects stand as: each one's look where it stands, keeping the ground
     /// under it as a placed prop does.
     pub stood: Vec<PropPlacement>,
+    /// The ground the area's scatters strew nothing on, which every expansion of them keeps
+    /// clear of.
+    pub scatter_clearing: ScatterClearing,
+    /// What its props that snap to the ground rest on.
+    pub snap_surfaces: SnapSurfaces,
     /// The modules that stand the area's props, placed and scattered, in the order `props`
     /// expands them: what any chunk's props are worked out from alone.
     pub prop_sources: Vec<AreaModule>,
@@ -1650,6 +1652,23 @@ fn build_area(
             _ => None,
         })
         .collect();
+    let stood: Vec<PropPlacement> = objects(modules)
+        .filter_map(|(_, object)| object.standing())
+        .collect();
+    let scatter_clearing = ScatterClearing::of(
+        content,
+        modules
+            .iter()
+            .filter_map(|placed| match &placed.module {
+                AreaModule::Prop(prop) => Some(prop),
+                _ => None,
+            })
+            .chain(&stood),
+        modules.iter().filter_map(|placed| match &placed.module {
+            AreaModule::Scatter(scatter) => Some(scatter),
+            _ => None,
+        }),
+    );
     let mut props: Vec<PropPlacement> = Vec::new();
     let mut prop_sources: Vec<AreaModule> = Vec::new();
     let mut prop_origins: Vec<String> = Vec::new();
@@ -1662,7 +1681,7 @@ fn build_area(
                 prop_origins.push(placed.origin.clone());
             }
             AreaModule::Scatter(scatter) => {
-                props.extend(scatter.expand());
+                props.extend(scatter.expand(&scatter_clearing));
                 prop_sources.push(placed.module.clone());
                 prop_origins.push(placed.origin.clone());
             }
@@ -1698,9 +1717,16 @@ fn build_area(
             );
         }
     }
-    let stood: Vec<PropPlacement> = objects(modules)
-        .filter_map(|(_, object)| object.standing())
-        .collect();
+    let snap_surfaces = SnapSurfaces::of(
+        content,
+        modules
+            .iter()
+            .filter_map(|placed| match &placed.module {
+                AreaModule::Prop(prop) => Some(prop),
+                _ => None,
+            })
+            .chain(&stood),
+    );
     let footprints = walk::footprints(content, props.iter().chain(&stood));
     let mut footprint_index = SpatialIndex::new(TILE_SIDE);
     footprint_index.refile(
@@ -1750,6 +1776,8 @@ fn build_area(
         footprint_index,
         props,
         stood,
+        scatter_clearing,
+        snap_surfaces,
         prop_sources,
         prop_origins,
         lights,

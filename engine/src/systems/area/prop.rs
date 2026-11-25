@@ -1,15 +1,18 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::gltf::{self, GltfInfo, Triangle};
+use crate::core::content::media::GltfInfos;
 use crate::core::content::{AssetKind, FileSize, ModelRef};
 use crate::core::content::{
-    Bundle, ContentFile, ContentId, FileHashes, FileShape, FileWriter, Loading, Nearby, PartSpec,
-    Parts, RowCheck, serial,
+    Bundle, Content, ContentFile, ContentId, FileHashes, FileShape, FileWriter, Loading, Nearby,
+    PartSpec, Parts, RowCheck, serial,
 };
+use crate::core::ground::TILE_SIDE;
 use crate::core::math::{Offset, Pos, Rect, Rng};
+use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, Meters};
 use crate::core::vfx::VfxId;
 use crate::systems::area::prop_material::PropMaterialId;
@@ -18,8 +21,8 @@ use crate::systems::water::ripples::RippleSource;
 pub type PropId = ContentId<PropDef>;
 
 pub const MAX_PROP_BYTES: FileSize = FileSize::kib(4 * 1024);
-pub const MAX_PROP_TRIANGLES: usize = 16_000;
-pub const MAX_PROP_MATERIALS: usize = 2;
+pub const MAX_PROP_TRIANGLES: usize = 96_000;
+pub const MAX_PROP_MATERIALS: usize = 8;
 /// How many vfx a prop or a body plays of its own accord at most.
 pub const MAX_EFFECTS: usize = 4;
 pub const MIN_POLYGON_POINTS: usize = 3;
@@ -62,6 +65,12 @@ pub struct PropDef {
     /// Whether it keeps the rain off the ground under it, as a roof or a dense canopy does.
     #[serde(default, skip_serializing_if = "serial::is_false")]
     pub shelter: bool,
+    /// Whether it rests on what lies under it, as a rug, a doormat or the shine marking a warp
+    /// does: lifted out of a floor placed where it stands onto the floor's top, let down onto the
+    /// floor or ground under it, and tilted along a slope, its shape as it is. Without it, its foot
+    /// stands at the height of the ground under its middle.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub snap_to_ground: bool,
     /// Keyed by the name of a material of the model.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub materials: BTreeMap<String, PropMaterialId>,
@@ -148,6 +157,7 @@ impl ContentFile for PropDef {
             fade: false,
             shadow: true,
             shelter: false,
+            snap_to_ground: false,
             materials: BTreeMap::new(),
             effects: Vec::new(),
             ripples: None,
@@ -415,10 +425,14 @@ impl Scatter {
         (self.region.area() * self.per_square_meter).ceil().max(0.0) as u32
     }
 
-    /// The props the scatter strews, the same for the same seed on every machine.
-    pub fn expand(&self) -> impl Iterator<Item = PropPlacement> + '_ {
+    /// The props the scatter strews, the same for the same seed on every machine, but for those
+    /// `clearing` leaves out: each is drawn all the same, so leaving one out moves no other.
+    pub fn expand<'a>(
+        &'a self,
+        clearing: &'a ScatterClearing,
+    ) -> impl Iterator<Item = PropPlacement> + 'a {
         let mut rng = Rng::new(self.seed);
-        (0..self.count()).filter_map(move |_| {
+        let drawn = (0..self.count()).filter_map(move |_| {
             let prop = *rng.choose(&self.props)?;
             let at = self.region.origin
                 + Offset::new(
@@ -434,7 +448,94 @@ impl Scatter {
                 scale,
                 sunk: Meters::default(),
             })
+        });
+        drawn.filter(|placed| clearing.keeps_clear(placed))
+    }
+}
+
+/// The ground an area's placed props and its objects stand on, which its scatters strew nothing
+/// on: a scattered prop is left out where it would stand, or its own footprint reach, within
+/// theirs.
+pub struct ScatterClearing {
+    taken: Vec<Vec<Pos<Meters>>>,
+    index: SpatialIndex,
+    strewn: HashMap<PropId, Footprint>,
+}
+
+impl Default for ScatterClearing {
+    fn default() -> ScatterClearing {
+        ScatterClearing {
+            taken: Vec::new(),
+            index: SpatialIndex::new(TILE_SIDE),
+            strewn: HashMap::new(),
+        }
+    }
+}
+
+impl ScatterClearing {
+    /// The ground `placed` takes, clear of what `scatters` strew.
+    pub fn of<'a>(
+        content: &Content,
+        placed: impl IntoIterator<Item = &'a PropPlacement>,
+        scatters: impl IntoIterator<Item = &'a Scatter>,
+    ) -> ScatterClearing {
+        let taken: Vec<Vec<Pos<Meters>>> = placed
+            .into_iter()
+            .flat_map(|placed| {
+                let def = placed.prop.get(content);
+                def.footprint.outlines(placed.at, placed.yaw, placed.scale)
+            })
+            .collect();
+        let mut index = SpatialIndex::new(TILE_SIDE);
+        index.refile(
+            taken
+                .iter()
+                .map(|outline| Rect::from_points(outline.iter().copied())),
+        );
+        let strewn = scatters
+            .into_iter()
+            .flat_map(|scatter| &scatter.props)
+            .map(|&prop| (prop, prop.get(content).footprint.clone()))
+            .collect();
+        ScatterClearing {
+            taken,
+            index,
+            strewn,
+        }
+    }
+
+    /// Whether a prop a scatter strews at `placed` keeps clear of the ground taken: neither where
+    /// it stands nor any of its own footprint lies within it.
+    pub fn keeps_clear(&self, placed: &PropPlacement) -> bool {
+        let own = self
+            .strewn
+            .get(&placed.prop)
+            .map_or_else(Vec::new, |footprint| {
+                footprint.outlines(placed.at, placed.yaw, placed.scale)
+            });
+        let reach = Rect::from_points(own.iter().flatten().copied().chain([placed.at]));
+        self.index.within(reach).all(|taken| {
+            let taken = &self.taken[taken];
+            !inside_polygon(taken, placed.at) && own.iter().all(|part| !outlines_meet(part, taken))
         })
+    }
+
+    /// Where the ground taken differs from `before`'s: each outline one holds and the other
+    /// doesn't, by the box around it.
+    pub fn changes_from<'a>(
+        &'a self,
+        before: &'a ScatterClearing,
+    ) -> impl Iterator<Item = Rect<Meters>> + 'a {
+        let gone = before
+            .taken
+            .iter()
+            .filter(|outline| !self.taken.contains(outline));
+        let come = self
+            .taken
+            .iter()
+            .filter(|outline| !before.taken.contains(outline));
+        gone.chain(come)
+            .map(|outline| Rect::from_points(outline.iter().copied()))
     }
 }
 
@@ -465,6 +566,49 @@ pub fn check_fitted(loading: &mut Loading) {
             );
             loading.row_errors(id, check);
         }
+    }
+}
+
+/// A material drawn in pictures of the game's lays them by its model's texture coordinates, its
+/// wear by the second set, and turns a relief by its tangents: a model that draws the material
+/// without them is reported at the prop.
+pub fn check_pictured(loading: &mut Loading) {
+    let content = loading.content();
+    let infos = content.built::<GltfInfos>();
+    for (id, def) in loading.rows::<PropDef>(&content) {
+        let Some(info) = infos.0.get(def.model.as_str()) else {
+            continue;
+        };
+        let mut check = RowCheck::default();
+        for (name, material) in &def.materials {
+            let material = material.get(&content);
+            let pictured = material.color.is_some() || material.normal.is_some();
+            if pictured && info.unmapped.contains(name) {
+                check.error(
+                    format!("/materials/{name}"),
+                    "nothing to lay a picture by",
+                    "a mesh drawn in the material without texture coordinates",
+                    "a model whose meshes of the material all carry texture coordinates",
+                );
+            }
+            if material.wear.is_some() && info.unworn.contains(name) {
+                check.error(
+                    format!("/materials/{name}"),
+                    "nothing to lay wear by",
+                    "a mesh drawn in the material without a second set of texture coordinates",
+                    "a model whose meshes of the material all carry a second set",
+                );
+            }
+            if material.normal.is_some() && info.untangented.contains(name) {
+                check.error(
+                    format!("/materials/{name}"),
+                    "nothing to turn a relief by",
+                    "a mesh drawn in the material without tangents",
+                    "a model whose meshes of the material all carry tangents",
+                );
+            }
+        }
+        loading.row_errors(id, check);
     }
 }
 
@@ -532,6 +676,20 @@ fn is_simple(points: &[Pos<Meters>]) -> bool {
         }
     }
     true
+}
+
+/// Whether two outlines share any ground: a corner of one lies within the other, or their edges
+/// cross.
+fn outlines_meet(a: &[Pos<Meters>], b: &[Pos<Meters>]) -> bool {
+    a.iter().any(|&corner| inside_polygon(b, corner))
+        || b.iter().any(|&corner| inside_polygon(a, corner))
+        || edges(a).any(|(p1, p2)| edges(b).any(|(q1, q2)| segments_cross(p1, p2, q1, q2)))
+}
+
+/// Each edge of a polygon, from each corner to the next round it.
+fn edges(points: &[Pos<Meters>]) -> impl Iterator<Item = (Pos<Meters>, Pos<Meters>)> + '_ {
+    let count = points.len();
+    (0..count).map(move |index| (points[index], points[(index + 1) % count]))
 }
 
 fn segments_cross(p1: Pos<Meters>, p2: Pos<Meters>, q1: Pos<Meters>, q2: Pos<Meters>) -> bool {

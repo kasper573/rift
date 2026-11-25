@@ -1,6 +1,7 @@
 //! The market window: Browse to search and buy, New listing to put items up for other items, and
 //! the player's own listings with their time left.
 
+use super::{ShownMarketStack, my_listings, shown_stacks, view};
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,7 +20,6 @@ use crate::core::content::Content;
 use crate::core::text::LineText;
 use crate::core::text::{self, TextLook};
 use crate::core::time::{self, UnixMillis};
-use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::hud::{self, Seat, Sizing, WindowKey};
 use crate::systems::input::map::{self, InputAction};
@@ -35,7 +35,6 @@ use crate::systems::messages;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::Placed;
-use crate::systems::society::SocietyView;
 use crate::systems::window::AnswerCount;
 
 pub(crate) fn plugin(app: &mut App) {
@@ -138,6 +137,28 @@ fn tell_created(world: &mut World) {
     );
 }
 
+/// What the market's window shows beside what the market holds, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownMarketWindow {
+    pub tab: MarketTab,
+    /// The item whose listings the player browses, none until one is chosen.
+    pub item: Option<ItemId>,
+    /// The goods of the new listing so far.
+    pub goods: Vec<ShownMarketStack>,
+    pub waiting: bool,
+}
+
+pub fn shown(world: &World) -> Option<ShownMarketWindow> {
+    let view = view(world)?;
+    let browse = world.resource::<Browse>();
+    Some(ShownMarketWindow {
+        tab: browse.tab,
+        item: browse.item,
+        goods: shown_stacks(&browse.goods.covered()),
+        waiting: browse.waiting_on == Some(view.answered),
+    })
+}
+
 /// Closes the market, if it is open: what stepping out does while it is.
 pub fn is_open(world: &World) -> bool {
     view(world).is_some()
@@ -151,45 +172,6 @@ pub fn close(world: &mut World) -> bool {
     true
 }
 
-/// The market as its window shows it, for a driver of the client.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownMarket {
-    pub tab: MarketTab,
-    /// The item whose listings the player browses, none until one is chosen.
-    pub item: Option<ItemId>,
-    /// The page of listings the latest search found, none before the first.
-    pub results: Option<Vec<ShownListing>>,
-    pub sort: Option<ListingSort>,
-    /// Every way the listings that match can be sorted.
-    pub sorts: Vec<SortBy>,
-    pub page: u32,
-    pub pages: u32,
-    /// How many listings match.
-    pub found: u32,
-    /// The listings the player has up.
-    pub mine: Vec<ShownListing>,
-    /// The goods of the new listing so far.
-    pub goods: Vec<ShownMarketStack>,
-    pub waiting: bool,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownListing {
-    pub id: ListingId,
-    pub goods: Vec<ShownMarketStack>,
-    pub price: Vec<ShownMarketStack>,
-    pub left: Seconds,
-    pub mine: bool,
-    /// Whether someone else bought it before the player's purchase settled.
-    pub gone: bool,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
-pub struct ShownMarketStack {
-    pub item: ItemId,
-    pub count: u32,
-}
-
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketTab {
@@ -197,43 +179,6 @@ pub enum MarketTab {
     Browse,
     List,
     Mine,
-}
-
-pub fn shown(world: &World) -> Option<ShownMarket> {
-    let view = view(world)?;
-    let now = time::server_now(world)?;
-    let browse = world.resource::<Browse>();
-    let row = |row: &ListingRow| ShownListing {
-        id: row.id,
-        goods: shown_stacks(&row.goods),
-        price: shown_stacks(&row.price),
-        left: row.ends.since(now),
-        mine: row.mine,
-        gone: view.gone.contains(&row.id),
-    };
-    Some(ShownMarket {
-        tab: browse.tab,
-        item: browse.item,
-        results: view
-            .results
-            .as_ref()
-            .map(|results| results.rows.iter().map(row).collect()),
-        page: view
-            .results
-            .as_ref()
-            .map_or(0, |results| results.query.page),
-        pages: view.results.as_ref().map_or(0, |results| results.pages),
-        found: view.results.as_ref().map_or(0, |results| results.found),
-        sort: view.results.as_ref().and_then(|results| results.query.sort),
-        sorts: view
-            .results
-            .as_ref()
-            .map(|results| results.sorts.clone())
-            .unwrap_or_default(),
-        mine: my_listings(world).iter().map(row).collect(),
-        goods: shown_stacks(&browse.goods.covered()),
-        waiting: browse.waiting_on == Some(view.answered),
-    })
 }
 
 const WIDTH: f32 = 860.0;
@@ -349,29 +294,8 @@ fn notice(world: &mut World) {
     }
 }
 
-fn view(world: &World) -> Option<&MarketView> {
-    session::my_character(world)?.get::<MarketView>()
-}
-
-fn my_listings(world: &World) -> Vec<ListingRow> {
-    session::my_character(world)
-        .and_then(|me| me.get::<SocietyView>())
-        .map(|view| view.listings.clone())
-        .unwrap_or_default()
-}
-
 fn listing(world: &World) -> bool {
     view(world).is_some() && world.resource::<Browse>().tab == MarketTab::List
-}
-
-fn shown_stacks(stacks: &[ItemStack]) -> Vec<ShownMarketStack> {
-    stacks
-        .iter()
-        .map(|stack| ShownMarketStack {
-            item: stack.item,
-            count: stack.count,
-        })
-        .collect()
 }
 
 /// Sends `ask` unless the market still owes an answer, so one press is one ask.

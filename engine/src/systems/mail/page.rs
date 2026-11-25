@@ -1,8 +1,7 @@
 //! The Mail page of the Social tab: the inbox, the letter chosen in it with what is
 //! attached, and the letter being written.
 
-use std::collections::HashMap;
-
+use super::inbox;
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,8 +10,8 @@ use ui::{controls, face, form, ink, sheet};
 
 use super::draft::{self, ShownDraft};
 use super::{
-    DeleteLetter, InboxRow, InboxSender, InboxView, LetterId, LetterText, MailMessages, OpenLetter,
-    TakeAttached, TakenStack,
+    DeleteLetter, InboxRow, InboxSender, InboxView, LetterId, LetterTexts, MailMessages,
+    OpenLetter, TakeAttached, TakenStack,
 };
 use crate::core::content::Content;
 use crate::core::time::LocalClock;
@@ -81,7 +80,6 @@ impl SocialPage for MailPage {
         let content = world.resource::<Content>().clone();
         let messages = &messages::of(&content).mail;
         let inbox = inbox(world).cloned().unwrap_or_default();
-        hear(world, &inbox);
         let room = ui.available_rect_before_wrap();
         let ([list_at], reading_at) = sheet::columns(ui, room, [LIST_WIDTH]);
         let mut done = None;
@@ -102,74 +100,20 @@ impl SocialPage for MailPage {
     }
 }
 
-/// What the Mail page shows, for a driver of the client.
+/// What the Mail page shows beside the inbox, for a driver of the client.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
-pub struct ShownLetters {
-    /// The inbox, the newest letter first.
-    pub inbox: Vec<ShownLetter>,
-    /// The letter chosen in it.
-    pub open: Option<ShownOpenLetter>,
+pub struct ShownMailPage {
+    /// The letter chosen in the inbox.
+    pub open: Option<LetterId>,
     /// The letter being written.
     pub draft: Option<ShownDraft>,
 }
 
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownLetter {
-    pub title: String,
-    pub from: ShownSender,
-    pub read: bool,
-    /// How many stacks are attached.
-    pub attached: u32,
-}
-
-/// Who wrote a letter: the system, or the character named `name`.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShownSender {
-    System,
-    Character { name: String },
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownOpenLetter {
-    pub title: String,
-    /// Its text, once the server has sent it.
-    pub text: Option<String>,
-    /// Each stack attached, as its count and its item's name.
-    pub attached: Vec<String>,
-}
-
-pub fn shown(world: &World) -> ShownLetters {
-    let Some(inbox) = inbox(world) else {
-        return ShownLetters::default();
-    };
-    let content = world.resource::<Content>();
-    let reading = world.resource::<Reading>();
-    ShownLetters {
-        inbox: inbox
-            .rows
-            .iter()
-            .map(|row| ShownLetter {
-                title: row.title.clone(),
-                from: match &row.from {
-                    InboxSender::System => ShownSender::System,
-                    InboxSender::Character(from) => ShownSender::Character {
-                        name: from.name.clone(),
-                    },
-                },
-                read: row.read,
-                attached: row.attached.len() as u32,
-            })
-            .collect(),
-        open: chosen(inbox, reading).map(|row| ShownOpenLetter {
-            title: row.title.clone(),
-            text: reading.texts.get(&row.id).cloned(),
-            attached: row
-                .attached
-                .iter()
-                .map(|stack| stack.describe(content))
-                .collect(),
-        }),
+pub fn shown(world: &World) -> ShownMailPage {
+    ShownMailPage {
+        open: inbox(world)
+            .and_then(|inbox| chosen(inbox, world.resource::<Reading>()))
+            .map(|row| row.id),
         draft: draft::shown(world),
     }
 }
@@ -181,11 +125,10 @@ pub(crate) fn plugin(app: &mut App) {
         .add_systems(OnExit(ClientScreen::Area), forget);
 }
 
-/// What the player reads: the letter chosen, and the texts the server has sent.
+/// The letter the player chose to read.
 #[derive(Resource, Default)]
 struct Reading {
     chosen: Option<LetterId>,
-    texts: HashMap<LetterId, String>,
 }
 
 fn forget(mut reading: ResMut<Reading>) {
@@ -220,30 +163,9 @@ impl Done {
     }
 }
 
-fn inbox(world: &World) -> Option<&InboxView> {
-    session::my_character(world)?.get::<InboxView>()
-}
-
 fn chosen<'a>(inbox: &'a InboxView, reading: &Reading) -> Option<&'a InboxRow> {
     let chosen = reading.chosen?;
     inbox.rows.iter().find(|row| row.id == chosen)
-}
-
-/// Takes the texts the server sent, and forgets those of letters that are gone.
-fn hear(world: &mut World, inbox: &InboxView) {
-    let sent: Vec<LetterText> = world
-        .resource_mut::<Messages<LetterText>>()
-        .drain()
-        .collect();
-    let mut reading = world.resource_mut::<Reading>();
-    for LetterText { id, text } in sent {
-        reading.texts.insert(id, text);
-    }
-    if inbox.whole {
-        reading
-            .texts
-            .retain(|id, _| inbox.rows.iter().any(|row| row.id == *id));
-    }
 }
 
 fn list(ui: &mut Ui, world: &mut World, words: &MailMessages, inbox: &InboxView) -> Option<Done> {
@@ -380,9 +302,9 @@ fn reading(
     let sent = LocalClock::of_this_machine().label(row.sent);
     caption(ui, &words.sent_line(written_by(words, row), sent));
     ui.add_space(GAP);
-    match world.resource::<Reading>().texts.get(&row.id) {
+    match world.resource::<LetterTexts>().of(row.id) {
         Some(text) => {
-            ui.add(egui::Label::new(face::body(text.as_str())).wrap());
+            ui.add(egui::Label::new(face::body(text)).wrap());
         }
         None => caption(ui, words.opening()),
     }

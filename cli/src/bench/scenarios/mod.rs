@@ -7,6 +7,7 @@ pub mod editor;
 
 use std::path::Path;
 
+use engine::core::content::id::Leaf;
 use engine::core::content::{Content, ContentId};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
@@ -48,11 +49,15 @@ impl ScenarioSlots {
         let mut slots = if path.exists() {
             let text = std::fs::read_to_string(path)
                 .map_err(|error| format!("{}: {error}", path.display()))?;
-            let (slots, _) = engine::core::content::with_content(
+            let (slots, scope) = engine::core::content::with_content(
                 engine::core::content::ContentScope::of(content),
                 || serde_json::from_str::<ScenarioSlots>(&text),
             );
-            slots.map_err(|error| format!("{}: {error}", path.display()))?
+            let slots = slots.map_err(|error| format!("{}: {error}", path.display()))?;
+            if let Some(problem) = scope.leaves().iter().find_map(Leaf::reported) {
+                return Err(format!("{}: {problem}", path.display()));
+            }
+            slots
         } else {
             ScenarioSlots::default()
         };

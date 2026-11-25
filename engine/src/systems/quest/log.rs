@@ -19,6 +19,7 @@ use crate::core::text::LineText;
 use crate::core::text::TextLook;
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
+use crate::systems::equipment::{Belongings, Equipment};
 use crate::systems::hud::menu::{MenuTab, MenuTabName, SubTabs};
 use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
@@ -157,6 +158,7 @@ struct Page {
     tab: LogTab,
     log: QuestLog,
     inventory: Inventory,
+    equipment: Equipment,
     now: UnixMillis,
     selected: Option<QuestId>,
 }
@@ -176,6 +178,10 @@ impl Page {
                 .cloned()
                 .unwrap_or_default(),
             inventory: Inventory::of(world, seen),
+            equipment: seen
+                .and_then(|seen| world.get::<Equipment>(seen))
+                .cloned()
+                .unwrap_or_default(),
             now: super::card::clock_now(),
             selected: world.resource::<Browse>().of(tab),
         }
@@ -213,6 +219,10 @@ impl Page {
 
     fn finished(&self, quest: QuestId) -> Option<&FinishedQuest> {
         self.log.finished(quest)
+    }
+
+    fn belongings(&self) -> Belongings<'_> {
+        Belongings::of(Some(&self.inventory), Some(&self.equipment))
     }
 }
 
@@ -357,7 +367,7 @@ fn status(content: &Content, page: &Page, quest: QuestId) -> (String, Tone) {
         if def.decision().is_some() {
             return (words.status_choice().to_owned(), Tone::Notice);
         }
-        if active.ready(content, &page.parties, Some(&page.inventory)) {
+        if active.ready(content, &page.parties, page.belongings()) {
             return (words.status_ready().to_owned(), Tone::Notice);
         }
         if active.deadline.is_some() {
@@ -370,7 +380,7 @@ fn status(content: &Content, page: &Page, quest: QuestId) -> (String, Tone) {
             return (words.status_daily().to_owned(), Tone::Plain);
         }
         let counted = def
-            .progress(content, &page.parties, active, Some(&page.inventory))
+            .progress(content, &page.parties, active, page.belongings())
             .into_iter()
             .find(|progress| progress.counted && !progress.done())
             .map(|progress| words.progress(progress.have, progress.need))
@@ -482,7 +492,7 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         &content,
         &page.parties,
         page.active(quest).unwrap_or(&fresh),
-        Some(&page.inventory),
+        page.belongings(),
     );
     let finished = page.finished(quest);
     for (index, mut progress) in progress.into_iter().enumerate() {

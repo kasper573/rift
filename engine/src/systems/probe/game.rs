@@ -1,6 +1,8 @@
 //! Questions about the game itself are answered at once from the client's content rather than on
 //! a frame, as a driver planning a walk asks hundreds of them in a row.
 
+use std::collections::BTreeSet;
+
 use bevy::ecs::entity::Entity;
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
@@ -11,8 +13,7 @@ use serde_json::Value;
 use crate::core::content::ContentId;
 use crate::core::content::media::GltfInfos;
 use crate::core::content::{Content, ContentScope, Fixture, with_content};
-use crate::core::geometry::Shape;
-use crate::core::ground::TILE_SIDE;
+use crate::core::ground::{TILE_SIDE, TileAt};
 use crate::core::math::{Pos, PosSchema, Rect, RectSchema, Size, SizeSchema};
 use crate::core::units::{Meters, Seconds};
 use crate::systems::GameSettings;
@@ -29,7 +30,7 @@ use crate::systems::mount::{self, MountDef, MountId, MountKind};
 use crate::systems::movement::Bodies;
 use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
-use crate::systems::skill::{SkillDef, SkillId};
+use crate::systems::skill::{SkillDef, SkillId, Targeting};
 use crate::systems::spawner::{SpawnSurface, Spawns};
 use crate::systems::water::WaterId;
 
@@ -46,12 +47,24 @@ pub enum ProbeFrameQuestion {
     /// The frames drawn after frame `since`, as far as they have settled. Answered with
     /// [`super::ProbeFrames`].
     Frames { since: u32 },
-    /// Where to point to take `of`, anyone or anything a snapshot told of by its id, in a frame
-    /// after the question: the ground a click at takes it rather than whatever stands in front
-    /// of it, else where it stands or lies. Answered with a position, or null once it is gone.
+    /// Where to rest the pointer to take `of`, anyone or anything a snapshot told of by its id, in
+    /// a frame after the question: the pixel of the window a click at takes it rather than
+    /// whatever stands in front of it, else the one over where it stands or lies, whatever the
+    /// interface draws over it. Answered with a window point, or null once it is gone or shows
+    /// nowhere in the window.
     Aim {
         #[schemars(with = "u64")]
         of: Entity,
+    },
+    /// Where each of `spots` shows in the window, in a frame after the question, to be clicked as
+    /// the game reads a click there now: on the ground, or on what lies open to the sky (over
+    /// water its surface) while a spot is aimed or a mount carries the player over it, whatever
+    /// the interface draws over it. Answered with a list in the same order, each a
+    /// [`super::ProbeShown`], or null where the spot lies out of the window or hidden from the
+    /// eye.
+    Show {
+        #[schemars(with = "Vec<PosSchema>")]
+        spots: Vec<Pos<Meters>>,
     },
 }
 
@@ -204,9 +217,8 @@ pub struct ProbeItem {
 pub struct ProbeSkill {
     pub skill: SkillId,
     pub name: String,
-    pub range: Option<Meters>,
-    /// The ground it strikes around where it lands.
-    pub area: Option<Shape>,
+    /// What it is aimed at, how far, and the shape it strikes.
+    pub target: Targeting,
 }
 
 /// A mount of the game: how it travels and so where it goes, how far off it its rider steps, and
@@ -397,21 +409,27 @@ impl From<InputBinding> for ProbeGesture {
     }
 }
 
-/// What the game answers to `question`, as the line the probe answers with.
-pub fn answer(content: &Content, question: &ProbeGameQuestion) -> String {
-    // The ground a question is answered on stays held until the whole answer is given, so a
-    // batch asking about the same ground over and over lays its meshes once.
-    let mut held = Vec::new();
-    let (answer, _) = with_content(ContentScope::of(content), || {
-        answer_in_scope(content, question, &mut held)
-    });
-    answer.to_string()
+/// What the game answers to the questions a driver asks one after another, each as the line the
+/// probe answers with. The ground an answer is given on stays held for the answers after it, as a
+/// driver planning a walk asks about the same ground over and over while its player crosses it.
+#[derive(Default)]
+pub struct GameAnswers {
+    held: HeldGround,
+}
+
+impl GameAnswers {
+    pub fn answer(&mut self, content: &Content, question: &ProbeGameQuestion) -> String {
+        let (answer, _) = with_content(ContentScope::of(content), || {
+            answer_in_scope(content, question, &mut self.held)
+        });
+        answer.to_string()
+    }
 }
 
 fn answer_in_scope(
     content: &Content,
     question: &ProbeGameQuestion,
-    held: &mut Vec<area::GroundHold>,
+    held: &mut HeldGround,
 ) -> Value {
     match question {
         ProbeGameQuestion::Game => json(&game(content)),
@@ -514,8 +532,7 @@ fn game(content: &Content) -> ProbeGame {
                 ProbeSkill {
                     skill,
                     name: def.name.clone(),
-                    range: def.range,
-                    area: def.area,
+                    target: def.target,
                 }
             })
             .collect(),
@@ -644,11 +661,11 @@ fn mesh(
     id: AreaId,
     riding: Option<MountId>,
     points: &[Pos<Meters>],
-    held: &mut Vec<area::GroundHold>,
+    held: &mut HeldGround,
 ) -> Option<area::HeldMesh> {
     let area = area::load(content, id);
     let around = Rect::from_points(points.iter().copied()).inflate(TILE_SIDE.0, TILE_SIDE.0);
-    held.push(area.hold(area.ground_size().tiles_within(around)));
+    held.cover(area, area.ground_size().tiles_within(around));
     match riding {
         Some(mount) => mount::mesh_in(content, id, mount.get(content).travels),
         None => Some(area.mesh()),
@@ -684,4 +701,28 @@ fn pictured(content: &Content, id: AreaId, at: Pos<Meters>) -> bool {
     area.terrains
         .get(usize::from(area.paint.at(at)))
         .is_some_and(|terrain| terrain.get(content).picture.is_some())
+}
+
+/// The ground answers were given on, one hold for each area, grown to cover all of it.
+#[derive(Default)]
+struct HeldGround(Vec<area::GroundHold>);
+
+impl HeldGround {
+    fn cover(&mut self, area: &area::Area, tiles: impl IntoIterator<Item = TileAt>) {
+        let previous = self
+            .0
+            .iter()
+            .position(|hold| hold.holds_on(area))
+            .map(|at| self.0.swap_remove(at));
+        let held = previous
+            .as_ref()
+            .map_or_else(BTreeSet::new, |hold| hold.tiles().clone());
+        let mut wanted = held.clone();
+        wanted.extend(tiles);
+        let hold = match previous {
+            Some(previous) if wanted == held => previous,
+            previous => area.hold_instead(previous, wanted),
+        };
+        self.0.push(hold);
+    }
 }

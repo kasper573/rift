@@ -117,8 +117,8 @@ pub fn awake_reach(content: &Content) -> Meters {
 fn acting_reach(content: &Content) -> Meters {
     let mut reach = content.built::<GameSettings>().sight;
     for (_, skill) in content.table::<SkillDef>().iter() {
-        let lands = skill.range.map_or(0.0, |range| range.0)
-            + skill.area.as_ref().map_or(0.0, |area| area.reach().0);
+        let lands = skill.target.range().flatten().map_or(0.0, |range| range.0)
+            + skill.target.shape().map_or(0.0, |shape| shape.reach().0);
         reach = Meters(reach.0.max(lands));
     }
     let scripts = content.built::<Scripts>();

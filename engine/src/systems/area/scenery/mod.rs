@@ -17,7 +17,7 @@ mod waters;
 
 pub use instances::impostor_of;
 pub use plan::{Eyes, Sight};
-pub use props::{extent_of, prop_transform};
+pub use props::{ShowsProp, compiled_looks, extent_of, prop_transform};
 
 use covers::Covers;
 use grass::Grass;
@@ -46,7 +46,7 @@ use super::rain::RainField;
 use super::shown_weather::{ShownWeather, ShownWeatherPlugin};
 use super::terrain::PieceShape;
 use super::{Area, AreaModule, Climate, LaidFog, Lighting, PointLightDef, Rainfall, Weather};
-use crate::core::content::{Content, ContentFile, FileHash, FileHashes};
+use crate::core::content::{Content, ContentFile, FileHash, FileHashes, ImageRef};
 use crate::core::ground::{
     GroundGrid, GroundValue, Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_SIDE,
     TileAt, TileVersion, WaterMap, WaterSurface,
@@ -127,7 +127,8 @@ impl Plugin for SceneryPlugin {
                     light_by_sky.run_if(resource_exists::<SkyNow>),
                 )
                     .chain(),
-            );
+            )
+            .add_systems(Update, props::show_props.run_if(resource_exists::<Content>));
     }
 }
 
@@ -221,7 +222,9 @@ pub fn spawn(
     }
     let grass = Grass::new(world, terrain, covers.grass());
     let planner = planner_of(area);
-    world.entity_mut(root).insert(PropArena);
+    world.entity_mut(root).insert(PropArena {
+        floor: area.heights.range().lowest,
+    });
     let streaming = Streaming {
         content: content.clone(),
         area: area.clone(),
@@ -373,6 +376,11 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
             .iter()
             .chain(&new[first..new_end])
             .filter_map(stretch_of)
+            .chain(
+                area.scatter_clearing
+                    .changes_from(&before.scatter_clearing)
+                    .map(|taken| taken.inflate(EDGE_REACH.0, EDGE_REACH.0)),
+            )
             .collect();
         streaming
             .instances
@@ -417,7 +425,7 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
 
 /// The files the scenery of an area is made from beyond the area itself, each with what it held
 /// when read: its terrains, their covers' shaders, its waters and their shaders, the props it
-/// stands and strews, and their models. Scenery stood from equal sources looks alike, so it need
+/// stands and strews, their models, and the pictures and shaders their materials are drawn with. Scenery stood from equal sources looks alike, so it need
 /// not stand again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sources(Vec<(String, FileHash)>);
@@ -453,7 +461,16 @@ impl Sources {
             files.insert(def.model.as_str());
             for material in def.materials.values() {
                 files.insert(material.path(content));
-                files.insert(material.get(content).shader.path(content));
+                let material = material.get(content);
+                files.extend(material.shader.map(|shader| shader.path(content)));
+                files.extend(material.color.as_ref().map(ImageRef::as_str));
+                files.extend(material.normal.as_ref().map(ImageRef::as_str));
+                files.extend(
+                    material
+                        .wear
+                        .iter()
+                        .flat_map(|wear| [wear.mask.as_str(), wear.mottle.as_str()]),
+                );
             }
         }
         let hashes = &content.built::<FileHashes>().0;
@@ -528,7 +545,10 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
         && rain
         && props_of(area).iter().all(|prop| {
             prop.get(content).materials.values().all(|material| {
-                vfx_render::compiled_shader(world, material.get(content).shader).is_some()
+                material
+                    .get(content)
+                    .shader
+                    .is_none_or(|shader| vfx_render::compiled_shader(world, shader).is_some())
             })
         })
 }
@@ -1187,8 +1207,14 @@ fn stream_acting(world: &mut World, streaming: &mut Streaming, plan: &Plan, root
         .collect();
     for index in near {
         let placed = &streaming.area.props[streaming.area.acting[index]];
-        let entity =
-            props::stand_acting(world, &streaming.content, &streaming.heights, placed, root);
+        let entity = props::stand_acting(
+            world,
+            &streaming.content,
+            &streaming.heights,
+            &streaming.area.snap_surfaces,
+            placed,
+            root,
+        );
         streaming.stood.acting.insert(index, entity);
     }
 }

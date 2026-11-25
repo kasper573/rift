@@ -75,7 +75,7 @@ pub fn crowd() -> Game {
         )
         .edit_settings(|settings| {
             settings["mail"] = json!({
-                "inbox": 50, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 6
+                "inbox": 50, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 6
             });
             settings["market"] = json!({
                 "default_currency": path("item", "gold"),

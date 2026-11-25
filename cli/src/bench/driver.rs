@@ -11,16 +11,16 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use engine::core::content::{Content, ContentId};
-use engine::core::math::{Pos, Rect, Size};
+use engine::core::math::{Pos, Size};
 use engine::core::render::transition::ScreenTransitionPhase;
 use engine::core::units::{Degrees, MeterPos, Meters, Radians, WindowPx};
-use engine::systems::area::Place;
+use engine::systems::area::{self, Place};
 use engine::systems::input::camera::DRAG_TURN;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
 use engine::systems::input::scope::InputScope;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::probe::{
-    ProbeFrameQuestion, ProbeFrames, ProbeInput, ProbeInputSeen, ProbeSnapshot, ProbeTerrain,
+    ProbeFrameQuestion, ProbeFrames, ProbeInput, ProbeInputSeen, ProbeShown, ProbeSnapshot,
     ProbeUiElement, ProbeView,
 };
 use engine::systems::staging::Staging;
@@ -39,7 +39,6 @@ pub struct Driver {
     cursor: Option<Pos<WindowPx>>,
     frame: u32,
     screen: Option<Size<WindowPx>>,
-    terrain: Option<(String, ProbeTerrain)>,
     measuring: Option<Measuring>,
     steps: File,
 }
@@ -76,12 +75,11 @@ impl Driver {
             cursor: None,
             frame: 0,
             screen: None,
-            terrain: None,
             measuring: None,
             steps,
         };
         let entered = hands::wait_for(&mut driver, "the player in the world", LONG, |snapshot| {
-            (snapshot.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle)
+            (snapshot.sight.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle)
                 .then_some(snapshot.frame)
         })?;
         driver.measuring = Some(Measuring::since(entered));
@@ -170,15 +168,15 @@ impl Driver {
     /// on whatever the scene does next.
     fn place(&mut self, place: Place) -> Result<(), Failure> {
         let before = self.snapshot()?;
-        let was = (before.area, before.me.map(|me| me.jumps));
+        let was = (before.sight.area, before.sight.me.map(|me| me.jumps));
         self.stage(&Staging::Place { place })?;
         hands::wait_for(
             self,
             "the player put at the staged place",
             LONG,
             move |snapshot| {
-                let me = snapshot.me.as_ref()?;
-                ((snapshot.area, Some(me.jumps)) != was && !me.locked).then_some(())
+                let me = snapshot.sight.me.as_ref()?;
+                ((snapshot.sight.area, Some(me.jumps)) != was && !me.locked).then_some(())
             },
         )?;
         self.wait(&Cond::Arrived(place))?;
@@ -209,13 +207,14 @@ impl Driver {
             return Ok(());
         }
         hands::wait_for(self, "the player to set off", BUDGET, |snapshot| {
-            let me = snapshot.me.as_ref()?;
+            let me = snapshot.sight.me.as_ref()?;
             (me.at.distance(from) > STILL_WITHIN).then_some(())
         })
     }
 
     fn me_at(&mut self) -> Result<Pos<Meters>, Failure> {
         self.snapshot()?
+            .sight
             .me
             .map(|me| me.at)
             .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))
@@ -331,11 +330,13 @@ impl Driver {
             Step::CrossWarp => {
                 let snapshot = self.snapshot()?;
                 let me = snapshot
+                    .sight
                     .me
                     .as_ref()
                     .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
                     .at;
                 let warp = snapshot
+                    .sight
                     .warps
                     .iter()
                     .min_by(|a, b| a.at.distance(me).0.total_cmp(&b.at.distance(me).0))
@@ -344,8 +345,8 @@ impl Driver {
                 self.stage(&Staging::Walk { to: warp.at })?;
                 self.arriving();
                 hands::wait_for(self, "the warp to lead on", LONG, move |snapshot| {
-                    (snapshot.area == Some(warp.to)
-                        && snapshot.me.is_some()
+                    (snapshot.sight.area == Some(warp.to)
+                        && snapshot.sight.me.is_some()
                         && snapshot.transition == ScreenTransitionPhase::Idle)
                         .then_some(())
                 })?;
@@ -449,8 +450,8 @@ impl Driver {
             Cond::Arrived(place) => {
                 let place = *place;
                 hands::wait_for(self, "the arrival", LONG, move |snapshot| {
-                    (snapshot.area == Some(place.area)
-                        && snapshot.me.is_some()
+                    (snapshot.sight.area == Some(place.area)
+                        && snapshot.sight.me.is_some()
                         && snapshot.transition == ScreenTransitionPhase::Idle)
                         .then_some(())
                 })?;
@@ -475,7 +476,7 @@ impl Driver {
                 let mut last: Option<(Pos<Meters>, Instant)> = None;
                 let mut rested_at: Option<u32> = None;
                 hands::wait_for(self, "the player to come to rest", LONG, move |snapshot| {
-                    let me = snapshot.me.as_ref()?;
+                    let me = snapshot.sight.me.as_ref()?;
                     if me.resting {
                         let since = *rested_at.get_or_insert(snapshot.frame);
                         return (snapshot.frame >= since + REST_FRAMES).then_some(());
@@ -491,7 +492,7 @@ impl Driver {
                         }
                     }
                 })?;
-                let me = self.snapshot()?.me;
+                let me = self.snapshot()?.sight.me;
                 if me.is_some_and(|me| !me.resting) {
                     return Err(Failure::Harness(
                         "the player stopped moving without coming to rest".to_owned(),
@@ -541,23 +542,10 @@ impl Driver {
     pub fn snapshot(&mut self) -> Result<ProbeSnapshot, Failure> {
         self.read_frames(false)?;
         let answer = self.play.ask(&ProbeFrameQuestion::Snapshot);
-        let mut snapshot: ProbeSnapshot = match answer {
+        let snapshot: ProbeSnapshot = match answer {
             Ok(snapshot) => snapshot,
             Err(problem) => return Err(self.died_or(problem)),
         };
-        match (&snapshot.terrain, &self.terrain) {
-            (Some(terrain), _) => {
-                self.terrain = snapshot
-                    .area
-                    .map(|area| (area.path(self.play.content()).to_owned(), terrain.clone()));
-            }
-            (None, Some((area, terrain)))
-                if snapshot.area.map(|now| now.path(self.play.content())) == Some(area) =>
-            {
-                snapshot.terrain = Some(terrain.clone());
-            }
-            _ => {}
-        }
         self.seen = snapshot.input.seen;
         self.cursor = snapshot.input.cursor;
         self.frame = snapshot.frame;
@@ -797,13 +785,25 @@ impl Driver {
     fn open_ground(&mut self) -> Result<Pos<WindowPx>, Failure> {
         let snapshot = self.snapshot()?;
         let me = snapshot
+            .sight
             .me
             .as_ref()
             .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
             .at;
-        OPEN_GROUND_OFFSETS
+        let spots = OPEN_GROUND_OFFSETS
             .iter()
-            .find_map(|&(dx, dy)| clickable_point(&snapshot, Pos::new(me.x + dx, me.y + dy)))
+            .map(|&(dx, dy)| Pos::new(me.x + dx, me.y + dy))
+            .collect();
+        let shown: Vec<Option<ProbeShown>> =
+            match self.play.ask(&ProbeFrameQuestion::Show { spots }) {
+                Ok(shown) => shown,
+                Err(problem) => return Err(self.died_or(problem)),
+            };
+        shown
+            .into_iter()
+            .flatten()
+            .map(|shown| shown.at)
+            .find(|&at| uncovered(&snapshot, at))
             .ok_or_else(|| Failure::Harness("no open ground shows near the player".to_owned()))
     }
 
@@ -812,6 +812,7 @@ impl Driver {
     fn ahead_of(&mut self, to: Pos<Meters>) -> Result<f32, Failure> {
         let snapshot = self.snapshot()?;
         let me = snapshot
+            .sight
             .me
             .as_ref()
             .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
@@ -820,12 +821,12 @@ impl Driver {
             .view
             .as_ref()
             .ok_or_else(|| Failure::Harness("no view to face with".to_owned()))?;
-        let height = |at| {
-            snapshot
-                .terrain
-                .as_ref()
-                .map_or(Meters(0.0), |terrain| terrain.height_at(at))
-        };
+        let area = snapshot
+            .sight
+            .area
+            .ok_or_else(|| Failure::Harness("the player is in no area".to_owned()))?;
+        let heights = &area::load(self.play.content(), area).heights;
+        let height = |at| heights.height_at(at);
         let from = view.window_point(me, height(me)).ok_or_else(|| {
             Failure::Harness("the player is out of the camera's sight".to_owned())
         })?;
@@ -1014,18 +1015,9 @@ fn nudged(at: Pos<WindowPx>, by: Nudge) -> Pos<WindowPx> {
     Pos::new(at.x + by.dx.0, at.y + by.dy.0)
 }
 
-/// Where the ground at `at` shows in the window, when it does and nothing of the interface
-/// covers it.
-pub fn clickable_point(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> Option<Pos<WindowPx>> {
-    let view: &ProbeView = snapshot.view.as_ref()?;
-    let height = snapshot
-        .terrain
-        .as_ref()
-        .map_or(Meters(0.0), |terrain: &ProbeTerrain| terrain.height_at(at));
-    let point = view.window_point(at, height)?.round();
-    let window = Rect::from_size(snapshot.screen?);
-    let covered = snapshot.covered.iter().any(|cover| cover.contains(point));
-    (window.contains(point) && !covered).then_some(point)
+/// Whether nothing of the interface covers `at`.
+fn uncovered(snapshot: &ProbeSnapshot, at: Pos<WindowPx>) -> bool {
+    !snapshot.covered.iter().any(|cover| cover.contains(at))
 }
 
 fn shown_field(snapshot: &ProbeSnapshot) -> Option<ProbeUiElement> {

@@ -50,7 +50,7 @@ use engine::core::render::{CameraFocus, CameraRig, Look};
 use engine::core::units::{DayHours, Degrees, HourOfDay, Meters, Radians, Seconds};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::GameSettings;
-use engine::systems::actor::layering::{self, Layering};
+use engine::systems::actor::layering::{self, HandHold, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::skeleton::Clip;
 use engine::systems::actor::stance::{self, HandIndex, StanceId};
@@ -59,7 +59,7 @@ use engine::systems::area::rain::{RainField, Shelter};
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::sky::{self, Sky};
 use engine::systems::area::{self, Area, AreaDef, AreaId, Kept, Pictured, Weather, rain};
-use engine::systems::item::{ItemDef, PropHold, Wear};
+use engine::systems::item::{ItemDef, PropHold, Steady, Wear};
 use serde::{Deserialize, Serialize};
 
 /// How far around the target the scenery stands, in times the eye's distance from it: as far as a
@@ -399,6 +399,7 @@ struct Prop {
     transform: Transform,
     plumb: Option<Plumb>,
     hold: PropHold,
+    steady: Option<Steady>,
 }
 
 #[derive(Resource, Default)]
@@ -432,68 +433,61 @@ pub fn area(folder: &Path, shot: &Path, out: &Path, profile: Option<&Path>) {
         .map_or_else(VideoPreferences::default, VideoChoice::preferences);
     let seed = shot.seed;
     let mut shot = Some(shot);
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    ..default()
-                })
-                .set(AssetPlugin {
-                    file_path: folder.display().to_string(),
-                    ..default()
-                })
-                .disable::<bevy::winit::WinitPlugin>(),
-        )
-        .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
-            FRAME_STEP,
-        )))
-        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
-            FRAME_STEP,
-        )))
-        .insert_resource(Rng::new(seed))
-        .insert_resource(Handoff::NextFrame)
-        .insert_resource(profile)
-        .add_plugins((
-            WorldScenePlugin,
-            VfxMaterialsPlugin,
-            SceneryPlugin,
-            FrameSamplingPlugin,
-        ))
-        .insert_resource(content.built::<GameSettings>().look)
-        .insert_resource(content)
-        .insert_resource(video)
-        .init_resource::<Read>()
-        .init_resource::<RainField>()
-        .init_resource::<Shelter>()
-        .init_resource::<Listener>()
-        .add_observer(|read: On<ReadbackComplete>, mut taken: ResMut<Read>| {
-            taken.0.push((read.entity, read.data.clone()));
-        })
-        .add_systems(Startup, move |world: &mut World| {
-            world.resource_mut::<Time<Virtual>>().pause();
-            let shot = shot.take().expect("startup runs once");
-            let mut image = Image::new_target_texture(
-                shot.width,
-                shot.height,
-                TextureFormat::Rgba8UnormSrgb,
-                None,
-            );
-            image.sampler = ImageSampler::linear();
-            image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
-            let image = world.resource_mut::<Assets<Image>>().add(image);
-            world.insert_resource(Taking {
-                shot,
-                out: out.clone(),
-                image,
-                stage: Stage::Empty,
-                stood: None,
-                frame: 0,
-            });
-        })
-        .add_systems(Update, step)
-        .run();
+    let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, &folder);
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                ..default()
+            })
+            .disable::<bevy::winit::WinitPlugin>(),
+    )
+    .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
+        FRAME_STEP,
+    )))
+    .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+        FRAME_STEP,
+    )))
+    .insert_resource(Rng::new(seed))
+    .insert_resource(Handoff::NextFrame)
+    .insert_resource(profile)
+    .add_plugins((
+        WorldScenePlugin,
+        VfxMaterialsPlugin,
+        SceneryPlugin,
+        FrameSamplingPlugin,
+    ))
+    .insert_resource(content.built::<GameSettings>().look)
+    .insert_resource(content)
+    .insert_resource(video)
+    .init_resource::<Read>()
+    .init_resource::<RainField>()
+    .init_resource::<Shelter>()
+    .init_resource::<Listener>()
+    .add_observer(|read: On<ReadbackComplete>, mut taken: ResMut<Read>| {
+        taken.0.push((read.entity, read.data.clone()));
+    })
+    .add_systems(Startup, move |world: &mut World| {
+        world.resource_mut::<Time<Virtual>>().pause();
+        let shot = shot.take().expect("startup runs once");
+        let mut image =
+            Image::new_target_texture(shot.width, shot.height, TextureFormat::Rgba8UnormSrgb, None);
+        image.sampler = ImageSampler::linear();
+        image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+        let image = world.resource_mut::<Assets<Image>>().add(image);
+        world.insert_resource(Taking {
+            shot,
+            out: out.clone(),
+            image,
+            stage: Stage::Empty,
+            stood: None,
+            frame: 0,
+        });
+    })
+    .add_systems(Update, step)
+    .run();
 }
 
 /// Draws `shot` twice, each in a process of its own, and tells how far the two pictures differ:
@@ -980,6 +974,7 @@ fn stand(world: &mut World, content: &Content, ground: &Heightfield, standing: &
                 transform: render::held_at(model, at, grip),
                 plumb: render::plumb_from(model, at, grip),
                 hold: grip.hold,
+                steady: grip.steady,
             })
         })
         .collect();
@@ -1041,10 +1036,10 @@ fn hang(world: &mut World, model: &ActorModel, standing: &Body) -> bool {
 /// Drives each body's layers as the game drives an idle body holding its props.
 fn drive(world: &mut World, bodies: &[Body]) {
     for standing in bodies {
-        let holding: Vec<(HandIndex, PropHold)> = standing
+        let holding: Vec<HandHold> = standing
             .props
             .iter()
-            .map(|prop| (prop.hand, prop.hold))
+            .map(|prop| (prop.hand, prop.hold, prop.steady))
             .collect();
         if let Ok((mut layered, layering)) = world
             .query::<(&mut Layered, &Layering)>()
@@ -1054,6 +1049,7 @@ fn drive(world: &mut World, bodies: &[Body]) {
                 &mut layered,
                 layering,
                 Action::Idle,
+                Pose::Idle,
                 standing.stance,
                 &holding,
                 false,

@@ -2,7 +2,10 @@ use bevy::animation::AnimationPlugin;
 use bevy::anti_alias::smaa::Smaa;
 use bevy::gltf::GltfPlugin;
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::light::{CascadeShadowConfig, VolumetricFog};
+use bevy::light::cascade::build_directional_light_cascades;
+use bevy::light::{
+    CascadeShadowConfig, Cascades, DirectionalLightShadowMap, SimulationLightSystems, VolumetricFog,
+};
 use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
@@ -249,6 +252,72 @@ fn the_suns_shadows_reach_as_far_as_its_camera_sees_the_ground() {
     );
 }
 
+/// The shadows follow the sun exactly as the day turns it, and a turn of a frame's worth moves the
+/// texels of its nearest shadows by less than a quarter of a texel where the player stands,
+/// however far from the world's origin that is: a shadow's edge neither jumps nor flickers.
+#[test]
+fn the_suns_shadows_follow_it_as_the_day_turns_it_and_their_texels_hold_their_place() {
+    for (elevation, azimuth) in [(52.0, 215.0), (52.01, 215.01), (12.3, 290.7)] {
+        let behind = lights::sun_transform(Degrees(elevation), Degrees(azimuth), Vec2::ZERO)
+            .forward()
+            .angle_between(-lights::toward(Degrees(elevation), Degrees(azimuth)))
+            .to_degrees();
+        assert!(
+            behind < 1e-3,
+            "the shadows follow a sun {elevation}° up at {azimuth}° to within {behind}°"
+        );
+    }
+
+    let over = Vec2::new(1380.0, 7024.0);
+    let ground = Vec3::new(over.x, 0.0, over.y);
+    let mut app = client();
+    let world = app.world_mut();
+    let eye = world
+        .spawn((
+            Camera3d::default(),
+            Transform::from_translation(ground + Vec3::new(0.0, EYE_HEIGHT, 12.0))
+                .looking_at(ground, Vec3::Y),
+        ))
+        .id();
+    let sun = world
+        .spawn(lights::sun(
+            Color::WHITE,
+            1.0,
+            Degrees(52.0),
+            Degrees(215.0),
+        ))
+        .id();
+    let texel_at = |app: &mut App, turned: f32| {
+        *app.world_mut().get_mut::<Transform>(sun).expect("the sun") =
+            lights::sun_transform(Degrees(52.0 + turned), Degrees(215.0 + turned), over);
+        app.update();
+        let cascades = app
+            .world()
+            .get::<Cascades>(sun)
+            .expect("the sun's cascades");
+        let nearest = &cascades.cascades[&eye][0];
+        let at = nearest
+            .world_from_cascade
+            .as_dmat4()
+            .inverse()
+            .transform_point3(ground.as_dvec3());
+        (at.truncate() / f64::from(nearest.texel_size)).as_vec2()
+    };
+    texel_at(&mut app, 0.0);
+    let mut was = texel_at(&mut app, 0.0);
+    // A day of twenty minutes turns the sun about a hundredth of a degree from frame to frame.
+    for frame in 1..=20 {
+        let now = texel_at(&mut app, frame as f32 * 0.01);
+        let moved = now - was;
+        let drift = moved - moved.round();
+        assert!(
+            drift.length() < 0.25,
+            "the ground's texel drifts {drift:?} of a texel {frame} frames on"
+        );
+        was = now;
+    }
+}
+
 /// How high the eye stands over the ground the shadows fall on.
 const EYE_HEIGHT: f32 = 10.0;
 /// How much farther than a camera sees a reach may lie: it moves in steps, four to a doubling.
@@ -292,7 +361,15 @@ fn client() -> App {
         AnimationPlugin,
         GltfPlugin::default(),
         bevy::mesh::MeshPlugin,
+        TransformPlugin,
     ))
+    .init_resource::<DirectionalLightShadowMap>()
+    .add_systems(
+        PostUpdate,
+        build_directional_light_cascades
+            .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
+            .after(TransformSystems::Propagate),
+    )
     .init_asset::<Shader>()
     .init_asset::<Image>()
     .init_asset::<StandardMaterial>()

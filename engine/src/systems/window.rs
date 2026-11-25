@@ -2,11 +2,14 @@
 //! count that tells an answer from silence, and the rule that keeps the window open.
 
 use bevy_ecs::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The turn of a window a request answers, so a second press or a late packet answers a turn that
 /// is already over.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord,
+)]
 pub struct WindowStep(pub u32);
 
 /// Deals every window's turns.

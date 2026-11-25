@@ -90,12 +90,10 @@ fn held(app: &App) -> Held {
 fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
     let (content, area) = picture(game, folder);
     let mut app = App::new();
+    engine::core::assets::serve_folder(&mut app, folder);
     app.add_plugins((
         MinimalPlugins,
-        AssetPlugin {
-            file_path: folder.display().to_string(),
-            ..Default::default()
-        },
+        AssetPlugin::default(),
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),
@@ -276,8 +274,9 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
 
 /// A scenery takes in its area as an edit leaves it in place of standing anew: a prop moved
 /// across the field, taken away, or of a kind the area stood none of stands where it now does or
-/// goes, while every other prop and all that grows on the ground keep standing as they stood. An area that differs in what only
-/// standing anew takes in, lit otherwise, is refused and changes nothing.
+/// goes, while every other prop and all that grows on the ground keep standing as they stood; a
+/// scatter under an object put down stands without what the object's ground now clears. An area
+/// that differs in what only standing anew takes in, lit otherwise, is refused and changes nothing.
 #[test]
 fn a_scenery_takes_in_its_area_edited_standing_anew_only_what_the_edit_changed() {
     let tufts = |at: &[f32]| {
@@ -342,6 +341,42 @@ fn a_scenery_takes_in_its_area_edited_standing_anew_only_what_the_edit_changed()
         "an area lit otherwise stands only anew"
     );
     assert_eq!(scenery::arena_props(app.world(), stood), 4);
+
+    let strewn = |shed: bool| {
+        let mut scene = vec![json!({
+            "type": "scatter",
+            "props": [path("prop", "tuft")],
+            "region": { "x": 56.0, "y": -0.5, "w": 16.0, "h": 16.0 },
+            "per_square_meter": 0.5,
+            "seed": 3,
+        })];
+        if shed {
+            scene.push(json!({
+                "type": "object",
+                "shape": { "type": "point", "x": 64.0, "y": 8.0 },
+                "look": path("prop", "shed"),
+            }));
+        }
+        field(json!(scene)).prop("shed", json!({ "type": "box", "width": 8.0, "depth": 8.0 }))
+    };
+    let open_folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, open) = client(strewn(false), open_folder.path());
+    let stood = stand(&mut app, &open);
+    let shed_folder = tempfile::tempdir().expect("a scratch folder");
+    let (content, shed) = picture(strewn(true), shed_folder.path());
+    assert!(
+        shed.props.len() < open.props.len(),
+        "the shed stands where the tufts are strewn"
+    );
+    assert!(scenery::restand(app.world_mut(), stood, &content, &shed));
+    settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    });
+    assert_eq!(
+        scenery::arena_props(app.world(), stood) as usize,
+        shed.props.len(),
+        "an object put down over a scatter clears the tufts from under it"
+    );
 }
 
 /// The field of `game` written to `folder`, as its content pictures it.

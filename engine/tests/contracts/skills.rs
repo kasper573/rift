@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::units::Meters;
+use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::area::vfx;
@@ -284,28 +284,60 @@ fn clicking_another_player_does_nothing_hostile() {
 }
 
 #[test]
-fn an_area_skill_walks_into_range_lands_at_the_point_and_cools_down() {
+fn an_area_skill_lands_where_its_targeting_lays_it_and_cools_down() {
+    // A melee area is cast where its caster stands, however far off the click: only the way
+    // to it counts.
     let (mut sim, player) = yard();
     request(&mut sim, learn(&[("cleave", 1)]));
-    let dummy = dummy(&mut sim, player, Offset::new(4.0, 0.0));
-    let full = stat::effective(&sim.world, dummy, StatKind::Health);
-    let at = position(&sim.world, dummy).expect("position");
+    let near = dummy(&mut sim, player, Offset::new(1.2, 0.0));
+    let far = dummy(&mut sim, player, Offset::new(4.0, 0.0));
+    let full = stat::effective(&sim.world, near, StatKind::Health);
+    let stood = position(&sim.world, player).expect("the player");
     let cleave = sim.id::<SkillDef>("cleave");
 
-    cast(&mut sim, cleave, CastAim::Point(at));
-    assert!(sim.run_until(10.0, |world| {
-        stat::effective(world, dummy, StatKind::Health) < full
+    cast(
+        &mut sim,
+        cleave,
+        CastAim::Point(stood + Offset::new(9.0, 0.0)),
+    );
+    assert!(sim.run_until(2.0, |world| {
+        stat::effective(world, near, StatKind::Health) < full
     }));
-    let struck = stat::effective(&sim.world, dummy, StatKind::Health);
+    let struck = stat::effective(&sim.world, near, StatKind::Health);
+    assert_eq!(stat::effective(&sim.world, far, StatKind::Health), full);
+    assert_eq!(position(&sim.world, player), Some(stood));
 
-    cast(&mut sim, cleave, CastAim::Point(at));
+    cast(
+        &mut sim,
+        cleave,
+        CastAim::Point(stood + Offset::new(9.0, 0.0)),
+    );
     sim.run(0.5);
     assert!(
         sim.errors(1)
             .iter()
             .any(|text| text.contains("cooling down"))
     );
-    assert_eq!(stat::effective(&sim.world, dummy, StatKind::Health), struck);
+    assert_eq!(stat::effective(&sim.world, near, StatKind::Health), struck);
+
+    // A ranged area walks its caster into range, lies centred on the point, and lands on the
+    // nearest the point first.
+    let (mut sim, player) = yard();
+    class::grant_xp(&mut sim.world, player, 30);
+    request(&mut sim, learn(&[("sweep", 1)]));
+    let point = position(&sim.world, player).expect("the player") + Offset::new(7.0, 0.0);
+    let behind = dummy(&mut sim, player, Offset::new(6.2, 0.0));
+    let beyond = dummy(&mut sim, player, Offset::new(7.9, 0.0));
+    let full = stat::effective(&sim.world, behind, StatKind::Health);
+    let sweep = sim.id::<SkillDef>("sweep");
+
+    cast(&mut sim, sweep, CastAim::Point(point));
+    assert!(sim.run_until(10.0, |world| {
+        stat::effective(world, behind, StatKind::Health) < full
+    }));
+    assert_eq!(stat::effective(&sim.world, beyond, StatKind::Health), full);
+    let cast_from = position(&sim.world, player).expect("the player");
+    assert!(cast_from.distance(point) <= Meters(2.0));
 }
 
 #[test]
@@ -432,6 +464,7 @@ fn yard() -> (Sim, Entity) {
                     "at": { "x": 40.0, "y": 80.0 },
                 },
                 "throw_knife": { "skill": "throw_knife.skill.json", "at": { "x": 160.0, "y": 0.0 } },
+                "sweep": { "skill": "sweep.skill.json", "at": { "x": 240.0, "y": 0.0 } },
             });
         })
         .row(
@@ -440,8 +473,11 @@ fn yard() -> (Sim, Entity) {
             skill(
                 "Cleave",
                 json!({
-                    "target": "area_enemy",
-                    "area": { "type": "cone", "angle": 90.0, "length": 2.0 },
+                    "target": {
+                        "type": "melee_area",
+                        "affects": "enemy",
+                        "shape": { "type": "cone", "angle": 90.0, "length": 2.0 },
+                    },
                     "cooldown": 6.0,
                     "levels": [{ "cost": 1, "stats": {} }, { "cost": 1, "stats": {} }],
                 }),
@@ -455,8 +491,7 @@ fn yard() -> (Sim, Entity) {
             skill(
                 "Throw Knife",
                 json!({
-                    "target": "single_enemy",
-                    "range": 4.0,
+                    "target": { "type": "single", "affects": "enemy", "range": 4.0 },
                     "cooldown": 2.0,
                     "cost": [{ "item": "knife.item.json" }],
                     "levels": [{ "cost": 1, "stats": { "mana": 4.0 } }],
@@ -465,6 +500,25 @@ fn yard() -> (Sim, Entity) {
             ),
         )
         .script("throw_knife_strike", "skill", strike_nodes())
+        .row(
+            "skill",
+            "sweep",
+            skill(
+                "Sweep",
+                json!({
+                    "target": {
+                        "type": "ranged_area",
+                        "affects": "enemy",
+                        "range": 2.0,
+                        "shape": { "type": "line", "length": 2.0, "width": 1.0 },
+                        "max_targets": 1,
+                    },
+                    "levels": [{ "cost": 1, "stats": {} }],
+                }),
+                "sweep_strike",
+            ),
+        )
+        .script("sweep_strike", "skill", strike_nodes())
         .row("skill", "guard", self_skill("Guard", "guard_breathe"))
         .script("guard_breathe", "skill", breathing())
         .row("skill", "second_wind", self_skill("Second Wind", "second_wind_breathe"))
@@ -563,7 +617,7 @@ fn skill(name: &str, fields: Value, script: &str) -> Value {
 fn self_skill(name: &str, script: &str) -> Value {
     skill(
         name,
-        json!({ "target": "self", "cooldown": 20.0, "levels": [{ "cost": 1, "stats": {} }] }),
+        json!({ "target": { "type": "caster" }, "cooldown": 20.0, "levels": [{ "cost": 1, "stats": {} }] }),
         script,
     )
 }

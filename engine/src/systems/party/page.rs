@@ -1,9 +1,8 @@
 //! The Party page of the Social tab: the invitations that wait while the player is in no party,
 //! and their party with what its leader and its members may do, and who to invite.
 
+use super::{invitations, invited, society};
 use bevy::prelude::*;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use ui::egui::{self, Align, Layout, Rect, Sense, Ui, Vec2};
 use ui::face::TextRole;
 use ui::glyph::{self, Mark};
@@ -23,12 +22,9 @@ use crate::systems::input::map::{self, InputAction};
 use crate::systems::item::inline;
 use crate::systems::mention::Mention;
 use crate::systems::messages;
-use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::social_request::card::time_left;
-use crate::systems::social_request::{
-    AnswerSocialRequest, RequestAnswer, SocialRequestId, SocialRequestKind,
-};
+use crate::systems::social_request::{AnswerSocialRequest, RequestAnswer, SocialRequestId};
 use crate::systems::society::tab::{CharacterAction, SocialPage};
 use crate::systems::society::{AccountNumber, RequestCard, SocietyMember, SocietyView};
 
@@ -48,12 +44,12 @@ impl SocialPage for PartyPage {
     }
 
     fn waiting(&self, world: &World) -> u32 {
-        view(world).map_or(0, |view| invitations(&view).count() as u32)
+        society(world).map_or(0, |view| invitations(&view).count() as u32)
     }
 
     fn hints(&self, world: &World) -> Vec<(InputAction, String)> {
         let messages = messages::of(world.resource::<Content>());
-        let listed = view(world).is_some_and(|view| view.party.is_some());
+        let listed = society(world).is_some_and(|view| view.party.is_some());
         listed
             .then(|| (InputAction::Select, messages.party.hint_choose().to_owned()))
             .into_iter()
@@ -61,7 +57,7 @@ impl SocialPage for PartyPage {
     }
 
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let Some(view) = view(world) else {
+        let Some(view) = society(world) else {
             return;
         };
         hear(world);
@@ -102,49 +98,6 @@ impl CharacterAction for InviteToParty {
 
     fn act(&self, world: &mut World, player: &SocietyMember) {
         world.write_message(PartyRequest::Invite(player.account));
-    }
-}
-
-/// What the player sees of parties, for a driver of the client.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
-pub struct ShownParty {
-    /// The members of the party the player is in, in the order they joined, the player among
-    /// them.
-    pub members: Vec<ShownPartyMember>,
-    /// Who invites the player to a party.
-    pub invitations: Vec<String>,
-    /// Who the player invited and waits for.
-    pub invited: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ShownPartyMember {
-    pub name: String,
-    pub leads: bool,
-    /// The area they play in, while their player is at their character.
-    pub area: Option<String>,
-}
-
-pub fn shown(world: &World) -> ShownParty {
-    let Some(view) = view(world) else {
-        return ShownParty::default();
-    };
-    let content = world.resource::<Content>();
-    let names =
-        |cards: Vec<&RequestCard>| cards.iter().map(|card| card.other.name.clone()).collect();
-    ShownParty {
-        members: view
-            .party
-            .iter()
-            .flat_map(|party| party.members.iter().map(move |member| (party, member)))
-            .map(|(party, member)| ShownPartyMember {
-                name: member.character.name.clone(),
-                leads: party.leader == member.character.account,
-                area: member.area.map(|area| area.get(content).name.clone()),
-            })
-            .collect(),
-        invitations: names(invitations(&view).collect()),
-        invited: names(invited(&view).collect()),
     }
 }
 
@@ -213,26 +166,6 @@ impl Done {
             Done::Disband => disband(world),
         }
     }
-}
-
-fn view(world: &World) -> Option<SocietyView> {
-    session::my_character(world)?.get::<SocietyView>().cloned()
-}
-
-fn invitation(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
-    view.requests
-        .iter()
-        .filter(|card| card.kind == SocialRequestKind::PartyInvitation)
-}
-
-/// The invitations the player is asked.
-fn invitations(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
-    invitation(view).filter(|card| !card.mine)
-}
-
-/// The invitations the player sent.
-fn invited(view: &SocietyView) -> impl Iterator<Item = &RequestCard> {
-    invitation(view).filter(|card| card.mine)
 }
 
 /// Takes what the server found, and asks it for what is typed once the typing has paused.

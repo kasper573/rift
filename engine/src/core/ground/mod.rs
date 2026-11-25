@@ -553,13 +553,9 @@ impl PaintNames {
     }
 
     fn of(pixels: &[u8]) -> PaintNames {
-        let mut held = [false; MAX_TERRAINS];
-        for &index in pixels {
-            held[usize::from(index)] = true;
-        }
         let mut names = PaintNames::default();
-        for (index, _) in held.iter().enumerate().filter(|(_, held)| **held) {
-            names.0[index / 64] |= 1 << (index % 64);
+        for &index in pixels {
+            names.0[usize::from(index / 64)] |= 1 << (index % 64);
         }
         names
     }

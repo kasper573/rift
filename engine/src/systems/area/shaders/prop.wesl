@@ -2,8 +2,9 @@
 // game stands it in the world. The shader says where a vertex stands (`sway`, given where the
 // model puts it in the world and its uv, with the weather the engine tells it of) and what
 // colour a pixel is (`vfx`). Both read where the point lies in the model's own metres (`local`),
-// where the prop stands (`origin`), how much it is grown (`size`) and the point's vertex colour
-// (`tint`); a vertex also reads the ways the screen's right and up run in the world
+// where the prop stands (`origin`), how much it is grown (`size`), where a point of the model
+// stands in the world as the prop stands, grown and turned (`in_world`), and the point's vertex
+// colour (`tint`); a vertex also reads the ways the screen's right and up run in the world
 // (`screen_right`, `screen_up`), to turn a card to face the camera. A pixel also reads the
 // material lit (`sample`), the light falling there on a white face (`light`), the material's own
 // colour unlit (`albedo`), the way its face turns (`normal`), the way to the eye (`toward_eye`)
@@ -34,6 +35,8 @@ import bevy_pbr::render::pbr_types::PbrInput;
 import engine::core::render::world::gpu::impostor_bake::{BakeOutput, bake_clip, bake_right, bake_seen, bake_up, baked};
 
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
+@if(!PREPASS_PIPELINE)
+import engine::core::render::world::wear::worn;
 @if(PICK)
 import engine::core::render::world::gpu::instance::id_of;
 @if(MARK)
@@ -54,6 +57,7 @@ import bevy_pbr::render::mesh_view_bindings::globals;
 var<private> at_local: vec3<f32>;
 var<private> stands: vec3<f32>;
 var<private> grown: f32;
+var<private> turning: vec4<f32>;
 var<private> tinted: vec4<f32>;
 var<private> lit: vec4<f32>;
 var<private> shine: vec3<f32>;
@@ -76,6 +80,10 @@ fn origin() -> vec3<f32> {
 
 fn size() -> f32 {
     return grown;
+}
+
+fn in_world(at: vec3<f32>) -> vec3<f32> {
+    return stands + turned(turning, at * grown);
 }
 
 fn tint() -> vec4<f32> {
@@ -133,6 +141,7 @@ fn stand(place: vec4<f32>, turn: vec4<f32>, world: vec3<f32>) {
     at_local = unturned / place.w;
     stands = place.xyz;
     grown = place.w;
+    turning = turn;
 }
 
 // The vertex output of a prop, with where its instance stands and how far it shows.
@@ -375,11 +384,11 @@ fn prepare(in: VertexOutput, is_front: bool) -> PbrInput {
         tinted = in.color;
     }
     var pbr_input = pbr_input_from_standard_material(in, is_front);
-    let base = alpha_discard(
+    let base = worn(alpha_discard(
         pbr_input.material.flags,
         pbr_input.material.alpha_cutoff,
         pbr_input.material.base_color
-    );
+    ), in);
     own = vec4<f32>(base.rgb / max(tinted.rgb, vec3<f32>(0.001)), base.a);
     facing = pbr_input.N;
     eye_way = pbr_input.V;

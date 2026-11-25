@@ -3,6 +3,7 @@
 //! them from. What is placed in the tray stays in the bag and is known to this client alone until
 //! it is submitted.
 
+use super::view;
 use bevy::prelude::*;
 use ui::controls;
 use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, UiBuilder, Vec2};
@@ -21,7 +22,7 @@ use crate::systems::dialogue::windows::{self, Opens};
 use crate::systems::hud::WindowKey;
 use crate::systems::input::map::InputMap;
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::bag_view::{BagView, bag_view};
+use crate::systems::item::bag_view::{BagView, bag_view, least_bag_width};
 use crate::systems::item::grid::scrolled;
 use crate::systems::item::transfer::{self, ItemTransfer, TransferPane, TrayWindow, tray_window};
 use crate::systems::item::tray::ItemTray;
@@ -36,7 +37,8 @@ use crate::systems::window::WindowStep;
 
 const SHEET: Vec2 = Vec2::new(680.0, 320.0);
 const SHEET_LEAST: Vec2 = Vec2::new(580.0, 280.0);
-pub const INVENTORY_WIDTH: f32 = 290.0;
+/// How wide the inventory beside a tray is laid out, before its heading row asks for more.
+const INVENTORY_WIDTH: f32 = 290.0;
 const BUTTON_GAP: f32 = 10.0;
 
 pub struct PromptTrayPlugin;
@@ -62,11 +64,6 @@ pub struct Placing {
     /// The turn the placed items were submitted for, until the server answers it.
     sent: Option<WindowStep>,
     seen: Option<WindowStep>,
-}
-
-/// The prompt before the player, if one is open.
-pub fn view(world: &World) -> Option<&PromptView> {
-    session::me(world).and_then(|me| world.get::<PromptView>(me))
 }
 
 /// What is placed in the tray, slot by slot.
@@ -170,6 +167,18 @@ pub fn heading(ui: &mut Ui, world: &World) {
     sheet::section(ui, messages::of(content).prompt.placed());
 }
 
+/// How wide the inventory beside a tray is: as wide as it is laid out, or as its heading row needs
+/// to set the heading and its controls side by side.
+pub fn inventory_width(gui: &egui::Context) -> f32 {
+    INVENTORY_WIDTH.max(least_bag_width(gui, settings::Placed::Prompt))
+}
+
+/// `size`, of a window laid out with an inventory beside a tray, widened by as much as the
+/// inventory needs past what it was laid out for.
+pub fn making_room(gui: &egui::Context, size: Vec2) -> Vec2 {
+    size + Vec2::new(inventory_width(gui) - INVENTORY_WIDTH, 0.0)
+}
+
 pub fn inventory(ui: &mut Ui, world: &mut World, locked: bool) {
     let content = world.resource::<Content>().clone();
     let messages = &messages::of(&content).prompt;
@@ -201,8 +210,8 @@ fn draw(world: &mut World) {
     let opens = Opens {
         key: WindowKey::Prompt,
         of: settings::Placed::Prompt,
-        size: SHEET,
-        min: SHEET_LEAST,
+        size: making_room(&gui, SHEET),
+        min: making_room(&gui, SHEET_LEAST),
     };
     let open = view(world)
         .filter(|view| view.kind == PromptKind::Offer)
@@ -227,7 +236,7 @@ fn show(ui: &mut Ui, world: &mut World) {
             words(ui, world, &view);
             let room = ui.available_rect_before_wrap();
             let inventory_at = Rect::from_min_max(
-                Pos2::new(room.max.x - INVENTORY_WIDTH, room.min.y),
+                Pos2::new(room.max.x - inventory_width(ui.ctx()), room.min.y),
                 room.max,
             );
             let tray = Rect::from_min_max(

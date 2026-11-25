@@ -122,6 +122,15 @@ pub fn say(world: &mut World, notification_sent: NotificationSent) {
     }
 }
 
+/// Where every bubble is drawn now.
+pub(super) fn drawn(world: &World) -> impl Iterator<Item = egui::Rect> + '_ {
+    world
+        .resource::<Bubbles>()
+        .speakers
+        .iter()
+        .filter_map(|speaking| speaking.drawn.map(|drawn| drawn.rect))
+}
+
 pub fn edge_folds(world: &World) -> Vec<u32> {
     world.resource::<Bubbles>().edge_folds.clone()
 }
@@ -945,9 +954,8 @@ fn fighting(world: &World, body: Entity, viewer: Option<Pos<Meters>>) -> bool {
         .get::<Npc>(body)
         .and_then(|npc| npc.def.get(content).basic_attack);
     let close = match (body_at(world, body), viewer, attack) {
-        (Some(at), Some(viewer), Some(attack)) => {
-            at.distance(viewer) <= skill::range_of(world, body, attack, Rank::FIRST)
-        }
+        (Some(at), Some(viewer), Some(attack)) => skill::range_of(world, body, attack, Rank::FIRST)
+            .is_some_and(|range| at.distance(viewer) <= range),
         _ => false,
     };
     hostile && attacking && close

@@ -1,17 +1,19 @@
 use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
-use engine::core::content::{Content, ContentScope};
+use engine::core::content::{Content, ContentScope, Fixture, ImageRef};
 use engine::core::store::{Record, RecordRow};
 use engine::core::time::UnixMillis;
 use engine::systems::account::AccountId;
 use engine::systems::friend::{self, AskFriendship};
+use engine::systems::interface::InterfaceIcon;
 use engine::systems::item::deliver::{self, DeliveryReason};
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
 use engine::systems::mail::{
     DeleteLetter, InboxSender, InboxView, Letter, LetterAnswered, LetterSender, LetterText,
     OpenLetter, SendLetter, TakeAttached, TakenStack,
 };
+use engine::systems::notification::{FeedLayout, NotificationKind};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
 use engine::systems::player::{self};
 use engine::systems::save::SavedCharacter;
@@ -62,8 +64,13 @@ fn a_message_carries_what_is_attached_from_one_bag_to_another() {
     );
     assert_eq!(
         server.told(2).last().map(String::as_str),
-        Some("Wren wrote to you: Lures, as promised."),
+        Some("Wren: Lures, as promised"),
         "the receiver is told at once, in whatever world they are"
+    );
+    assert_eq!(
+        arrival(&mut server, 2),
+        Some((FeedLayout::Corner, mail_icon(&content))),
+        "in the corner, under the mail icon"
     );
     let inbox = whole_inbox(&mut server, 2);
     let letter = inbox.rows[0].clone();
@@ -157,6 +164,19 @@ fn a_message_carries_what_is_attached_from_one_bag_to_another() {
         (inbox.rows.len(), inbox.held),
         (0, 0),
         "then it is deleted for good"
+    );
+
+    write(
+        &mut server,
+        1,
+        "Hale",
+        "Nets mended by the old pier at dawn",
+        &[],
+    );
+    assert_eq!(
+        server.told(2).last().map(String::as_str),
+        Some("Wren: Nets mended by the old pi…"),
+        "a title longer than the notice shows is cut where the game says"
     );
 }
 
@@ -539,6 +559,19 @@ fn write(server: &mut Server, client: u32, to: &str, title: &str, attached: &[It
     server.step();
 }
 
+/// Where the last notice the player of `client` was told shows, and under which icon.
+fn arrival(server: &mut Server, client: u32) -> Option<(FeedLayout, ImageRef)> {
+    let told = server.village_or_forest(client).told(client).pop()?;
+    match told.kind {
+        NotificationKind::Feed(row) => Some((row.layout, row.icon?)),
+        _ => None,
+    }
+}
+
+fn mail_icon(content: &Content) -> ImageRef {
+    InterfaceIcon::Mail.get(content).image.clone()
+}
+
 /// What the player of `client` sees of their inbox.
 fn inbox_of(server: &mut Server, client: u32) -> InboxView {
     let sim = server.village_or_forest(client);
@@ -586,6 +619,7 @@ fn game() -> Game {
         .area("forest", &Map::open(9, 9), json!([]))
         .hero("village", 4.0, 4.0)
         .sfx("ui_refuse")
+        .interface_icon("mail")
         .item("lure", stacked(50))
         .item("plank", stacked(50))
         .item("rod", json!({ "kind": { "type": "resource" } }))
@@ -601,7 +635,7 @@ fn game() -> Game {
             settings["friends"] =
                 json!({ "most": 100, "requests": 20, "request_lasts": 604_800.0 });
             settings["mail"] = json!({
-                "inbox": 2, "attachments": 6, "title_length": 60, "text_length": 1000, "a_minute": 2
+                "inbox": 2, "attachments": 6, "title_length": 60, "notice_title_length": 25, "text_length": 1000, "a_minute": 2
             });
         })
 }

@@ -2,6 +2,7 @@
 //! such buffers, and the few slots of an atlas the tiles near the views take turns to hold.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
@@ -118,6 +119,27 @@ fn an_atlas_gives_its_slots_to_the_tiles_wanted_last_and_never_takes_one_wanted_
     );
     assert!(atlas.is_current(4, &1));
     assert_eq!(atlas.want(4), Some((1, &1)));
+
+    atlas.next_frame();
+    for tile in [2, 3, 4] {
+        atlas.want(tile);
+    }
+    assert_eq!(atlas.admit(5, 0), None, "every slot is wanted again");
+    atlas.grow(6);
+    assert_eq!(atlas.slots(), 6);
+    assert_eq!(
+        atlas.want(4),
+        Some((1, &1)),
+        "what held a slot keeps it as the atlas grows"
+    );
+    assert_eq!(
+        atlas.admit(5, 0),
+        Some(Admitted {
+            slot: 3,
+            evicted: None
+        }),
+        "the room it grew by is free"
+    );
 }
 
 #[test]
@@ -131,11 +153,8 @@ fn a_models_parts_and_levels_lie_where_their_bytes_are_written_and_keep_their_pl
             let model = model(&mut rng);
             let writes = slabs.insert(key, &model);
             let placed = slabs.get(&key).expect("a model just placed").parts.clone();
-            for ((part, ranges), (vertices, indices)) in model
-                .parts
-                .iter()
-                .zip(&placed)
-                .zip(writes.vertices.iter().zip(&writes.indices))
+            let mut index_writes = writes.indices.iter();
+            for ((part, ranges), vertices) in model.parts.iter().zip(&placed).zip(&writes.vertices)
             {
                 assert_eq!(ranges.vertices as usize, part.vertices.len());
                 assert_eq!(
@@ -146,22 +165,27 @@ fn a_models_parts_and_levels_lie_where_their_bytes_are_written_and_keep_their_pl
                     ),
                     "the part's vertices are written where it lies"
                 );
-                let first = ranges.levels.first().expect("a part's full mesh");
-                let written: Vec<u32> = indices
-                    .1
-                    .chunks(INDEX_BYTES as usize)
-                    .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("an index")))
-                    .collect();
-                assert_eq!(indices.0, u64::from(first.first_index) * INDEX_BYTES);
                 for (level, range) in part.levels.iter().zip(&ranges.levels) {
-                    let at = (range.first_index - first.first_index) as usize;
+                    let (offset, bytes) =
+                        index_writes.next().expect("each level's indices written");
+                    let written: Vec<u32> = bytes
+                        .chunks(INDEX_BYTES as usize)
+                        .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("an index")))
+                        .collect();
                     assert_eq!(
-                        &written[at..at + range.indices as usize],
-                        level.indices.as_slice(),
+                        (*offset, written.as_slice()),
+                        (
+                            u64::from(range.first_index) * INDEX_BYTES,
+                            level.indices.as_slice()
+                        ),
                         "each level's indices are written where it lies"
                     );
                 }
             }
+            assert!(
+                index_writes.next().is_none(),
+                "nothing but the levels' indices is written"
+            );
             live.push((key, placed));
         } else {
             let (key, _) = live.swap_remove(rng.rand_range(0..live.len() as u32) as usize);
@@ -203,11 +227,13 @@ fn a_models_parts_and_levels_lie_where_their_bytes_are_written_and_keep_their_pl
         }
     }
 
-    let field = Plane3d::default()
-        .mesh()
-        .size(2.0, 2.0)
-        .subdivisions(15)
-        .build();
+    let field = Arc::new(
+        Plane3d::default()
+            .mesh()
+            .size(2.0, 2.0)
+            .subdivisions(15)
+            .build(),
+    );
     let at = Transform::from_xyz(4.0, 1.0, -2.0).with_scale(Vec3::splat(2.0));
     let pieces = [
         Piece {
@@ -265,6 +291,7 @@ fn model(rng: &mut Rng) -> PreparedModel {
                         position: [vertex as f32, 0.0, 0.0],
                         normal: [0.0, 1.0, 0.0],
                         uv: [0.0, 0.0],
+                        uv_b: [0.0, 0.0],
                         color: [1.0; 4],
                     })
                     .collect(),

@@ -70,7 +70,7 @@ pub enum PresenceFade {
 
 impl PresenceFade {
     /// How much of the thing shows `now`, when its fade takes `fades`.
-    fn shown(self, now: Seconds, fades: Seconds) -> f32 {
+    pub fn shown(self, now: Seconds, fades: Seconds) -> f32 {
         let along = |since: Seconds| ((now - since).0 / fades.0.max(f32::EPSILON)).clamp(0.0, 1.0);
         match self {
             PresenceFade::In(since) => along(since),
@@ -140,15 +140,8 @@ fn fade_at_the_edge(
     let now = Seconds(time.elapsed_secs());
     for (entity, at, shown, opacity, fade, faint) in &placed {
         let present = fade.map_or(1.0, |fade| fade.shown(now, look.presence_fades));
-        match fade {
-            Some(PresenceFade::Out(_)) if present <= 0.0 => {
-                commands.entity(entity).try_despawn();
-                continue;
-            }
-            Some(PresenceFade::In(_)) if present >= 1.0 => {
-                commands.entity(entity).try_remove::<PresenceFade>();
-            }
-            _ => {}
+        if matches!(fade, Some(PresenceFade::In(_))) && present >= 1.0 {
+            commands.entity(entity).try_remove::<PresenceFade>();
         }
         let wanted = if entity == mine {
             1.0

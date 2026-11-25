@@ -12,7 +12,7 @@ use egui::{
 
 use crate::glyph::Mark;
 use crate::ink::{Ground, Prose};
-use crate::paint::TextShadow;
+use crate::paint::{self, TextShadow};
 
 pub const FILL: Color32 = Color32::from_rgb(38, 38, 43);
 pub const BORDER: Color32 = Color32::from_rgb(50, 50, 57);
@@ -164,6 +164,121 @@ pub fn label(
     }
     response
 }
+
+/// What a tag of a trade says of an item: that the player gives it and holds enough of it, gives
+/// it and holds too little, or gets it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tally {
+    Gives,
+    Lacks,
+    Gets,
+}
+
+impl Tally {
+    /// The sign the tag's count is led by.
+    pub fn mark(self) -> Mark {
+        match self {
+            Tally::Gives | Tally::Lacks => Mark::Minus,
+            Tally::Gets => Mark::Plus,
+        }
+    }
+
+    /// The colour of the tag's sign and words.
+    pub fn ink(self) -> Color32 {
+        match self {
+            Tally::Gives => Color32::from_rgb(236, 228, 212),
+            Tally::Lacks => Color32::from_rgb(255, 172, 160),
+            Tally::Gets => Color32::from_rgb(144, 214, 122),
+        }
+    }
+
+    fn fill(self) -> Color32 {
+        match self {
+            Tally::Gives => Color32::from_rgba_unmultiplied(44, 32, 28, 215),
+            Tally::Lacks => Color32::from_rgba_unmultiplied(92, 24, 20, 225),
+            Tally::Gets => Color32::from_rgba_unmultiplied(30, 64, 34, 225),
+        }
+    }
+
+    fn edge(self) -> Color32 {
+        match self {
+            Tally::Gives => Color32::from_rgb(150, 120, 104),
+            Tally::Lacks => DANGER,
+            Tally::Gets => Color32::from_rgb(120, 196, 104),
+        }
+    }
+}
+
+/// A chip of a trade's tally over the world, round what `add` lays in it, for text `size` tall:
+/// the tally's fill within one even edge, as tall as the text, so a row holding it grows no
+/// taller.
+pub fn tally<R>(
+    ui: &mut Ui,
+    tally: Tally,
+    size: f32,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let across = (size * TALLY_PADDING).round() as i8;
+    Frame::new()
+        .fill(tally.fill())
+        .stroke(Stroke::new(1.0, tally.edge()))
+        .corner_radius(CornerRadius::same((size * TALLY_CORNER).round() as u8))
+        .inner_margin(Margin::symmetric(across, 0))
+        .show(ui, add)
+}
+
+/// How far a tally's words keep from its edges along the row, and how round its corners are, in
+/// the height of its text.
+const TALLY_PADDING: f32 = 0.35;
+const TALLY_CORNER: f32 = 0.3;
+
+/// A moment worth marking, set straight over the world: what `add` lays out (giving back the
+/// rect it drew in), centred on a dark band that fades out to both sides between two thin rules
+/// of `rule`. Gives back the band's rect.
+pub fn banner(ui: &mut Ui, rule: Color32, add: impl FnOnce(&mut Ui) -> Rect) -> Rect {
+    let under = ui.painter().add(Shape::Noop);
+    ui.add_space(BANNER_PADDING);
+    let words = add(ui);
+    ui.add_space(BANNER_PADDING);
+    let reach = words.width() * 0.5 + BANNER_REACH;
+    let band = Rect::from_x_y_ranges(
+        words.center().x - reach..=words.center().x + reach,
+        words.top() - BANNER_PADDING..=words.bottom() + BANNER_PADDING,
+    );
+    let ruled = band.shrink2(Vec2::new(band.width() * (1.0 - BANNER_RULED) * 0.5, 0.0));
+    let rule_at = |y: f32| Rect::from_x_y_ranges(ruled.x_range(), y - 0.5..=y + 0.5);
+    let ends = |along: f32| (along.min(1.0 - along) / BANNER_RULE_FADE).clamp(0.0, 1.0);
+    ui.painter().set(
+        under,
+        Shape::Vec(vec![
+            paint::band(band, |along| {
+                let middle = 1.0 - (2.0 * along - 1.0).abs();
+                BANNER_GROUND.gamma_multiply(middle.powf(BANNER_FALLOFF))
+            }),
+            paint::band(rule_at(band.top() + BANNER_RULE_INSET), |along| {
+                rule.gamma_multiply(ends(along))
+            }),
+            paint::band(rule_at(band.bottom() - BANNER_RULE_INSET), |along| {
+                rule.gamma_multiply(ends(along))
+            }),
+        ]),
+    );
+    band
+}
+
+const BANNER_GROUND: Color32 = Color32::from_rgba_premultiplied(9, 7, 5, 170);
+/// How sharply the ground fades out from the middle to its ends: under 1, it stays dark across
+/// most of its width.
+const BANNER_FALLOFF: f32 = 0.7;
+/// How far the band reaches past the words on each side, and how far it keeps from them above
+/// and below.
+const BANNER_REACH: f32 = 220.0;
+const BANNER_PADDING: f32 = 8.0;
+/// How much of the band's width the rules span, how much of their length fades out at each end,
+/// and how far in from the band's edges they run.
+const BANNER_RULED: f32 = 0.8;
+const BANNER_RULE_FADE: f32 = 0.25;
+const BANNER_RULE_INSET: f32 = 2.0;
 
 pub fn frame() -> Frame {
     Frame::new()

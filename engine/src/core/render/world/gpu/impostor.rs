@@ -17,12 +17,12 @@ use bevy::gltf::Gltf;
 use bevy::math::{Mat4, UVec2, Vec2, Vec3, Vec4, proj};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    Buffer, BufferDescriptor, BufferUsages, CommandEncoder, Extent3d, FilterMode, LoadOp, MapMode,
-    Operations, Origin3d, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
-    RenderPassDescriptor, Sampler, SamplerDescriptor, ShaderType, StoreOp, TexelCopyBufferInfo,
-    TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
-    TextureViewDimension,
+    Buffer, BufferDescriptor, BufferUsages, CommandEncoder, CommandEncoderDescriptor, Extent3d,
+    FilterMode, LoadOp, MapMode, Operations, Origin3d, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, Sampler, SamplerDescriptor, ShaderType,
+    StoreOp, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
+    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView,
+    TextureViewDescriptor, TextureViewDimension,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
@@ -228,7 +228,7 @@ impl ImpostorState {
 struct Baked(Arc<Mutex<Vec<BakedAtlas>>>);
 
 /// An atlas come back from its bake: its texels as the GPU drew them, none if it lost them on
-/// the way.
+/// the way or had no layer left to bake it into.
 struct BakedAtlas {
     key: AtlasKey,
     texels: Option<ImpostorTexels>,
@@ -436,7 +436,7 @@ fn keep_impostors(
                     }),
                 ));
             }
-            // The atlas stays as the GPU drew it, and is baked anew at the next start.
+            // Nothing of it is kept, so it is baked anew at the next start.
             None => {
                 if let Some(state) = atlases.get_mut(&key)
                     && let ImpostorState::Baking { model, frame } = *state
@@ -512,10 +512,14 @@ fn extract_impostors(store: Extract<Res<ImpostorStore>>, mut orders: ResMut<Impo
 
 /// Gives every atlas read its layer, sets going the bakes of a few of those ordered whose model
 /// is in the slabs, and lets go of the layers of atlases let go. The atlases the arenas' dressed
-/// props draw from, and those on their way, keep their layers. While anything is left to do the
-/// frame is not whole, so a veil holds until every impostor stands.
+/// props draw from, and those on their way, keep their layers, so when more kinds of prop stand
+/// dressed than there are layers the atlas grows; past what the device's textures hold, those
+/// left without a layer are given up, and their props draw as their models however far off.
+/// While anything is left to do the frame is not whole, so a veil holds until every impostor
+/// stands.
 fn prepare_impostors(
-    queue: Res<RenderQueue>,
+    (device, queue): (Res<RenderDevice>, Res<RenderQueue>),
+    baked: Res<Baked>,
     models: Res<ModelArena>,
     arenas: Res<InstanceArenas>,
     atlas: Option<ResMut<ImpostorAtlas>>,
@@ -544,6 +548,7 @@ fn prepare_impostors(
         .chain(std::mem::take(&mut orders.incoming))
         .collect();
     let mut later = Vec::new();
+    let mut crowded_out = Vec::new();
     let mut started = 0;
     for order in waiting {
         match order {
@@ -563,7 +568,7 @@ fn prepare_impostors(
                     atlas.write(&queue, admitted.slot, texels);
                     atlas.round += 1;
                 }
-                None => later.push(order),
+                None => crowded_out.push(order),
             },
             ImpostorOrder::Bake {
                 key,
@@ -574,9 +579,9 @@ fn prepare_impostors(
                 let placed = models.slabs.get(&model);
                 let admitted = placed
                     .filter(|_| started < BAKES_PER_FRAME)
-                    .and_then(|_| atlas.layers.admit(key, ()));
+                    .map(|_| atlas.layers.admit(key, ()));
                 match (placed, admitted) {
-                    (Some(placed), Some(admitted)) => {
+                    (Some(placed), Some(Some(admitted))) => {
                         debug!(
                             "atlas {key} baked from {model} into layer {}, {} evicted",
                             admitted.slot,
@@ -592,9 +597,32 @@ fn prepare_impostors(
                             overhang,
                         });
                     }
+                    (_, Some(None)) => crowded_out.push(order),
                     _ => later.push(order),
                 }
             }
+        }
+    }
+    if !crowded_out.is_empty() {
+        if atlas.grow(&device, &queue) {
+            later.append(&mut crowded_out);
+        } else {
+            warn!(
+                "{} kinds of prop stand without an impostor: the atlas holds {} and the device's textures no more",
+                crowded_out.len(),
+                atlas.layers.slots()
+            );
+            baked
+                .0
+                .lock()
+                .expect("the baked atlases lock")
+                .extend(crowded_out.iter().filter_map(|order| match order {
+                    ImpostorOrder::Bake { key, .. } => Some(BakedAtlas {
+                        key: *key,
+                        texels: None,
+                    }),
+                    ImpostorOrder::Read { .. } | ImpostorOrder::Forget { .. } => None,
+                }));
         }
     }
     if !later.is_empty() || !orders.bakes.is_empty() {
@@ -967,9 +995,19 @@ pub fn atlas_key(model_hash: &str, overhang: Meters, materials: &[BakeMaterialKe
         hasher.update(material.texture.as_deref().unwrap_or("").as_bytes());
         hasher.update(&material.cutoff.to_le_bytes());
         if let Some(look) = &material.look {
-            hasher.update(look.shader.as_bytes());
+            for part in [&look.color, &look.normal, &look.shader] {
+                hasher.update(part.as_deref().unwrap_or("").as_bytes());
+                hasher.update(&[0]);
+            }
             hasher.update(&look.params.map(u32::to_le_bytes).concat());
             hasher.update(&look.translucency.to_le_bytes());
+            if let Some(wear) = &look.wear {
+                for picture in [&wear.mask, &wear.mottle] {
+                    hasher.update(picture.as_deref().unwrap_or("").as_bytes());
+                    hasher.update(&[0]);
+                }
+                hasher.update(&[wear.from, wear.to].concat());
+            }
         }
     }
     let header = ImpostorHeader::current();
@@ -990,18 +1028,32 @@ pub struct BakeMaterialKey {
     pub look: Option<LookBakeKey>,
 }
 
-/// What of a look the bake shows: the shader as it is compiled, the parameters it is filled with
-/// and how translucent it is.
+/// What of a look the bake shows: what the pictures it draws in hold, the shader as it is
+/// compiled, the parameters it is filled with, how translucent it is, and its wear: what its
+/// pictures hold and its colours.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LookBakeKey {
-    pub shader: String,
+    pub color: Option<String>,
+    pub normal: Option<String>,
+    pub shader: Option<String>,
     pub params: [u32; PARAMS_BYTES / 4],
     pub translucency: f32,
+    pub wear: Option<WearBakeKey>,
 }
 
-/// The most models whose atlases the GPU holds at once; past that the one wanted longest ago
-/// gives its layer up, and its props draw their proxies until it is baked or read again.
-pub const LAYERS: u32 = 128;
+/// What of a look's wear the bake shows: what its mask and mottle hold, and the colours it runs
+/// between.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WearBakeKey {
+    pub mask: Option<String>,
+    pub mottle: Option<String>,
+    pub from: [u8; 3],
+    pub to: [u8; 3],
+}
+
+/// How many models' atlases the GPU has room for to begin with. Every kind of prop dressed wants
+/// its atlas every frame, so the room doubles whenever an area dresses more kinds than it holds.
+const FIRST_LAYERS: u32 = 128;
 
 /// The albedo with its coverage, as the atlas and its files hold it.
 pub const ALBEDO_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
@@ -1027,34 +1079,46 @@ pub struct ImpostorAtlas {
     /// Counts each time a layer is given or taken, for what tells the kernel which props have
     /// one.
     pub round: u64,
+    /// Counts each time the atlas grew: what was bound of it before is bound to textures it no
+    /// longer draws from.
+    pub grown: u64,
     bake_depth: Texture,
 }
 
-impl ImpostorAtlas {
-    pub fn new(device: &RenderDevice) -> ImpostorAtlas {
-        let texture = |label, format, usage| {
+/// The three textures of an atlas with room for some number of models, and each seen whole.
+struct AtlasTextures {
+    albedo: Texture,
+    normal: Texture,
+    depth: Texture,
+    albedo_view: TextureView,
+    normal_view: TextureView,
+    depth_view: TextureView,
+}
+
+impl AtlasTextures {
+    fn holding(device: &RenderDevice, layers: u32) -> AtlasTextures {
+        let texture = |label, format| {
             device.create_texture(&TextureDescriptor {
                 label: Some(label),
                 size: Extent3d {
                     width: ATLAS_PIXELS,
                     height: ATLAS_PIXELS,
-                    depth_or_array_layers: LAYERS,
+                    depth_or_array_layers: layers,
                 },
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: TextureDimension::D2,
                 format,
-                usage,
+                usage: TextureUsages::RENDER_ATTACHMENT
+                    | TextureUsages::TEXTURE_BINDING
+                    | TextureUsages::COPY_SRC
+                    | TextureUsages::COPY_DST,
                 view_formats: &[],
             })
         };
-        let baked = TextureUsages::RENDER_ATTACHMENT
-            | TextureUsages::TEXTURE_BINDING
-            | TextureUsages::COPY_SRC
-            | TextureUsages::COPY_DST;
-        let albedo = texture("impostor albedo", ALBEDO_FORMAT, baked);
-        let normal = texture("impostor normals", NORMAL_FORMAT, baked);
-        let depth = texture("impostor depths", DEPTH_FORMAT, baked);
+        let albedo = texture("impostor albedo", ALBEDO_FORMAT);
+        let normal = texture("impostor normals", NORMAL_FORMAT);
+        let depth = texture("impostor depths", DEPTH_FORMAT);
         let whole = |texture: &Texture| {
             texture.create_view(&TextureViewDescriptor {
                 label: Some("impostor atlas"),
@@ -1062,10 +1126,31 @@ impl ImpostorAtlas {
                 ..default()
             })
         };
-        ImpostorAtlas {
+        AtlasTextures {
             albedo_view: whole(&albedo),
             normal_view: whole(&normal),
             depth_view: whole(&depth),
+            albedo,
+            normal,
+            depth,
+        }
+    }
+}
+
+impl ImpostorAtlas {
+    pub fn new(device: &RenderDevice) -> ImpostorAtlas {
+        let AtlasTextures {
+            albedo,
+            normal,
+            depth,
+            albedo_view,
+            normal_view,
+            depth_view,
+        } = AtlasTextures::holding(device, FIRST_LAYERS);
+        ImpostorAtlas {
+            albedo_view,
+            normal_view,
+            depth_view,
             albedo,
             normal,
             depth,
@@ -1075,8 +1160,9 @@ impl ImpostorAtlas {
                 min_filter: FilterMode::Linear,
                 ..default()
             }),
-            layers: Residency::new(LAYERS),
+            layers: Residency::new(FIRST_LAYERS),
             round: 0,
+            grown: 0,
             bake_depth: device.create_texture(&TextureDescriptor {
                 label: Some("impostor bake depth"),
                 size: Extent3d {
@@ -1092,6 +1178,46 @@ impl ImpostorAtlas {
                 view_formats: &[],
             }),
         }
+    }
+
+    /// Doubles the room, as far as the device lets a texture go, every atlas held staying in its
+    /// layer. Says whether there is more room now.
+    fn grow(&mut self, device: &RenderDevice, queue: &RenderQueue) -> bool {
+        let held = self.layers.slots();
+        let room = (held * 2).min(device.limits().max_texture_array_layers);
+        if room <= held {
+            return false;
+        }
+        let grown = AtlasTextures::holding(device, room);
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("impostor atlas grown"),
+        });
+        for (from, to) in [
+            (&self.albedo, &grown.albedo),
+            (&self.normal, &grown.normal),
+            (&self.depth, &grown.depth),
+        ] {
+            encoder.copy_texture_to_texture(
+                from.as_image_copy(),
+                to.as_image_copy(),
+                Extent3d {
+                    width: ATLAS_PIXELS,
+                    height: ATLAS_PIXELS,
+                    depth_or_array_layers: held,
+                },
+            );
+        }
+        queue.submit([encoder.finish()]);
+        debug!("impostor atlas grown from {held} layers to {room}");
+        self.albedo = grown.albedo;
+        self.normal = grown.normal;
+        self.depth = grown.depth;
+        self.albedo_view = grown.albedo_view;
+        self.normal_view = grown.normal_view;
+        self.depth_view = grown.depth_view;
+        self.layers.grow(room);
+        self.grown += 1;
+        true
     }
 
     /// Writes `texels` into `layer`.

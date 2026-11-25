@@ -1018,6 +1018,7 @@ fn hand_over(
     let request = TestCharacterRequest {
         test_character: character.to_owned(),
         start: start.filter(|_| content.is_some()),
+        kept: false,
     };
     let body = match content {
         Some(content) => {

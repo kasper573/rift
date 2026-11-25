@@ -314,7 +314,7 @@ fn every_node_a_script_offers_lands_after_its_event_or_is_refused_for_what_it_is
     let skill = json!({
         "name": "Lunge",
         "icon": "icons/cap.png",
-        "target": "single_enemy",
+        "target": { "type": "single", "affects": "enemy" },
         "levels": [{ "cost": 1, "stats": {} }],
         "modules": [{ "type": "script", "script": path("script", "lunge_used") }],
     });

@@ -21,6 +21,7 @@ use crate::core::time::UnixMillis;
 use crate::systems::chat::ChatEmbed;
 use crate::systems::dialogue::windows;
 use crate::systems::dialogue::{Conversation, ConversationPanel};
+use crate::systems::equipment::{Belongings, Equipment};
 use crate::systems::hud::{self, WindowKey};
 use crate::systems::item::card::CardLook;
 use crate::systems::item::grid::item_grid;
@@ -40,6 +41,7 @@ pub struct QuestCardPlugin;
 impl Plugin for QuestCardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<hud::Pinned<QuestId>>()
+            .init_resource::<OfferSpot>()
             .add_systems(
                 Update,
                 hud::raise_pinned::<QuestId>(WindowKey::QuestCard)
@@ -140,12 +142,12 @@ pub fn offer<I: ImageSource + ?Sized>(
     content: &Content,
     parties: &Parties,
     quest: QuestId,
-    inventory: Option<&Inventory>,
+    belongings: Belongings<'_>,
     plate: Plate,
 ) -> Vec<DrawnItem> {
     let reader = QuestReader {
         log: &QuestLog::default(),
-        inventory,
+        belongings,
     };
     let shown = terms(ui, images, content, parties, quest, reader, plate);
     card::foot(ui, words(content).offer_foot());
@@ -156,7 +158,7 @@ pub fn offer<I: ImageSource + ?Sized>(
 #[derive(Clone, Copy)]
 struct QuestReader<'a> {
     log: &'a QuestLog,
-    inventory: Option<&'a Inventory>,
+    belongings: Belongings<'a>,
 }
 
 /// What a quest asks, as far as its reader is with it, and what it gives when the quest lets
@@ -176,7 +178,7 @@ fn terms<I: ImageSource + ?Sized>(
         content,
         parties,
         reader.log.active(quest).unwrap_or(&fresh),
-        reader.inventory,
+        reader.belongings,
     );
     let finished = reader.log.finished(quest).map(|finished| finished.result);
     let standing = match finished {
@@ -240,17 +242,23 @@ fn draw_offer(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
-    let Some((quest, moment)) = moment(world) else {
+    let Some(shows) = moment(world) else {
+        *world.resource_mut::<OfferSpot>() = OfferSpot::None;
         return;
     };
+    let (quest, moment) = shows;
     let key = WindowKey::QuestOffer;
-    let size =
-        hud::drawn_rect(&gui, key).map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size());
     let placed = world
         .resource::<UserSettings>()
         .widget_pos(key.name())
         .is_some();
-    let start = windows::seat(world, &gui, key, size, !placed).min;
+    let start = if placed {
+        let size = hud::drawn_rect(&gui, key)
+            .map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size());
+        windows::seat(world, &gui, key, size, false).min
+    } else {
+        offer_spot(world, &gui, shows)
+    };
     let rest = hud::placed_spot(world, &gui, key, start);
     let shown = egui::Area::new(hud::panel_id(key))
         .order(Band::Hud.order())
@@ -266,8 +274,42 @@ fn draw_offer(world: &mut World) {
         .insert(key.name().to_owned(), shown.response.rect);
 }
 
+/// Where the card of an offer stands until the player places it: in sight of the conversation. It
+/// is worked out once, when the card has been drawn for this offer and its size is known, and kept
+/// while the offer shows, so it never moves with the camera.
+fn offer_spot(world: &mut World, gui: &egui::Context, shows: (QuestId, QuestMoment)) -> egui::Pos2 {
+    let size = hud::drawn_rect(gui, WindowKey::QuestOffer)
+        .map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size());
+    match *world.resource::<OfferSpot>() {
+        OfferSpot::At(of, at) if of == shows => at,
+        OfferSpot::Measured(of) if of == shows => {
+            let at = windows::spot_in_sight(world, gui, size);
+            *world.resource_mut::<OfferSpot>() = OfferSpot::At(shows, at);
+            at
+        }
+        _ => {
+            *world.resource_mut::<OfferSpot>() = OfferSpot::Measured(shows);
+            gui.request_discard("a quest offer's card measured before it is placed");
+            windows::spot_in_sight(world, gui, size)
+        }
+    }
+}
+
+/// How far the card of the offer on show has come to its spot: drawn once so its size is known,
+/// then standing where it was worked out to.
+#[derive(Resource, Default, Clone, Copy)]
+enum OfferSpot {
+    #[default]
+    None,
+    Measured((QuestId, QuestMoment)),
+    At((QuestId, QuestMoment), egui::Pos2),
+}
+
 fn show_offer(ui: &mut Ui, world: &mut World, quest: QuestId, moment: QuestMoment) -> Response {
-    let inventory = Inventory::of(world, session::me(world));
+    let me = session::me(world);
+    let bag = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+    let worn = me.and_then(|me| world.get::<Equipment>(me)).cloned();
+    let belongings = Belongings::of(bag.as_ref(), worn.as_ref());
     let content = world.resource::<Content>().clone();
     let parties = world.resource::<Parties>().clone();
     let painted = ui.layer_id();
@@ -279,16 +321,8 @@ fn show_offer(ui: &mut Ui, world: &mut World, quest: QuestId, moment: QuestMomen
     };
     let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
         let shown = match moment {
-            QuestMoment::Offer => offer(
-                ui,
-                world,
-                &content,
-                &parties,
-                quest,
-                Some(&inventory),
-                plate,
-            ),
-            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory, plate),
+            QuestMoment::Offer => offer(ui, world, &content, &parties, quest, belongings, plate),
+            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, belongings, plate),
             QuestMoment::Decision => {
                 decision(ui, &content, quest);
                 Vec::new()
@@ -331,7 +365,8 @@ fn draw_card(world: &mut World) {
                 .and_then(|me| world.get::<QuestLog>(me))
                 .cloned()
                 .unwrap_or_default();
-            let inventory = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+            let bag = me.and_then(|me| world.get::<Inventory>(me)).cloned();
+            let worn = me.and_then(|me| world.get::<Equipment>(me)).cloned();
             let shown_as = QuestCardLook {
                 moment: None,
                 action: Some(chat::card_action(&messages::of(&content).terminal)),
@@ -343,7 +378,7 @@ fn draw_card(world: &mut World) {
             let shown = show(ui, world, &content, quest, shown_as, |ui, world, plate| {
                 let reader = QuestReader {
                     log: &log,
-                    inventory: inventory.as_ref(),
+                    belongings: Belongings::of(bag.as_ref(), worn.as_ref()),
                 };
                 let shown = terms(ui, world, &content, &parties, quest, reader, plate);
                 answer_drawn(world, shown);
@@ -359,7 +394,7 @@ fn turn_in(
     images: &mut World,
     content: &Content,
     quest: QuestId,
-    inventory: &Inventory,
+    belongings: Belongings<'_>,
     plate: Plate,
 ) -> Vec<DrawnItem> {
     let def = quest.get(content);
@@ -368,7 +403,7 @@ fn turn_in(
     if def.reveals(ChoiceReveal::Costs) {
         card::heading(ui, plate, words.card_hand_in());
         for (index, &stack) in def.hand_in().iter().enumerate() {
-            let held = inventory.count(stack.item);
+            let held = belongings.count(stack.item);
             shown.push(
                 ui.push_id(("hand in", index), |ui| {
                     hand_in_row(ui, images, content, stack, held)

@@ -12,7 +12,7 @@ use editor::user::{EditorSettings, UserFolder};
 use editor::views::area::nodes::SceneTree;
 use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::GameSettings;
 use engine::systems::area::AreaModule;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
@@ -114,6 +114,7 @@ pub fn object(name: &str) -> SceneNode {
         title: None,
         shape: ObjectShape::Point(Pos::new(1.5, 1.5)),
         look: None,
+        yaw: Degrees::default(),
         shown: None,
         scripts: Vec::new(),
     })))

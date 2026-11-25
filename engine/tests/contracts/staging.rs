@@ -5,16 +5,13 @@ use engine::core::units::{HourOfDay, MeterPos, Meters};
 use engine::systems::area::AreaDef;
 use engine::systems::area::Place;
 use engine::systems::combat::{self, AttackRequest};
-use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, MoveRequest, position};
 use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::player::{self, AreaDrawn};
 use engine::systems::region;
 use engine::systems::staging::{Staging, stage};
-use engine::systems::{
-    GameSettings, ServerClocks, actor, dialogue, npc, reach, skill, start_clocks, stat,
-};
+use engine::systems::{GameSettings, ServerClocks, actor, npc, reach, skill, start_clocks, stat};
 use serde_json::json;
 use testkit::{Game, Map, Sim, hunting, path};
 
@@ -26,20 +23,12 @@ fn a_bench_stages_what_a_test_character_does_through_its_own_requests() {
     let player = sim.join(1);
     sim.equip(player, "sword");
     let conn = sim.conn(1);
-    let keeper = sim.npc("keeper");
     let raider = sim.npc("raider");
 
     let walk_to = SPAWN + engine::core::math::Offset::new(0.0, 3.0);
     stage(&mut sim.world, conn, Staging::Walk { to: walk_to }).expect("a walk");
     assert!(sim.run_until(10.0, |world| {
         position(world, player).is_some_and(|at| at.distance(walk_to) < Meters(0.1))
-    }));
-
-    stage(&mut sim.world, conn, Staging::Talk).expect("someone to talk to");
-    assert!(sim.run_until(10.0, |world| {
-        world
-            .get::<dialogue::Conversation>(player)
-            .is_some_and(|talk| talk.with == Some(keeper))
     }));
 
     let area = sim.id::<AreaDef>("yard");
@@ -55,7 +44,6 @@ fn a_bench_stages_what_a_test_character_does_through_its_own_requests() {
     sim.tick();
     let placed = position(&sim.world, player).expect("a position");
     assert!(placed.distance(away) < Meters(1.5), "{placed:?}");
-    assert!(sim.conversation(1).is_none());
     sim.send(conn, AreaDrawn);
     player::arrival_holds(&mut sim.world);
 
@@ -89,7 +77,6 @@ fn a_bench_is_told_when_there_is_nothing_to_stage() {
     let conn = sim.conn(1);
 
     assert!(stage(&mut sim.world, conn, Staging::Fight).is_err());
-    assert!(stage(&mut sim.world, conn, Staging::Talk).is_err());
     let off_the_ground = Pos::new(100.0, 100.0);
     assert!(stage(&mut sim.world, conn, Staging::Walk { to: off_the_ground }).is_err());
 }
@@ -272,32 +259,9 @@ fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it_until_rest
 
 fn sim() -> Sim {
     let content = Game::new()
-        .area(
-            "yard",
-            &Map::open(20, 9),
-            json!([
-                { "type": "resident", "npc": path("npc", "keeper"), "at": { "x": 10.0, "y": 1.0 } },
-            ]),
-        )
+        .area("yard", &Map::open(20, 9), json!([]))
         .hero("yard", SPAWN.x, SPAWN.y)
         .sword()
-        .npc(
-            "keeper",
-            40.0,
-            json!([{ "type": "script", "script": path("script", "keeper_talk") }]),
-        )
-        .script(
-            "keeper_talk",
-            "npc",
-            json!({
-                "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "hello" },
-                "hello": {
-                    "type": "dialogue",
-                    "lines": [{ "by": { "type": "npc", "npc": path("npc", "keeper") }, "text": ["Welcome."] }],
-                    "choices": [{ "label": ["Goodbye."] }],
-                },
-            }),
-        )
         .npc(
             "raider",
             1_000.0,
@@ -312,7 +276,6 @@ fn sim() -> Sim {
                 "text": ["Something happened."],
             }),
         )
-        .mark("talking")
         .sfx("ui_refuse")
         .sfx("ui_close")
         .vfx("damage_taken")
@@ -322,14 +285,10 @@ fn sim() -> Sim {
     let mut sim = Sim::new(content);
     sim.serve("yard")
         .accept::<MoveRequest>()
-        .accept::<InteractRequest>()
         .accept::<AttackRequest>()
-        .accept::<dialogue::ConversationRequest>()
         .add((
             movement::move_request,
-            interact::interact_request,
             combat::request,
-            dialogue::requests,
             actor::playing::progress,
         ))
         .plan(skill::casting::StepCasts::default())
@@ -340,7 +299,6 @@ fn sim() -> Sim {
             npc::body::DriveBodies::default(),
             movement::AdvanceWalks::default(),
         ))
-        .add((interact::interactions, dialogue::hold, dialogue::refresh))
         .plan(stat::SettleVitals::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());

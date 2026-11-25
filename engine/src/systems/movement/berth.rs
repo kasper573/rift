@@ -34,6 +34,13 @@ impl Aim {
         }
     }
 
+    fn mark(self) -> Mark {
+        match self {
+            Aim::Point(point) => Mark::Point(point),
+            Aim::Actor(actor) | Aim::Meeting(actor) => Mark::Actor(actor),
+        }
+    }
+
     fn sight(self, world: &World) -> Option<Sight> {
         let bodies = *world.resource::<Bodies>();
         Some(match self {
@@ -80,7 +87,9 @@ impl Aim {
 /// in reach, so an approach never wavers. An actor walking away is closed on to a body's width inside
 /// the reach, and met wherever the approacher gets that near, so it is still in reach once the
 /// approacher has stopped. An actor that can't take a step, held fast or never moving at all, waits
-/// where it stands for what it aims at to come in reach.
+/// where it stands for what it aims at to come in reach. An approacher that has come to rest in reach
+/// keeps what it aims at in reach a body's radius past the reach, for as long as it stands there, so
+/// a small step of either doesn't break off what it does there.
 pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> Approach {
     ApproachPlan::of(world, entity, aim, reach).apply(world, entity)
 }
@@ -95,6 +104,7 @@ pub enum ApproachPlan {
     Resting {
         halt: bool,
         met: bool,
+        aim: Aim,
     },
     /// Waiting where it stands or walking on to the berth it has.
     Holding {
@@ -116,11 +126,15 @@ impl ApproachPlan {
         let rooted = speed_of(world, entity) <= MetersPerSec(Meters(0.0));
         let caught = sight.walking && sight.reaches(at, sight.closing(reach));
         let halt = moving(world, entity) && (rooted || caught);
-        if (halt || !moving(world, entity)) && sight.reaches(at, reach) {
+        let berthed = world
+            .get::<Berthed>(entity)
+            .is_some_and(|berthed| berthed.mark == aim.mark() && berthed.at == at);
+        let holds = if berthed { sight.leeway(reach) } else { reach };
+        if (halt || !moving(world, entity)) && sight.reaches(at, holds) {
             let met = sight
                 .footing
-                .is_none_or(|footing| at.distance(footing) <= reach);
-            return ApproachPlan::Resting { halt, met };
+                .is_none_or(|footing| at.distance(footing) <= holds);
+            return ApproachPlan::Resting { halt, met, aim };
         }
         if rooted {
             return ApproachPlan::Holding { halt };
@@ -149,9 +163,26 @@ impl ApproachPlan {
     }
 
     pub fn apply(self, world: &mut World, entity: Entity) -> Approach {
+        let berthed = match &self {
+            ApproachPlan::Resting { met: true, aim, .. } => Some(aim.mark()),
+            _ => None,
+        };
+        let approach = self.go(world, entity);
+        match berthed.zip(position(world, entity)) {
+            Some((mark, at)) => {
+                world.entity_mut(entity).insert(Berthed { mark, at });
+            }
+            None => {
+                world.entity_mut(entity).remove::<Berthed>();
+            }
+        }
+        approach
+    }
+
+    fn go(self, world: &mut World, entity: Entity) -> Approach {
         match self {
             ApproachPlan::Unreachable => Approach::Unreachable,
-            ApproachPlan::Resting { halt, met } => {
+            ApproachPlan::Resting { halt, met, .. } => {
                 halt_if(world, entity, halt);
                 if met {
                     Approach::Arrived
@@ -179,6 +210,20 @@ impl ApproachPlan {
             }
         }
     }
+}
+
+/// Where an approacher came to rest in reach of what it aimed at.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+struct Berthed {
+    mark: Mark,
+    at: Pos<Meters>,
+}
+
+/// What an approach is for, however it is aimed at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Mark {
+    Actor(Entity),
+    Point(Pos<Meters>),
 }
 
 /// Moves a resting actor in reach of what it aims at to a better berth: off the body of the actor it
@@ -390,6 +435,12 @@ impl Sight {
     fn closing(&self, reach: Meters) -> Meters {
         let spacing = self.bodies.spacing();
         Meters((reach.0 - spacing.0).max(spacing.0).min(reach.0))
+    }
+
+    /// How far what an approacher rests in reach of may stand before it must be followed: a body's
+    /// radius past the reach.
+    fn leeway(&self, reach: Meters) -> Meters {
+        Meters(reach.0 + self.bodies.radius.0)
     }
 
     fn reaches(&self, point: Pos<Meters>, reach: Meters) -> bool {

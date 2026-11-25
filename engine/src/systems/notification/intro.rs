@@ -81,7 +81,7 @@ pub fn shown(world: &World) -> Option<ShownIntro> {
     })
 }
 
-pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
+pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) {
     let now = rows::time(gui);
     let mut shown = world.resource_mut::<IntroShowing>();
     let current = shown
@@ -185,13 +185,11 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
         gui.set_transform_layer(shown.response.layer_id, look.around(shown.inner));
         drawn.push(shown.inner);
     }
-    let bottom = drawn.iter().map(Rect::bottom).fold(top, f32::max);
     world.resource_mut::<IntroShowing>().drawn = drawn;
-    bottom
 }
 
 #[derive(Resource, Default)]
-struct IntroShowing {
+pub(super) struct IntroShowing {
     waiting: Option<NotificationSent>,
     settled_for: Duration,
     showing: Option<ShowingIntro>,

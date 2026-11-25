@@ -156,7 +156,7 @@ fn game() -> Game {
             json!({
                 "name": "Homeward",
                 "icon": "icons/skill.png",
-                "target": "self",
+                "target": { "type": "caster" },
                 "levels": [{ "cost": 0, "stats": {} }],
                 "modules": [{ "type": "script", "script": path("script", "homeward_used") }],
             }),

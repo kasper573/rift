@@ -554,7 +554,7 @@ fn a_player_says_only_so_many_lines_in_a_while_and_is_told_when_one_is_too_many(
 }
 
 #[test]
-fn a_line_reaches_its_hearers_with_the_things_set_in_it_unless_one_is_no_thing_of_the_game() {
+fn a_line_reaches_its_hearers_with_the_things_set_in_it_unless_one_is_not_in_the_game() {
     let mut sim = serving(game().load(), "camp");
     sim.join(1);
     sim.join(2);
@@ -593,26 +593,31 @@ fn a_line_reaches_its_hearers_with_the_things_set_in_it_unless_one_is_no_thing_o
     }
 
     let content = sim.world.resource::<Content>().clone();
-    let speaker = sim.player(1);
-    let stands = movement::position(&sim.world, speaker).expect("somewhere");
-    let elsewhere = ChatEmbed::Location(ChatLocation {
-        area: content.by_path(&path("area", "wood")).expect("the wood"),
+    let wood = content.by_path(&path("area", "wood")).expect("the wood");
+    let picked = ChatEmbed::Location(ChatLocation {
+        area: wood,
         x: 4,
         y: 4,
     });
-    let told: Vec<Option<ChatEmbed>> = heard(&mut sim, vec![elsewhere.sent(&content)])
+    let told: Vec<Option<ChatEmbed>> = heard(&mut sim, vec![picked.sent(&content)])
         .iter()
         .flat_map(|(_, held)| held)
         .map(|sent| ChatEmbed::read(&content, sent))
         .collect();
     assert_eq!(
         told,
-        [Some(ChatEmbed::Location(ChatLocation {
-            area: content.by_path(&path("area", "camp")).expect("the camp"),
-            x: stands.x.round() as i32,
-            y: stands.y.round() as i32,
-        }))],
-        "a location a line holds is where its speaker stands, whatever their client sent"
+        [Some(picked)],
+        "a location a line holds is the spot its speaker picked, in any area of the game"
+    );
+    let off = ChatEmbed::Location(ChatLocation {
+        area: wood,
+        x: 999,
+        y: 999,
+    });
+    assert_eq!(
+        heard(&mut sim, vec![off.sent(&content)]),
+        Vec::new(),
+        "a line holding a spot off its area's ground reaches nobody"
     );
 }
 

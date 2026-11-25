@@ -13,21 +13,22 @@ use crate::systems::messages;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
+use schemars::JsonSchema;
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct AssignHotbarRequest {
     pub slot: HotbarSlot,
     pub entry: HotbarEntry,
 }
 
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct AssignBasicAttackRequest {
     pub pick: BasicAttackPick,
 }
 
 /// What the player puts in the basic attack slot: a skill they know, a weapon whose attack they
 /// want (worn first if it is still in the bag), or nothing.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BasicAttackPick {
     Empty,
     Skill(SkillId),

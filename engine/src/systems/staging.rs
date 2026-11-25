@@ -7,20 +7,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::core::math::{Pos, PosSchema};
-use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
-use crate::core::units::{HourOfDay, MeterPos, Meters, Seconds};
+use crate::core::time::{TimeCourse, WallClock, WeatherClock};
+use crate::core::units::{HourOfDay, MeterPos, Meters};
 use crate::systems::area;
 use crate::systems::area::Place;
 use crate::systems::combat::{self, AttackRequest, Relation};
 use crate::systems::dialogue::span::ScriptSpan;
-use crate::systems::interact::{self, InteractRequest, Verb};
-use crate::systems::item::ItemStack;
-use crate::systems::market::{self, MarketAsk, MarketRequest, MarketView};
 use crate::systems::movement::{self, MoveRequest, MoveSeq, Position};
 use crate::systems::notification::{self, NotificationId};
 use crate::systems::npc::Npc;
 use crate::systems::player::{conn_player, may_command, tell_clocks};
-use crate::systems::{GameSettings, ServerClocks, WorldArea, from_client, start_clocks, stat};
+use crate::systems::{
+    GameSettings, ServerClocks, WorldArea, from_client, run_day, start_clocks, stat,
+};
 
 /// Where a game server that stages scenes takes them, beside its test characters.
 pub const STAGING_ROUTE: &str = "/test/stage";
@@ -37,8 +36,6 @@ pub enum Staging {
     },
     /// Attacks the nearest foe.
     Fight,
-    /// Talks to the nearest NPC with something to say.
-    Talk,
     /// Puts the character at `place`, in its own area or another.
     Place { place: Place },
     /// Holds the weather of the character's area at the spell of its climate named `spell`, for
@@ -56,13 +53,6 @@ pub enum Staging {
     /// Tells the character's player the notification `notification`, as a script tells it, with
     /// nothing in the places its text leaves for a script's values.
     Notify { notification: NotificationId },
-    /// Puts up a listing on the market from the character's bag of `goods` for `price`
-    /// for `duration`, with the market opened for them where they stand.
-    List {
-        goods: Vec<ItemStack>,
-        price: Vec<ItemStack>,
-        duration: Seconds,
-    },
 }
 
 /// Stages `staging` for the character the connection `conn` plays, as its client would ask for it.
@@ -92,13 +82,6 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
             })
             .ok_or("no foe in the character's area")?;
             from_client(world, conn, AttackRequest { target: foe });
-        }
-        Staging::Talk => {
-            let npc = nearest(world, player, |world, npc| {
-                interact::interaction_of(world, npc).is_some_and(|it| it.verb == Verb::Talk)
-            })
-            .ok_or("nobody to talk to in the character's area")?;
-            from_client(world, conn, InteractRequest { target: npc });
         }
         Staging::Place { place } => area::warp::warp(world, player, place)
             .map_err(|refusal| refusal.plain_words(world.resource::<Content>()))?,
@@ -131,8 +114,7 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
             } else {
                 TimeCourse::Held(hour)
             };
-            world.insert_resource(DayClock(Some(course)));
-            tell_clocks(world);
+            run_day(world, Some(course));
         }
         Staging::Restore => {
             let clocks = *world.resource::<ServerClocks>();
@@ -143,24 +125,6 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
             let def = notification.get(world.resource::<Content>()).clone();
             let told = def.notification(ScriptSpan::said(&def.text, &[]));
             notification::notify(world, player, None, told);
-        }
-        Staging::List {
-            goods,
-            price,
-            duration,
-        } => {
-            if world.resource::<GameSettings>().market.is_none() {
-                return Err("the game has no market".to_owned());
-            }
-            if world.get::<MarketView>(player).is_none() {
-                market::open(world, player, None);
-            }
-            let ask = MarketAsk::List {
-                goods,
-                price,
-                duration,
-            };
-            from_client(world, conn, MarketRequest::Ask(ask));
         }
     }
     Ok(())

@@ -26,7 +26,7 @@ use crate::core::math::{Pos, Rng};
 use crate::core::script::{Answer, NEXT, REFUSED};
 use crate::core::script::{FlowKey, Instances};
 use crate::core::text::LineText;
-use crate::core::time::UnixMillis;
+use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, Seconds};
 use crate::systems::account::AccountId;
 use crate::systems::area::Place;
@@ -41,12 +41,15 @@ use crate::systems::mount;
 use crate::systems::notification::{self, Notification};
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::party::CharacterParties;
+use crate::systems::player::session;
 use crate::systems::player::snapshot::{self, CharacterSnapshot};
 use crate::systems::player::{self, RequestNeeds};
 use crate::systems::reward::{self, Reward, Rolled};
+use crate::systems::society::SocietyView;
 use crate::systems::society::{Settling, Society, SocietyMember};
 use crate::systems::worlds::WorldName;
 use crate::systems::{GameSettings, SETTINGS_FILE, identity};
+use roster::{CallAnswer, InstanceCallShown, RosterRowShown};
 
 use crate::systems::messages::{self, ArgumentKindOf, Line, Phrase, messages};
 pub use effect::EntersInstance;
@@ -653,7 +656,7 @@ pub struct AreaInstanceTally {
 }
 
 /// A player asks to leave the instance they are inside, for good.
-#[derive(Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LeaveInstance;
 
 /// The instance a player is inside, as their client shows it.
@@ -1324,4 +1327,157 @@ pub fn scripting(vocabulary: &mut Vocabulary) {
         .effect::<effect::EnterInstance>("enter_instance")
         .effect::<effect::LeaveInstance>("leave_instance")
         .effect::<effect::CompleteGoal>("complete_goal");
+}
+
+/// The instance the player is inside, as the plate shows it, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownAreaInstance {
+    pub area: String,
+    pub goals: Vec<AreaInstanceGoalShown>,
+    /// Its roster, in the order they were taken.
+    pub roster: Vec<ShownRosterMember>,
+    /// How long it has left uncleared, in an area whose instances only last so long.
+    pub left: Option<Seconds>,
+    /// Once it is cleared: what that gave the player.
+    pub cleared: Option<AreaInstanceGiven>,
+    /// How long until a cleared one closes and everyone is returned.
+    pub returned_in: Option<Seconds>,
+}
+
+/// A member of the roster, as the plate lists them.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownRosterMember {
+    pub name: String,
+    pub place: RosterPlace,
+    pub me: bool,
+}
+
+pub fn shown(world: &World) -> Option<ShownAreaInstance> {
+    let instance = instance(world)?;
+    let now = time::server_now(world)?;
+    let closes = instance.cleared.as_ref().map(|cleared| cleared.closes);
+    Some(ShownAreaInstance {
+        area: instance.area.get(world.resource::<Content>()).name.clone(),
+        goals: instance.goals.clone(),
+        roster: instance
+            .roster
+            .iter()
+            .map(|row| ShownRosterMember {
+                name: row.character.name.clone(),
+                place: row.place,
+                me: row.me,
+            })
+            .collect(),
+        left: instance.ends.map(|ends| ends.since(now)),
+        cleared: instance.cleared.map(|cleared| cleared.given),
+        returned_in: closes.map(|at| at.since(now)),
+    })
+}
+
+pub(crate) fn instance(world: &World) -> Option<AreaInstanceShown> {
+    session::my_character(world)?
+        .get::<SocietyView>()?
+        .instance
+        .clone()
+}
+
+/// A call as the roster window or the card shows it, for a driver of the client.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownInstanceCall {
+    pub area: String,
+    pub leader: String,
+    /// Whether the player leads it, and sees the roster window rather than the card.
+    pub leads: bool,
+    pub left: Seconds,
+    pub least: u32,
+    pub most: u32,
+    /// How many slots are taken: the leader and everyone picked.
+    pub taken: u32,
+    /// How many would go if the leader entered now.
+    pub ready: u32,
+    /// The leader first, then the members; to a member, only their own row.
+    pub rows: Vec<ShownCallRow>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ShownCallRow {
+    pub name: String,
+    pub state: CallRowState,
+    /// The area they play in, while they are too far.
+    pub area: Option<String>,
+    pub answer: ShownCallAnswer,
+    pub picked: bool,
+}
+
+pub fn shown_call(world: &World) -> Option<ShownInstanceCall> {
+    let call = call(world)?;
+    let now = time::server_now(world)?;
+    let content = world.resource::<Content>();
+    Some(ShownInstanceCall {
+        area: call.area.get(content).name.clone(),
+        leader: call.leader.name.clone(),
+        leads: call.leads,
+        left: call.ends.since(now),
+        least: call.players.least,
+        most: call.players.most,
+        taken: call.taken,
+        ready: call.ready,
+        rows: call
+            .rows
+            .iter()
+            .map(|row| {
+                let (state, area) = match row.shown {
+                    RosterRowShown::Leading => (CallRowState::Leading, None),
+                    RosterRowShown::Going => (CallRowState::Going, None),
+                    RosterRowShown::Benched => (CallRowState::Benched, None),
+                    RosterRowShown::Deciding { .. } => (CallRowState::Deciding, None),
+                    RosterRowShown::NotGoing => (CallRowState::NotGoing, None),
+                    RosterRowShown::TooFar { area } => {
+                        (CallRowState::TooFar, Some(area.get(content).name.clone()))
+                    }
+                    RosterRowShown::Away => (CallRowState::Away, None),
+                    RosterRowShown::Fallen => (CallRowState::Fallen, None),
+                };
+                ShownCallRow {
+                    name: row.character.name.clone(),
+                    state,
+                    area,
+                    answer: match row.answer {
+                        CallAnswer::Deciding => ShownCallAnswer::Deciding,
+                        CallAnswer::Joined { .. } => ShownCallAnswer::Joined,
+                        CallAnswer::Declined => ShownCallAnswer::Declined,
+                    },
+                    picked: matches!(row.answer, CallAnswer::Joined { picked: true }),
+                }
+            })
+            .collect(),
+    })
+}
+
+pub(crate) fn call(world: &World) -> Option<InstanceCallShown> {
+    session::my_character(world)?
+        .get::<SocietyView>()?
+        .call
+        .clone()
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CallRowState {
+    Leading,
+    Going,
+    Benched,
+    Deciding,
+    NotGoing,
+    TooFar,
+    Away,
+    Fallen,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShownCallAnswer {
+    Deciding,
+    Joined,
+    Declined,
 }

@@ -82,9 +82,12 @@ impl Interactive {
     }
 }
 
-#[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
+#[derive(
+    JsonSchema, Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq,
+)]
 pub struct InteractRequest {
     #[entities]
+    #[schemars(with = "u64")]
     pub target: Entity,
 }
 

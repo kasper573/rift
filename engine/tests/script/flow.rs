@@ -222,7 +222,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
                 "interacted": interacted("first"),
                 "first": { "type": "notify", "notification": "gulls.notification.json" },
                 "came_near": {
-                    "type": "on", "event": "came_near", "within": 3.0, "by": "characters", "next": "second"
+                    "type": "on", "event": "came_near", "within": 3.0, "by": "characters", "fliers": false, "next": "second"
                 },
                 "second": { "type": "notify", "notification": "sails.notification.json" },
             })),
@@ -284,7 +284,7 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
         (
             "flow_healer",
             npc(json!({
-                "came_near": { "type": "on", "event": "came_near", "within": 3.0, "by": "npcs", "next": "heal" },
+                "came_near": { "type": "on", "event": "came_near", "within": 3.0, "by": "npcs", "fliers": false, "next": "heal" },
                 "heal": { "type": "heal", "by": "full" },
             })),
         ),

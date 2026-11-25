@@ -298,9 +298,12 @@ fn area_skill(area: Value, script: &str) -> Value {
     json!({
         "name": "Area skill",
         "icon": "icons/skill.png",
-        "target": "area_enemy",
-        "range": 6.0,
-        "area": area,
+        "target": {
+            "type": "ranged_area",
+            "affects": "enemy",
+            "range": 6.0,
+            "shape": area,
+        },
         "cooldown": 6.0,
         "levels": [{ "cost": 1, "stats": { "power": 1.0 } }],
         "modules": [{ "type": "script", "script": path("script", script) }],

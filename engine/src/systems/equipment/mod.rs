@@ -21,6 +21,7 @@ use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
 use crate::systems::requirement;
 use crate::systems::resource::Working;
+use schemars::JsonSchema;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -38,7 +39,7 @@ pub struct Equipment {
 
 /// Takes off what is worn in `slot`, into the bag's slot `into` when one is named, as
 /// `unequip_slot` puts it there.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UnequipRequest {
     pub slot: EquipmentPlace,
     pub into: Option<u32>,
@@ -46,7 +47,7 @@ pub struct UnequipRequest {
 
 /// Puts on the item in the bag's slot `slot`: a held one in `hand` when one is named, whichever
 /// hand its stance's clips were made for. Never uses the item: one that isn't worn is refused.
-#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct EquipRequest {
     pub slot: u32,
     pub hand: Option<HandIndex>,
@@ -54,12 +55,68 @@ pub struct EquipRequest {
 
 /// A place a character wears an item: one of its body's hands, in the skeleton's order, one of the
 /// slots its skeleton lists, or the one place every body keeps a tool.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EquipmentPlace {
     Hand(HandIndex),
     Slot(EquipmentSlot),
     Tool,
+}
+
+/// What a character has on them: their bag, and what they wear.
+#[derive(Clone, Copy, Default)]
+pub struct Belongings<'a> {
+    bag: Option<&'a Inventory>,
+    worn: Option<&'a Equipment>,
+}
+
+impl<'a> Belongings<'a> {
+    pub fn by(world: &'a World, actor: impl Into<Option<Entity>>) -> Belongings<'a> {
+        let actor = actor.into();
+        Belongings {
+            bag: actor.and_then(|actor| world.get(actor)),
+            worn: actor.and_then(|actor| world.get(actor)),
+        }
+    }
+
+    pub fn of(bag: Option<&'a Inventory>, worn: Option<&'a Equipment>) -> Belongings<'a> {
+        Belongings { bag, worn }
+    }
+
+    /// How many of `item` they have. One worn counts once, however many hands it takes.
+    pub fn count(&self, item: ItemId) -> u32 {
+        let worn = self
+            .worn
+            .is_some_and(|worn| worn.slots.values().any(|worn| *worn == item));
+        self.bag
+            .map_or(0, |bag| bag.count(item))
+            .saturating_add(u32::from(worn))
+    }
+}
+
+/// Takes `stacks` from what `actor` has on them: from their bag, and from what they wear where the
+/// bag falls short. Refuses, taking nothing, when they have too few.
+pub fn take_belongings(
+    world: &mut World,
+    actor: Entity,
+    stacks: &[ItemStack],
+) -> Result<(), LineText> {
+    let (worn, bagged) = worn_share(world, actor, stacks);
+    item::effects::exchange(world, actor, &bagged, &[])?;
+    discard_worn(world, actor, &worn);
+    Ok(())
+}
+
+/// Takes as much of `stacks` as `actor` has, from their bag and from what they wear where
+/// the bag falls short.
+pub fn take_belongings_up_to(world: &mut World, actor: Entity, stacks: &[ItemStack]) {
+    let (worn, bagged) = worn_share(world, actor, stacks);
+    if let Some(mut bag) = world.get_mut::<Inventory>(actor) {
+        bag.take_up_to(&bagged);
+    }
+    discard_worn(world, actor, &worn);
 }
 
 pub fn wears(world: &World, actor: Entity, item: ItemId) -> bool {
@@ -347,6 +404,39 @@ pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(
                 .not_worn(Mention::Item(item).line(content))
         })?;
     unequip_slot(world, player, slot, None)
+}
+
+/// The items of `stacks` that `actor` wears and whose bag holds too few of, and what is left of
+/// `stacks` for the bag to give once those are taken off them.
+fn worn_share(world: &World, actor: Entity, stacks: &[ItemStack]) -> (Vec<ItemId>, Vec<ItemStack>) {
+    let bag = Inventory::of(world, actor);
+    let mut worn = Vec::new();
+    let mut bagged = Vec::new();
+    for &stack in stacks {
+        let short = bag.count(stack.item) < stack.count;
+        let left = if short && wears(world, actor, stack.item) {
+            worn.push(stack.item);
+            stack.count - 1
+        } else {
+            stack.count
+        };
+        if left > 0 {
+            bagged.push(ItemStack::new(stack.item, left));
+        }
+    }
+    (worn, bagged)
+}
+
+/// Removes each of `items` from wherever `actor` wears it, without a place to land.
+fn discard_worn(world: &mut World, actor: Entity, items: &[ItemId]) {
+    if items.is_empty() {
+        return;
+    }
+    if let Some(equipment) = world.get::<Equipment>(actor) {
+        let mut slots = equipment.slots.clone();
+        slots.retain(|_, worn| !items.contains(worn));
+        world.entity_mut(actor).insert(Equipment { slots });
+    }
 }
 
 /// Whether `item` is put on in `place` when it is equipped.
