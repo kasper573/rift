@@ -668,6 +668,14 @@ impl CameraRig {
             .map_or_else(|| self.kept(), |staging| staging.at())
     }
 
+    /// The shot the camera comes to rest on once it has glided there: the one it is staged on,
+    /// or where the player keeps it.
+    pub fn resting(&self) -> Shot {
+        self.staging
+            .and_then(|staging| staging.to)
+            .unwrap_or_else(|| self.kept())
+    }
+
     /// Where the player keeps the camera, whatever shot it is on.
     pub fn kept(&self) -> Shot {
         let orbit = self.orbit();

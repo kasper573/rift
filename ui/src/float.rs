@@ -181,6 +181,61 @@ pub fn lay_apart(rects: &mut [Rect], apart: f32) {
     }
 }
 
+/// Where a rect of `size` goes within `within` so it covers as little of `kept_clear` as it can,
+/// none of it where it fits clear of them all, and of the spots that cover least, the nearest
+/// `preferred`. A rect that covers least lies flush with an edge of `within` or `apart` off an
+/// edge of one kept clear, along each axis, so those are the spots weighed.
+pub fn clear_spot(
+    size: Vec2,
+    within: Rect,
+    kept_clear: &[Rect],
+    preferred: Pos2,
+    apart: f32,
+) -> Pos2 {
+    let spots = |low: f32, high: f32, preferred: f32, edges: &mut dyn Iterator<Item = f32>| {
+        let last = (high - low).max(0.0) + low;
+        let mut spots: Vec<f32> = [low, last, preferred].into_iter().chain(edges).collect();
+        for spot in &mut spots {
+            *spot = spot.clamp(low, last);
+        }
+        spots
+    };
+    let xs = spots(
+        within.left(),
+        within.right() - size.x,
+        preferred.x,
+        &mut kept_clear
+            .iter()
+            .flat_map(|rect| [rect.left() - apart - size.x, rect.right() + apart]),
+    );
+    let ys = spots(
+        within.top(),
+        within.bottom() - size.y,
+        preferred.y,
+        &mut kept_clear
+            .iter()
+            .flat_map(|rect| [rect.top() - apart - size.y, rect.bottom() + apart]),
+    );
+    let covered = |at: Pos2| -> f32 {
+        let placed = Rect::from_min_size(at, size);
+        kept_clear
+            .iter()
+            .map(|rect| {
+                let over = placed.intersect(*rect);
+                if over.is_positive() { over.area() } else { 0.0 }
+            })
+            .sum()
+    };
+    xs.iter()
+        .flat_map(|&x| ys.iter().map(move |&y| Pos2::new(x, y)))
+        .min_by(|a, b| {
+            covered(*a)
+                .total_cmp(&covered(*b))
+                .then(a.distance(preferred).total_cmp(&b.distance(preferred)))
+        })
+        .unwrap_or(preferred)
+}
+
 /// The layer drawn at `at`, leaving out the root layer egui keeps under the whole screen for panels
 /// to catch clicks on.
 pub fn layer_at(gui: &Context, at: Pos2) -> Option<LayerId> {

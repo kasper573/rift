@@ -41,6 +41,7 @@ pub struct QuestCardPlugin;
 impl Plugin for QuestCardPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<hud::Pinned<QuestId>>()
+            .init_resource::<OfferSpot>()
             .add_systems(
                 Update,
                 hud::raise_pinned::<QuestId>(WindowKey::QuestCard)
@@ -241,17 +242,23 @@ fn draw_offer(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
-    let Some((quest, moment)) = moment(world) else {
+    let Some(shows) = moment(world) else {
+        *world.resource_mut::<OfferSpot>() = OfferSpot::None;
         return;
     };
+    let (quest, moment) = shows;
     let key = WindowKey::QuestOffer;
-    let size =
-        hud::drawn_rect(&gui, key).map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size());
     let placed = world
         .resource::<UserSettings>()
         .widget_pos(key.name())
         .is_some();
-    let start = windows::seat(world, &gui, key, size, !placed).min;
+    let start = if placed {
+        let size = hud::drawn_rect(&gui, key)
+            .map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size());
+        windows::seat(world, &gui, key, size, false).min
+    } else {
+        offer_spot(world, &gui, shows)
+    };
     let rest = hud::placed_spot(world, &gui, key, start);
     let shown = egui::Area::new(hud::panel_id(key))
         .order(Band::Hud.order())
@@ -265,6 +272,45 @@ fn draw_offer(world: &mut World) {
         .resource_mut::<WidgetRects>()
         .0
         .insert(key.name().to_owned(), shown.response.rect);
+}
+
+/// Where the card of an offer stands until the player places it: in sight of the people talking
+/// where it can be. It is worked out once, when the card has been drawn for this offer and its size
+/// is known, and kept while the offer shows, so it never moves with the camera.
+fn offer_spot(world: &mut World, gui: &egui::Context, shows: (QuestId, QuestMoment)) -> egui::Pos2 {
+    let key = WindowKey::QuestOffer;
+    let size = |gui: &egui::Context| {
+        hud::drawn_rect(gui, key).map_or(Vec2::new(card::WIDTH, card::HEIGHT), |rect| rect.size())
+    };
+    let spot = *world.resource::<OfferSpot>();
+    match spot {
+        OfferSpot::At(of, at) if of == shows => {
+            // The row keeps the card's place, so the conversation's other windows stand where
+            // they would beside it.
+            windows::seat(world, gui, key, size(gui), true);
+            at
+        }
+        OfferSpot::Measured(of) if of == shows => {
+            let at = windows::seat_in_sight_of_bodies(world, gui, key, size(gui)).min;
+            *world.resource_mut::<OfferSpot>() = OfferSpot::At(shows, at);
+            at
+        }
+        _ => {
+            *world.resource_mut::<OfferSpot>() = OfferSpot::Measured(shows);
+            gui.request_discard("a quest offer's card measured before it is placed");
+            windows::seat(world, gui, key, size(gui), true).min
+        }
+    }
+}
+
+/// How far the card of the offer on show has come to its spot: drawn once so its size is known,
+/// then standing where it was worked out to.
+#[derive(Resource, Default, Clone, Copy)]
+enum OfferSpot {
+    #[default]
+    None,
+    Measured((QuestId, QuestMoment)),
+    At((QuestId, QuestMoment), egui::Pos2),
 }
 
 fn show_offer(ui: &mut Ui, world: &mut World, quest: QuestId, moment: QuestMoment) -> Response {
