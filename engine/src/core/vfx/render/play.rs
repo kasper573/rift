@@ -86,8 +86,10 @@ struct ParticleKey {
 #[derive(Resource, Default)]
 pub(super) struct Shining(HashSet<Entity>);
 
-/// Despawns what an instance drew once the instance goes.
-pub(super) fn forget(gone: On<Remove<VfxView>>, views: Query<&VfxView>, mut commands: Commands) {
+/// Despawns what an instance drew once the entity holding its view is despawned. A view moved
+/// onto another entity, as onto the stand-in a client keeps of what a server despawned, keeps
+/// drawing with its pieces.
+pub(super) fn forget(gone: On<Despawn<VfxView>>, views: Query<&VfxView>, mut commands: Commands) {
     let Ok(view) = views.get(gone.entity) else {
         return;
     };
