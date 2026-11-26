@@ -11,7 +11,8 @@ use crate::core::geometry::Shape;
 use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::opacity::Opacity;
 use crate::core::render::world::shine::HeldPiece;
-use crate::core::render::{facing_rotation, ground_height, world_point};
+use crate::core::render::{facing_of, facing_rotation, ground_height, world_point};
+use crate::core::units::Radians;
 
 /// A thing whose meshes stand only for its vfx to wrap: drawn somewhere else, it holds them
 /// hidden, and what its coats wrap them in shows of its own.
@@ -38,17 +39,20 @@ pub(super) struct Scene {
     pub thing: Option<Thing>,
     pub area: Option<Area>,
     pub path: Vec<Vec3>,
+    /// The way the vfx heads, as the world's facings count it.
+    pub facing: Radians,
     /// The vfx's heading, as a turn about the vertical from facing +Z.
     pub heading: Quat,
     /// How far the thing it plays on has faded from sight.
     pub faded: f32,
 }
 
-/// A thing a vfx plays on: where its feet stand and how tall it is.
+/// A thing a vfx plays on: where its feet stand, how it is turned and how tall it is.
 #[derive(Clone, Copy)]
 pub(super) struct Thing {
     pub entity: Entity,
     pub feet: Vec3,
+    pub turn: Quat,
     pub height: f32,
 }
 
@@ -85,15 +89,16 @@ impl Scene {
     /// The site of `instance` as it stands this frame, or nothing while it cannot be drawn: a
     /// thing not yet placed, or a path with a stop gone.
     pub fn of(world: &World, instance: &VfxInstance) -> Option<Scene> {
-        let heading = facing_rotation(instance.heading);
         let scene = match &instance.site {
             VfxSite::Actor(entity) | VfxSite::Object(entity) => {
                 let thing = thing(world, *entity)?;
+                let facing = instance.heading.unwrap_or_else(|| facing_of(thing.turn));
                 Scene {
                     thing: Some(thing),
                     area: None,
                     path: Vec::new(),
-                    heading,
+                    facing,
+                    heading: facing_rotation(facing),
                     faded: 1.0 - Opacity::of(world, *entity).clamp(0.0, 1.0),
                 }
             }
@@ -117,6 +122,7 @@ impl Scene {
                         shape: footprint.shape,
                     }),
                     path: Vec::new(),
+                    facing: footprint.facing,
                     heading: turn,
                     faded: 0.0,
                 }
@@ -129,7 +135,8 @@ impl Scene {
                     .enumerate()
                     .map(|(index, stop)| stop_point(world, stop, index == 0))
                     .collect::<Option<Vec<Vec3>>>()?,
-                heading,
+                facing: instance.heading.unwrap_or_default(),
+                heading: facing_rotation(instance.heading.unwrap_or_default()),
                 faded: 0.0,
             },
         };
@@ -359,7 +366,7 @@ impl Placing<'_> {
 
     /// Where the area's own point lies on the ground: a circle's or a rectangle's middle, a cone's
     /// tip, a line's start.
-    fn area_point(&self) -> Vec3 {
+    pub fn area_point(&self) -> Vec3 {
         let Some(area) = &self.scene.area else {
             return Vec3::ZERO;
         };
@@ -381,14 +388,21 @@ impl Placing<'_> {
 /// A thing as it stands: where its transform stands it, or, held by another, where its holder
 /// had it as the last frame was drawn, and how tall its extent says it is.
 fn thing(world: &World, entity: Entity) -> Option<Thing> {
-    let feet = match world.get::<ChildOf>(entity) {
-        Some(_) => world.get::<GlobalTransform>(entity)?.translation(),
-        None => world.get::<Transform>(entity)?.translation,
+    let (feet, turn) = match world.get::<ChildOf>(entity) {
+        Some(_) => {
+            let placed = world.get::<GlobalTransform>(entity)?;
+            (placed.translation(), placed.rotation())
+        }
+        None => {
+            let placed = world.get::<Transform>(entity)?;
+            (placed.translation, placed.rotation)
+        }
     };
     let height = world.get::<SiteExtent>(entity)?.height;
     Some(Thing {
         entity,
         feet,
+        turn,
         height,
     })
 }

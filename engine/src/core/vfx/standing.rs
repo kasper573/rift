@@ -5,7 +5,6 @@ use bevy::prelude::*;
 
 use super::{VfxInstance, VfxPlay, VfxSite};
 use crate::core::time::server_now;
-use crate::core::units::Radians;
 
 /// The vfx a thing plays over and over for as long as it is drawn: the flame of a lantern, the
 /// glow of a crystal. Whoever draws the thing says which, and stands the thing by its transform
@@ -67,7 +66,7 @@ pub(super) fn play(world: &mut World) {
                     part: play.part.clone(),
                     params: play.params(),
                     dealer: None,
-                    heading: Radians::default(),
+                    heading: None,
                     started: now,
                     until: None,
                 },

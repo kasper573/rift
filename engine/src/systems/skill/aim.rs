@@ -329,7 +329,7 @@ fn show(
         part: VfxPart::Whole,
         params,
         dealer: None,
-        heading: Radians::default(),
+        heading: None,
         started,
         until: None,
     };

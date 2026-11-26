@@ -1054,6 +1054,12 @@ pub fn facing_rotation(facing: Radians) -> Quat {
     Quat::from_rotation_y(std::f32::consts::FRAC_PI_2 - facing.0)
 }
 
+/// The facing a thing turned by `rotation` about the vertical shows: `facing_rotation` undone.
+pub fn facing_of(rotation: Quat) -> Radians {
+    let (yaw, _, _) = rotation.to_euler(EulerRot::YXZ);
+    Radians(std::f32::consts::FRAC_PI_2 - yaw)
+}
+
 pub fn ground_height(world: &World, at: Pos<Meters>) -> Meters {
     world
         .get_resource::<GroundHeights>()

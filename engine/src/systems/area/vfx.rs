@@ -105,11 +105,11 @@ pub fn spawn(
     };
     let from = delivery.dealer.and_then(|dealer| position(world, dealer));
     let heading = match &site {
-        VfxSite::Area(footprint) => footprint.facing,
-        VfxSite::Path(stops) => facing_from(at, stop_at(world, stops.last()?)?),
+        VfxSite::Area(footprint) => Some(footprint.facing),
+        VfxSite::Path(stops) => Some(facing_from(at, stop_at(world, stops.last()?)?)),
         _ => from
             .filter(|from| *from != at)
-            .map_or(Radians::default(), |from| facing_from(from, at)),
+            .map(|from| facing_from(from, at)),
     };
     let params = play.params();
     if let VfxSite::Area(footprint) = &site
@@ -118,7 +118,7 @@ pub fn spawn(
         for (actor, stood) in reached(world, footprint, delivery.struck.as_deref()) {
             let instance = VfxInstance {
                 part: VfxPart::Whole,
-                heading: footprint.facing,
+                heading: Some(footprint.facing),
                 ..instance(world, inner, VfxSite::Actor(actor), params.clone())
             };
             spawn_at(world, instance, stood);
@@ -490,7 +490,7 @@ fn instance(world: &World, vfx: VfxId, site: VfxSite, params: VfxParams) -> VfxI
         part: VfxPart::Whole,
         params,
         dealer: None,
-        heading: Radians::default(),
+        heading: None,
         started: now,
         until: Some(now.after(vfx.get(world.resource::<Content>()).lasts())),
     }

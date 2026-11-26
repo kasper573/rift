@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use bevy_ecs::entity::{EntityHashMap, MapEntities};
 use bevy_ecs::prelude::*;
 use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::{Offset, Pos, Rgba};
@@ -112,14 +113,14 @@ fn an_area_vfx_reaches_the_targets_it_struck_and_not_the_caster() {
         .collect();
     assert_eq!(circles.len(), 1);
     assert!(circles[0].contains(feet));
-    let struck: Vec<(Entity, Radians)> = blasts
+    let struck: Vec<(Entity, Option<Radians>)> = blasts
         .iter()
         .filter_map(|blast| match blast.site {
             VfxSite::Actor(actor) => Some((actor, blast.heading)),
             _ => None,
         })
         .collect();
-    assert_eq!(struck, vec![(dummy, circles[0].facing)]);
+    assert_eq!(struck, vec![(dummy, Some(circles[0].facing))]);
 }
 
 #[test]
@@ -190,7 +191,7 @@ fn an_instance_arrives_as_the_server_sent_it_whatever_its_parameters_and_site() 
             ("amount".to_owned(), ParamValue::Number(4.5)),
             ("tint".to_owned(), ParamValue::Color(Rgba(0xff00_80ff))),
         ]),
-        heading: Radians(0.25),
+        heading: Some(Radians(0.25)),
         started: UnixMillis(1_000),
         until: Some(UnixMillis(2_500)),
     };
@@ -207,10 +208,26 @@ fn an_instance_arrives_as_the_server_sent_it_whatever_its_parameters_and_site() 
         params: VfxParams::default(),
         ..along_a_path.clone()
     };
+    // The client knows the player by an entity of its own, and every one the instance names
+    // must become that.
+    let mut client = World::new();
+    let mut theirs = client.spawn_empty().id();
+    while theirs == player {
+        theirs = client.spawn_empty().id();
+    }
+    let mut names = EntityHashMap::default();
+    names.insert(player, theirs);
     for sent in [along_a_path, on_an_area] {
         let bytes = postcard::to_allocvec(&sent).expect("serializes");
-        let received: VfxInstance = postcard::from_bytes(&bytes).expect("deserializes");
+        let mut received: VfxInstance = postcard::from_bytes(&bytes).expect("deserializes");
         assert_eq!(received, sent);
+        received.map_entities(&mut names);
+        let mut seen = sent.clone();
+        seen.dealer = Some(theirs);
+        if let VfxSite::Path(stops) = &mut seen.site {
+            stops[0] = PathStop::Actor(theirs);
+        }
+        assert_eq!(received, seen);
     }
 }
 

@@ -453,7 +453,7 @@ fn play_effects(world: &mut World) {
                     params: play.params(),
                     part: play.part,
                     dealer: None,
-                    heading: default(),
+                    heading: None,
                     started: now,
                     until: Some(until),
                 },

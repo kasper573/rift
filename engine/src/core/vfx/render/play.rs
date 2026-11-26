@@ -317,7 +317,7 @@ impl Cx<'_> {
         local: Seconds,
     ) -> EffectFrame {
         EffectFrame {
-            origin: placed.0.extend(self.instance.heading.0),
+            origin: placed.0.extend(self.scene.facing.0),
             rotation: Vec4::from_array(placed.1.to_array()),
             scale: scale.extend(seed),
             life: Vec4::new(life, self.age(local).0, self.ends().0, 0.0),
@@ -355,9 +355,11 @@ fn draw_mesh(world: &mut World, cx: &Cx, mesh: &MeshLayer, local: Seconds, life:
             }
             _ => placed,
         };
+        let mut placed = placed;
         if let (MeshFit::Area, Some(area)) = (mesh.fit, &cx.scene.area) {
             scale.x *= area.across / 2.0;
             scale.z *= area.along / 2.0;
+            placed.0 += area.middle - placing.area_point();
         }
         (placed, scale)
     };
@@ -381,7 +383,7 @@ fn draw_mesh(world: &mut World, cx: &Cx, mesh: &MeshLayer, local: Seconds, life:
         let tick = (local.0 * rate.0).floor() as i64;
         let material = EffectMaterial {
             frame: EffectFrame {
-                origin: Vec4::new(0.0, 0.0, 0.0, cx.instance.heading.0),
+                origin: Vec4::new(0.0, 0.0, 0.0, cx.scene.facing.0),
                 rotation: Vec4::W,
                 scale: Vec4::new(1.0, 1.0, 1.0, seed + tick as f32 * 17.0),
                 ..frame
@@ -389,22 +391,10 @@ fn draw_mesh(world: &mut World, cx: &Cx, mesh: &MeshLayer, local: Seconds, life:
             ..material
         };
         if built(world, cx) != Some(Built::Bolt(tick)) {
-            clear(world, cx.entity, cx.index);
             let path = cx.scene.path.clone();
             let bolt_seed = (seed.to_bits() as u64) << 20 | (tick as u64 & 0xfffff);
             let tubes = shapes::bolts(&path, radius.0, jitter.0, branches, bolt_seed);
-            let handle = world.resource_mut::<Assets<EffectMaterial>>().add(material);
-            let mut shown = Vec::new();
-            for tube in tubes {
-                let tube = world.resource_mut::<Assets<Mesh>>().add(tube);
-                shown.push(spawn_shape(
-                    world,
-                    tube,
-                    handle.clone(),
-                    Transform::IDENTITY,
-                ));
-            }
-            set_pieces(world, cx, shown, Some(handle), Some(Built::Bolt(tick)));
+            reshape(world, cx, tubes, material, Built::Bolt(tick));
         } else {
             paint(world, cx, material);
         }
@@ -706,11 +696,7 @@ fn lay_patch(
         yaw,
         LIFT,
     );
-    clear(world, cx.entity, cx.index);
-    let patch = world.resource_mut::<Assets<Mesh>>().add(patch);
-    let handle = world.resource_mut::<Assets<EffectMaterial>>().add(material);
-    let piece = spawn_shape(world, patch, handle.clone(), Transform::IDENTITY);
-    set_pieces(world, cx, vec![piece], Some(handle), Some(wanted));
+    reshape(world, cx, vec![patch], material, wanted);
 }
 
 fn draw_light(world: &mut World, cx: &Cx, light: &LightLayer, life: f32) {
@@ -1209,6 +1195,49 @@ fn set_pieces(
         pieces.material = material;
         pieces.built = built;
     }
+}
+
+/// Gives a layer's pieces the shapes `meshes`, painted as `painted`, built for `built`. The pieces
+/// it already shows keep drawing, each with its mesh written over in place: a piece spawned anew
+/// draws only once the renderer has taken it in, so a layer whose shape changes every frame, as an
+/// aim's ground does under a moving pointer, would never draw if it spawned its pieces each time.
+fn reshape(world: &mut World, cx: &Cx, meshes: Vec<Mesh>, painted: EffectMaterial, built: Built) {
+    let handle = match world
+        .get::<VfxView>(cx.entity)
+        .and_then(|view| view.layers[cx.index].material.clone())
+    {
+        Some(handle) => {
+            paint(world, cx, painted);
+            handle
+        }
+        None => world.resource_mut::<Assets<EffectMaterial>>().add(painted),
+    };
+    let mut kept = shown(world, cx).into_iter();
+    let mut pieces = Vec::new();
+    for mesh in meshes {
+        let reused = kept
+            .next()
+            .and_then(|piece| Some((piece, world.get::<Mesh3d>(piece)?.0.clone())));
+        let piece = match reused {
+            Some((piece, shape)) => {
+                if let Some(mut shape) = world.resource_mut::<Assets<Mesh>>().get_mut(&shape) {
+                    *shape = mesh;
+                }
+                piece
+            }
+            None => {
+                let shape = world.resource_mut::<Assets<Mesh>>().add(mesh);
+                spawn_shape(world, shape, handle.clone(), Transform::IDENTITY)
+            }
+        };
+        pieces.push(piece);
+    }
+    for surplus in kept {
+        if let Ok(piece) = world.get_entity_mut(surplus) {
+            piece.despawn();
+        }
+    }
+    set_pieces(world, cx, pieces, Some(handle), Some(built));
 }
 
 /// Paints a layer's material as `painted`.

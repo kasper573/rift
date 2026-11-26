@@ -164,9 +164,10 @@ pub struct VfxInstance {
     /// Whoever dealt it: where a layer anchored at the hand leaves from.
     #[entities]
     pub dealer: Option<Entity>,
-    /// The way the vfx travels: from whoever dealt it toward the one it lands on, else east. A vfx
+    /// The way the vfx travels: from whoever dealt it toward the one it lands on. None for a vfx
+    /// on a thing that no one else dealt, which heads the way that thing faces as it turns. A vfx
     /// on an area heads the way the area faces, whatever this says.
-    pub heading: Radians,
+    pub heading: Option<Radians>,
     pub started: UnixMillis,
     /// When its last layer ends; none for one that plays over and over until it is removed.
     pub until: Option<UnixMillis>,
@@ -187,7 +188,11 @@ pub enum VfxSite {
     ),
     Area(PlacedShape),
     /// From whoever deals it through what it reaches, in order.
-    Path(#[schemars(with = "Vec<PathStopSchema>")] Vec<PathStop>),
+    Path(
+        #[entities]
+        #[schemars(with = "Vec<PathStopSchema>")]
+        Vec<PathStop>,
+    ),
 }
 
 /// A point a path passes through: an actor, wherever it stands as the path is drawn, or a place

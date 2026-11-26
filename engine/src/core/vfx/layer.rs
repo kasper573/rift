@@ -153,7 +153,8 @@ pub enum MeshFit {
     /// Drawn at its own measures.
     #[default]
     None,
-    /// Scaled across to an area: a circle's radius, a cone's length.
+    /// Scaled across to an area and laid over it: a circle's radius, a cone's length, a line's
+    /// width and length.
     Area,
     /// A band takes an area cone's angle and length.
     Cone,
