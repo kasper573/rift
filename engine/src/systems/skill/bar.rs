@@ -20,6 +20,7 @@ use super::{
 };
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
+use crate::core::geometry::Shape;
 use crate::core::gui::{self, Tier};
 use crate::core::text::{self, TextLook};
 use crate::core::text::{LineText, SpanText};
@@ -39,6 +40,7 @@ use crate::systems::item::widget::{ItemSlotLook, SLOT, SlotRarity, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemKind, UseItemRequest, card as item_card};
 use crate::systems::mention::Mention;
 use crate::systems::mount::{self, RiderAct};
+use crate::systems::movement;
 use crate::systems::player::session;
 use crate::systems::reach::Engaged;
 use crate::systems::requirement;
@@ -1044,6 +1046,20 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
                 None => aim_or_cast(world, skill, rank),
             }
         }
+        // A circle round where the caster stands is the same whichever way it is aimed.
+        Targeting::MeleeArea {
+            shape: Shape::Circle { .. },
+            ..
+        } => match movement::position(world, me) {
+            Some(at) => {
+                world.write_message(UseSkillRequest {
+                    skill,
+                    aim: CastAim::Point(at),
+                });
+                true
+            }
+            None => false,
+        },
         Targeting::RangedArea { .. } | Targeting::MeleeArea { .. } | Targeting::Spot { .. } => {
             aim_or_cast(world, skill, rank)
         }
