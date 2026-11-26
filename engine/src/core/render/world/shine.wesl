@@ -2,6 +2,7 @@ import bevy_pbr::render::forward_io::VertexOutput;
 import bevy_pbr::render::mesh_bindings::mesh;
 import bevy_pbr::render::mesh_view_bindings::view;
 
+import engine::core::render::world::opacity::FADE_BITS;
 import engine::core::render::world::shade::{finished, lit};
 
 // What a vfx lays over a thing's lit surface, as the engine lays it in the buffer.
@@ -14,9 +15,6 @@ struct SurfaceLook {
 
 // The looks of every shining thing, by slot; slot 0 lays nothing.
 @group(3) @binding(109) var<storage, read> looks: array<SurfaceLook>;
-
-// How many of a mesh tag's low bits tell how much of the mesh has faded.
-const FADE_BITS: u32 = 8u;
 
 // A pixel of a world material lit, with the look its mesh's tag names laid over it, then fogged
 // and finished. Slot 0 is a look of nothing, so every pixel reads its look alike.

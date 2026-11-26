@@ -112,7 +112,7 @@ impl Scene {
                         shape: footprint.shape,
                     }),
                     path: Vec::new(),
-                    heading,
+                    heading: turn,
                     faded: 0.0,
                 }
             }

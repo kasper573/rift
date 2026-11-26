@@ -164,8 +164,8 @@ pub struct VfxInstance {
     /// Whoever dealt it: where a layer anchored at the hand leaves from.
     #[entities]
     pub dealer: Option<Entity>,
-    /// The way the vfx travels: from whoever dealt it toward the one it lands on, the facing of
-    /// the area it plays on, else east.
+    /// The way the vfx travels: from whoever dealt it toward the one it lands on, else east. A vfx
+    /// on an area heads the way the area faces, whatever this says.
     pub heading: Radians,
     pub started: UnixMillis,
     /// When its last layer ends; none for one that plays over and over until it is removed.
