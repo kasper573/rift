@@ -1,0 +1,63 @@
+{
+  "name": "Aim",
+  "stage": "effect",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        97,
+        203,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "rim",
+      "kind": "color",
+      "default": [
+        237,
+        252,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "hostile_color",
+      "kind": "color",
+      "default": [
+        255,
+        89,
+        48,
+        255
+      ]
+    },
+    {
+      "name": "hostile_rim",
+      "kind": "color",
+      "default": [
+        255,
+        206,
+        170,
+        255
+      ]
+    },
+    {
+      "name": "hostile",
+      "kind": "bool",
+      "default": false
+    },
+    {
+      "name": "melee",
+      "kind": "bool",
+      "default": false
+    },
+    {
+      "name": "strength",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 2.0
+    }
+  ]
+}

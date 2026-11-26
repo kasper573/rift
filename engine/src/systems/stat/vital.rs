@@ -13,11 +13,11 @@ use crate::systems::notification;
 use crate::systems::notification::pop::PopShader;
 use crate::systems::status::boost::Boosts;
 
-/// The vfx every game provides, played on an actor where damage lands and where a heal does.
+/// The vfx every game provides, played on an actor where a heal lands. Where damage lands, the
+/// blow's own vfx shows it and the actor flinches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum VitalVfx {
-    DamageTaken,
     Healed,
 }
 
@@ -27,7 +27,7 @@ impl Fixture for VitalVfx {
 }
 
 pub fn check_vfx(loading: &mut Loading) {
-    check_fixtures_played::<VitalVfx>(loading, &[SiteKind::Actor]);
+    check_fixtures_played::<VitalVfx>(loading, |_| &[SiteKind::Actor]);
 }
 
 /// Worn down by damage like anyone, but always left standing: a blow that would fell it leaves its
@@ -80,7 +80,6 @@ pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
     if amount > 0.0 {
         let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
         world.entity_mut(entity).insert(Hurt(blows + 1));
-        play_fixture(world, VitalVfx::DamageTaken, VfxSite::Actor(entity));
         let shown = whole(amount).to_string();
         notification::pop_as(world, entity, shown, PopShader::DamagePop);
     }

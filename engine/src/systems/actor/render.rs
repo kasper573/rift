@@ -32,11 +32,12 @@ use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::plumb::Plumb;
 use crate::core::render::world::rig_clip;
+use crate::core::render::world::shine::HeldPiece;
 use crate::core::render::{Animator, Loops, NextTurn, Previous, facing_rotation, world_point};
 use crate::core::text::Typewriter;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
-use crate::core::vfx::render::SiteExtent;
+use crate::core::vfx::render::{SiteExtent, VfxHand};
 use crate::core::vfx::standing::StandingVfx;
 use crate::systems::area::scenery::ShowsProp;
 use crate::systems::area::{self, Area, PropId};
@@ -209,10 +210,6 @@ struct Dressed {
     appearance: Appearance,
     worn: BTreeMap<EquipmentSlot, ItemId>,
 }
-
-/// A prop hanging from a hand of an actor's rig.
-#[derive(Component)]
-pub struct HeldProp;
 
 /// What hangs from a hand: an item the body holds, or the tool of the work its hands are at.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1100,6 +1097,15 @@ pub fn hang(world: &mut World) {
             let at = *places.hands.get(hand.index())?;
             Some((places.steed, ActorModel::get(&content, places.look), at))
         };
+        let casting = world.get::<Body>(entity).and_then(|body| {
+            let hand = model.hands().first()?;
+            Some(VfxHand(body.joint(&hand.joint.0)?))
+        });
+        if let Some(hand) = casting
+            && world.get::<VfxHand>(entity) != Some(&hand)
+        {
+            world.entity_mut(entity).insert(hand);
+        }
         let (Some(puppet), Some(body)) = (world.get::<Puppet>(entity), world.get::<Body>(entity))
         else {
             continue;
@@ -1170,7 +1176,7 @@ pub fn hang(world: &mut World) {
             let plumb = plumb_from(holder, held_by, &grip);
             let prop = world
                 .spawn((
-                    HeldProp,
+                    HeldPiece,
                     ShowsProp(look),
                     placed,
                     Visibility::default(),

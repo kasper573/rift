@@ -42,7 +42,7 @@ impl Fixture for DefeatVfx {
 }
 
 pub fn check_vfx(loading: &mut Loading) {
-    check_fixtures_played::<DefeatVfx>(loading, &[SiteKind::Actor]);
+    check_fixtures_played::<DefeatVfx>(loading, |_| &[SiteKind::Actor]);
 }
 
 pub fn register(app: &mut App) {

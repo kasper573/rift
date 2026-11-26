@@ -4,7 +4,6 @@
 
 pub mod afloat;
 pub mod backdrop;
-pub mod billboard;
 pub mod body;
 pub mod clouds;
 pub mod cover;
@@ -22,6 +21,7 @@ pub mod outline;
 pub mod paint;
 pub mod plumb;
 pub mod rig_clip;
+pub mod shine;
 pub mod sky;
 pub mod sky_picture;
 pub mod terrain;
@@ -73,12 +73,14 @@ impl Plugin for WorldScenePlugin {
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::shader::load_shader_library!(app, "clearing.wesl");
         bevy::shader::load_shader_library!(app, "opacity.wesl");
+        bevy::shader::load_shader_library!(app, "shine.wesl");
         bevy::asset::embedded_asset!(app, "material.wesl");
         bevy::asset::embedded_asset!(app, "material_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
         bevy::asset::embedded_asset!(app, "backdrop.wesl");
         bevy::asset::embedded_asset!(app, "afloat.wesl");
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
+        shine::install(app);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             let progress = RenderProgress::default();
             render_app
@@ -160,10 +162,8 @@ impl Plugin for WorldScenePlugin {
         )
         .add_systems(
             PostUpdate,
-            (
-                decal::lay_decals.run_if(resource_exists::<super::GroundHeights>),
-                billboard::face_camera,
-            )
+            decal::lay_decals
+                .run_if(resource_exists::<super::GroundHeights>)
                 .run_if(resource_exists::<CameraRig>)
                 .after(camera::place)
                 .before(bevy::transform::TransformSystems::Propagate),
@@ -172,7 +172,7 @@ impl Plugin for WorldScenePlugin {
             PostUpdate,
             (
                 let_depth_be_read,
-                opacity::thin,
+                shine::tag.in_set(shine::MeshesTagged),
                 afloat::lid_the_floating,
                 plumb::hang
                     .after(BodiesOnJoints)

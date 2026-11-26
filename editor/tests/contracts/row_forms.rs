@@ -18,7 +18,7 @@ use engine::core::math::Pos;
 use engine::core::script::ScriptDef;
 use engine::core::script::VarValue;
 use engine::core::units::{MeterPos, Meters};
-use engine::core::vfx::{ParamFill, ParamValue, VfxDef, VfxLayer};
+use engine::core::vfx::{CoatLayer, ParamFill, ParamValue, VfxDef, VfxLayer};
 use engine::systems::actor::{ModelDef, ModelPartDef};
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
 use engine::systems::class::{AccessRequirement, ClassDef, NodeKey};
@@ -664,9 +664,10 @@ fn a_layers_shader_parameter_lands_in_its_file_as_it_was_typed() {
             json!({
                 "name": "jolt",
                 "layers": [{
-                    "type": "shader",
+                    "type": "coat",
                     "shader": path("vfx_shader", "shake"),
-                    "duration": 0.2,
+                    "blend": "add",
+                    "run": { "duration": 0.2 },
                 }],
             }),
         );
@@ -682,8 +683,8 @@ fn a_layers_shader_parameter_lands_in_its_file_as_it_was_typed() {
         .read::<VfxDef>(&jolt)
         .expect("a project")
         .expect("the effect reads");
-    let Some(VfxLayer::Shader { params, .. }) = vfx.layers.first() else {
-        panic!("a shader layer");
+    let Some(VfxLayer::Coat(CoatLayer { params, .. })) = vfx.layers.first() else {
+        panic!("a coat layer");
     };
     assert_eq!(
         params.get("amplitude"),

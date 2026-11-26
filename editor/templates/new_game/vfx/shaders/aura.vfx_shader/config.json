@@ -1,0 +1,30 @@
+{
+  "name": "Aura",
+  "stage": "effect",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        255,
+        218,
+        137,
+        255
+      ]
+    },
+    {
+      "name": "edge",
+      "kind": "number",
+      "default": 0.5,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "stir",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 2.0
+    }
+  ]
+}

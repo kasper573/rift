@@ -1301,6 +1301,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy_hanabi"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4364f703ea01bf311e4243abd73907ae77f61bb808d9234db207d217b9b49b2"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "bitflags 2.13.2",
+ "bytemuck",
+ "fixedbitset 0.5.7",
+ "getrandom 0.4.3",
+ "rand 0.10.3",
+ "rand_pcg",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+ "wgpu",
+]
+
+[[package]]
 name = "bevy_image"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3793,6 +3813,7 @@ dependencies = [
  "bevy_app",
  "bevy_ecs",
  "bevy_egui",
+ "bevy_hanabi",
  "bevy_input",
  "bevy_math",
  "bevy_mod_outline",

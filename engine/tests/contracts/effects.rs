@@ -278,14 +278,14 @@ fn clinic() -> (Sim, Entity) {
                 "fireball": { "skill": "fireball.skill.json", "at": { "x": 80.0, "y": 0.0 } },
             });
         })
-        .row("status_effect", "guarded", effect("buff", json!({ "on_activate": "guard_up.vfx.json" }), "guarded_boost"))
+        .row("status_effect", "guarded", effect("buff", json!({ "on_activate": { "vfx": "guard_up.vfx.json" } }), "guarded_boost"))
         .script("guarded_boost", "status_effect", boost_by_power())
         .row(
             "status_effect",
             "warded",
             effect(
                 "buff",
-                json!({ "on_activate": "ward_up.vfx.json", "during": "ward_bubble.vfx.json", "on_expire": "ward_break.vfx.json" }),
+                json!({ "on_activate": { "vfx": "ward_up.vfx.json" }, "during": { "vfx": "ward_bubble.vfx.json" }, "on_expire": { "vfx": "ward_break.vfx.json" } }),
                 "warded_boost",
             ),
         )
@@ -293,19 +293,19 @@ fn clinic() -> (Sim, Entity) {
         .row(
             "status_effect",
             "poisoned",
-            effect("debuff", json!({ "during": "poison_bubbles.vfx.json" }), "poisoned_damage"),
+            effect("debuff", json!({ "during": { "vfx": "poison_bubbles.vfx.json" } }), "poisoned_damage"),
         )
         .script("poisoned_damage", "status_effect", every(2.0, "damage"))
         .row(
             "status_effect",
             "sanctified",
-            effect("buff", json!({ "during": "holy_motes.vfx.json" }), "sanctified_heal"),
+            effect("buff", json!({ "during": { "vfx": "holy_motes.vfx.json" } }), "sanctified_heal"),
         )
         .script("sanctified_heal", "status_effect", every(2.0, "heal"))
         .row(
             "status_effect",
             "burning",
-            effect("debuff", json!({ "during": "embers.vfx.json" }), "burning_damage"),
+            effect("debuff", json!({ "during": { "vfx": "embers.vfx.json" } }), "burning_damage"),
         )
         .script("burning_damage", "status_effect", every(1.0, "damage"))
         .asset("icons/status.png", testkit::png(1, 1))
@@ -417,7 +417,6 @@ fn clinic() -> (Sim, Entity) {
         .vfx("poison_bubbles")
         .vfx("holy_motes")
         .vfx("embers")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("healed")
         .shader("heal_pop")

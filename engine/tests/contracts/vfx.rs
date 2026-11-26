@@ -5,7 +5,7 @@ use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::{Offset, Pos, Rgba};
 use engine::core::time::UnixMillis;
 use engine::core::units::{Degrees, Meters, Radians};
-use engine::core::vfx::{ParamValue, VfxDef, VfxInstance, VfxParams, VfxSite};
+use engine::core::vfx::{ParamValue, PathStop, VfxDef, VfxInstance, VfxParams, VfxPart, VfxSite};
 use engine::systems::actor;
 use engine::systems::area::AreaDef;
 use engine::systems::area::vfx;
@@ -18,22 +18,6 @@ use engine::systems::stat::{self, StatKind, Vital};
 use engine::systems::visibility::Presence;
 use serde_json::{Value, json};
 use testkit::{Declared, Game, Map, Sim, path};
-
-#[test]
-fn damage_shows_on_the_one_hit_and_the_effect_passes() {
-    let (mut sim, player) = arena();
-    let dummy = dummy_toward(&mut sim, player, 1.0);
-
-    combat::inflict(&mut sim.world, dummy, Some(player), 4.0);
-    sim.tick();
-
-    let shown = instances(&mut sim, "damage_taken");
-    assert_eq!(shown.len(), 1);
-    assert_eq!(shown[0].site, VfxSite::Actor(dummy));
-
-    sim.later(3.0);
-    assert!(instances(&mut sim, "damage_taken").is_empty());
-}
 
 #[test]
 fn healing_shows_but_regeneration_does_not() {
@@ -153,19 +137,50 @@ fn a_path_vfx_runs_from_the_caster_through_its_targets_nearest_first() {
 
     let shown = instances(&mut sim, "arc");
     assert_eq!(shown.len(), 1);
-    let stops: Vec<_> = [player, near, middle, far]
-        .iter()
-        .map(|who| position(&sim.world, *who).expect("position"))
-        .collect();
+    let stops = [player, near, middle, far].map(PathStop::Actor).to_vec();
     assert_eq!(shown[0].site, VfxSite::Path(stops));
 }
 
 #[test]
+fn a_bolt_flies_to_where_its_skill_is_aimed_and_its_hit_waits_for_it_to_land() {
+    let (mut sim, player) = arena();
+    learn(&mut sim, player, "bolt");
+    let dummy = dummy_toward(&mut sim, player, 3.0);
+    let full = stat::effective(&sim.world, dummy, StatKind::Health);
+    let at = position(&sim.world, dummy).expect("position");
+
+    cast(&mut sim, "bolt", at);
+    assert!(sim.run_until(10.0, |world| any_shown(world, "flight")));
+
+    let flight = instances(&mut sim, "flight");
+    let VfxSite::Path(stops) = &flight[0].site else {
+        panic!("a path: {:?}", flight[0].site);
+    };
+    assert_eq!(stops[0], PathStop::Actor(player));
+    assert!(
+        matches!(stops[1..], [PathStop::Point(end)] if end.distance_to(at) < 0.01),
+        "{stops:?}"
+    );
+    sim.run(0.8);
+    assert_eq!(stat::effective(&sim.world, dummy, StatKind::Health), full);
+    sim.run(0.4);
+    assert!(stat::effective(&sim.world, dummy, StatKind::Health) < full);
+}
+
+#[test]
 fn an_instance_arrives_as_the_server_sent_it_whatever_its_parameters_and_site() {
-    let (sim, _) = arena();
-    let on_screen = VfxInstance {
-        vfx: sim.id("damage_taken"),
-        site: VfxSite::Screen,
+    let (sim, player) = arena();
+    let along_a_path = VfxInstance {
+        vfx: sim.id("arc"),
+        site: VfxSite::Path(vec![
+            PathStop::Actor(player),
+            PathStop::Point(Pos::new(2.0, 1.5)),
+        ]),
+        part: VfxPart::Node {
+            node: "hand_r".to_owned(),
+            radius: Meters(0.3),
+        },
+        dealer: Some(player),
         params: VfxParams(vec![
             ("amount".to_owned(), ParamValue::Number(4.5)),
             ("tint".to_owned(), ParamValue::Color(Rgba(0xff00_80ff))),
@@ -185,9 +200,9 @@ fn an_instance_arrives_as_the_server_sent_it_whatever_its_parameters_and_site() 
             },
         }),
         params: VfxParams::default(),
-        ..on_screen.clone()
+        ..along_a_path.clone()
     };
-    for sent in [on_screen, on_an_area] {
+    for sent in [along_a_path, on_an_area] {
         let bytes = postcard::to_allocvec(&sent).expect("serializes");
         let received: VfxInstance = postcard::from_bytes(&bytes).expect("deserializes");
         assert_eq!(received, sent);
@@ -207,6 +222,7 @@ fn arena() -> (Sim, Entity) {
                 "cleave": { "skill": "cleave.skill.json", "at": { "x": 0.0, "y": 0.0 } },
                 "fireball": { "skill": "fireball.skill.json", "at": { "x": 80.0, "y": 0.0 } },
                 "chain": { "skill": "chain.skill.json", "at": { "x": 160.0, "y": 0.0 } },
+                "bolt": { "skill": "bolt.skill.json", "at": { "x": 240.0, "y": 0.0 } },
             });
         })
         .row(
@@ -255,6 +271,26 @@ fn arena() -> (Sim, Entity) {
                 "hit": damage_last(),
             }), "arc"),
         )
+        .row(
+            "skill",
+            "bolt",
+            area_skill(json!({ "type": "circle", "radius": 1.0 }), "bolt_flight"),
+        )
+        .script(
+            "bolt_flight",
+            "skill",
+            area_nodes(json!({
+                "fly": {
+                    "type": "vfx",
+                    "vfx": "flight.vfx.json",
+                    "on": { "type": "skill_area" },
+                    "site": { "type": "path" },
+                    "wait": true,
+                    "next": "hit",
+                },
+                "hit": damage_last(),
+            }), "fly"),
+        )
         .asset("icons/skill.png", testkit::png(1, 1))
         .npc("dummy", 100.0, json!([]))
         .vfx("slash_hit")
@@ -262,7 +298,8 @@ fn arena() -> (Sim, Entity) {
         .vfx("blast")
         .edit("vfx", "blast", |blast| blast["on_actors_inside"] = json!(path("vfx", "blast")))
         .vfx("arc")
-        .vfx("damage_taken")
+        .vfx("flight")
+        .edit("vfx", "flight", |flight| flight["layers"][0]["place"] = json!({ "travel": {} }))
         .shader("damage_pop")
         .vfx("healed")
         .shader("heal_pop")

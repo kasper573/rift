@@ -14,7 +14,7 @@ use crate::core::ground::TILE_SIDE;
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, Meters};
-use crate::core::vfx::VfxId;
+use crate::core::vfx::VfxPlay;
 use crate::systems::area::prop_material::PropMaterialId;
 use crate::systems::water::ripples::RippleSource;
 
@@ -77,7 +77,7 @@ pub struct PropDef {
     /// The vfx it plays over and over wherever it is seen, standing in an area, lying on the
     /// ground or held in a hand: the flame of a lantern, the glow of a crystal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<VfxId>,
+    pub effects: Vec<VfxPlay>,
     /// How it breaks the water it stands in, as a shoal of fish or a spring does. Without it,
     /// it leaves the water as it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]

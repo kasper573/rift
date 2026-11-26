@@ -1,7 +1,7 @@
 use engine::core::card::CardStyleFixture;
 use engine::core::content::fixture::FixtureLock;
 use engine::core::content::{ContentFile, Fixture};
-use engine::core::vfx::{ParamKind, ShaderParam};
+use engine::core::vfx::{ParamKind, ShaderParam, Stage, VfxShaderDef};
 use engine::systems::area::world_map::WorldMap;
 use engine::systems::attention::AttentionMark;
 use engine::systems::chat::ChatChannel;
@@ -10,7 +10,7 @@ use engine::systems::combat::DefeatVfx;
 use engine::systems::input::map::{BoundAction, InputAction, InputBinding, InputDef, InputFixture};
 use engine::systems::interface::{CursorShape, InterfaceIcon, InterfaceSound};
 use engine::systems::notification::pop::PopShader;
-use engine::systems::skill::aim::AreaShader;
+use engine::systems::skill::aim::AimVfx;
 use engine::systems::stat::VitalVfx;
 use serde_json::{Value, json};
 use strum::VariantArray;
@@ -35,7 +35,7 @@ impl Game {
         let game = each::<DefeatVfx>(game, |game, key, _| game.vfx(key));
         let game = each::<LevelVfx>(game, |game, key, _| game.vfx(key));
         let game = each::<PopShader>(game, shader_fixture);
-        let game = each::<AreaShader>(game, shader_fixture);
+        let game = each::<AimVfx>(game, vfx_fixture);
         let game = each::<WorldMap>(game, |game, key, _| game.row("world_map", key, json!({})));
         each::<CardStyleFixture>(game, |game, key, _| game.card_style(key, json!({})))
     }
@@ -69,16 +69,41 @@ impl Game {
     }
 }
 
+/// A fixture shader of the stage its locks keep, which declares the parameters they keep.
 fn shader_fixture(game: Game, key: &str, locks: Vec<FixtureLock>) -> Game {
-    game.shader(key).edit("vfx_shader", key, |shader| {
-        shader["params"] = Value::Array(locks.iter().filter_map(param).collect());
-        for lock in &locks {
-            if let FixtureLock::Field { field, value } = lock
-                && let Some(held) = shader.pointer_mut(field)
-            {
-                *held = value.clone();
+    let stage = locks
+        .iter()
+        .find_map(|lock| match lock {
+            FixtureLock::Field { field, value } if field == engine::field!(VfxShaderDef, stage) => {
+                Some(serde_json::from_value::<Stage>(value.clone()).expect("a stage"))
             }
-        }
+            _ => None,
+        })
+        .unwrap_or(Stage::EFFECT);
+    game.shader_on(key, stage)
+        .edit("vfx_shader", key, |shader| {
+            shader["params"] = Value::Array(locks.iter().filter_map(param).collect());
+            for lock in &locks {
+                if let FixtureLock::Field { field, value } = lock
+                    && let Some(held) = shader.pointer_mut(field)
+                {
+                    *held = value.clone();
+                }
+            }
+        })
+}
+
+/// A fixture vfx that declares the parameters its locks keep.
+fn vfx_fixture(game: Game, key: &str, locks: Vec<FixtureLock>) -> Game {
+    let params: Vec<Value> = locks
+        .iter()
+        .filter_map(|lock| match lock {
+            FixtureLock::Entry { list, entry } if list == "/params" => Some(entry.clone()),
+            _ => None,
+        })
+        .collect();
+    game.vfx(key).edit("vfx", key, |vfx| {
+        vfx["params"] = Value::Array(params.clone());
     })
 }
 

@@ -52,8 +52,8 @@ impl From<&VfxParam> for ParamSpec {
     fn from(param: &VfxParam) -> ParamSpec {
         ParamSpec {
             name: param.name.clone(),
-            kind: param.kind,
-            default: param.kind.blank(),
+            kind: param.default.kind(),
+            default: param.default,
             range: None,
         }
     }

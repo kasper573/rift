@@ -91,7 +91,6 @@ pub struct PosedVfx {
 pub enum PosedSite {
     Actor(usize),
     Area(PlacedShape),
-    Screen,
 }
 
 /// A scene the game's mechanics play out in a live world.

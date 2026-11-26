@@ -558,7 +558,6 @@ fn yard() -> (Sim, Entity) {
             }),
         )
         .npc("dummy", 100.0, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("level_up")
         .shader("level_pop")

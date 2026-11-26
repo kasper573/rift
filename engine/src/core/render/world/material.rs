@@ -20,6 +20,7 @@ use bevy::render::render_resource::{
     AsBindGroup, Extent3d, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
     TextureDimension, TextureFormat,
 };
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::{Shader, ShaderRef};
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
@@ -29,6 +30,7 @@ use image::imageops::{self, FilterType};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::shine::SHINE_BUFFER;
 use crate::core::render::Look;
 use crate::core::vfx::board::ShaderBoardImage;
 use crate::core::vfx::shader::PARAMS_BYTES;
@@ -69,6 +71,8 @@ pub struct WorldLook {
     pub wear_mottle: Option<Handle<Image>>,
     #[uniform(108)]
     pub wear: WearUniform,
+    #[storage(109, read_only)]
+    pub shine: Handle<ShaderBuffer>,
     pub shader: Option<Handle<Shader>>,
 }
 
@@ -237,6 +241,7 @@ pub fn world_material(
             wear_mask: None,
             wear_mottle: None,
             wear: WearUniform::default(),
+            shine: SHINE_BUFFER,
             shader: None,
         },
     }

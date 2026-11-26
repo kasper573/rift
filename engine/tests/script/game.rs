@@ -269,7 +269,6 @@ pub fn game() -> Game {
         .sfx("ui_pick")
         .sfx("ui_refuse")
         .sfx("ui_close")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("healed")
         .shader("heal_pop")

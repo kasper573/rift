@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 
-use super::{VfxId, VfxInstance, VfxParams, VfxSite};
+use super::{VfxInstance, VfxPlay, VfxSite};
 use crate::core::time::server_now;
 use crate::core::units::Radians;
 
@@ -12,20 +12,14 @@ use crate::core::units::Radians;
 /// and its [`SiteExtent`](super::render::SiteExtent).
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct StandingVfx {
-    pub vfx: Vec<VfxId>,
-    /// What each of them is played with.
-    pub params: VfxParams,
+    pub plays: Vec<VfxPlay>,
     /// Whether each stands still at the middle of its run rather than playing.
     pub held: bool,
 }
 
 impl StandingVfx {
-    /// `vfx` playing with nothing filled in.
-    pub fn playing(vfx: Vec<VfxId>) -> StandingVfx {
-        StandingVfx {
-            vfx,
-            ..StandingVfx::default()
-        }
+    pub fn playing(plays: Vec<VfxPlay>) -> StandingVfx {
+        StandingVfx { plays, held: false }
     }
 }
 
@@ -65,12 +59,14 @@ pub(super) fn play(world: &mut World) {
         }
     }
     for (thing, standing) in fresh {
-        for &vfx in &standing.vfx {
+        for play in &standing.plays {
             let mut instance = world.spawn((
                 VfxInstance {
-                    vfx,
+                    vfx: play.vfx,
                     site: VfxSite::Object(thing),
-                    params: standing.params.clone(),
+                    part: play.part.clone(),
+                    params: play.params(),
+                    dealer: None,
                     heading: Radians::default(),
                     started: now,
                     until: None,

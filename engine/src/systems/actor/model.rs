@@ -29,7 +29,7 @@ use crate::core::content::{
 use crate::core::geometry::Capsule;
 use crate::core::render::world::body::{Figure, Skin};
 use crate::core::units::{Meters, MetersPerSec, Millis, PlaybackRate, Seconds};
-use crate::core::vfx::{SiteKind, VfxId, check_played};
+use crate::core::vfx::{SiteKind, VfxPlay, check_play, check_played};
 use crate::systems::area::prop::MAX_EFFECTS;
 use crate::systems::mount::{self, MountDef};
 
@@ -53,7 +53,7 @@ pub struct ModelDef {
     /// The vfx whoever wears the body plays over and over wherever they are seen: the embers of
     /// a thing of fire, the glow of a ghost.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<VfxId>,
+    pub effects: Vec<VfxPlay>,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -70,13 +70,17 @@ pub const HITBOX_RADII: RangeInclusive<f32> = 0.1..=4.0;
 /// The heights a model's hitbox may take.
 pub const HITBOX_HEIGHTS: RangeInclusive<f32> = 0.2..=8.0;
 
-/// Refuses the stage of a model's vfx that the object they play on cannot take.
+/// Refuses a layer of a model's vfx that the object they play on cannot carry, and a play that
+/// fills what its vfx doesn't declare.
 pub fn check_vfx(loading: &mut Loading) {
     let content = loading.content();
     for (id, model) in loading.rows::<ModelDef>(&content) {
-        for vfx in &model.effects {
-            check_played(loading, *vfx, &[SiteKind::Object], id.path(&content));
+        let mut check = RowCheck::default();
+        for (index, play) in model.effects.iter().enumerate() {
+            check_played(loading, play.vfx, &[SiteKind::Object], id.path(&content));
+            check_play(&content, play, &format!("/effects/{index}"), &mut check);
         }
+        loading.row_errors(id, check);
     }
 }
 

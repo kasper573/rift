@@ -418,7 +418,6 @@ fn armoury() -> Game {
         .area("field", &Map::open(11, 11), json!([]))
         .hero("field", 5.0, 5.0)
         .npc("brute", 25.0, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .script(

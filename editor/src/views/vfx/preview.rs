@@ -51,8 +51,6 @@ enum VfxTarget {
         facing: Degrees,
         count: u32,
     },
-    #[strum_discriminants(strum(serialize = "screen"))]
-    Screen,
 }
 
 impl Default for VfxTarget {
@@ -78,7 +76,7 @@ pub fn preview(
     let models: Vec<String> = content.table::<ModelDef>().paths().to_vec();
     let total = layers
         .iter()
-        .map(|layer| layer.ends().0)
+        .map(|layer| (layer.run().ends() + layer.lingers()).0)
         .fold(0.5_f32, f32::max);
     let now = ui.input(|input| input.time);
     let views = &mut editor.views.vfx;
@@ -127,7 +125,6 @@ pub fn preview(
             }
             ui.label(theme::faint(count.to_string()).size(12.0));
         }
-        VfxTarget::Screen => {}
     });
     let started = match &views.started {
         Some((playing, started)) if playing == key => *started,
@@ -187,7 +184,6 @@ pub fn preview(
             }
             PosedSite::Area(footprint)
         }
-        VfxTarget::Screen => PosedSite::Screen,
     };
     posed.vfx = Some(PosedVfx {
         layers,
@@ -237,7 +233,6 @@ impl VfxTarget {
                 facing: Degrees(0.0),
                 count: FIRST_CROWD,
             },
-            VfxTargetKind::Screen => VfxTarget::Screen,
         }
     }
 
@@ -250,7 +245,7 @@ impl VfxTarget {
                     shape: *shape,
                 })
             }
-            VfxTarget::Actor { .. } | VfxTarget::Screen => None,
+            VfxTarget::Actor { .. } => None,
         }
     }
 }

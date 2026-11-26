@@ -174,7 +174,6 @@ fn border(modules: Value) -> Sim {
         )
         .npc("bat", 8.0, json!([]))
         .model_on("bat", "wings", 1.5, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

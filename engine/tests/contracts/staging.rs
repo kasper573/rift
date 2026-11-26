@@ -278,7 +278,6 @@ fn sim() -> Sim {
         )
         .sfx("ui_refuse")
         .sfx("ui_close")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

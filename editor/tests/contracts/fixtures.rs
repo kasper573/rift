@@ -4,7 +4,7 @@ use editor::schema::SchemaShapes;
 use editor::tabs::EditorTab;
 use editor::views::spreadsheet;
 use engine::core::content::{ContentFile, Fixture};
-use engine::core::vfx::VfxShaderDef;
+use engine::core::vfx::VfxDef;
 use engine::systems::input::map::{InputAction, InputBinding, InputDef, InputFixture};
 use engine::systems::messages;
 use serde_json::json;
@@ -16,7 +16,7 @@ fn a_table_of_fixtures_alone_takes_no_rows_of_its_own_and_a_mixed_one_does() {
     let shapes = SchemaShapes::load();
 
     assert!(shapes.is_closed("input"));
-    assert!(shapes.is_fixture(VfxShaderDef::TABLE, &path("vfx_shader", "skill_area")));
+    assert!(shapes.is_fixture(VfxDef::TABLE, &path("vfx", "skill_area")));
     assert!(!shapes.is_closed("vfx_shader"));
     assert!(!shapes.is_closed("vfx"));
 
@@ -34,9 +34,9 @@ fn a_table_of_fixtures_alone_takes_no_rows_of_its_own_and_a_mixed_one_does() {
 #[test]
 fn a_fixture_keeps_the_parameter_the_engine_sets_with_its_name_and_kind_pinned() {
     let shapes = SchemaShapes::load();
-    let locks = shapes.locks("vfx_shader", &path("vfx_shader", "skill_area"));
-    let hostile = json!({ "name": "hostile", "kind": "bool", "default": false });
-    let color = json!({ "name": "color", "kind": "color", "default": [255, 255, 255, 255] });
+    let locks = shapes.locks(VfxDef::TABLE, &path("vfx", "skill_area"));
+    let hostile = json!({ "name": "hostile", "default": false });
+    let color = json!({ "name": "color", "default": [255, 255, 255, 255] });
 
     assert!(locks.iter().any(|lock| lock.keeps("/params", &hostile)));
     assert!(!locks.iter().any(|lock| lock.keeps("/params", &color)));
@@ -45,7 +45,7 @@ fn a_fixture_keeps_the_parameter_the_engine_sets_with_its_name_and_kind_pinned()
         .flat_map(|lock| lock.pinned("/params", &hostile))
         .collect();
     pinned.sort_unstable();
-    assert_eq!(pinned, vec!["kind", "name"]);
+    assert_eq!(pinned, vec!["default", "name"]);
 }
 
 #[test]

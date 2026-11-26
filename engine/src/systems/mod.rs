@@ -862,7 +862,7 @@ pub fn tables() -> ContentRegistry {
         .fixture::<combat::DefeatVfx>()
         .fixture::<class::LevelVfx>()
         .fixture::<notification::pop::PopShader>()
-        .fixture::<skill::aim::AreaShader>()
+        .fixture::<skill::aim::AimVfx>()
         .fixture::<area::world_map::WorldMap>()
         .fixture::<CardStyleFixture>()
         .bundle::<SfxDef>()
@@ -954,6 +954,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, combat::check_vfx)
         .hook(LoadStep::Across, status::check_vfx)
         .hook(LoadStep::Across, actor::model::check_vfx)
+        .hook(LoadStep::Across, skill::aim::check_vfx)
         .hook(LoadStep::Across, player::snapshot::check_all);
     registry
 }

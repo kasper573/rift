@@ -1,10 +1,7 @@
 //! How much of a thing shows: a thing that fades thins away with all it holds, rather than
 //! vanishing at once.
 
-use bevy::mesh::MeshTag;
 use bevy::prelude::*;
-
-use super::afloat::WaterLid;
 
 /// How much of an entity and all that hangs under it shows, from 1 whole to 0 nothing: its meshes
 /// thin out pixel by pixel, and its lamps dim.
@@ -28,7 +25,7 @@ impl Opacity {
     }
 
     /// How much of `entity` shows, asked of a system's queries.
-    pub(super) fn inherited(
+    pub fn inherited(
         entity: Entity,
         opacities: &Query<&Opacity>,
         holders: &Query<&ChildOf>,
@@ -37,34 +34,5 @@ impl Opacity {
             .chain(holders.iter_ancestors(entity))
             .find_map(|at| opacities.get(at).ok())
             .map_or(1.0, |opacity| opacity.0)
-    }
-
-    /// How many of 255 pixels a mesh under it drops.
-    fn dropped(self) -> u32 {
-        ((1.0 - self.0.clamp(0.0, 1.0)) * 255.0).round() as u32
-    }
-}
-
-/// Tells every mesh under a fading thing how much of it to drop, those its scene spawns while it
-/// fades among them. A lid over the water keeps its tag for the water's level.
-pub(super) fn thin(
-    fading: Query<(Entity, Ref<Opacity>)>,
-    children: Query<&Children>,
-    meshes: Query<Option<&MeshTag>, (With<Mesh3d>, Without<WaterLid>)>,
-    mut commands: Commands,
-) {
-    for (entity, opacity) in &fading {
-        if !opacity.is_changed() && opacity.0 >= 1.0 {
-            continue;
-        }
-        let dropped = opacity.dropped();
-        for part in std::iter::once(entity).chain(children.iter_descendants(entity)) {
-            let Ok(tagged) = meshes.get(part) else {
-                continue;
-            };
-            if tagged.map_or(0, |tag| tag.value) != dropped {
-                commands.entity(part).try_insert(MeshTag::new(dropped));
-            }
-        }
     }
 }

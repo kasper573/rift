@@ -253,7 +253,6 @@ fn harbour() -> Sim {
         .memory("grudge", "never")
         .memory("fighting", "leaving_area")
         .memory("dead", "never")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

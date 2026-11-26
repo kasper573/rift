@@ -191,7 +191,6 @@ fn a_player_crossing_into_another_area_stays_immortal() {
         .area("field", &Map::open(7, 7), json!([]))
         .area("meadow", &Map::open(7, 7), json!([]))
         .hero("field", 3.0, 3.0)
-        .vfx("damage_taken")
         .shader("damage_pop")
         .load();
     let mut field = Sim::new(content.clone());
@@ -223,7 +222,6 @@ fn fight() -> (Sim, Entity) {
             hunter["basic_attack"] = json!(path("skill", "strike"));
             hunter["stats"]["range"] = json!(2.5);
         })
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

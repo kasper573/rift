@@ -1,0 +1,25 @@
+{
+  "name": "Skill target",
+  "params": [
+    {
+      "name": "hostile",
+      "default": false
+    }
+  ],
+  "layers": [
+    {
+      "type": "coat",
+      "shader": "vfx/shaders/target.vfx_shader",
+      "params": {
+        "hostile": {
+          "param": "hostile"
+        }
+      },
+      "blend": "add",
+      "inflate": 0.015,
+      "run": {
+        "duration": 5.9
+      }
+    }
+  ]
+}

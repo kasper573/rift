@@ -42,7 +42,6 @@ fn camp() -> (Sim, Entity) {
             "helmet",
             json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
         )
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("healed")
         .shader("heal_pop")

@@ -194,12 +194,6 @@ pub(super) fn take_look(world: &mut World, look: &Look) {
     }
 }
 
-pub(crate) fn world_texture(world: &World) -> Option<Handle<Image>> {
-    world
-        .get_resource::<WorldTargets>()
-        .map(|targets| targets.live.clone())
-}
-
 pub(super) fn fit(
     window: Single<&Window, With<PrimaryWindow>>,
     mut targets: ResMut<WorldTargets>,

@@ -648,7 +648,6 @@ fn game() -> Game {
                 "laid": { "type": "complete_task", "quest": "vault.quest.json", "task": "warden" },
             }),
         )
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .edit_settings(|settings| {

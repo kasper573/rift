@@ -677,7 +677,6 @@ fn field(wanderers: bool) -> Sim {
                 "rest": { "type": "wait", "seconds": 0, "at_most": 1.0, "next": "roam" },
             }),
         )
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

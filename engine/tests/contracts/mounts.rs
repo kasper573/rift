@@ -822,7 +822,6 @@ fn game() -> Game {
         .hero("village", 9.0, 6.0)
         .sword()
         .sfx("ui_refuse")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .npc("dummy", 100.0, json!([]))

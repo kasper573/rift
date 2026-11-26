@@ -1,5 +1,5 @@
-//! What a game's shader reads beside its mesh: its parameters, the site it draws on, and the key its
-//! pipeline is built for.
+//! What a game's shader reads beside its mesh: its parameters, the site it draws on or the frame
+//! of the effect layer it draws, and the key its pipeline is built for.
 
 use std::marker::PhantomData;
 
@@ -36,10 +36,52 @@ pub struct SiteUniform {
     pub(super) points: [Vec4; MAX_PATH_POINTS / 2],
 }
 
+/// Where an effect layer stands and how far through its run it is, as `effect_frame.wesl` reads
+/// it.
+#[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
+pub struct EffectFrame {
+    pub origin: Vec4,
+    pub rotation: Vec4,
+    pub scale: Vec4,
+    pub life: Vec4,
+    pub site: Vec4,
+    pub extra: Vec4,
+    pub mask: Vec4,
+}
+
 /// A shader's parameters laid out as its `Params` struct, built by `ParamsUniform::pack`.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct ParamsUniform {
     words: [Vec4; PARAMS_BYTES / 16],
+}
+
+/// A value a shader's parameter is filled with: a number, a flag, or a colour already in linear
+/// light, above 1 glowing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ShaderValue {
+    Number(f32),
+    Bool(bool),
+    Light(LinearRgba),
+}
+
+impl From<ParamValue> for ShaderValue {
+    fn from(value: ParamValue) -> ShaderValue {
+        match value {
+            ParamValue::Number(number) => ShaderValue::Number(number),
+            ParamValue::Bool(flag) => ShaderValue::Bool(flag),
+            ParamValue::Color(color) => ShaderValue::Light(color.color().to_linear()),
+        }
+    }
+}
+
+impl ShaderValue {
+    fn kind(self) -> ParamKind {
+        match self {
+            ShaderValue::Number(_) => ParamKind::Number,
+            ShaderValue::Bool(_) => ParamKind::Bool,
+            ShaderValue::Light(_) => ParamKind::Color,
+        }
+    }
 }
 
 impl ParamsUniform {
@@ -47,27 +89,20 @@ impl ParamsUniform {
     /// a value of another kind, laid out as the shader's `Params` struct.
     pub fn pack(
         shader: &VfxShaderDef,
-        value: impl Fn(&str) -> Option<ParamValue>,
+        value: impl Fn(&str) -> Option<ShaderValue>,
     ) -> ParamsUniform {
         let mut floats = [0.0f32; PARAMS_BYTES / 4];
         for slot in shader.layout() {
             let value = value(&slot.name)
                 .filter(|value| value.kind() == slot.kind)
-                .unwrap_or(slot.default);
+                .unwrap_or(ShaderValue::from(slot.default));
             let at = slot.offset / 4;
-            match (slot.kind, value) {
-                (ParamKind::Number, ParamValue::Number(number)) => floats[at] = number,
-                (ParamKind::Bool, ParamValue::Bool(flag)) => floats[at] = f32::from(u8::from(flag)),
-                (ParamKind::Color, ParamValue::Color(color)) => {
-                    let linear = color.color().to_linear();
-                    floats[at..at + 4].copy_from_slice(&[
-                        linear.red,
-                        linear.green,
-                        linear.blue,
-                        linear.alpha,
-                    ]);
+            match value {
+                ShaderValue::Number(number) => floats[at] = number,
+                ShaderValue::Bool(flag) => floats[at] = f32::from(u8::from(flag)),
+                ShaderValue::Light(light) => {
+                    floats[at..at + 4].copy_from_slice(&light.to_f32_array());
                 }
-                _ => {}
             }
         }
         let mut words = [Vec4::ZERO; PARAMS_BYTES / 16];

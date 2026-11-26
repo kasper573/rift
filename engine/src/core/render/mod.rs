@@ -67,6 +67,7 @@ impl Plugin for WorldRenderPlugin {
             Update,
             CameraRigSystems.before(transition::WorldViewSystems),
         )
+        .init_resource::<camera::CameraShake>()
         .add_systems(Startup, present::setup)
         .add_systems(First, take_look.run_if(resource_exists_and_changed::<Look>))
         .add_systems(

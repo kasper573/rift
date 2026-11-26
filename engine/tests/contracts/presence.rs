@@ -141,7 +141,6 @@ fn arena() -> Sim {
         .row("script", "hunter_hunt", hunting(8.0))
         .edit("npc", "hunter", |hunter| hunter["basic_attack"] = json!(path("skill", "strike")))
         .memory("slain", "never")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

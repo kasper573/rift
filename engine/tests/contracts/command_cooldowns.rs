@@ -146,7 +146,6 @@ fn game() -> Game {
         .hero("camp", SPAWN.x, SPAWN.y)
         .npc("dummy", 100.0, json!([]))
         .sfx("ui_refuse")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .asset("icons/skill.png", testkit::png(1, 1))
         .edit_settings(|settings| settings["claims_last"] = json!(2.0))

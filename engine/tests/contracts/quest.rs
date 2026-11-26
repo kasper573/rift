@@ -649,7 +649,6 @@ fn harbour() -> Sim {
         )
         .memory("sided", "never")
         .memory("spurned", "never")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .sfx("ui_refuse")

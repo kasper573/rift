@@ -11,11 +11,10 @@ use crate::core::math::Pos;
 use crate::core::render::world::gpu::draw::{GroundSheet, SheetOver};
 use crate::core::render::world::water::{self, WaterLook, WaterMaterial};
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
-use crate::core::vfx::Stage;
 use crate::core::vfx::board::ShaderBoardImage;
 use crate::core::vfx::field::ShaderFieldImage;
 use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
-use crate::core::vfx::uniform::ParamsUniform;
+use crate::core::vfx::uniform::{ParamsUniform, ShaderValue};
 use crate::systems::area::Area;
 use crate::systems::water::WaterId;
 
@@ -70,14 +69,14 @@ pub(super) fn sheets(
             continue;
         };
         let params = ParamsUniform::pack(def.shader.get(content), |name| {
-            def.params.get(name).copied()
+            def.params.get(name).copied().map(ShaderValue::from)
         });
         let board = world.resource::<ShaderBoardImage>().image.clone();
         let field = world.resource::<ShaderFieldImage>().image.clone();
         let material = world
             .resource_mut::<Assets<WaterMaterial>>()
             .add(water::material(
-                frame.uniform_over(run, frame.metres(Stage::GROUND)),
+                frame.uniform(run),
                 params,
                 shader,
                 board,

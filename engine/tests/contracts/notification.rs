@@ -535,7 +535,6 @@ fn game() -> Content {
         .sfx("tally_tick")
         .sfx("quest_accepted")
         .sfx("quest_completed")
-        .vfx("damage_taken")
         .vfx("healed")
         .vfx("level_up")
         .vfx("defeated")

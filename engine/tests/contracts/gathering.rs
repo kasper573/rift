@@ -373,7 +373,6 @@ fn a_spawner_on_water_keeps_its_resources_afloat_where_water_stands() {
     walkers["populations"][0]["spawns"] = json!([{ "type": "npc", "npc": path("npc", "wolf") }]);
     let wolves = lake(game(far), walkers)
         .npc("wolf", 20.0, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated");
     assert_eq!(refused(wolves), ["walks on water"]);

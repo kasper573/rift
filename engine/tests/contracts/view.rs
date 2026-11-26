@@ -21,6 +21,7 @@ use engine::core::render::transition::WorldViewSystems;
 use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
+use engine::core::render::world::shine::HeldPiece;
 use engine::core::render::{
     Animator, CameraPreferences, CameraRig, GroundHeights, Orbit, Shot, capsule_hit,
     facing_rotation, ground_pos, world_point,
@@ -31,7 +32,7 @@ use engine::core::units::{
     Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
 };
 use engine::systems::actor::held::{HandsAtWork, Held, ToolInHand};
-use engine::systems::actor::render::{self, HeldProp, Puppet, RenderActor};
+use engine::systems::actor::render::{self, Puppet, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{
@@ -1855,7 +1856,7 @@ fn joint(app: &mut App, name: &str) -> Option<Entity> {
 fn prop_under(app: &mut App, above: Entity) -> Option<(Mat4, Mat4)> {
     let world = app.world_mut();
     let (in_hand, mut at) = world
-        .query_filtered::<(&Transform, &ChildOf), With<HeldProp>>()
+        .query_filtered::<(&Transform, &ChildOf), With<HeldPiece>>()
         .iter(world)
         .next()
         .map(|(placed, hand)| (placed.to_matrix(), hand.parent()))?;
@@ -1876,7 +1877,7 @@ fn joint_of(app: &mut App, body: Entity, name: &str) -> Option<Entity> {
 fn shown_props(app: &mut App) -> Vec<(Entity, PropId)> {
     let world = app.world_mut();
     world
-        .query_filtered::<(&ChildOf, &ShowsProp), With<HeldProp>>()
+        .query_filtered::<(&ChildOf, &ShowsProp), With<HeldPiece>>()
         .iter(world)
         .map(|(joint, shown)| (joint.parent(), shown.0))
         .collect()
@@ -1887,7 +1888,7 @@ fn props(app: &mut App) -> Vec<(Entity, engine::systems::item::ItemId)> {
     let world = app.world_mut();
     let mut held = Vec::new();
     for (prop, parent) in world
-        .query_filtered::<(Entity, &ChildOf), With<HeldProp>>()
+        .query_filtered::<(Entity, &ChildOf), With<HeldPiece>>()
         .iter(world)
     {
         held.push((prop, parent.parent()));

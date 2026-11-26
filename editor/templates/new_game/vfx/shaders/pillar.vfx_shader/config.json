@@ -1,0 +1,37 @@
+{
+  "name": "Pillar",
+  "stage": "effect",
+  "params": [
+    {
+      "name": "color",
+      "kind": "color",
+      "default": [
+        255,
+        231,
+        153,
+        255
+      ]
+    },
+    {
+      "name": "streaks",
+      "kind": "number",
+      "default": 9.0,
+      "min": 0.0,
+      "max": 28.0
+    },
+    {
+      "name": "speed",
+      "kind": "number",
+      "default": 2.0,
+      "min": 0.0,
+      "max": 5.0
+    },
+    {
+      "name": "top",
+      "kind": "number",
+      "default": 0.9,
+      "min": 0.0,
+      "max": 1.8
+    }
+  ]
+}
