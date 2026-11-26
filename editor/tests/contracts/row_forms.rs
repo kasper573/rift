@@ -29,7 +29,7 @@ use engine::systems::npc::NpcDef;
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
 use engine::systems::stat::StatKind;
 use serde_json::{Value, json};
-use testkit::{BODY, Game, Map, path};
+use testkit::{BODY, GEAR, Game, Map, path};
 
 use crate::support::{self, Drawn, Frames, click, key};
 
@@ -192,9 +192,9 @@ fn an_edit_to_a_field_the_rows_hold_apart_sets_it_in_every_row_unless_it_holds_m
     let game = support::game()
         .npc("wolf", 10.0, json!([]))
         .npc("bear", 10.0, json!([]))
-        .item(
+        .equipment(
             "cap",
-            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" } }),
         )
         .item("ore", json!({ "kind": { "type": "resource" } }));
     let mut editor = support::open(game, &scratch);
@@ -744,9 +744,9 @@ fn an_item_held_in_hand_is_made_worn_in_a_slot_by_its_wear_and_forgets_its_stanc
     let game = support::game()
         .stance("sword", 1, "main")
         .slots(testkit::BODY, &["chest"])
-        .item(
+        .equipment(
             "cuirass",
-            json!({ "kind": { "type": "equipment", "wear": "held", "stance": path("stance", "sword") } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": path("stance", "sword") } }),
         );
     let mut editor = support::open(game, &scratch);
     let cuirass = path("item", "cuirass");

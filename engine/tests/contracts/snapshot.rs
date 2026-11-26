@@ -37,7 +37,7 @@ use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::status::{self, StatusEffectDef, Statuses};
 use engine::systems::{GameSettings, dialogue};
 use serde_json::json;
-use testkit::{Declared, Game, Map, Sim};
+use testkit::{Declared, GEAR, Game, Map, Sim, path};
 
 #[test]
 fn a_character_joined_from_a_row_is_that_character() {
@@ -426,7 +426,7 @@ fn returning_to(area: &str) -> Sim {
         )
         .item("bone", json!({ "kind": { "type": "resource" } }))
         .stance("shield", 1, "off")
-        .item("shield", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "shield.stance.json" } }))
+        .equipment("shield", json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": "shield.stance.json" } }))
         .npc("chief", 60.0, json!([]))
         .quest("errand",
             json!({

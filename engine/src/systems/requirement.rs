@@ -239,6 +239,8 @@ messages! {
         offered[item: Line],
         /// The item `{item}` worn.
         worn[item: Line],
+        /// An item of any of the equipment categories `{categories}` worn, `{categories}` naming them as a list of alternatives.
+        worn_any[categories: Line],
         /// Being on the quest `{quest}`.
         on_quest[quest: Line],
         /// Having done the quest `{quest}` too lately to do it again.

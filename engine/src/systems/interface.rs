@@ -126,28 +126,43 @@ messages! {
         list_middle[first: Line, rest: Line],
         /// The end of a longer list: the item before the last, `{first}`, and the last, `{last}`.
         list_end[first: Line, last: Line],
+        /// A choice of two, `{first}` or `{second}`, as CLDR's list pattern for two alternatives words it.
+        either_pair[first: Line, second: Line],
+        /// The start of a longer choice: its first alternative, `{first}`, before the rest, `{rest}`.
+        either_start[first: Line, rest: Line],
+        /// The middle of a longer choice: an alternative, `{first}`, before the rest, `{rest}`.
+        either_middle[first: Line, rest: Line],
+        /// The end of a longer choice: the alternative before the last, `{first}`, and the last, `{last}`.
+        either_end[first: Line, last: Line],
     }
 }
 
 impl InterfaceMessages {
     /// The `lines` as one, the way a sentence lists them in the catalog's language.
-    pub fn listed(&self, mut lines: Vec<LineText>) -> LineText {
-        let Some(last) = lines.pop() else {
-            return LineText::default();
-        };
-        let Some(before) = lines.pop() else {
-            return last;
-        };
-        if lines.is_empty() {
-            return self.list_pair(before, last);
-        }
-        let mut rest = self.list_end(before, last);
-        while lines.len() > 1 {
-            let item = lines.pop().unwrap_or_default();
-            rest = self.list_middle(item, rest);
-        }
-        let first = lines.pop().unwrap_or_default();
-        self.list_start(first, rest)
+    pub fn listed(&self, lines: Vec<LineText>) -> LineText {
+        self.joined(
+            lines,
+            [
+                Self::list_pair,
+                Self::list_start,
+                Self::list_middle,
+                Self::list_end,
+            ],
+        )
+    }
+
+    /// The `lines` as one choice between them, the way a sentence offers alternatives in the
+    /// catalog's language.
+    pub fn either(&self, lines: Vec<LineText>) -> LineText {
+        self.joined(
+            lines,
+            [
+                Self::either_pair,
+                Self::either_start,
+                Self::either_middle,
+                Self::either_end,
+            ],
+        )
     }
 
     /// The `words` as one, the way a sentence lists them in the catalog's language.
@@ -162,6 +177,34 @@ impl InterfaceMessages {
             .collect()
     }
 }
+
+impl InterfaceMessages {
+    /// The `lines` joined by a pattern's pair, start, middle and end, in that order.
+    fn joined(
+        &self,
+        mut lines: Vec<LineText>,
+        [pair, start, middle, end]: [Joiner; 4],
+    ) -> LineText {
+        let Some(last) = lines.pop() else {
+            return LineText::default();
+        };
+        let Some(before) = lines.pop() else {
+            return last;
+        };
+        if lines.is_empty() {
+            return pair(self, before, last);
+        }
+        let mut rest = end(self, before, last);
+        while lines.len() > 1 {
+            let item = lines.pop().unwrap_or_default();
+            rest = middle(self, item, rest);
+        }
+        let first = lines.pop().unwrap_or_default();
+        start(self, first, rest)
+    }
+}
+
+type Joiner = fn(&InterfaceMessages, LineText, LineText) -> LineText;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr, strum::VariantArray)]
 #[strum(serialize_all = "snake_case")]

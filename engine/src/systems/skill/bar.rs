@@ -27,6 +27,7 @@ use crate::core::text::{LineText, SpanText};
 use crate::core::time;
 use crate::core::units::Seconds;
 use crate::systems::chat::ChatEmbed;
+use crate::systems::equipment::category;
 use crate::systems::equipment::{self, EquipmentPlace, UnequipRequest};
 use crate::systems::hud::{self, Carried, Confirm};
 use crate::systems::input::InputMessages;
@@ -514,7 +515,9 @@ fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> SlotFill
             left,
         };
     }
-    if requirement::first_unmet(world, me, def.requires.iter()).is_some() {
+    if requirement::first_unmet(world, me, def.requires.iter()).is_some()
+        || !category::equips_any(world, me, &def.equipment_categories)
+    {
         return SlotFill::Blocked(Glyph::Lock);
     }
     let bag = world.get::<Inventory>(me);

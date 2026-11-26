@@ -22,7 +22,7 @@ use engine::systems::skill::{
 use engine::systems::stat::{self, StatKind};
 use engine::systems::status::{self, StatusCategory, StatusEffectDef, Statuses};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, path};
+use testkit::{GEAR, Game, Map, Sim, path};
 
 #[test]
 fn a_status_holds_its_boost_until_its_time_runs_out() {
@@ -336,10 +336,10 @@ fn clinic() -> (Sim, Entity) {
         )
         .script("wing_boost", "item", boosting("movement_speed", 0.5))
         .stance("sword", 1, "main")
-        .item(
+        .equipment(
             "blade",
             json!({
-                "kind": { "type": "equipment", "wear": "held", "stance": "sword.stance.json" },
+                "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": "sword.stance.json" },
                 "modules": [{ "type": "script", "script": "blade_boost.script.json" }],
             }),
         )

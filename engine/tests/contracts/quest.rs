@@ -11,7 +11,7 @@ use engine::systems::region;
 use engine::systems::shop::{self, ShopRequest};
 use engine::systems::{combat, equipment, movement, npc, reward, stat, window};
 use serde_json::{Value, json};
-use testkit::{BODY, Game, Map, Sim, dialogue, path, said};
+use testkit::{BODY, GEAR, Game, Map, Sim, dialogue, path, said};
 
 #[test]
 fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items() {
@@ -446,11 +446,11 @@ fn harbour() -> Sim {
         .item("pebble", json!({ "kind": { "type": "resource" } }))
         .stance("shield", 1, "off")
         .stance("sword", 1, "main")
-        .item("shield", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "shield.stance.json" } }))
-        .item("helm", json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }))
-        .item("cutlass", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "sword.stance.json" } }))
+        .equipment("shield", json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": "shield.stance.json" } }))
+        .equipment("helm", json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" } }))
+        .equipment("cutlass", json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": "sword.stance.json" } }))
         .item("letter", quest_item("resource"))
-        .item("cap", json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" }, "modules": [{ "type": "quest_item" }] }))
+        .equipment("cap", json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" }, "modules": [{ "type": "quest_item" }] }))
         .item("key", quest_item("resource"))
         .item("map", {
             let mut map = quest_item("usable");

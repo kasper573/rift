@@ -21,8 +21,8 @@ pub use art::{
 pub use bag::saved_bag;
 pub use crowd::crowd;
 pub use game::{
-    APEX, BODY, CLIP, Declared, Game, HEIGHTS, Map, POND, ROCK, RUN_PACE, TURF, WALK_PACE, clip,
-    clip_on, look, part_file, path, rig_clips, rig_file, speech, stats, typing,
+    APEX, BODY, CLIP, Declared, GEAR, Game, HEIGHTS, Map, POND, ROCK, RUN_PACE, TURF, WALK_PACE,
+    clip, clip_on, look, part_file, path, rig_clips, rig_file, speech, stats, typing,
 };
 pub use players::confer;
 pub use script::{dialogue, hunting, said};

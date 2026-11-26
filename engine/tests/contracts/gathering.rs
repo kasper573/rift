@@ -20,7 +20,7 @@ use engine::systems::spawner::Spawned;
 use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::{actor, region};
 use serde_json::{Value, json};
-use testkit::{APEX, BODY, Game, HEIGHTS, Map, Sim, path, rig_clips};
+use testkit::{APEX, BODY, GEAR, Game, HEIGHTS, Map, Sim, path, rig_clips};
 
 const TAKES: f32 = 2.0;
 const SWING: f32 = 0.5;
@@ -435,14 +435,14 @@ fn game(fields: Value) -> Game {
     };
     let held = |stance: &str| {
         json!({ "kind": {
-            "type": "equipment",
+            "type": "equipment", "category": path("equipment_category", GEAR),
             "wear": "held",
             "stance": path("stance", stance),
         } })
     };
     let tool = |kind: &str| {
         json!({ "kind": {
-            "type": "equipment",
+            "type": "equipment", "category": path("equipment_category", GEAR),
             "wear": "tool",
             "tool": path("tool_type", kind),
             "stance": path("stance", "swing"),
@@ -473,11 +473,11 @@ fn game(fields: Value) -> Game {
         .row("tool_type", "axe", kind("Axe", "hew", false))
         .row("tool_type", "hands", kind("Hands", "pluck", true))
         .cursor("dig")
-        .item("pickaxe", tool("pick"))
-        .item("hatchet", tool("axe"))
+        .equipment("pickaxe", tool("pick"))
+        .equipment("hatchet", tool("axe"))
         .stance("guard", 1, "off")
-        .item("blade", held("swing"))
-        .item("buckler", held("guard"))
+        .equipment("blade", held("swing"))
+        .equipment("buckler", held("guard"))
         .resource("ore", 20)
         .prop("rock", json!({ "type": "none" }))
         .sfx("crack")

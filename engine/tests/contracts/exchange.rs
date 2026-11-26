@@ -7,7 +7,7 @@ use engine::systems::item::{
 };
 use engine::systems::messages;
 use serde_json::json;
-use testkit::{Declared, Game, Map, Sim, path};
+use testkit::{Declared, GEAR, Game, Map, Sim, path};
 
 #[test]
 fn moving_items_onto_the_same_character_changes_nothing() {
@@ -268,9 +268,9 @@ fn a_sort_lays_the_whole_bag_out_once_in_the_order_picked() {
                 "amber",
                 json!({ "name": "Amber", "rarity": path("item_rarity", "rare"), "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 50 }] }),
             )
-            .item(
+            .equipment(
                 "crown",
-                json!({ "name": "Crown", "rarity": path("item_rarity", "rare"), "kind": { "type": "equipment", "wear": "held", "stance": "sword.stance.json" } }),
+                json!({ "name": "Crown", "rarity": path("item_rarity", "rare"), "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": "sword.stance.json" } }),
             )
             .item(
                 "draught",
@@ -489,9 +489,9 @@ fn goods() -> Game {
         )
         .item("bone", json!({ "kind": { "type": "resource" } }))
         .stance("sword", 1, "main")
-        .item(
+        .equipment(
             "sword",
-            json!({ "kind": { "type": "equipment", "wear": "held", "stance": "sword.stance.json" } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": "sword.stance.json" } }),
         )
 }
 

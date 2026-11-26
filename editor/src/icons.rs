@@ -26,6 +26,7 @@ use engine::systems::class::ClassDef;
 use engine::systems::command::TerminalCommandDef;
 use engine::systems::crafting::RecipeBookDef;
 use engine::systems::emote::EmoteDef;
+use engine::systems::equipment::category::EquipmentCategoryDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::interface::{CursorDef, InterfaceIconDef};
 use engine::systems::item::rarity::ItemRarityDef;
@@ -189,6 +190,7 @@ impl KindFamily {
             | RecipeBookDef::TABLE
             | StanceDef::TABLE
             | ToolTypeDef::TABLE
+            | EquipmentCategoryDef::TABLE
             | ItemRarityDef::TABLE => KindFamily::Items,
             SkillDef::TABLE
             | StatusEffectDef::TABLE
@@ -247,6 +249,7 @@ pub fn of_table(table: &str) -> KindIcon {
         EmoteDef::TABLE => KindIcon::plain(phosphor::HAND_WAVING),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),
         ToolTypeDef::TABLE => KindIcon::plain(phosphor::TOOLBOX),
+        EquipmentCategoryDef::TABLE => KindIcon::plain(phosphor::SWORD),
         ItemRarityDef::TABLE => KindIcon::plain(phosphor::SPARKLE).unpictured(),
         CardStyleDef::TABLE => KindIcon::plain(phosphor::CARDS).unpictured(),
         ResourceDef::TABLE => KindIcon::plain(phosphor::DIAMOND).unpictured(),

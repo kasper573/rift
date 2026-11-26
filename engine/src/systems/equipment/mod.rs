@@ -1,3 +1,4 @@
+pub mod category;
 pub mod query;
 pub mod widget;
 

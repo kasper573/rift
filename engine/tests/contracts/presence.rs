@@ -15,7 +15,7 @@ use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility;
 use engine::systems::{actor, reach, skill};
 use serde_json::json;
-use testkit::{Declared, Game, Map, Sim, hunting, path};
+use testkit::{Declared, GEAR, Game, Map, Sim, hunting, path};
 
 #[test]
 fn a_monster_summoned_for_one_player_fights_only_that_player() {
@@ -90,11 +90,11 @@ fn a_resident_shown_by_condition_follows_the_players_memory() {
 fn a_world_that_serves_no_area_judges_an_items_requirements() {
     let content = Game::new()
         .stance("shield", 1, "off")
-        .item(
+        .equipment(
             "shield",
             json!({
                 "kind": {
-                    "type": "equipment",
+                    "type": "equipment", "category": path("equipment_category", GEAR),
                     "wear": "held",
                     "stance": "shield.stance.json",
                     "requires": { "type": "at_least", "a": { "type": "level" }, "b": 2 },

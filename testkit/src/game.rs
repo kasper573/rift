@@ -124,6 +124,9 @@ const DROP: &str = "drop";
 /// The rarity of every item a test declares without naming one.
 const PLAIN: &str = "plain";
 
+/// The equipment category every item a test declares can be of, without declaring its own.
+pub const GEAR: &str = "gear";
+
 /// The terrains and the footstep of every area a test declares.
 pub const TURF: &str = "turf";
 pub const ROCK: &str = "rock";
@@ -364,10 +367,11 @@ impl Game {
         )
         .asset("icons/strike.png", png(1, 1))
         .stance("sword", 1, "main")
-        .item(
+        .equipment(
             "sword",
             json!({ "kind": {
                 "type": "equipment",
+                "category": path("equipment_category", GEAR),
                 "wear": "held",
                 "stance": path("stance", "sword"),
                 "grants": [path("skill", "strike")],
@@ -484,6 +488,17 @@ impl Game {
             .row("item", name, row)
             .asset(&icon, png(item::ICON_SIZE.0, item::ICON_SIZE.1))
             .asset(&card, png(item::CARD_SIZE.0, item::CARD_SIZE.1))
+    }
+
+    /// An equipment item of `fields`, as [`Game::item`] makes one, with the equipment category
+    /// [`GEAR`] its kind names declared.
+    pub fn equipment(self, name: &str, fields: Value) -> Game {
+        self.equipment_category(GEAR).item(name, fields)
+    }
+
+    /// An equipment category, named after its file.
+    pub fn equipment_category(self, name: &str) -> Game {
+        self.row("equipment_category", name, json!({ "name": name }))
     }
 
     /// An item rarity of `rank` and `fields`, named after its file, in one grey.

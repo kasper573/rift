@@ -880,6 +880,8 @@ pub fn tables() -> ContentRegistry {
         .named::<item::rarity::ItemRarityDef>()
         .file::<item::ToolTypeDef>()
         .named::<item::ToolTypeDef>()
+        .file::<equipment::category::EquipmentCategoryDef>()
+        .named::<equipment::category::EquipmentCategoryDef>()
         .file::<class::ClassDef>()
         .named::<class::ClassDef>()
         .file::<memory::MemoryDef>()

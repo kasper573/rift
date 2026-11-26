@@ -50,7 +50,7 @@ use engine::systems::player::session::MyCharacter;
 use engine::systems::screen::ClientScreen;
 use engine::systems::view::CameraFollowPlugin;
 use serde_json::json;
-use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, RUN_PACE, WALK_PACE, path, png};
+use testkit::{APEX, BODY, CLIP, GEAR, Game, HEIGHTS, Map, RUN_PACE, WALK_PACE, path, png};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -713,9 +713,9 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
             "bow",
             json!({ "name": "bow", "hands": 2, "hand": "main", "prop": "last" }),
         )
-        .item(
+        .equipment(
             "bow",
-            json!({ "kind": { "type": "equipment", "wear": "held", "stance": path("stance", "bow") } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": path("stance", "bow") } }),
         );
     let folder = tempfile::tempdir().expect("a scratch folder");
     let (mut app, content) = viewer(game, folder.path());
@@ -938,10 +938,10 @@ fn a_body_holding_an_item_closes_its_hand_as_the_clasp_poses_it_and_carries_it_a
         .hero("field", 2.0, 2.0)
         .sword()
         .stance("wand", 1, "main")
-        .item(
+        .equipment(
             "wand",
             json!({ "kind": {
-                "type": "equipment",
+                "type": "equipment", "category": path("equipment_category", GEAR),
                 "wear": "held",
                 "stance": path("stance", "wand"),
             } }),
@@ -1089,10 +1089,10 @@ fn a_prop_strapped_to_the_arm_turns_with_the_arm_and_the_hand_holding_it_as_its_
             .area("field", &Map::open(5, 5), json!([]))
             .hero("field", 2.0, 2.0)
             .sword()
-            .item(
+            .equipment(
                 "shield",
                 json!({ "kind": {
-                    "type": "equipment",
+                    "type": "equipment", "category": path("equipment_category", GEAR),
                     "wear": "held",
                     "stance": path("stance", "sword"),
                     "grip": { "hold": "strapped" },
