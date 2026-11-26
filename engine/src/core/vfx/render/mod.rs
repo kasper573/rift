@@ -12,7 +12,7 @@ mod site;
 mod surface;
 
 pub use effect::EffectMaterial;
-pub use scene::{SiteExtent, VfxHand};
+pub use scene::{DrawnElsewhere, SiteExtent, VfxHand};
 pub use site::{
     Run, SiteBody, SiteFrame, SitePlace, SiteTexture, TEXELS_PER_METER, TextMaterial, hide,
     present_shader, screen_piece,

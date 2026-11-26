@@ -13,6 +13,11 @@ use crate::core::render::world::opacity::Opacity;
 use crate::core::render::world::shine::HeldPiece;
 use crate::core::render::{facing_rotation, ground_height, world_point};
 
+/// A thing whose meshes stand only for its vfx to wrap: drawn somewhere else, it holds them
+/// hidden, and what its coats wrap them in shows of its own.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct DrawnElsewhere;
+
 /// How big a thing a vfx plays on is. Whoever draws a thing says, as it stands at its entity's
 /// transform.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]

@@ -13,7 +13,7 @@ use crate::core::render::world::material::{
     LookWear, MaterialLook, PictureKind, PictureRead, SceneLooks, material_picture,
 };
 use crate::core::units::Meters;
-use crate::core::vfx::render::{self as vfx_render, SiteExtent};
+use crate::core::vfx::render::{self as vfx_render, DrawnElsewhere, SiteExtent};
 use crate::core::vfx::standing::StandingVfx;
 use crate::core::vfx::uniform::{ParamsUniform, ShaderValue};
 use crate::systems::area::PropPlacement;
@@ -112,6 +112,15 @@ pub(super) fn stand_acting(
         .id();
     if let Some(ripples) = def.ripples {
         world.entity_mut(stood).insert(RippleSpot(ripples));
+    }
+    // The arena draws the prop itself, so the model it shows here stands hidden, only for its
+    // coats to wrap.
+    if def.effects.iter().any(|play| play.vfx.get(content).coats()) {
+        world.entity_mut(stood).insert((
+            ShowsProp(placed.prop),
+            Visibility::Hidden,
+            DrawnElsewhere,
+        ));
     }
     let sockets = def
         .effects

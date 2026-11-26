@@ -268,6 +268,13 @@ impl VfxDef {
         )
     }
 
+    /// Whether a layer of it coats the surfaces of the thing it plays on.
+    pub fn coats(&self) -> bool {
+        self.layers
+            .iter()
+            .any(|layer| matches!(layer, VfxLayer::Coat(_)))
+    }
+
     /// When the vfx lands: when the last of its layers that travel its path arrives, or, with none
     /// travelling, when it ends.
     pub fn lands(&self) -> Seconds {

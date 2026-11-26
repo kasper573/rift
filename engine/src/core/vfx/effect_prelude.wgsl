@@ -159,9 +159,15 @@ fn coat_rim(i: FxIn, power: f32) -> f32 {
     return fresnel(i, power);
 }
 
-// A coat eased in over its first `rise` seconds and out over its last `fall`.
+// A coat eased in over its first `rise` seconds and, where it ends, out over its last `fall`: one
+// that plays on stays.
 fn coat_env(i: FxIn, rise: f32, fall: f32) -> f32 {
-    return smoothstep(0.0, rise, i.age) * (1.0 - smoothstep(frame.life.z - fall, frame.life.z, i.age));
+    let ends = frame.life.z;
+    var kept = 1.0;
+    if ends > 0.0 {
+        kept = 1.0 - smoothstep(ends - fall, ends, i.age);
+    }
+    return smoothstep(0.0, rise, i.age) * kept;
 }
 
 // On the ground, how far inside its patch a point is: 1 well within, 0 past its ragged edge.

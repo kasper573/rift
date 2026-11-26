@@ -7,8 +7,9 @@ struct Fx {
     rotation: vec4<f32>,
     // xyz its extent in metres, w a seed of its own.
     scale: vec4<f32>,
-    // x how far through its run, y its age in seconds, z how long it runs, w the depth in metres
-    // over which it softens where it meets what stands behind it, 0 for none.
+    // x how far through its run, y its age in seconds, z the age at which it ends for good, 0 for
+    // one that plays on, w the depth in metres over which it softens where it meets what stands
+    // behind it, 0 for none.
     life: vec4<f32>,
     // An area's radius, a cone's angle in degrees, its length, and a path's length.
     site: vec4<f32>,

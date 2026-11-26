@@ -19,7 +19,7 @@ use super::super::{
 };
 use super::effect::EffectMaterial;
 use super::particles::{self, AreaKind, SURFACE_POINTS};
-use super::scene::{PartFrame, Placing, Scene};
+use super::scene::{DrawnElsewhere, PartFrame, Placing, Scene};
 use super::{compiled_shader, repaint, shapes, surface};
 use crate::core::content::Content;
 use crate::core::geometry::Shape;
@@ -291,6 +291,14 @@ impl Cx<'_> {
         color.linear(self.def, &self.instance.params)
     }
 
+    /// The age at which the layer ends for good: none for one that plays on.
+    fn ends(&self) -> Seconds {
+        if self.instance.until.is_none() && !self.held {
+            return Seconds(0.0);
+        }
+        self.def.layers[self.index].run().duration
+    }
+
     /// How long the layer has played: across every cycle of a vfx that loops, so what animates by
     /// it never jumps as one cycle gives way to the next.
     fn age(&self, local: Seconds) -> Seconds {
@@ -312,12 +320,7 @@ impl Cx<'_> {
             origin: placed.0.extend(self.instance.heading.0),
             rotation: Vec4::from_array(placed.1.to_array()),
             scale: scale.extend(seed),
-            life: Vec4::new(
-                life,
-                self.age(local).0,
-                self.def.layers[self.index].run().duration.0,
-                0.0,
-            ),
+            life: Vec4::new(life, self.age(local).0, self.ends().0, 0.0),
             site: self.scene.measures(),
             extra: Vec4::new(0.0, 0.0, self.scene.faded, 0.0),
             mask: Vec4::ZERO,
@@ -585,6 +588,14 @@ fn draw_coat(
         return;
     }
     let handle = world.resource_mut::<Assets<EffectMaterial>>().add(material);
+    let shown = match cx
+        .scene
+        .thing
+        .filter(|thing| world.get::<DrawnElsewhere>(thing.entity).is_some())
+    {
+        Some(_) => Visibility::Visible,
+        None => Visibility::Inherited,
+    };
     let hulls = sources
         .into_iter()
         .map(|(source, mesh, skin)| {
@@ -592,7 +603,7 @@ fn draw_coat(
                 Mesh3d(mesh),
                 MeshMaterial3d(handle.clone()),
                 Transform::IDENTITY,
-                Visibility::default(),
+                shown,
                 ChildOf(source),
                 NotShadowCaster,
                 NotShadowReceiver,
