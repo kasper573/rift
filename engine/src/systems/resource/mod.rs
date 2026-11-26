@@ -12,12 +12,10 @@ use bevy_replication::Replicated;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::media::GltfInfos;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
     Nearby, RowCheck, SchemaMark,
 };
-use crate::core::geometry::Capsule;
 use crate::core::math::{Pos, Rng};
 use crate::core::script::Value;
 use crate::core::script::{EventKind, Instances, Owner, RunnerKind, ScriptModule, ScriptedRow};
@@ -359,34 +357,12 @@ pub fn spawn(world: &mut World, def: ResourceId, at: Pos<Meters>, area: AreaId) 
             Resource { def },
             Left(row.quantity),
             Spot { area, at },
-            Hitbox(body(&content, def)),
+            Hitbox(row.look.get(&content).body(&content)),
             actor::Name {
                 name: row.name.clone(),
             },
         ))
         .id()
-}
-
-/// The room a resource takes standing: as tall as the model of its look, and as wide as the ground
-/// that look takes up, so a tree is its trunk rather than its crown. A look taking no ground is as
-/// wide as its model.
-pub fn body(content: &Content, def: ResourceId) -> Capsule {
-    let look = def.get(content).look.get(content);
-    let bounds = content
-        .built::<GltfInfos>()
-        .0
-        .get(&look.model.path())
-        .map(|model| model.bounds);
-    let model_width = bounds.map_or(0.0, |bounds| {
-        [bounds.min.x, bounds.max.x, bounds.min.z, bounds.max.z]
-            .into_iter()
-            .map(f32::abs)
-            .fold(0.0, f32::max)
-    });
-    Capsule {
-        radius: look.footprint.reach().unwrap_or(Meters(model_width)),
-        height: Meters(bounds.map_or(0.0, |bounds| bounds.max.y)),
-    }
 }
 
 /// How many characters are working `resource`.

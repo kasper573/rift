@@ -1,4 +1,6 @@
+use engine::core::content::Content;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::systems::actor::plate;
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement;
@@ -81,13 +83,44 @@ fn two_players_open_the_same_chest_for_themselves() {
     }
 }
 
+#[test]
+fn a_map_object_wears_its_title_on_a_plate_only_where_it_asks_for_one() {
+    let mut sim = beach();
+    let mut plate = |name: &str| {
+        let object = sim.object(name);
+        let content = sim.world.resource::<Content>().clone();
+        plate::label_of(&sim.world, &content, object).and_then(|label| label.name)
+    };
+    assert_eq!(plate("board").as_deref(), Some("Notice board"));
+    assert_eq!(plate("chest"), None, "a title alone names it only in words");
+
+    let untitled = Game::new()
+        .area(
+            "beach",
+            &Map::open(9, 9),
+            json!([{
+                "type": "object",
+                "nameplate": true,
+                "shape": { "type": "point", "x": 2.0, "y": 4.0 },
+            }]),
+        )
+        .hero("beach", 4.0, 4.0)
+        .try_load()
+        .err()
+        .expect("refused");
+    assert!(
+        untitled.to_string().contains("nameplate without a title"),
+        "{untitled}"
+    );
+}
+
 fn beach() -> Sim {
     let content = Game::new()
         .area(
             "beach",
             &Map::open(9, 9),
             json!([
-                object("board", 2.0, 4.0, "board_read"),
+                plated(object("board", 2.0, 4.0, "board_read"), "Notice board"),
                 object("chest", 6.0, 4.0, "chest_open"),
             ]),
         )
@@ -152,6 +185,12 @@ fn object(name: &str, x: f32, y: f32, script: &str) -> Value {
         "look": path("prop", "look"),
         "scripts": [{ "script": path("script", script) }],
     })
+}
+
+fn plated(mut object: Value, title: &str) -> Value {
+    object["title"] = json!(title);
+    object["nameplate"] = json!(true);
+    object
 }
 
 fn said(text: &str) -> Value {
