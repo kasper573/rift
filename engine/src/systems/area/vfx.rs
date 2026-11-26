@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::{AreaObject, AreaTag, PropDef};
 use crate::core::content::{Content, Fixture, Loading, SchemaMark};
 use crate::core::geometry::{PlacedShape, Shape, facing_from};
-use crate::core::math::Pos;
+use crate::core::math::{Pos, Rgba};
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectCall, EffectDef, EffectStep, Eval, Expr, FlowCx, FlowKey,
     Instances, NEXT, Node, Reach, ReachDef, ScriptDef, ScriptFault, ValueType, Vocabulary,
@@ -224,7 +224,7 @@ pub struct PlayVfx {
     /// Keyed by the vfx's declared parameters, each given or left to the layers' own values.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(transform = SchemaMark::ParamsOf.with("vfx"))]
-    pub params: BTreeMap<String, Expr>,
+    pub params: BTreeMap<String, VfxArg>,
     /// Goes on once the vfx lands: when its last layer that travels its path arrives, or, with
     /// none travelling, when it ends. A shot lands before the blow it deals.
     #[serde(
@@ -234,6 +234,15 @@ pub struct PlayVfx {
     pub wait: bool,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
+}
+
+/// A script's value for one of a vfx's parameters: a colour, as it is given, or what an
+/// expression yields for a number or a flag.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum VfxArg {
+    Color(Rgba),
+    Expr(Expr),
 }
 
 #[derive(JsonSchema, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -303,17 +312,22 @@ impl EffectDef for PlayVfx {
         };
         let def = self.vfx.get(cx.content);
         let mut fillers: Vec<(String, ParamFiller)> = Vec::new();
-        for (name, expr) in &self.params {
-            let filler = match def.declares(name) {
-                Some(ParamKind::Number) => ParamFiller::Number(cx.expr(expr, ValueType::Number)?),
-                Some(ParamKind::Bool) => ParamFiller::Flag(cx.expr(expr, ValueType::Boolean)?),
-                Some(ParamKind::Color) => {
+        for (name, arg) in &self.params {
+            let filler = match (def.declares(name), arg) {
+                (Some(ParamKind::Number), VfxArg::Expr(expr)) => {
+                    ParamFiller::Number(cx.expr(expr, ValueType::Number)?)
+                }
+                (Some(ParamKind::Bool), VfxArg::Expr(expr)) => {
+                    ParamFiller::Flag(cx.expr(expr, ValueType::Boolean)?)
+                }
+                (Some(ParamKind::Color), VfxArg::Color(color)) => ParamFiller::Color(*color),
+                (Some(kind), _) => {
                     return Err(ScriptFault::new(
-                        "wrong type",
-                        format!("{name} is a color, which a script cannot fill"),
+                        "wrong parameter kind",
+                        format!("{name} takes a {}", kind.label()),
                     ));
                 }
-                None => {
+                (None, _) => {
                     return Err(ScriptFault::new(
                         "unknown parameter",
                         format!("{} declares no {name}", def.name),
@@ -418,6 +432,7 @@ struct Landing {
 enum ParamFiller {
     Number(Eval),
     Flag(Eval),
+    Color(Rgba),
 }
 
 impl ParamFiller {
@@ -425,6 +440,7 @@ impl ParamFiller {
         match self {
             ParamFiller::Number(eval) => ParamValue::Number(eval(world, cx).as_num() as f32),
             ParamFiller::Flag(eval) => ParamValue::Bool(eval(world, cx).truthy()),
+            ParamFiller::Color(color) => ParamValue::Color(*color),
         }
     }
 }

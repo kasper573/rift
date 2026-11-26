@@ -1067,7 +1067,27 @@ fn a_vfx_is_played_filling_only_the_parameters_its_row_declares_as_they_are_decl
             "modules": [],
         }),
     );
+    let by_a_script = shine()
+        .npc(
+            "glinter",
+            10.0,
+            json!([{ "type": "script", "script": path("script", "glint") }]),
+        )
+        .script(
+            "glint",
+            "npc",
+            json!({
+                "started": { "type": "on", "event": "started", "next": "show" },
+                "show": { "type": "vfx", "vfx": path("vfx", "shine"), "params": { "tint": 0.5 } },
+            }),
+        );
     let cases = [
+        (
+            by_a_script,
+            "glint.script.json",
+            "wrong parameter kind",
+            "/nodes/show",
+        ),
         (
             undeclared,
             "fine.item_rarity.json",

@@ -123,7 +123,7 @@ fn an_area_vfx_reaches_the_targets_it_struck_and_not_the_caster() {
 }
 
 #[test]
-fn a_path_vfx_runs_from_the_caster_through_its_targets_nearest_first() {
+fn a_path_vfx_runs_from_the_caster_through_its_targets_nearest_first_as_its_script_fills_it() {
     let (mut sim, player) = arena();
     learn(&mut sim, player, "chain");
     let from = position(&sim.world, player).expect("position");
@@ -139,6 +139,11 @@ fn a_path_vfx_runs_from_the_caster_through_its_targets_nearest_first() {
     assert_eq!(shown.len(), 1);
     let stops = [player, near, middle, far].map(PathStop::Actor).to_vec();
     assert_eq!(shown[0].site, VfxSite::Path(stops));
+    let filled = VfxParams(vec![
+        ("tint".to_owned(), ParamValue::Color(Rgba(0xff00_80ff))),
+        ("width".to_owned(), ParamValue::Number(1.5)),
+    ]);
+    assert_eq!(shown[0].params, filled);
 }
 
 #[test]
@@ -266,6 +271,7 @@ fn arena() -> (Sim, Entity) {
                     "vfx": "arc.vfx.json",
                     "on": { "type": "skill_targets" },
                     "site": { "type": "path" },
+                    "params": { "tint": [255, 0, 128, 255], "width": 1.5 },
                     "next": "hit",
                 },
                 "hit": damage_last(),
@@ -298,6 +304,12 @@ fn arena() -> (Sim, Entity) {
         .vfx("blast")
         .edit("vfx", "blast", |blast| blast["on_actors_inside"] = json!(path("vfx", "blast")))
         .vfx("arc")
+        .edit("vfx", "arc", |arc| {
+            arc["params"] = json!([
+                { "name": "tint", "default": [255, 255, 255, 255] },
+                { "name": "width", "default": 1.0 },
+            ]);
+        })
         .vfx("flight")
         .edit("vfx", "flight", |flight| flight["layers"][0]["place"] = json!({ "travel": {} }))
         .shader("damage_pop")
