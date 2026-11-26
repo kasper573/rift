@@ -53,7 +53,7 @@ instead.
 
 Archives extracted into one folder make a **binaries folder**: `editor` and `rift` find `game-server`,
 `game-client` and `game-server-profiling` beside themselves. `just dist` builds this machine's
-binaries into such a folder, `target/dist/`, so an unreleased build runs exactly as a release would.
+binaries into such a folder, `target/dist/`, so an unreleased build runs as a release would.
 
 ## The rift tool
 
@@ -496,7 +496,14 @@ just bench            # the server bench on the generated game
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests
 just smoke            # download the game client from the website, start it, and see it draw the game
+just build-times      # how long each of these builds takes, as the build cache stands
 ```
+
+Every recipe builds on the `dev` profile, made for iterating: an edit rebuilds in seconds, and
+every recipe shares one build, so switching between them rebuilds nothing. The binaries that ship
+are built on `release`, optimized across crates, which takes far longer: CI builds them with
+`just archives`, the one way to a release asset. `just profile=release <recipe>` runs any recipe on
+release, for an issue only the shipped build shows.
 
 ## Tests
 
