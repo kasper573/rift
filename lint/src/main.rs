@@ -7,6 +7,8 @@ use syn::UseTree;
 use syn::visit::{self, Visit};
 use walkdir::{DirEntry, WalkDir};
 
+mod builds;
+
 fn main() {
     let metadata = MetadataCommand::new()
         .no_deps()
@@ -31,10 +33,11 @@ fn main() {
         check_json_keys(package, &mut violations);
     }
     check_standalone(&metadata, &mut violations);
+    builds::check(metadata.workspace_root.as_std_path(), &mut violations);
 
     if violations.is_empty() {
         println!(
-            "lint: layering, standalone crates, content keys, JSON keys and mapped messages OK"
+            "lint: layering, standalone crates, content keys, JSON keys, mapped messages and builds OK"
         );
         return;
     }

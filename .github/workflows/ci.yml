@@ -106,16 +106,16 @@ jobs:
           deps: dist
           cache: dist-${{ matrix.platform }}
           recipes: dist archives smoke
+      # `archives` builds the binaries on release whatever the profile says, so nothing else can ship.
       - name: Build the binaries
         shell: bash
         env:
           RIFT_BUILD: ${{ needs.tag.outputs.tag }}
-        run: |
-          RIFT_RELEASE_KEY="$(tail -n 1 release.pub)" just dist target/dist profiling
-          just archives "${{ matrix.platform }}" target/dist target/archives
+        run: RIFT_RELEASE_KEY="$(tail -n 1 release.pub)" just archives "${{ matrix.platform }}"
+      # On release too, so the harness builds on what the binaries just built.
       - name: Smoke-test the website, the game server and the game client
         if: ${{ matrix.platform == 'linux-x86_64' }}
-        run: just smoke target/dist
+        run: just profile=release smoke target/dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ github.ref == 'refs/heads/main' }}
         with:

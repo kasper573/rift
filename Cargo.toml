@@ -88,13 +88,9 @@ oauth2-test-server = "0.2.3"
 openidconnect = "4"
 
 [profile.release]
-lto = false
-incremental = true
-
-# Release with the symbols and line tables a sampling profiler reads; full debug info would make
-# the binary too large to publish.
-[profile.profiling]
-inherits = "release"
+lto = "thin"
+codegen-units = 1
+incremental = false
 debug = "line-tables-only"
 
 [profile.dev]
