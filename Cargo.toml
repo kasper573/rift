@@ -92,7 +92,6 @@ openidconnect = "4"
 lto = "thin"
 codegen-units = 1
 incremental = false
-debug = "line-tables-only"
 
 [profile.dev]
 opt-level = 1
