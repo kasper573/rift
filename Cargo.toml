@@ -88,10 +88,9 @@ tiny-skia = { version = "0.12", default-features = false, features = ["std", "si
 oauth2-test-server = "0.2.3"
 openidconnect = "4"
 
+# Cargo's own release profile, without LTO: whole-program optimization makes the binaries only a
+# few percent faster, for builds several times longer and larger than a free CI runner holds.
 [profile.release]
-lto = "thin"
-codegen-units = 16
-incremental = false
 
 # Built for iterating: the workspace's own crates at the least optimization that keeps the game
 # within its bench floors, and line tables alone, so a panic still names its line; the

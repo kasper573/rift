@@ -36,8 +36,7 @@ editor *folder:
     cargo build {{shared}} --bin editor --bin game-server --bin game-client
     {{out_dir}}/editor {{folder}}
 
-# Frame pointers give perf whole call stacks without copying each sampled stack; the profiling
-# build keeps the symbols the release binaries are stripped of.
+# The profiling build keeps the symbols the release binaries are stripped of.
 [doc("The running platform's binaries as a release lays them out, into OUT: a binaries folder. EXTRAS may add profiling (game-server-profiling), which builds on Linux only.")]
 dist out="target/dist" *extras="":
     #!/usr/bin/env bash

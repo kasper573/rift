@@ -499,11 +499,10 @@ just smoke            # download the game client from the website, start it, and
 just build-times      # how long each of these builds takes, as the build cache stands
 ```
 
-Every recipe builds on the `dev` profile, made for iterating: an edit rebuilds in seconds, and
-every recipe shares one build, so switching between them rebuilds nothing. The binaries that ship
-are built on `release`, optimized across crates, which takes far longer: CI builds them with
-`just archives`, the one way to a release asset. `just profile=release <recipe>` runs any recipe on
-release, for an issue only the shipped build shows.
+Every recipe builds on the `dev` profile, made for iterating, and every recipe shares one build, so
+switching between them rebuilds nothing. The binaries that ship are built on `release`: CI builds
+them with `just archives`, the one way to a release asset. `just profile=release <recipe>` runs any
+recipe on release, for an issue only the shipped build shows.
 
 ## Tests
 
