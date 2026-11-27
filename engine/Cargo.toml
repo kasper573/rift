@@ -64,6 +64,7 @@ unicode-segmentation = "1"
 smallvec.workspace = true
 bevy_egui.workspace = true
 bevy_mod_outline.workspace = true
+bevy_hanabi.workspace = true
 accesskit = "0.24"
 bevy_replication.workspace = true
 bevy_time = { workspace = true, features = ["std"] }

@@ -4,7 +4,7 @@ use engine::systems::actor::skeleton::{LocalOffset, LocalTurn};
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::item::{CARD_SIZE, Grip, ICON_SIZE, ItemDef, PropAxis, PropHold, Wear};
 use serde_json::json;
-use testkit::path;
+use testkit::{GEAR, path};
 
 use crate::support;
 
@@ -47,9 +47,9 @@ fn a_held_items_stance_and_grip_land_in_its_file_and_its_pairs_in_the_stances() 
         .stance(sword, 1, "main")
         .stance(dagger, 1, "either")
         .stance(dual, 2, "main")
-        .item(
+        .equipment(
             "blade",
-            json!({ "kind": { "type": "equipment", "wear": "held", "stance": path("stance", sword) } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": path("stance", sword) } }),
         );
     let mut editor = support::open(game, &scratch);
     let key = path("item", "blade");

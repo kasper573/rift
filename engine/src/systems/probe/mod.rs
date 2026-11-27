@@ -349,6 +349,8 @@ pub struct ProbeSnapshot {
     /// Where the interface takes the pointer: each rect edges included, as egui hit-tests.
     #[schemars(with = "Vec<RectSchema>")]
     pub covered: Vec<Rect<WindowPx>>,
+    /// The windows the player places that are up, each with what moves and resizes it.
+    pub windows: Vec<ProbeWindow>,
     /// The conversation as the dialogue box shows it.
     #[entities]
     pub stage: Option<ProbeStage>,
@@ -447,6 +449,19 @@ pub struct ProbeInputSeen {
     pub click_run: u8,
     pub wheel_turns: u32,
     pub key_presses: u32,
+}
+
+/// A window the player places: where it stands, the band to drag it by, and the corner to drag
+/// to resize it, when it can be.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+pub struct ProbeWindow {
+    pub window: Placed,
+    #[schemars(with = "RectSchema")]
+    pub rect: Rect<WindowPx>,
+    #[schemars(with = "RectSchema")]
+    pub band: Rect<WindowPx>,
+    #[schemars(with = "Option<RectSchema>")]
+    pub corner: Option<Rect<WindowPx>>,
 }
 
 /// The camera: how a world point (x east, height up, y south) lands in the window, and where the
@@ -1229,6 +1244,15 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         },
         ui: ui(world),
         covered: covered(world),
+        windows: hud::placed_windows(world)
+            .into_iter()
+            .map(|placed| ProbeWindow {
+                window: placed.of,
+                rect: gui::window_rect(placed.rect),
+                band: gui::window_rect(placed.band),
+                corner: placed.corner.map(gui::window_rect),
+            })
+            .collect(),
         soundscape: soundscape(world),
         drawn_weather: area.and(weather(world, me)),
         transition: world.resource::<ActiveTransition>().phase(),

@@ -78,7 +78,7 @@ use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::board::ShaderBoardImage;
 use crate::core::vfx::render as vfx_render;
-use crate::core::vfx::uniform::{ParamsUniform, SiteUniform};
+use crate::core::vfx::uniform::{ParamsUniform, ShaderValue, SiteUniform};
 use crate::systems::area::sky::SkyCondition;
 use crate::systems::area::sky::SkyNow;
 use crate::systems::water::WaterId;
@@ -1640,7 +1640,7 @@ fn spawn_dome(
 ) -> Option<Entity> {
     let shader = vfx_render::compiled_shader(world, look.shader)?;
     let params = ParamsUniform::pack(look.shader.get(content), |name| {
-        look.params.get(name).copied()
+        look.params.get(name).copied().map(ShaderValue::from)
     });
     let material = SkyMaterial {
         site: SiteUniform::default(),
@@ -1710,7 +1710,7 @@ fn spawn_rain(
 ) -> Option<Entity> {
     let shader = vfx_render::compiled_shader(world, rainfall.shader)?;
     let params = ParamsUniform::pack(rainfall.shader.get(content), |name| {
-        rainfall.params.get(name).copied()
+        rainfall.params.get(name).copied().map(ShaderValue::from)
     });
     let material = RainMaterial {
         site: SiteUniform::default(),

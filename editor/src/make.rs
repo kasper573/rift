@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use engine::core::content::files::name_of;
 use engine::core::content::gltf::placeholder_rig;
-use engine::core::content::{ContentFile, FolderReader, Nearby};
+use engine::core::content::{CONFIG_FILE, ContentFile, FolderReader, Nearby};
 use engine::core::script::Arrow;
 use engine::core::script::Node;
 use engine::core::script::RunnerKind;
@@ -38,7 +38,7 @@ pub fn content_file(
 ) -> Result<(), String> {
     let reader = project.reader();
     let files = reader.fresh(table, path)?;
-    for (part, bytes) in blank_parts(table) {
+    for (part, bytes) in blank_parts(table, path, &files) {
         let file = format!("{path}/{part}");
         if !files.contains_key(&file) {
             edit.write(file, bytes);
@@ -110,7 +110,11 @@ pub(crate) fn usable_without_used(
     matches!(item.kind, ItemKind::Usable { casts: None }) && !item.modules.iter().any(answers_used)
 }
 
-fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
+fn blank_parts(
+    table: &str,
+    path: &str,
+    files: &BTreeMap<String, Vec<u8>>,
+) -> Vec<(String, FileBytes)> {
     let silence = || default("silence.wav");
     match table {
         SfxDef::TABLE => vec![(SFX_CLIP.named("", "wav"), silence())],
@@ -122,7 +126,15 @@ fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
             PROP_GLB.named("", "glb"),
             FileBytes::from(placeholder_rig(&[])),
         )],
-        VfxShaderDef::TABLE => vec![(SHADER_SOURCE.named("", "wgsl"), default("shader.wgsl"))],
+        VfxShaderDef::TABLE => {
+            let config = &files[&format!("{path}/{CONFIG_FILE}")];
+            let shader: VfxShaderDef =
+                serde_json::from_slice(config).expect("a fresh shader reads as one");
+            vec![(
+                SHADER_SOURCE.named("", "wgsl"),
+                FileBytes::from(shader.stage.spec().blank.as_bytes()),
+            )]
+        }
         _ => Vec::new(),
     }
 }

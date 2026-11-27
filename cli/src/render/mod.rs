@@ -13,7 +13,6 @@
 //! Every draw of chance on the client's side is seeded by the shot, and time stands still while the
 //! area loads and then steps a frame at a time, so the same shot draws the same picture twice.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -39,28 +38,23 @@ use engine::core::render::camera::{self, Zoom, world_point};
 use engine::core::render::sample::FrameSamplingPlugin;
 use engine::core::render::video::{Quality, VideoPreferences};
 use engine::core::render::world::WorldScenePlugin;
-use engine::core::render::world::body;
 use engine::core::render::world::clouds::CloudDrift;
-use engine::core::render::world::layers::Layered;
-use engine::core::render::world::mannequin::mannequin;
-use engine::core::render::world::plumb::Plumb;
-use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::{CameraFocus, CameraRig, Look};
 use engine::core::units::{DayHours, Degrees, HourOfDay, Meters, Radians, Seconds};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::GameSettings;
-use engine::systems::actor::layering::{self, HandHold, Layering};
-use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::skeleton::Clip;
-use engine::systems::actor::stance::{self, HandIndex, StanceId};
-use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
 use engine::systems::area::rain::{RainField, Shelter};
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::sky::{self, Sky};
 use engine::systems::area::{self, Area, AreaDef, AreaId, Kept, Pictured, Weather, rain};
-use engine::systems::item::{ItemDef, PropHold, Steady, Wear};
 use serde::{Deserialize, Serialize};
+
+use body::{Body, Posed};
+
+mod body;
+pub mod coat;
 
 /// How far around the target the scenery stands, in times the eye's distance from it: as far as a
 /// lens looking down at the target takes in, and the haze beyond.
@@ -343,6 +337,26 @@ impl Place {
     }
 }
 
+impl Standing {
+    /// Stands the body on `ground` where the shot says, facing its spot, holding its items in its
+    /// stance's idle.
+    fn stand(&self, world: &mut World, content: &Content, ground: &Heightfield) -> Body {
+        let at = self.at.ground();
+        let faces = self.faces.ground();
+        let placed = Transform::from_translation(world_point(at, ground.height_at(at)))
+            .with_rotation(camera::facing_rotation(Radians(
+                (faces.y - at.y).atan2(faces.x - at.x),
+            )));
+        let posed = Posed {
+            model: &self.model,
+            held: &self.held,
+            clip: self.clip.as_ref(),
+            moment: Some(self.moment),
+        };
+        body::stand(world, content, &posed, placed)
+    }
+}
+
 #[derive(Resource)]
 struct Taking {
     shot: Shot,
@@ -383,24 +397,6 @@ enum Stage {
 
 /// Frames a picture settles for once the hour turns, for the light to reach every pass.
 const TURNING: u32 = 2;
-
-struct Body {
-    rig: Entity,
-    model: ModelId,
-    stance: Option<StanceId>,
-    props: Vec<Prop>,
-    hung: bool,
-}
-
-struct Prop {
-    hand: HandIndex,
-    joint: String,
-    scene: String,
-    transform: Transform,
-    plumb: Option<Plumb>,
-    hold: PropHold,
-    steady: Option<Steady>,
-}
 
 #[derive(Resource, Default)]
 struct Read(Vec<(Entity, Vec<u8>)>);
@@ -610,13 +606,9 @@ fn step(world: &mut World) {
             Stage::Standing(bodies) => {
                 let mut all = true;
                 for standing in bodies.iter_mut() {
-                    let model = loaded(&content, standing.model);
-                    if !standing.hung {
-                        standing.hung = hang(world, model, standing);
-                    }
-                    all &= standing.hung;
+                    all &= standing.hang(world, &content);
                 }
-                drive(world, bodies);
+                body::drive(world, bodies.iter());
                 shine(world, taking.stood.as_ref().expect("the area stood"), false);
                 if all && !scenery::standing(world) && !engine::core::render::world::readying(world)
                 {
@@ -811,7 +803,7 @@ fn set_up(
     let bodies = shot
         .bodies
         .iter()
-        .map(|standing| stand(world, content, &picture.area.heights, standing))
+        .map(|standing| standing.stand(world, content, &picture.area.heights))
         .collect();
     Some((bodies, stood))
 }
@@ -900,162 +892,6 @@ fn shine(world: &mut World, stood: &Stood, flashing: bool) {
         &stood.weather,
         flash,
     ));
-}
-
-fn loaded(content: &Content, model: ModelId) -> &ActorModel {
-    ActorModel::loaded(content, model)
-        .unwrap_or_else(|| panic!("{} did not build", model.path(content)))
-}
-
-/// Stands a body where the shot says, facing its spot, holding its items in its stance's idle.
-fn stand(world: &mut World, content: &Content, ground: &Heightfield, standing: &Standing) -> Body {
-    let model_id = content
-        .by_path::<ModelDef>(&standing.model)
-        .unwrap_or_else(|| panic!("no model {}", standing.model));
-    let model = loaded(content, model_id);
-    let held: BTreeMap<HandIndex, _> = standing
-        .held
-        .iter()
-        .enumerate()
-        .filter_map(|(hand, item)| {
-            let item = item.as_ref()?;
-            let id = content
-                .by_path::<ItemDef>(item)
-                .unwrap_or_else(|| panic!("no item {item}"));
-            Some((HandIndex(hand as u8), id))
-        })
-        .collect();
-    let stance = stance::of_hands(content, &held);
-    let built = model.skeleton();
-    let played = match &standing.clip {
-        Some(clip) => built
-            .played(clip)
-            .unwrap_or_else(|| panic!("{} plays no clip {clip}", standing.model)),
-        None => model.standing_clip(stance, &Motion::Action(Action::Idle), Pose::Idle),
-    };
-    let clip = &built.clips[played];
-    let pairs = clip
-        .source
-        .map(|source| built.def.sources[source].joint_pairs());
-    let made = rig_clip::rig_clip(
-        world,
-        built.rig.clone(),
-        clip.clip.file().as_str(),
-        clip.animation,
-        rig_clip::maker(built.rig.clone(), pairs),
-    );
-    let mut mannequin = mannequin(world, made);
-    mannequin.hold(Some(standing.moment));
-    let figure = model.dressed(
-        content,
-        &appearance::look(content, &Appearance::of(model_id), &BTreeMap::new()),
-    );
-    let at = standing.at.ground();
-    let faces = standing.faces.ground();
-    let rig = world
-        .spawn((
-            Transform::from_translation(world_point(at, ground.height_at(at))).with_rotation(
-                camera::facing_rotation(Radians((faces.y - at.y).atan2(faces.x - at.x))),
-            ),
-            Visibility::default(),
-            mannequin,
-        ))
-        .id();
-    body::dress(world, rig, &figure);
-    let props = render::hung(content, model, &held)
-        .into_iter()
-        .filter_map(|(hand, item)| {
-            let (_, grip) = item.get(content).wear().and_then(Wear::grasp)?;
-            let at = model.hands().get(hand.index())?;
-            Some(Prop {
-                hand,
-                joint: at.joint.0.clone(),
-                scene: item.get(content).look.get(content).model.path(),
-                transform: render::held_at(model, at, grip),
-                plumb: render::plumb_from(model, at, grip),
-                hold: grip.hold,
-                steady: grip.steady,
-            })
-        })
-        .collect();
-    Body {
-        rig,
-        model: model_id,
-        stance,
-        props,
-        hung: false,
-    }
-}
-
-/// Hangs the body's props under their joints and puts its layers on, once its scene has spawned
-/// the joints and every part of it shows.
-fn hang(world: &mut World, model: &ActorModel, standing: &Body) -> bool {
-    let Some(joints) = world
-        .get::<body::Body>(standing.rig)
-        .map(|body| body.joints().clone())
-    else {
-        return false;
-    };
-    let rigged = model
-        .skeleton()
-        .rig
-        .joints()
-        .all(|joint| joints.contains_key(&model.skeleton().rig.nodes[joint].name));
-    let dressed = world
-        .get::<Children>(standing.rig)
-        .into_iter()
-        .flatten()
-        .filter(|child| world.get::<WorldAssetRoot>(**child).is_some())
-        .all(|skin| world.get::<Visibility>(*skin) != Some(&Visibility::Hidden));
-    if !rigged || !dressed {
-        return false;
-    }
-    for prop in &standing.props {
-        let Some(&joint) = joints.get(&prop.joint) else {
-            continue;
-        };
-        let scene = world
-            .resource::<AssetServer>()
-            .load(GltfAssetLabel::Scene(0).from_asset(prop.scene.clone()));
-        let mut hung = world.spawn((
-            WorldAssetRoot(scene),
-            prop.transform,
-            Visibility::default(),
-            ChildOf(joint),
-        ));
-        if let Some(plumb) = prop.plumb {
-            hung.insert(plumb);
-        }
-    }
-    if let Some((layered, layering)) = layering::layered(model, &joints) {
-        world.entity_mut(standing.rig).insert((layered, layering));
-    }
-    true
-}
-
-/// Drives each body's layers as the game drives an idle body holding its props.
-fn drive(world: &mut World, bodies: &[Body]) {
-    for standing in bodies {
-        let holding: Vec<HandHold> = standing
-            .props
-            .iter()
-            .map(|prop| (prop.hand, prop.hold, prop.steady))
-            .collect();
-        if let Ok((mut layered, layering)) = world
-            .query::<(&mut Layered, &Layering)>()
-            .get_mut(world, standing.rig)
-        {
-            layering::drive(
-                &mut layered,
-                layering,
-                Action::Idle,
-                Pose::Idle,
-                standing.stance,
-                &holding,
-                false,
-            );
-        }
-    }
 }
 
 fn save(pixels: Vec<u8>, width: u32, height: u32, path: &std::path::Path) {

@@ -1,5 +1,6 @@
-//! Where a shader runs: the stage it is composed for. A few stages play on the sites of a vfx; the
-//! features of a game register more, which a system draws in a material of its own.
+//! Where a shader runs: the stage it is composed for. The effect stage draws the layers of a vfx,
+//! the text stage the plates the game letters; the features of a game register more, which a
+//! system draws in a material of its own.
 
 use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
@@ -10,14 +11,16 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::shader::{SiteKind, quad_header, surface_header};
+use super::shader::{
+    effect_check_header, effect_header, effect_prelude, quad_header, site_prelude,
+};
 
-/// A shader that draws nothing, which every stage has the function of.
+/// A shader that draws nothing, which every stage on a site has the function of.
 pub const BLANK_VFX: &str = "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n";
+/// An effect shader that draws nothing.
+pub const BLANK_FX: &str = "fn fx(i: FxIn) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n";
 
-/// The bind group a material's own bindings sit in, for a quad drawn in the world or over the
-/// presented frame.
-const WORLD_GROUP: u32 = 3;
+/// The bind group a text quad's own bindings sit in, drawn over the presented frame.
 const PRESENT_GROUP: u32 = 2;
 
 /// A kind of place a shader runs, by the name its row gives it.
@@ -34,6 +37,9 @@ pub struct StageSpec {
     /// The header the validator composes a shader of the stage with: plain WGSL that declares what
     /// the runtime header declares and calls what the shader must define.
     pub check_header: fn() -> String,
+    /// The helpers a shader of the stage is composed with after its header, at run time and for
+    /// the validator alike.
+    pub prelude: fn() -> String,
     /// The functions a shader of the stage must define.
     pub required: &'static [&'static str],
     /// A shader of the stage that defines them all and draws nothing.
@@ -41,8 +47,8 @@ pub struct StageSpec {
     /// Whether the composed shader is WESL, importing the engine's own shader libraries, rather
     /// than plain WGSL.
     pub wesl: bool,
-    /// What the stage's header gives a shader to read, beyond what the header declares as
-    /// functions and constants: what an editor highlights as the vfx vocabulary.
+    /// What the stage's header gives a shader to read, beyond what the header and prelude declare
+    /// as functions and constants: what an editor highlights as the vfx vocabulary.
     pub names: &'static [&'static str],
     /// The passes the stage's shaders draw in, each with the defs its pipeline compiles it under.
     pub passes: fn() -> Vec<ShaderPass>,
@@ -51,14 +57,8 @@ pub struct StageSpec {
 /// How the engine draws a stage's shaders.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StageKind {
-    /// In the material of the thing it plays on.
-    Surface,
-    /// As a decal on the ground under a site.
-    Ground,
-    /// On a quad facing the camera at a site.
-    Billboard,
-    /// Over the whole screen.
-    Screen,
+    /// On the shapes, coats and patches of ground of a vfx's layers, in the world.
+    Effect,
     /// In the text of a plate.
     Text,
     /// In a material of a system's own, which takes no site of a vfx.
@@ -71,7 +71,7 @@ pub struct ShaderPass {
     pub defs: Vec<ShaderDefVal>,
 }
 
-/// The stages a game's shaders are written for: the five that play on vfx sites, and those its
+/// The stages a game's shaders are written for: the effect and text stages, and those its
 /// features register. Installed once, as serde and schemars, which read and describe shader rows,
 /// take no context to find it in.
 pub struct Stages {
@@ -81,59 +81,31 @@ pub struct Stages {
 static INSTALLED: OnceLock<Stages> = OnceLock::new();
 
 impl Stage {
-    pub const SURFACE: Stage = Stage(&StageSpec {
-        name: "surface",
-        kind: StageKind::Surface,
-        header: surface_header,
-        check_header: world_quad_header,
-        required: &["vfx"],
-        blank: BLANK_VFX,
+    pub const EFFECT: Stage = Stage(&StageSpec {
+        name: "effect",
+        kind: StageKind::Effect,
+        header: effect_header,
+        check_header: effect_check_header,
+        prelude: effect_prelude,
+        required: &["fx"],
+        blank: BLANK_FX,
         wesl: true,
-        names: &[],
-        passes: main_pass,
-    });
-    pub const GROUND: Stage = Stage(&StageSpec {
-        name: "ground",
-        kind: StageKind::Ground,
-        header: world_quad_header,
-        check_header: world_quad_header,
-        required: &["vfx"],
-        blank: BLANK_VFX,
-        wesl: false,
-        names: &[],
-        passes: no_passes,
-    });
-    pub const BILLBOARD: Stage = Stage(&StageSpec {
-        name: "billboard",
-        kind: StageKind::Billboard,
-        header: world_quad_header,
-        check_header: world_quad_header,
-        required: &["vfx"],
-        blank: BLANK_VFX,
-        wesl: false,
-        names: &[],
-        passes: no_passes,
-    });
-    pub const SCREEN: Stage = Stage(&StageSpec {
-        name: "screen",
-        kind: StageKind::Screen,
-        header: present_quad_header,
-        check_header: world_quad_header,
-        required: &["vfx"],
-        blank: BLANK_VFX,
-        wesl: false,
-        names: &[],
-        passes: no_passes,
+        names: &[
+            "FxIn", "uv", "world", "local", "normal", "view", "life", "age", "seed", "front",
+            "pixel", "size", "on", "frame", "params",
+        ],
+        passes: effect_passes,
     });
     pub const TEXT: Stage = Stage(&StageSpec {
         name: "text",
         kind: StageKind::Text,
         header: present_quad_header,
-        check_header: world_quad_header,
+        check_header: present_quad_header,
+        prelude: site_prelude,
         required: &["vfx"],
         blank: BLANK_VFX,
         wesl: false,
-        names: &[],
+        names: &["site", "params", "sample"],
         passes: no_passes,
     });
 
@@ -153,33 +125,6 @@ impl Stage {
 
     pub fn spec(self) -> &'static StageSpec {
         self.0
-    }
-
-    /// Whether a layer on this stage plays on a site of `kind`: a surface needs a mesh, the ground
-    /// and a billboard a place in the world, the screen and the text their own sites, and a
-    /// stage a system draws no site at all.
-    pub fn takes(self, site: SiteKind) -> bool {
-        match self.kind() {
-            StageKind::Surface => matches!(site, SiteKind::Actor | SiteKind::Object),
-            StageKind::Ground | StageKind::Billboard => matches!(
-                site,
-                SiteKind::Actor | SiteKind::Object | SiteKind::Area | SiteKind::Path
-            ),
-            StageKind::Screen => site == SiteKind::Screen,
-            StageKind::Text => site == SiteKind::Text,
-            StageKind::Pass => false,
-        }
-    }
-
-    /// The stages a site of `kind` takes, named.
-    pub fn taken_by(site: SiteKind) -> String {
-        Stages::get()
-            .all()
-            .iter()
-            .filter(|stage| stage.takes(site))
-            .map(|stage| stage.label())
-            .collect::<Vec<_>>()
-            .join(", ")
     }
 
     pub fn label(self) -> &'static str {
@@ -205,13 +150,7 @@ impl Stages {
     pub fn install(register: impl FnOnce(&mut Stages)) -> &'static Stages {
         INSTALLED.get_or_init(|| {
             let mut stages = Stages {
-                stages: vec![
-                    Stage::SURFACE,
-                    Stage::GROUND,
-                    Stage::BILLBOARD,
-                    Stage::SCREEN,
-                    Stage::TEXT,
-                ],
+                stages: vec![Stage::EFFECT, Stage::TEXT],
             };
             register(&mut stages);
             stages
@@ -227,7 +166,7 @@ impl Stages {
         assert_eq!(
             stage.kind(),
             StageKind::Pass,
-            "{} plays on sites, which only the built-in stages do",
+            "{} is drawn by the engine itself, which only the built-in stages are",
             stage.name()
         );
         self.stages.push(stage);
@@ -301,8 +240,23 @@ pub fn with_defs(base: Vec<ShaderDefVal>, more: &[&'static str]) -> Vec<ShaderDe
         .collect()
 }
 
-fn world_quad_header() -> String {
-    quad_header(WORLD_GROUP)
+/// An effect is drawn in the main pass alone, adding its light or blended over what lies behind
+/// it, and softened where it meets what stands behind it when the view has a depth prepass.
+fn effect_passes() -> Vec<ShaderPass> {
+    vec![
+        ShaderPass {
+            name: "blended",
+            defs: main_defs(),
+        },
+        ShaderPass {
+            name: "added",
+            defs: with_defs(main_defs(), &["FX_ADD"]),
+        },
+        ShaderPass {
+            name: "softened",
+            defs: with_defs(main_defs(), &["DEPTH_PREPASS"]),
+        },
+    ]
 }
 
 fn present_quad_header() -> String {

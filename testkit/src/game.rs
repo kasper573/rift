@@ -14,6 +14,7 @@ use engine::core::ground::{
     GroundSize, HeightRange, Heightfield, MIN_SIDE, PaintMap, SAMPLES_PER_METER, WaterSurface,
 };
 use engine::core::math::Rgb;
+use engine::core::math::Rgba;
 use engine::core::render::{
     CameraFraming, ClearingLook, CloudLook, LightLook, Look, PictureGrade, SkyLook, SurfaceFinish,
     Zooms,
@@ -24,8 +25,11 @@ use engine::core::text::{
 use engine::core::units::{Degrees, Radians, RadiansPerSec};
 use engine::core::units::{Meters, MetersPerSec, Stops};
 use engine::core::units::{Millis, Seconds};
-use engine::core::vfx::Stage;
 use engine::core::vfx::shader::SHADER_SOURCE;
+use engine::core::vfx::{
+    ColorFill, LayerPlace, LayerRun, LightLayer, Stage, VfxColor, VfxDef, VfxEase, VfxLayer,
+    VfxTrack,
+};
 use engine::systems::actor::Action;
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
@@ -119,6 +123,9 @@ const DROP: &str = "drop";
 
 /// The rarity of every item a test declares without naming one.
 const PLAIN: &str = "plain";
+
+/// The equipment category every item a test declares can be of, without declaring its own.
+pub const GEAR: &str = "gear";
 
 /// The terrains and the footstep of every area a test declares.
 pub const TURF: &str = "turf";
@@ -360,10 +367,11 @@ impl Game {
         )
         .asset("icons/strike.png", png(1, 1))
         .stance("sword", 1, "main")
-        .item(
+        .equipment(
             "sword",
             json!({ "kind": {
                 "type": "equipment",
+                "category": path("equipment_category", GEAR),
                 "wear": "held",
                 "stance": path("stance", "sword"),
                 "grants": [path("skill", "strike")],
@@ -480,6 +488,17 @@ impl Game {
             .row("item", name, row)
             .asset(&icon, png(item::ICON_SIZE.0, item::ICON_SIZE.1))
             .asset(&card, png(item::CARD_SIZE.0, item::CARD_SIZE.1))
+    }
+
+    /// An equipment item of `fields`, as [`Game::item`] makes one, with the equipment category
+    /// [`GEAR`] its kind names declared.
+    pub fn equipment(self, name: &str, fields: Value) -> Game {
+        self.equipment_category(GEAR).item(name, fields)
+    }
+
+    /// An equipment category, named after its file.
+    pub fn equipment_category(self, name: &str) -> Game {
+        self.row("equipment_category", name, json!({ "name": name }))
     }
 
     /// An item rarity of `rank` and `fields`, named after its file, in one grey.
@@ -613,9 +632,9 @@ impl Game {
             .asset(&icon, png(width, height))
     }
 
-    /// A visual effect shader that draws nothing, of no parameters, on a billboard.
+    /// An effect shader that draws nothing, of no parameters.
     pub fn shader(self, name: &str) -> Game {
-        self.shader_on(name, Stage::BILLBOARD)
+        self.shader_on(name, Stage::EFFECT)
     }
 
     /// A visual effect shader that draws nothing, of no parameters, on `stage`; a cover or a prop
@@ -639,24 +658,36 @@ impl Game {
         )
     }
 
-    /// A visual effect of one transparent frame, shown for a second.
+    /// A visual effect of one light, dimming out over a second.
     pub fn vfx(self, name: &str) -> Game {
-        let sheet = format!("vfx/{name}.png");
-        self.row(
-            "vfx",
-            name,
-            json!({
-                "name": name,
-                "layers": [{
-                    "type": "sprite",
-                    "sheet": sheet,
-                    "frame": { "width": 1, "height": 1 },
-                    "frames": 1,
-                    "fps": 1.0,
-                }],
-            }),
-        )
-        .asset(&sheet, png(1, 1))
+        let light = LightLayer {
+            color: VfxColor {
+                color: ColorFill::Value(Rgba::WHITE),
+                brightness: 1.0,
+                alpha: 1.0,
+            },
+            intensity: VfxTrack {
+                keys: vec![(0.0, 1.0), (1.0, 0.0)],
+                ease: VfxEase::Linear,
+            },
+            radius: Meters(4.0),
+            flicker: 0.0,
+            shadows_from: None,
+            aura: None,
+            place: LayerPlace::default(),
+            run: LayerRun {
+                delay: Seconds(0.0),
+                duration: Seconds(1.0),
+            },
+        };
+        let vfx = VfxDef {
+            name: name.to_owned(),
+            params: Vec::new(),
+            layers: vec![VfxLayer::Light(light)],
+            socket: None,
+            on_actors_inside: None,
+        };
+        self.row("vfx", name, serde_json::to_value(vfx).expect("a vfx row"))
     }
 
     /// A model nobody would notice on the plain skeleton [`BODY`], declared with it unless the test

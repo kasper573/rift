@@ -540,7 +540,6 @@ fn game(forest: Option<&Map>) -> Game {
             let settings = settings.as_object_mut().expect("settings");
             settings.remove("messages");
         })
-        .vfx("damage_taken")
         .shader("damage_pop")
         .item("token", stacked.clone())
         .item("plank", stacked)

@@ -13,9 +13,9 @@ use crate::core::render::world::material::{
     LookWear, MaterialLook, PictureKind, PictureRead, SceneLooks, material_picture,
 };
 use crate::core::units::Meters;
-use crate::core::vfx::render::{self as vfx_render, SiteExtent};
+use crate::core::vfx::render::{self as vfx_render, DrawnElsewhere, SiteExtent};
 use crate::core::vfx::standing::StandingVfx;
-use crate::core::vfx::uniform::ParamsUniform;
+use crate::core::vfx::uniform::{ParamsUniform, ShaderValue};
 use crate::systems::area::PropPlacement;
 use crate::systems::area::prop::{PropDef, PropId};
 use crate::systems::area::snap::SnapSurfaces;
@@ -113,10 +113,19 @@ pub(super) fn stand_acting(
     if let Some(ripples) = def.ripples {
         world.entity_mut(stood).insert(RippleSpot(ripples));
     }
+    // The arena draws the prop itself, so the model it shows here stands hidden, only for its
+    // coats to wrap.
+    if def.effects.iter().any(|play| play.vfx.get(content).coats()) {
+        world.entity_mut(stood).insert((
+            ShowsProp(placed.prop),
+            Visibility::Hidden,
+            DrawnElsewhere,
+        ));
+    }
     let sockets = def
         .effects
         .iter()
-        .filter_map(|vfx| vfx.get(content).socket.as_deref());
+        .filter_map(|play| play.vfx.get(content).socket.as_deref());
     for socket in sockets {
         let rests = info.and_then(|info| {
             let node = info.tree.named(socket)?;
@@ -191,7 +200,7 @@ pub fn compiled_looks(
                 Some(shader) => Some((
                     vfx_render::compiled_shader(world, shader)?,
                     ParamsUniform::pack(shader.get(content), |param| {
-                        material.params.get(param).copied()
+                        material.params.get(param).copied().map(ShaderValue::from)
                     }),
                 )),
                 None => None,

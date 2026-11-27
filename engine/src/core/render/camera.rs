@@ -1054,6 +1054,12 @@ pub fn facing_rotation(facing: Radians) -> Quat {
     Quat::from_rotation_y(std::f32::consts::FRAC_PI_2 - facing.0)
 }
 
+/// The facing a thing turned by `rotation` about the vertical shows: `facing_rotation` undone.
+pub fn facing_of(rotation: Quat) -> Radians {
+    let (yaw, _, _) = rotation.to_euler(EulerRot::YXZ);
+    Radians(std::f32::consts::FRAC_PI_2 - yaw)
+}
+
 pub fn ground_height(world: &World, at: Pos<Meters>) -> Meters {
     world
         .get_resource::<GroundHeights>()
@@ -1134,6 +1140,11 @@ pub(super) fn stand_over_ground(
 }
 
 /// The world camera as the rig places it: where it stands, and what it looks at once aimed.
+/// How far the camera is thrown off where its rig places it this frame, as what shakes it says:
+/// whatever does, sets it each frame before the camera is placed.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct CameraShake(pub Vec3);
+
 type PlacedCamera = (
     Entity,
     &'static mut Transform,
@@ -1142,6 +1153,7 @@ type PlacedCamera = (
 
 pub(super) fn place(
     rig: Option<Res<CameraRig>>,
+    shake: Res<CameraShake>,
     mut camera: Query<PlacedCamera, With<WorldCamera>>,
     mut commands: Commands,
 ) {
@@ -1149,6 +1161,7 @@ pub(super) fn place(
         && let Ok((camera, mut transform, focus)) = camera.single_mut()
     {
         *transform = rig.transform();
+        transform.translation += shake.0;
         match focus {
             Some(mut focus) => focus.0 = rig.target(),
             None => {

@@ -332,7 +332,7 @@ fn activate(world: &mut World, actor: Entity, Wanted { source, since }: Wanted) 
     if let AspectSource::Status(effect) = source {
         let content = world.resource::<Content>().clone();
         let def = effect.get(&content);
-        if let Some(shown) = def.vfx.on_activate {
+        if let Some(shown) = &def.vfx.on_activate {
             vfx::show(world, shown, vfx::site_on(world, actor));
         }
         if let Some(heard) = def.sfx.on_activate {
@@ -410,6 +410,7 @@ fn stay(world: &mut World, actor: Entity, effect: StatusEffectId, now: UnixMilli
         .get(&content)
         .vfx
         .during
+        .as_ref()
         .and_then(|shown| vfx::show_lasting(world, shown, vfx::site_on(world, actor)));
     if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor)
         && let Some(aspect) = aspects.0.iter_mut().find(|aspect| aspect.source == source)
@@ -441,7 +442,7 @@ fn deactivate(world: &mut World, actor: Entity, source: AspectSource) {
     if let AspectSource::Status(effect) = source {
         let content = world.resource::<Content>().clone();
         let def = effect.get(&content);
-        if let Some(shown) = def.vfx.on_expire {
+        if let Some(shown) = &def.vfx.on_expire {
             vfx::show(world, shown, vfx::site_on(world, actor));
         }
         if let Some(heard) = def.sfx.on_expire {

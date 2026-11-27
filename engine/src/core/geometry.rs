@@ -81,6 +81,14 @@ impl Shape {
     }
 
     /// The farthest a point of the shape lies from its anchor.
+    /// How far ahead of where it is laid down its middle lies, in metres.
+    fn to_middle(self) -> f32 {
+        match self {
+            Shape::Circle { .. } | Shape::Rect { .. } => 0.0,
+            Shape::Cone { length, .. } | Shape::Line { length, .. } => length.0 / 2.0,
+        }
+    }
+
     pub fn reach(self) -> Meters {
         match self {
             Shape::Circle { radius } => radius,
@@ -178,15 +186,16 @@ impl PlacedShape {
     /// A shape with its middle on `centre`, turned to `facing`: a cone's or a line's middle is
     /// halfway along its length.
     pub fn centred(shape: Shape, centre: Pos<Meters>, facing: Radians) -> PlacedShape {
-        let back = match shape {
-            Shape::Circle { .. } | Shape::Rect { .. } => 0.0,
-            Shape::Cone { length, .. } | Shape::Line { length, .. } => length.0 / 2.0,
-        };
         PlacedShape {
-            at: centre - facing.heading() * back,
+            at: centre - facing.heading() * shape.to_middle(),
             facing,
             shape,
         }
+    }
+
+    /// Where its middle lies: a circle's or a rectangle's centre, halfway along a cone or a line.
+    pub fn middle(&self) -> Pos<Meters> {
+        self.at + self.facing.heading() * self.shape.to_middle()
     }
 
     /// A shape reaching out from `start` toward `facing`: a circle round it, and a rectangle's

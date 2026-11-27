@@ -102,6 +102,7 @@ pub(crate) fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str)
     let mut door = ObjectDef {
         name: Some(name),
         title: None,
+        nameplate: false,
         shape: ObjectShape::Point(beside_arrival),
         look: None,
         yaw: Degrees::default(),

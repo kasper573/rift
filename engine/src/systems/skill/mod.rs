@@ -49,6 +49,7 @@ use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
 use crate::systems::combat::Regard;
 use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
+use crate::systems::equipment::category::EquipmentCategoryId;
 use crate::systems::item::{Inventory, ItemId, ItemKind, ItemStack};
 use crate::systems::item::{USED_POINT, USED_RANK, USED_TARGET, Used};
 use crate::systems::mention::Mention;
@@ -376,6 +377,10 @@ pub struct SkillDef {
     pub cooldown: Seconds,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Expr>,
+    /// The kinds of equipment of which its user must have any one equipped to use it; none
+    /// listed, it asks for no equipment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub equipment_categories: Vec<EquipmentCategoryId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cost: Vec<ItemStack>,
     #[serde(default, skip_serializing_if = "serial::is_false")]
@@ -410,6 +415,7 @@ impl ContentFile for SkillDef {
             },
             cooldown: Seconds(0.0),
             requires: None,
+            equipment_categories: Vec::new(),
             cost: Vec::new(),
             basic_attack: false,
             levels: vec![first],

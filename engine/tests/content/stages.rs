@@ -1,27 +1,19 @@
 use engine::core::content::ErrorPlace;
-use engine::core::vfx::Stage;
 use engine::systems::area::stages::COVER;
 use serde_json::{Value, json};
 use testkit::{Game, path};
 
 use crate::support::game;
 
-/// A game with a vfx of one `stage` shader layer, which an object's script plays `on` a `site`.
-fn playing(stage: Stage, site: Value, on: Option<Value>) -> Game {
+/// A game with a vfx of one `layer`, which an object's script plays `on` a `site`.
+fn playing(layer: Value, site: Value, on: Option<Value>) -> Game {
     let mut show = json!({ "type": "vfx", "vfx": path("vfx", "glow"), "site": site });
     if let Some(on) = on {
         show["on"] = on;
     }
     game()
-        .shader_on("glare", stage)
-        .row(
-            "vfx",
-            "glow",
-            json!({
-                "name": "Glow",
-                "layers": [{ "type": "shader", "shader": path("vfx_shader", "glare"), "duration": 0.5 }],
-            }),
-        )
+        .shader("glare")
+        .row("vfx", "glow", json!({ "name": "Glow", "layers": [layer] }))
         .script(
             "shine",
             "object",
@@ -32,24 +24,23 @@ fn playing(stage: Stage, site: Value, on: Option<Value>) -> Game {
         )
 }
 
-fn refused_at_the_layer(game: Game, case: &str) -> bool {
+fn refused_at_the_layer(game: Game, rule: &str, file: &str, case: &str) -> bool {
     match game.try_load() {
         Ok(_) => false,
         Err(report) => {
-            let stage_errors: Vec<_> = report
+            let errors: Vec<_> = report
                 .errors
                 .iter()
-                .filter(|error| error.problem.rule == "stage off its site")
+                .filter(|error| error.problem.rule == rule)
                 .collect();
             assert!(
-                !stage_errors.is_empty(),
+                !errors.is_empty(),
                 "{case}: refused for something else:\n{report}"
             );
             assert!(
-                stage_errors
+                errors
                     .iter()
-                    .all(|error| error.file == path("vfx", "glow")
-                        && pointer(&error.at) == "/layers/0"),
+                    .all(|error| error.file == file && pointer(&error.at).starts_with("/layers/0")),
                 "{report}"
             );
             true
@@ -57,47 +48,195 @@ fn refused_at_the_layer(game: Game, case: &str) -> bool {
     }
 }
 
+fn run() -> Value {
+    json!({ "duration": 0.5 })
+}
+
+fn mesh(shape: Value, fit: Option<&str>) -> Value {
+    let mut layer = json!({
+        "type": "mesh",
+        "shape": shape,
+        "shader": path("vfx_shader", "glare"),
+        "blend": "add",
+        "run": run(),
+    });
+    if let Some(fit) = fit {
+        layer["fit"] = json!(fit);
+    }
+    layer
+}
+
+fn sphere() -> Value {
+    json!({ "type": "sphere", "angle": 360.0, "from": -90.0, "to": 90.0 })
+}
+
 #[test]
-fn a_vfx_layers_stage_fits_the_site_it_is_played_on() {
+fn a_vfx_layer_fits_the_site_it_is_played_on() {
     let place = json!({ "type": "place" });
-    let targets = json!({ "type": "skill_targets" });
+    let along = json!({ "type": "path" });
+    let targets = Some(json!({ "type": "skill_targets" }));
+    let aimed = Some(json!({ "type": "aimed_point" }));
+    let surface = json!({ "type": "surface", "run": run() });
+    let coat = json!({
+        "type": "coat", "shader": path("vfx_shader", "glare"), "blend": "add", "run": run(),
+    });
+    let fitted_ground = json!({
+        "type": "ground", "shader": path("vfx_shader", "glare"), "blend": "alpha",
+        "size": 2.0, "fit": true, "run": run(),
+    });
+    let travelling_light = json!({
+        "type": "light",
+        "color": { "color": [255, 255, 255, 255] },
+        "intensity": { "keys": [[0.0, 1.0]] },
+        "radius": 2.0,
+        "place": { "travel": {} },
+        "run": run(),
+    });
+    let tube = json!({ "type": "path_tube", "radius": 0.1, "jitter": 0.1, "rate": 10.0 });
     let cases = [
-        (Stage::GROUND, json!({ "type": "screen" }), None, true),
         (
-            Stage::SURFACE,
-            json!({ "type": "widget", "name": "health" }),
-            None,
-            true,
-        ),
-        (Stage::SURFACE, json!({ "type": "path" }), None, true),
-        (Stage::SURFACE, place.clone(), None, false),
-        (Stage::SURFACE, place.clone(), Some(targets.clone()), false),
-        (
-            Stage::BILLBOARD,
+            "a surface on its object",
+            surface.clone(),
             place.clone(),
-            Some(json!({ "type": "aimed_point" })),
+            None,
             false,
         ),
         (
-            Stage::SURFACE,
+            "a surface on the actors hit",
+            surface.clone(),
             place.clone(),
-            Some(json!({ "type": "aimed_point" })),
+            targets.clone(),
+            false,
+        ),
+        (
+            "a surface on an aimed point",
+            surface.clone(),
+            place.clone(),
+            aimed.clone(),
             true,
         ),
-        (Stage::TEXT, place.clone(), Some(targets), true),
-        (Stage::SCREEN, json!({ "type": "screen" }), None, false),
-        (Stage::GROUND, json!({ "type": "path" }), None, false),
-        (COVER, place.clone(), None, true),
-        (COVER, json!({ "type": "screen" }), None, true),
+        ("a surface along a path", surface, along.clone(), None, true),
+        (
+            "a coat on its object",
+            coat.clone(),
+            place.clone(),
+            None,
+            false,
+        ),
+        ("a coat along a path", coat, along.clone(), None, true),
+        (
+            "a shape on its object",
+            mesh(sphere(), None),
+            place.clone(),
+            None,
+            false,
+        ),
+        (
+            "a shape along a path",
+            mesh(sphere(), None),
+            along.clone(),
+            None,
+            false,
+        ),
+        (
+            "a fitted shape on an aimed point",
+            mesh(sphere(), Some("area")),
+            place.clone(),
+            aimed.clone(),
+            false,
+        ),
+        (
+            "a fitted shape on the actors hit",
+            mesh(sphere(), Some("area")),
+            place.clone(),
+            targets,
+            true,
+        ),
+        (
+            "a wrapped shape on an aimed point",
+            mesh(sphere(), Some("wrap")),
+            place.clone(),
+            aimed.clone(),
+            true,
+        ),
+        (
+            "a path tube along a path",
+            mesh(tube.clone(), None),
+            along.clone(),
+            None,
+            false,
+        ),
+        (
+            "a path tube on its object",
+            mesh(tube, None),
+            place.clone(),
+            None,
+            true,
+        ),
+        (
+            "fitted ground on an aimed point",
+            fitted_ground.clone(),
+            place.clone(),
+            aimed,
+            false,
+        ),
+        (
+            "fitted ground on its object",
+            fitted_ground,
+            place.clone(),
+            None,
+            true,
+        ),
+        (
+            "a travelling light along a path",
+            travelling_light.clone(),
+            along,
+            None,
+            false,
+        ),
+        (
+            "a travelling light on its object",
+            travelling_light,
+            place,
+            None,
+            true,
+        ),
     ];
-    for (stage, site, on, refused) in cases {
-        let case = format!("a {} layer on {site} of {on:?}", stage.label());
+    for (case, layer, site, on, refused) in cases {
+        let game = playing(layer, site, on);
         assert_eq!(
-            refused_at_the_layer(playing(stage, site.clone(), on.clone()), &case),
+            refused_at_the_layer(game, "layer off its site", &path("vfx", "glow"), case),
             refused,
             "{case}"
         );
     }
+}
+
+#[test]
+fn an_effect_layer_draws_only_with_an_effect_shader() {
+    let covering =
+        playing(mesh(sphere(), None), json!({ "type": "place" }), None).shader_on("glare", COVER);
+    assert!(refused_at_the_layer(
+        covering,
+        "shader of another stage",
+        &path("vfx", "glow"),
+        "a shape drawn with a cover shader"
+    ));
+}
+
+#[test]
+fn the_engines_own_vfx_play_on_actors() {
+    let healed_over_an_area = game().engine_rows().whole().shader("glare").row(
+        "vfx",
+        "healed",
+        json!({ "name": "Healed", "layers": [mesh(sphere(), Some("area"))] }),
+    );
+    assert!(refused_at_the_layer(
+        healed_over_an_area,
+        "layer off its site",
+        &path("vfx", "healed"),
+        "a fixture's fitted shape"
+    ));
 }
 
 fn pointer(at: &ErrorPlace) -> &str {
@@ -105,47 +244,4 @@ fn pointer(at: &ErrorPlace) -> &str {
         ErrorPlace::Json { pointer, .. } => pointer,
         _ => "",
     }
-}
-
-#[test]
-fn a_sprite_layer_is_a_billboard_and_the_engines_own_vfx_play_on_actors() {
-    let on_screen = game().vfx("puff").script(
-        "shine",
-        "object",
-        json!({
-            "entered": { "type": "on", "event": "entered", "by": "characters", "next": "show" },
-            "show": { "type": "vfx", "vfx": path("vfx", "puff"), "site": { "type": "screen" } },
-        }),
-    );
-    let report = on_screen.try_load().err().expect("refused");
-    assert!(
-        report
-            .errors
-            .iter()
-            .any(|error| error.problem.rule == "stage off its site"
-                && error.file == path("vfx", "puff")),
-        "{report}"
-    );
-
-    let screen_flash_when_hurt = game()
-        .engine_rows()
-        .whole()
-        .shader_on("glare", Stage::SCREEN)
-        .row(
-            "vfx",
-            "damage_taken",
-            json!({
-                "name": "Damage taken",
-                "layers": [{ "type": "shader", "shader": path("vfx_shader", "glare"), "duration": 0.5 }],
-            }),
-        );
-    let report = screen_flash_when_hurt.try_load().err().expect("refused");
-    assert!(
-        report
-            .errors
-            .iter()
-            .any(|error| error.problem.rule == "stage off its site"
-                && error.file == path("vfx", "damage_taken")),
-        "{report}"
-    );
 }

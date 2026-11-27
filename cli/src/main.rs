@@ -150,6 +150,9 @@ enum Render {
         #[arg(long)]
         profile: Option<PathBuf>,
     },
+    /// Draws the vfx of a game off screen.
+    #[command(subcommand)]
+    Vfx(RenderVfx),
     /// Draws the dialogue of GAME once for every style a line is set in and every state a choice
     /// shows, over grounds from the lightest to the darkest and the busiest, as the pictures of the
     /// folder OUT.
@@ -159,6 +162,21 @@ enum Render {
         /// Pictures to draw the dialogue over too, such as frames of the game.
         #[arg(long)]
         over: Vec<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum RenderVfx {
+    /// Films the coats SHEET lays out, a JSON file of tiles that each name a vfx of GAME and what
+    /// it plays on, as the video OUT, through ffmpeg: page after page of tiles, each circled once
+    /// by a camera of its own.
+    Coat {
+        game: PathBuf,
+        sheet: PathBuf,
+        out: PathBuf,
+        /// The tiles to film, by patterns their labels match, such as "Blaze:*": every tile of
+        /// the sheet when none is given.
+        names: Vec<String>,
     },
 }
 
@@ -214,6 +232,12 @@ fn main() {
                 render::area(&game, &shot, &out, profile.as_deref());
             }
         }
+        Command::Render(Render::Vfx(RenderVfx::Coat {
+            game,
+            sheet,
+            out,
+            names,
+        })) => render::coat::run(&game, &sheet, &out, &names),
         Command::Render(Render::Dialogue { game, out, over }) => dialogue::run(&game, &out, &over),
         Command::Bake(Bake::Maps { game, profile }) => bake::maps(&game, profile.as_deref()),
         Command::Bench {

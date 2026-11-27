@@ -130,11 +130,12 @@ fn yard() -> Sim {
             combat::request,
             actor::playing::progress,
         ))
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan(movement::AdvanceWalks::default())
         .add((item::pickups, item::expire_drops))
         .plan(stat::SettleVitals::default())
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     sim
 }

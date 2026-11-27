@@ -42,6 +42,7 @@ bevy_math = { version = "0.20.1", default-features = false }
 bevy_time = { version = "0.20.1", default-features = false }
 bevy = { version = "0.20.1", default-features = false }
 bevy_mod_outline = { version = "0.14", default-features = false, features = ["flood"] }
+bevy_hanabi = { version = "0.20", default-features = false, features = ["3d"] }
 # Only to enable what bevy leaves off; the version must be the one bevy renders with.
 wgpu = { version = "30.0.1", default-features = false }
 syn = { version = "3", features = ["full"] }

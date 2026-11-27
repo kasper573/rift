@@ -14,7 +14,7 @@ use crate::core::content::{
 use crate::core::math::Rgba;
 use crate::core::render::world::terrain::{GROUND_PICTURE, WetLook};
 use crate::core::units::Meters;
-use crate::core::vfx::{ParamFill, VfxShaderId};
+use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::area::prop::PropId;
 
 pub type TerrainId = ContentId<TerrainDef>;
@@ -67,7 +67,7 @@ pub struct Cover {
     pub shader: VfxShaderId,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
-    pub params: BTreeMap<String, ParamFill>,
+    pub params: BTreeMap<String, ParamValue>,
     #[serde(default, skip_serializing_if = "serial::is_zero_u64")]
     pub seed: u64,
     #[serde(default, skip_serializing_if = "serial::is_false")]
@@ -237,16 +237,6 @@ impl ContentFile for TerrainDef {
                     cx.range(format!("{at}/shape/height"), height.0, 0.05, 1.5, "m");
                 }
             }
-            for (name, fill) in &cover.params {
-                if let ParamFill::Param { param } = fill {
-                    cx.error(
-                        format!("/cover/params/{name}"),
-                        "a terrain has no parameters to pass on",
-                        param,
-                        "a value",
-                    );
-                }
-            }
         }
     }
 }
@@ -314,12 +304,13 @@ pub fn check_all(loading: &mut Loading) {
                 );
             }
         }
-        for (name, fill) in &cover.params {
-            let value = match fill {
-                ParamFill::Value(value) => Some(value),
-                ParamFill::Param { .. } => None,
-            };
-            shader.check_fill(&mut check, &format!("/cover/params/{name}"), name, value);
+        for (name, value) in &cover.params {
+            shader.check_fill(
+                &mut check,
+                &format!("/cover/params/{name}"),
+                name,
+                Some(value),
+            );
         }
         loading.row_errors(id, check);
     }

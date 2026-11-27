@@ -278,7 +278,6 @@ fn sim() -> Sim {
         )
         .sfx("ui_refuse")
         .sfx("ui_close")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();
@@ -291,6 +290,7 @@ fn sim() -> Sim {
             combat::request,
             actor::playing::progress,
         ))
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -300,7 +300,7 @@ fn sim() -> Sim {
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);

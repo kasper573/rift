@@ -1,7 +1,7 @@
 //! The stage a water's shader runs in: the sheet an area lays over its ground wherever one of
 //! its waters lies, drawn after everything solid, over the picture of what lies behind it.
 
-use crate::core::vfx::shader::CLOCK_CHECK;
+use crate::core::vfx::shader::{CLOCK_CHECK, site_prelude};
 use crate::core::vfx::stage::{BLANK_VFX, main_defs, with_defs};
 use crate::core::vfx::{ShaderPass, Stage, StageKind, StageSpec, Stages};
 use crate::systems::area::stages::{treading, weather_helpers};
@@ -13,6 +13,7 @@ pub const WATER: Stage = Stage::registered(&StageSpec {
     kind: StageKind::Pass,
     header,
     check_header,
+    prelude: site_prelude,
     required: &["vfx"],
     blank: BLANK_VFX,
     wesl: true,

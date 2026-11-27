@@ -397,6 +397,7 @@ pub fn module_template(
         AreaModuleKind::Object => AreaModule::Object(ObjectDef {
             name: None,
             title: None,
+            nameplate: false,
             shape: ObjectShape::Point(at.ok_or_else(placed)?),
             look: None,
             yaw: Degrees::default(),

@@ -214,7 +214,6 @@ fn beasts(game: Game) -> Game {
     game.npc("wolf", 20.0, json!([]))
         .npc("boar", 30.0, json!([]))
         .npc("hawk", 5.0, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
 }

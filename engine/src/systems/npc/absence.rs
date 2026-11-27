@@ -165,6 +165,7 @@ pub fn leave_sign(world: &mut World, resident: &Resident, span: AbsenceSpanAt) -
         index: None,
         name: None,
         title: None,
+        nameplate: false,
         shape: ObjectShape::Point(resident.at),
         look: Some(sign.path(&content).to_owned()),
         yaw: sign_yaw(resident.facing),

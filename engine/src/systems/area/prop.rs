@@ -10,11 +10,12 @@ use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, FileHashes, FileShape, FileWriter, Loading, Nearby,
     PartSpec, Parts, RowCheck, serial,
 };
+use crate::core::geometry::Capsule;
 use crate::core::ground::TILE_SIDE;
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, Meters};
-use crate::core::vfx::VfxId;
+use crate::core::vfx::VfxPlay;
 use crate::systems::area::prop_material::PropMaterialId;
 use crate::systems::water::ripples::RippleSource;
 
@@ -77,7 +78,7 @@ pub struct PropDef {
     /// The vfx it plays over and over wherever it is seen, standing in an area, lying on the
     /// ground or held in a hand: the flame of a lantern, the glow of a crystal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub effects: Vec<VfxId>,
+    pub effects: Vec<VfxPlay>,
     /// How it breaks the water it stands in, as a shoal of fish or a spring does. Without it,
     /// it leaves the water as it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -116,6 +117,28 @@ pub enum Footprint {
 #[derive(JsonSchema, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ModelHash(pub String);
+
+impl PropDef {
+    /// The room it takes standing: as tall as its model, and as wide as the ground it takes up,
+    /// so a tree is its trunk rather than its crown. One taking no ground is as wide as its model.
+    pub fn body(&self, content: &Content) -> Capsule {
+        let bounds = content
+            .built::<GltfInfos>()
+            .0
+            .get(&self.model.path())
+            .map(|model| model.bounds);
+        let model_width = bounds.map_or(0.0, |bounds| {
+            [bounds.min.x, bounds.max.x, bounds.min.z, bounds.max.z]
+                .into_iter()
+                .map(f32::abs)
+                .fold(0.0, f32::max)
+        });
+        Capsule {
+            radius: self.footprint.reach().unwrap_or(Meters(model_width)),
+            height: Meters(bounds.map_or(0.0, |bounds| bounds.max.y)),
+        }
+    }
+}
 
 impl Bundle for PropDef {
     const PARTS: &'static [PartSpec] = &[PROP_GLB, PROP_TEXTURES];

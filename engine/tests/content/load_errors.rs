@@ -1,6 +1,5 @@
 use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
 use engine::core::ground::{GroundSize, PaintMap, TileAt};
-use engine::core::vfx::Stage;
 use engine::systems::actor::model::MAX_CHARACTER_TRIANGLES;
 use engine::systems::area::AreaDef;
 use engine::systems::area::prop::MAX_PROP_TRIANGLES;
@@ -402,9 +401,9 @@ fn a_basic_attack_that_costs_or_cools_down_is_refused() {
 }
 
 #[test]
-fn a_fixture_shader_without_the_parameter_the_engine_sets_is_refused() {
+fn a_fixture_vfx_without_the_parameter_the_engine_sets_is_refused() {
     let report = Game::new()
-        .shader_on("skill_area", Stage::GROUND)
+        .vfx("skill_area")
         .whole()
         .try_load()
         .err()
@@ -413,8 +412,8 @@ fn a_fixture_shader_without_the_parameter_the_engine_sets_is_refused() {
     let error = report
         .errors
         .iter()
-        .find(|error| error.file == "fixtures/vfx/skill_area.vfx_shader/config.json")
-        .expect("the shader row is refused");
+        .find(|error| error.file == "fixtures/vfx/skill_area.vfx.json")
+        .expect("the vfx row is refused");
     assert_eq!(error.problem.rule, "fixture entry missing");
     assert!(
         matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == "/params"),
@@ -451,7 +450,7 @@ fn a_shader_that_does_not_compile_is_refused_at_its_line() {
             "vfx_shader",
             "tint",
             "shader.wgsl",
-            b"fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return oops;\n}\n".to_vec(),
+            b"fn fx(i: FxIn) -> vec4<f32> {\n    return oops;\n}\n".to_vec(),
         )
         .try_load()
         .err()
@@ -501,9 +500,10 @@ fn a_layer_filling_a_parameter_its_shader_lacks_is_refused() {
             json!({
                 "name": "Healed",
                 "layers": [{
-                    "type": "shader",
+                    "type": "coat",
                     "shader": path("vfx_shader", "tint"),
-                    "duration": 0.35,
+                    "blend": "add",
+                    "run": { "duration": 0.35 },
                     "params": { "amount": 0.5, "glow": 1.0 },
                 }],
             }),
@@ -1038,4 +1038,76 @@ fn rules_in<'a>(report: &'a LoadReport, file: &str) -> Vec<(&'a str, &'a str)> {
         .filter(|error| error.file == file)
         .map(|error| (error.problem.rule, error.problem.expected.as_str()))
         .collect()
+}
+
+#[test]
+fn a_vfx_is_played_filling_only_the_parameters_its_row_declares_as_they_are_declared() {
+    let shine = || {
+        game().vfx("shine").edit("vfx", "shine", |shine| {
+            shine["params"] = json!([{ "name": "tint", "default": [255, 255, 255, 255] }]);
+        })
+    };
+    let undeclared = shine().resource("ore", 5).rarity(
+        "fine",
+        2,
+        json!({ "dropped": {
+            "named": { "type": "on_key" },
+            "vfx": { "vfx": path("vfx", "shine"), "fill": { "glow": 1.0 } },
+        } }),
+    );
+    let of_another_kind = shine().asset("icons/status.png", testkit::png(1, 1)).row(
+        "status_effect",
+        "lit",
+        json!({
+            "name": "Lit",
+            "icon": "icons/status.png",
+            "category": "buff",
+            "description": "Lit.",
+            "vfx": { "during": { "vfx": path("vfx", "shine"), "fill": { "tint": 0.5 } } },
+            "modules": [],
+        }),
+    );
+    let by_a_script = shine()
+        .npc(
+            "glinter",
+            10.0,
+            json!([{ "type": "script", "script": path("script", "glint") }]),
+        )
+        .script(
+            "glint",
+            "npc",
+            json!({
+                "started": { "type": "on", "event": "started", "next": "show" },
+                "show": { "type": "vfx", "vfx": path("vfx", "shine"), "params": { "tint": 0.5 } },
+            }),
+        );
+    let cases = [
+        (
+            by_a_script,
+            "glint.script.json",
+            "wrong parameter kind",
+            "/nodes/show",
+        ),
+        (
+            undeclared,
+            "fine.item_rarity.json",
+            "undeclared parameter",
+            "/dropped/vfx/fill/glow",
+        ),
+        (
+            of_another_kind,
+            "lit.status_effect.json",
+            "wrong parameter kind",
+            "/vfx/during/fill/tint",
+        ),
+    ];
+    for (game, file, rule, field) in cases {
+        let report = game.try_load().err().expect("refused");
+        let found = report.errors.iter().any(|error| {
+            error.file == file
+                && error.problem.rule == rule
+                && matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == field)
+        });
+        assert!(found, "{file} {rule} at {field}\n{report}");
+    }
 }

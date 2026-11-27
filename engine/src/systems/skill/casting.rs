@@ -1,5 +1,6 @@
 use crate::core::script::Reach;
 use crate::core::script::Vocabulary;
+use crate::systems::equipment::category;
 use crate::systems::item;
 use crate::systems::item::Used;
 use crate::systems::skill::Casts;
@@ -218,7 +219,8 @@ pub fn spot_refused(
 }
 
 /// Whether a skill may be used at `now`, by the server's wall clock, by someone who knows it: not
-/// cooling down, its requirements holding, its mana held and its cost in the bag.
+/// cooling down, its requirements holding, the equipment it asks for worn, its mana held and its
+/// cost in the bag.
 pub fn ready(
     world: &World,
     caster: Entity,
@@ -235,6 +237,13 @@ pub fn ready(
     }
     if let Some(unmet) = requirement::first_unmet(world, caster, def.requires.iter()) {
         return Err(needs(content, skill, unmet));
+    }
+    if !category::equips_any(world, caster, &def.equipment_categories) {
+        return Err(needs(
+            content,
+            skill,
+            category::wanted(content, &def.equipment_categories),
+        ));
     }
     for stack in &def.cost {
         let held = world

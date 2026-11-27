@@ -436,23 +436,24 @@ fn play_effects(world: &mut World) {
         let rarity = placed.map(|(_, dropped, ..)| dropped.item.get(&content).rarity.get(&content));
         let standing = rarity.and_then(|rarity| {
             Some(StandingVfx {
-                vfx: vec![rarity.dropped.vfx?],
-                params: rarity.vfx_params(),
+                plays: vec![rarity.dropped.vfx.clone()?],
                 held: calm,
             })
         });
         let burst = placed
             .filter(|(.., landed)| *landed && !calm)
-            .and_then(|_| rarity?.dropped.landing_vfx)
+            .and_then(|_| rarity?.dropped.landing_vfx.clone())
             .zip(now);
-        if let Some((vfx, now)) = burst {
-            let until = now.after(vfx.get(&content).lasts());
+        if let Some((play, now)) = burst {
+            let until = now.after(play.vfx.get(&content).lasts());
             world.spawn((
                 VfxInstance {
-                    vfx,
+                    vfx: play.vfx,
                     site: VfxSite::Object(entity),
-                    params: rarity.map(|rarity| rarity.vfx_params()).unwrap_or_default(),
-                    heading: default(),
+                    params: play.params(),
+                    part: play.part,
+                    dealer: None,
+                    heading: None,
                     started: now,
                     until: Some(until),
                 },

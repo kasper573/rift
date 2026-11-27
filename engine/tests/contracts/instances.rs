@@ -1610,7 +1610,6 @@ fn game(most: u32) -> Game {
             25.0,
             json!([{ "type": "script", "script": path("script", "vault_gate") }]),
         )
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .item("potion", stacked(20))

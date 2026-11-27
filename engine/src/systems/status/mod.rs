@@ -25,7 +25,7 @@ use crate::core::content::{
 use crate::core::script::{RunnerKind, ScriptModule, ScriptedRow};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
-use crate::core::vfx::{SiteKind, VfxId, check_played};
+use crate::core::vfx::{SiteKind, VfxPlay, check_play, check_played};
 use crate::systems::messages::messages;
 
 pub type StatusEffectId = ContentId<StatusEffectDef>;
@@ -40,15 +40,21 @@ pub fn register(app: &mut App) {
 pub fn check_vfx(loading: &mut Loading) {
     let content = loading.content();
     for (id, status) in loading.rows::<StatusEffectDef>(&content) {
+        let mut check = RowCheck::default();
         let phases = [
-            status.vfx.on_activate,
-            status.vfx.during,
-            status.vfx.on_expire,
+            ("on_activate", &status.vfx.on_activate),
+            ("during", &status.vfx.during),
+            ("on_expire", &status.vfx.on_expire),
         ];
-        for vfx in phases.into_iter().flatten() {
+        for (phase, play) in phases {
+            let Some(play) = play else {
+                continue;
+            };
             let carriers = &[SiteKind::Actor, SiteKind::Object];
-            check_played(loading, vfx, carriers, id.path(&content));
+            check_played(loading, play.vfx, carriers, id.path(&content));
+            check_play(&content, play, &format!("/vfx/{phase}"), &mut check);
         }
+        loading.row_errors(id, check);
     }
 }
 
@@ -63,7 +69,7 @@ pub struct StatusEffectDef {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     #[serde(default, skip_serializing_if = "Phased::is_empty")]
-    pub vfx: Phased<VfxId>,
+    pub vfx: Phased<VfxPlay>,
     #[serde(default, skip_serializing_if = "Phased::is_empty")]
     pub sfx: Phased<SfxId>,
     /// Whether its name pops over whoever gains it.

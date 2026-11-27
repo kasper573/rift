@@ -106,7 +106,6 @@ pub enum SiteKind {
     Object,
     Area,
     Path,
-    Screen,
     Text,
 }
 
@@ -118,7 +117,6 @@ impl SiteKind {
             SiteKind::Object => "an object",
             SiteKind::Area => "an area",
             SiteKind::Path => "a path",
-            SiteKind::Screen => "the screen",
             SiteKind::Text => "a text",
         }
     }
@@ -290,8 +288,8 @@ impl VfxShaderDef {
     }
 
     /// The shader's text as the pipeline compiles it for its stage: the row's file first, so its
-    /// lines keep their numbers, then the header of the stage it runs on, the prelude, the site's
-    /// constants and the struct its parameters are read through.
+    /// lines keep their numbers, then the header of the stage it runs on, the stage's prelude and
+    /// the struct its parameters are read through.
     pub fn compose(&self, source: &str) -> String {
         self.composed(&(self.stage.spec().header)(), source)
     }
@@ -299,7 +297,7 @@ impl VfxShaderDef {
     /// The source goes first so its lines keep their numbers in what the validator reports; a WESL
     /// header's imports alone go before it, as the module must open with them.
     fn composed(&self, header: &str, source: &str) -> String {
-        let prelude = prelude();
+        let prelude = (self.stage.spec().prelude)();
         let mut composed = String::with_capacity(source.len() + header.len() + prelude.len() + 512);
         let (imports, declarations) = split_imports(header);
         for import in imports {
@@ -315,13 +313,6 @@ impl VfxShaderDef {
             composed.push('\n');
         }
         composed.push_str(&prelude);
-        composed.push('\n');
-        for (index, kind) in SiteKind::VARIANTS.iter().enumerate() {
-            composed.push_str(&format!("const SITE_{}: u32 = {index}u;\n", kind.name()));
-        }
-        for (index, shape) in BodyShape::VARIANTS.iter().enumerate() {
-            composed.push_str(&format!("const SHAPE_{}: u32 = {index}u;\n", shape.name()));
-        }
         composed.push_str("\nstruct Params {\n");
         for param in &self.params {
             composed.push_str(&format!("    {}: {},\n", param.name, param.kind.wgsl()));
@@ -356,32 +347,29 @@ impl VfxShaderDef {
     }
 }
 
-/// Every name the prelude, the composed constants and the headers of the stages give a shader to
-/// read: what an editor highlights as the vfx vocabulary.
+/// Every name the stages give a shader to read, in their headers and their preludes, and the
+/// functions they make it define: what an editor highlights as the vfx vocabulary.
 pub fn prelude_names() -> Vec<String> {
-    let mut names: Vec<String> = ["vfx", "site", "params", "sample"]
-        .into_iter()
-        .chain(Stages::get().names())
-        .map(str::to_owned)
-        .collect();
-    for line in prelude().lines() {
-        let declared = line
-            .strip_prefix("fn ")
-            .and_then(|rest| rest.split_once('('))
-            .or_else(|| line.strip_prefix("const ")?.split_once(':'))
-            .map(|(name, _)| name.trim().to_owned());
-        names.extend(declared);
+    let mut names: Vec<String> = Vec::new();
+    for stage in Stages::get().all() {
+        let spec = stage.spec();
+        names.extend(
+            spec.required
+                .iter()
+                .chain(spec.names)
+                .map(|name| (*name).to_owned()),
+        );
+        for line in (spec.prelude)().lines() {
+            let declared = line
+                .strip_prefix("fn ")
+                .and_then(|rest| rest.split_once('('))
+                .or_else(|| line.strip_prefix("const ")?.split_once(':'))
+                .map(|(name, _)| name.trim().to_owned());
+            names.extend(declared);
+        }
     }
-    names.extend(
-        SiteKind::VARIANTS
-            .iter()
-            .map(|kind| format!("SITE_{}", kind.name())),
-    );
-    names.extend(
-        BodyShape::VARIANTS
-            .iter()
-            .map(|shape| format!("SHAPE_{}", shape.name())),
-    );
+    names.sort();
+    names.dedup();
     names
 }
 
@@ -398,7 +386,7 @@ impl ContentFile for VfxShaderDef {
     fn fresh(near: &Nearby) -> Result<VfxShaderDef, String> {
         Ok(VfxShaderDef {
             name: near.name(),
-            stage: Stage::BILLBOARD,
+            stage: Stage::EFFECT,
             params: Vec::new(),
         })
     }
@@ -532,15 +520,21 @@ pub fn compile_all(loading: &mut Loading) {
             Ok(composed) => {
                 compiled.insert(id, composed);
             }
-            Err(error) => loading.file_error(
-                file,
-                error.place,
-                ContentProblem::new(
-                    "shader does not compile",
-                    error.message,
-                    "WGSL defining fn vfx(uv: vec2<f32>) -> vec4<f32>",
-                ),
-            ),
+            Err(error) => {
+                let defining = def.stage.spec().required.join(", ");
+                loading.file_error(
+                    file,
+                    error.place,
+                    ContentProblem::new(
+                        "shader does not compile",
+                        error.message,
+                        format!(
+                            "WGSL defining {defining} as the {} stage asks",
+                            def.stage.label()
+                        ),
+                    ),
+                )
+            }
         }
     }
     loading.built(CompiledVfxShaders(compiled));
@@ -567,13 +561,17 @@ impl Display for ShaderError {
     }
 }
 
-/// The prelude every shader is composed with: the site and the helpers a shader reads it through.
-const PRELUDE: &str = include_str!("prelude.wgsl");
+/// The prelude a shader drawn on a site is composed with: the site and the helpers a shader reads
+/// it through.
+const SITE_PRELUDE: &str = include_str!("prelude.wgsl");
 /// The header of a shader drawn on a quad: its vertex output, its bindings in the group `GROUP`
 /// stands for, `sample` and the fragment entry, which calls the shader's `vfx`.
 const QUAD_HEADER: &str = include_str!("quad.wgsl");
-/// The header of a shader run in the material of the thing it plays on.
-const SURFACE_HEADER: &str = include_str!("surface.wesl");
+/// The header of an effect shader, the plain WGSL the validator reads in its place, and the
+/// helpers every effect shader is composed with.
+const EFFECT_HEADER: &str = include_str!("effect.wesl");
+const EFFECT_CHECK_HEADER: &str = include_str!("effect_check.wgsl");
+const EFFECT_PRELUDE: &str = include_str!("effect_prelude.wgsl");
 /// Numbers drawn from seeds, which the prelude and the helpers of features read alike.
 const HASH_HELPERS: &str = include_str!("hash.wgsl");
 /// The frame's globals as the validator sees them, where the runtime headers import bevy's.
@@ -584,19 +582,36 @@ pub fn hash_helpers() -> &'static str {
     HASH_HELPERS
 }
 
-fn prelude() -> String {
-    format!(
-        "{}\n{HASH_HELPERS}",
-        PRELUDE.replace("PATH_POINTS", &format!("{MAX_PATH_POINTS}u"))
-    )
+/// The prelude of every stage whose shaders draw on a site: the site, its helpers, and the
+/// constants that name its kinds and shapes.
+pub fn site_prelude() -> String {
+    let mut prelude = format!(
+        "{}\n{HASH_HELPERS}\n",
+        SITE_PRELUDE.replace("PATH_POINTS", &format!("{MAX_PATH_POINTS}u"))
+    );
+    for (index, kind) in SiteKind::VARIANTS.iter().enumerate() {
+        prelude.push_str(&format!("const SITE_{}: u32 = {index}u;\n", kind.name()));
+    }
+    for (index, shape) in BodyShape::VARIANTS.iter().enumerate() {
+        prelude.push_str(&format!("const SHAPE_{}: u32 = {index}u;\n", shape.name()));
+    }
+    prelude
 }
 
 pub(super) fn quad_header(group: u32) -> String {
     QUAD_HEADER.replace("GROUP", &group.to_string())
 }
 
-pub(super) fn surface_header() -> String {
-    SURFACE_HEADER.to_owned()
+pub(super) fn effect_header() -> String {
+    EFFECT_HEADER.to_owned()
+}
+
+pub(super) fn effect_check_header() -> String {
+    format!("{EFFECT_CHECK_HEADER}\n{CLOCK_CHECK}")
+}
+
+pub(super) fn effect_prelude() -> String {
+    EFFECT_PRELUDE.to_owned()
 }
 
 fn layout(params: &[ShaderParam]) -> Vec<ParamSlot> {

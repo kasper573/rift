@@ -17,7 +17,7 @@ use engine::systems::identity::Names;
 use engine::systems::interact::Interacted;
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
-use engine::systems::movement::{self, MoveRequest, MoveSeq, moving, position};
+use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, moving, position};
 use engine::systems::player::commands_locked;
 use engine::systems::player::session::{ClientSessionPlugin, MyCharacter, MyClient};
 use engine::systems::player::{ClientId, PlayedBy};
@@ -366,31 +366,42 @@ fn a_conversation_an_npc_starts_replaces_the_one_in_progress() {
     );
 }
 
+/// Ending a conversation is no coming near: whoever talked with an npc can walk off when it ends,
+/// however close they stand. News called out to someone who comes near while they talk waits
+/// until they are free.
 #[test]
-fn news_called_out_waits_until_you_are_free() {
+fn news_called_out_waits_until_you_are_free_and_a_talk_ending_calls_out_nothing() {
     let mut sim = inn();
     let player = sim.join(1);
-    let opened = sim.talk(1, "crier");
-    assert_eq!(
-        sim.lines(&opened),
-        vec!["The crier tips his hat.".to_owned()]
+    let conn = sim.conn(1);
+    let met = sim.talk(1, "crier");
+    assert_eq!(sim.lines(&met), vec!["The crier tips his hat.".to_owned()]);
+    sim.run(1.0);
+    sim.send(conn, ConversationRequest::Leave { step: met.step });
+    sim.run(2.0);
+    assert!(
+        sim.conversation(1).is_none(),
+        "leaving the crier's talk, close by him, is no coming near him"
     );
 
+    let kept = sim.talk(1, "keeper");
+    let crier = sim.npc("crier");
+    let beside = position(&sim.world, player).expect("the player stands") + Offset::new(1.0, 0.0);
+    sim.world.entity_mut(crier).insert(Position::at(beside));
     sim.run(1.0);
-    assert_eq!(sim.conversation(1).map(|now| now.step), Some(opened.step));
-    let conn = sim.conn(1);
-    sim.send(conn, ConversationRequest::Leave { step: opened.step });
+    assert_eq!(
+        sim.conversation(1).map(|now| now.step),
+        Some(kept.step),
+        "the crier's news waits while the keeper talks"
+    );
+    sim.send(conn, ConversationRequest::Leave { step: kept.step });
     assert!(sim.run_until(1.0, |world| {
         world
             .get::<Conversation>(player)
-            .is_some_and(|now| now.step != opened.step)
+            .is_some_and(|now| now.step != kept.step)
     }));
     let news = sim.conversation(1).expect("the crier's news");
     assert_eq!(sim.lines(&news), vec!["Hear ye!".to_owned()]);
-
-    sim.send(conn, ConversationRequest::Leave { step: news.step });
-    sim.run(2.0);
-    assert!(sim.conversation(1).is_none());
 }
 
 #[test]
@@ -470,7 +481,6 @@ fn inn() -> Sim {
         .mark("talking")
         .sfx("ui_refuse")
         .sfx("ui_close")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

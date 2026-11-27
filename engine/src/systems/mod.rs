@@ -501,8 +501,12 @@ pub fn server_app(
                     (shop::requests, prompt::requests, crafting::requests).chain(),
                     quest::requests,
                     (emote::requests, emote::rise).chain(),
-                    equipment::equip_requested,
-                    equipment::unequip,
+                    (
+                        equipment::equip_requested,
+                        equipment::unequip,
+                        skill::hotbar::settle_basic_attack,
+                    )
+                        .chain(),
                     skill::reset::expire,
                     (actor::playing::progress, resource::swings, crafting::moves).chain(),
                     reach::mirror_engaged,
@@ -560,7 +564,6 @@ pub fn server_app(
                     player::respawn,
                     (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
                     combat::defeats,
-                    skill::hotbar::settle_basic_attack,
                     chat::hear,
                     (command::run, command::retire, command::complete::answer).chain(),
                     chat::speak,
@@ -862,7 +865,7 @@ pub fn tables() -> ContentRegistry {
         .fixture::<combat::DefeatVfx>()
         .fixture::<class::LevelVfx>()
         .fixture::<notification::pop::PopShader>()
-        .fixture::<skill::aim::AreaShader>()
+        .fixture::<skill::aim::AimVfx>()
         .fixture::<area::world_map::WorldMap>()
         .fixture::<CardStyleFixture>()
         .bundle::<SfxDef>()
@@ -880,6 +883,8 @@ pub fn tables() -> ContentRegistry {
         .named::<item::rarity::ItemRarityDef>()
         .file::<item::ToolTypeDef>()
         .named::<item::ToolTypeDef>()
+        .file::<equipment::category::EquipmentCategoryDef>()
+        .named::<equipment::category::EquipmentCategoryDef>()
         .file::<class::ClassDef>()
         .named::<class::ClassDef>()
         .file::<memory::MemoryDef>()
@@ -954,6 +959,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, combat::check_vfx)
         .hook(LoadStep::Across, status::check_vfx)
         .hook(LoadStep::Across, actor::model::check_vfx)
+        .hook(LoadStep::Across, skill::aim::check_vfx)
         .hook(LoadStep::Across, player::snapshot::check_all);
     registry
 }

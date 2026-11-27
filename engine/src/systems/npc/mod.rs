@@ -515,7 +515,9 @@ struct Watcher {
 }
 
 /// Tells every npc watching for whoever comes near who did: who is near each watcher is found on
-/// every core from the tick's roster, then raised in the order the watchers were found.
+/// every core from the tick's roster, then raised in the order the watchers were found. Talking
+/// takes no one out of a watcher's notice, so a conversation ending is no coming near, while one
+/// who comes near in the middle of a conversation is noticed once it ends.
 #[derive(Default)]
 pub struct ApproachWatchers {
     approached: Vec<(Watcher, Vec<Approached>)>,
@@ -557,6 +559,11 @@ impl Planner for ApproachWatchers {
         self.approached = watchers
             .into_par_iter()
             .map(|watcher| {
+                let was_near = |who: Entity| {
+                    world
+                        .get::<Near>(watcher.npc)
+                        .is_some_and(|near| near.0.iter().any(|was| was.who == who))
+                };
                 let mut now: Vec<Approached> = roster
                     .near(Among::Anyone, watcher.at, watcher.reach)
                     .filter(|listed| {
@@ -565,7 +572,8 @@ impl Planner for ApproachWatchers {
                             && !listed.dead
                             && listed.at.distance(watcher.at) <= watcher.reach
                             && visibility::coexist(world, watcher.npc, listed.entity)
-                            && !dialogue::in_conversation(world, listed.entity)
+                            && (!dialogue::in_conversation(world, listed.entity)
+                                || was_near(listed.entity))
                     })
                     .map(|listed| Approached {
                         who: listed.entity,

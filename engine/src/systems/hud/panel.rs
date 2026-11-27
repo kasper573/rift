@@ -8,7 +8,7 @@ use ui::motion::{SheetClock, SheetPose};
 use ui::panel::{self, GripCorner};
 use ui::sheet::{self, Depth, Sheet, Tab, TabSize};
 
-use super::WindowsDrawn;
+use super::{PlacedWindow, WindowsDrawn};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, Tier};
 use crate::core::math::{Pos, Size};
@@ -423,15 +423,24 @@ pub(crate) fn window<R>(
         &handle,
         Held::new(key.name(), kept, Grip::Move, outer, limits),
     );
-    if let Some(grip) = grip {
+    if let Some(grip) = &grip {
         let resize = Grip::Resize(GripCorner::BottomRight);
         grab(
             world,
-            &grip,
+            grip,
             Held::new(key.name(), kept, resize, outer, limits),
         );
     }
-    world.resource_mut::<WindowsDrawn>().now.insert(key);
+    let mut drawn = world.resource_mut::<WindowsDrawn>();
+    drawn.now.insert(key);
+    if up {
+        drawn.placed_now.push(PlacedWindow {
+            of,
+            rect: outer,
+            band: handle.rect,
+            corner: grip.as_ref().map(|grip| grip.rect),
+        });
+    }
     world
         .resource_mut::<gui::WidgetRects>()
         .0

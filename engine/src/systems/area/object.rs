@@ -51,6 +51,9 @@ pub struct ObjectDef {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Whether its title hangs over it on a plate, as a resource's name does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nameplate: bool,
     pub shape: ObjectShape,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub look: Option<PropId>,
@@ -233,6 +236,8 @@ pub struct AreaObject {
     pub index: Option<u32>,
     pub name: Option<String>,
     pub title: Option<String>,
+    /// Whether its title hangs over it on a plate.
+    pub nameplate: bool,
     pub shape: ObjectShape,
     pub look: Option<String>,
     /// How far its look is turned, as a placed prop's is.
@@ -259,6 +264,7 @@ pub fn spawn_in(world: &mut World, tile: TileAt) {
             index: Some(*index),
             name: object.name.clone(),
             title: object.title.clone(),
+            nameplate: object.nameplate,
             shape: object.shape,
             look: object.look.map(|look| look.path(&content).to_owned()),
             yaw: object.yaw,
