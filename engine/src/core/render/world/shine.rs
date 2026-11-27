@@ -34,10 +34,62 @@ pub struct SurfaceLook {
     pub mask: Vec4,
 }
 
-/// A piece of what a thing holds, which a look laid over what the thing holds covers rather than
-/// one laid over its body.
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct HeldPiece;
+/// A piece of what the thing it names holds, wherever it hangs: in that thing's own hand, or laid
+/// on another body that carries it, as a mount carries its rider's gear. It is part of its holder
+/// alone, and a look laid over what its holder holds covers it rather than one laid over a body.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[relationship(relationship_target = Holds)]
+pub struct HeldPiece(pub Entity);
+
+/// The pieces a thing holds, wherever each hangs.
+#[derive(Component, Debug, Default)]
+#[relationship_target(relationship = HeldPiece)]
+pub struct Holds(Vec<Entity>);
+
+/// Every entity `thing` is drawn with, each with whether it is part of what the thing holds: its
+/// own tree, less the pieces another thing holds, and the pieces it holds, wherever they hang.
+/// `children` gives what hangs from an entity, `holder` whose piece an entity is, if it is one,
+/// and `held` the pieces an entity holds.
+pub fn drawn_with<C, H, P>(thing: Entity, children: C, holder: H, held: P) -> Vec<(Entity, bool)>
+where
+    C: Fn(Entity) -> Vec<Entity>,
+    H: Fn(Entity) -> Option<Entity>,
+    P: Fn(Entity) -> Vec<Entity>,
+{
+    let mut found = Vec::new();
+    let mut pending = vec![(thing, false)];
+    pending.extend(held(thing).into_iter().map(|piece| (piece, true)));
+    while let Some((at, in_held)) = pending.pop() {
+        found.push((at, in_held));
+        pending.extend(
+            children(at)
+                .into_iter()
+                .filter(|child| holder(*child).is_none())
+                .map(|child| (child, in_held)),
+        );
+    }
+    found
+}
+
+/// Every entity `thing` is drawn with, as [`drawn_with`] walks them, read from `world`.
+pub fn drawn_with_in(world: &World, thing: Entity) -> Vec<(Entity, bool)> {
+    drawn_with(
+        thing,
+        |at| {
+            world
+                .get::<Children>(at)
+                .map(|under| under.iter().collect())
+                .unwrap_or_default()
+        },
+        |at| world.get::<HeldPiece>(at).map(|piece| piece.0),
+        |at| {
+            world
+                .get::<Holds>(at)
+                .map(|holds| holds.iter().collect())
+                .unwrap_or_default()
+        },
+    )
+}
 
 /// The systems that tag every mesh with its fade and its look: what lays a look this frame does so
 /// before them.
@@ -76,7 +128,8 @@ pub(super) fn tag(
     holders: Query<&ChildOf>,
     children: Query<&Children>,
     meshes: Query<Option<&MeshTag>, (With<Mesh3d>, Without<WaterLid>)>,
-    held: Query<(), With<HeldPiece>>,
+    pieces: Query<&HeldPiece>,
+    holding: Query<&Holds>,
     mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut laid: Local<Vec<SurfaceLook>>,
     mut commands: Commands,
@@ -105,18 +158,29 @@ pub(super) fn tag(
         *laid = looks;
     }
     for (root, (dropped, slots)) in roots {
-        let mut pending = vec![(root, false)];
-        while let Some((part, in_held)) = pending.pop() {
-            let in_held = in_held || held.contains(part);
+        let parts = drawn_with(
+            root,
+            |at| {
+                children
+                    .get(at)
+                    .map(|under| under.iter().collect())
+                    .unwrap_or_default()
+            },
+            |at| pieces.get(at).ok().map(|piece| piece.0),
+            |at| {
+                holding
+                    .get(at)
+                    .map(|holds| holds.iter().collect())
+                    .unwrap_or_default()
+            },
+        );
+        for (part, in_held) in parts {
             if let Ok(tagged) = meshes.get(part) {
                 let slot = slots.map_or(0, |(body, held)| if in_held { held } else { body });
                 let wanted = dropped | slot << FADE_BITS;
                 if tagged.map_or(0, |tag| tag.value) != wanted {
                     commands.entity(part).try_insert(MeshTag::new(wanted));
                 }
-            }
-            if let Ok(under) = children.get(part) {
-                pending.extend(under.iter().map(|child| (child, in_held)));
             }
         }
     }

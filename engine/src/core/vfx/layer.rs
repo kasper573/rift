@@ -172,10 +172,18 @@ pub struct ParticleLayer {
     /// How fast each particle falls; a negative pull rises, as smoke and flame do.
     #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
     pub gravity: f32,
-    /// How much of its speed each particle loses a second.
+    /// How much of its speed against the air it drifts in each particle loses a second.
     #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
     #[schemars(extend("minimum" = 0.0))]
     pub drag: f32,
+    /// How much of the motion of where the layer emits from the air its particles drift in
+    /// shares, from 0 to 1. Each particle is born moving with that air and drags toward it. At 0
+    /// the air is still, so a moving emitter leaves its particles behind, as a trail; at 1 the air
+    /// moves along with the emitter, as the glass of a lantern carries its flame. A flame in the
+    /// open sits between: it leans back as its torch is carried, without trailing far behind.
+    #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
+    #[schemars(extend("minimum" = 0.0, "maximum" = 1.0))]
+    pub carried: f32,
     /// How long each particle lives, least and most.
     #[schemars(extend("default" = [0.4, 0.8]))]
     pub life: [Seconds; 2],

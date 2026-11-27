@@ -863,7 +863,7 @@ fn emit(world: &mut World, cx: &Cx, layer: &ParticleLayer) {
     };
     match has {
         Some(entity) if emitting && !layer.place.stays => {
-            set_emitter(world, entity, cx, layer, placed);
+            set_emitter(world, entity, cx, layer, placed, Emitter::Moved);
         }
         Some(_) => {}
         None if started && emitting => {
@@ -882,7 +882,7 @@ fn emit(world: &mut World, cx: &Cx, layer: &ParticleLayer) {
                 emitter.insert(EffectMesh(mesh));
             }
             let entity = emitter.id();
-            set_emitter(world, entity, cx, layer, placed);
+            set_emitter(world, entity, cx, layer, placed, Emitter::Fresh);
             if let Some(mut view) = cx.pieces(world) {
                 view.layers[cx.index].emitters.push((cycle, entity));
             }
@@ -891,14 +891,23 @@ fn emit(world: &mut World, cx: &Cx, layer: &ParticleLayer) {
     }
 }
 
+/// Whether an emitter is being stood for the first time, or moved on from where it stood.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Emitter {
+    Fresh,
+    Moved,
+}
+
 /// Stands an emitter where its layer stands now and tells it what its site sets apart: the area it
-/// emits across, the way its cone points and the points of the surface it emits from.
+/// emits across, the way its cone points, the points of the surface it emits from and, for a layer
+/// whose air it carries, how fast it moves.
 fn set_emitter(
     world: &mut World,
     entity: Entity,
     cx: &Cx,
     layer: &ParticleLayer,
     (at, turn, surface): (Vec3, Quat, Option<Surface>),
+    emitter: Emitter,
 ) {
     let mut values: Vec<(String, bevy_hanabi::prelude::Value)> = Vec::new();
     let mut stands = at;
@@ -927,6 +936,17 @@ fn set_emitter(
             ));
             values.push((particles::surface_normal(k), (*normal).into()));
         }
+    }
+    if layer.carried > 0.0 {
+        let since = world.resource::<Time>().delta_secs();
+        let stood = world
+            .get::<Transform>(entity)
+            .map(|stood| stood.translation);
+        let motion = match (emitter, stood) {
+            (Emitter::Moved, Some(stood)) if since > 0.0 => (stands - stood) / since,
+            _ => Vec3::ZERO,
+        };
+        values.push((particles::MOTION.to_owned(), motion.into()));
     }
     let mut emitter = world.entity_mut(entity);
     if let Some(mut transform) = emitter.get_mut::<Transform>() {

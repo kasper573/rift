@@ -165,7 +165,7 @@ impl Body {
                 continue;
             };
             let mut hung = world.spawn((
-                HeldPiece,
+                HeldPiece(self.rig),
                 ShowsProp(prop.look),
                 prop.transform,
                 Visibility::default(),

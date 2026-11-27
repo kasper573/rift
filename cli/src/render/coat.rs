@@ -35,7 +35,7 @@ use engine::core::os::Profile;
 use engine::core::render::camera::{self, GroundHeights, ground_height, world_point};
 use engine::core::render::sample::FrameSamplingPlugin;
 use engine::core::render::video::VideoPreferences;
-use engine::core::render::world::shine::HeldPiece;
+use engine::core::render::world::shine::drawn_with_in;
 use engine::core::render::world::{WorldScenePlugin, body as world_body, lights};
 use engine::core::render::{CameraFocus, Look};
 use engine::core::time::{ServerClock, UnixMillis, server_now};
@@ -762,9 +762,7 @@ impl Shown {
         self.measured = true;
         let mut own = Vec::new();
         let mut held = Vec::new();
-        let mut pending = vec![(self.thing, false)];
-        while let Some((at, in_held)) = pending.pop() {
-            let in_held = in_held || world.get::<HeldPiece>(at).is_some();
+        for (at, in_held) in drawn_with_in(world, self.thing) {
             if let (Some(aabb), Some(global)) =
                 (world.get::<Aabb>(at), world.get::<GlobalTransform>(at))
             {
@@ -783,9 +781,6 @@ impl Shown {
                 } else {
                     own.extend(corners);
                 }
-            }
-            if let Some(children) = world.get::<Children>(at) {
-                pending.extend(children.iter().map(|child| (child, in_held)));
             }
         }
         let middle = |points: &[Vec3]| {

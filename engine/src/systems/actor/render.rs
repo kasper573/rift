@@ -226,6 +226,15 @@ impl Hung {
         }
     }
 
+    /// Whether a mount carries it while its holder rides: what its holder holds in a hand, never a
+    /// tool its holder works with, which stays in the hand that works.
+    fn rides_on_mount(self, content: &Content) -> bool {
+        match self {
+            Hung::Item(item) => matches!(item.get(content).wear(), Some(Wear::Held { .. })),
+            Hung::Tool(_) => false,
+        }
+    }
+
     /// The prop that hangs, and how it sits in the hand: none for an item no hand holds.
     fn look(self, content: &Content) -> Option<(PropId, Grip)> {
         match self {
@@ -1092,7 +1101,9 @@ pub fn hang(world: &mut World) {
         let model = ActorModel::get(&content, model);
         let places = mount::render::gear_places(world, entity);
         let laid_in = |hand: HandIndex, hung: Hung| {
-            hung.item()?;
+            if !hung.rides_on_mount(&content) {
+                return None;
+            }
             let places = places.as_ref()?;
             let at = *places.hands.get(hand.index())?;
             Some((places.steed, ActorModel::get(&content, places.look), at))
@@ -1176,7 +1187,7 @@ pub fn hang(world: &mut World) {
             let plumb = plumb_from(holder, held_by, &grip);
             let prop = world
                 .spawn((
-                    HeldPiece,
+                    HeldPiece(entity),
                     ShowsProp(look),
                     placed,
                     Visibility::default(),

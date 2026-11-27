@@ -11,7 +11,7 @@ use crate::core::geometry::Shape;
 use crate::core::render::world::body::Body;
 use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::opacity::Opacity;
-use crate::core::render::world::shine::HeldPiece;
+use crate::core::render::world::shine::drawn_with_in;
 use crate::core::render::{facing_of, facing_rotation, ground_height, world_point};
 use crate::core::units::Radians;
 
@@ -192,29 +192,23 @@ impl Placing<'_> {
         let Some(thing) = self.scene.thing else {
             return Vec::new();
         };
-        let mut found = Vec::new();
-        let mut pending = vec![(thing.entity, false)];
-        while let Some((at, held)) = pending.pop() {
-            let held = held || self.world.get::<HeldPiece>(at).is_some();
-            let wanted = match self.instance.part {
-                VfxPart::Whole | VfxPart::Node { .. } => true,
-                VfxPart::Held => held,
-                VfxPart::Body => !held,
-            };
-            if wanted
-                && self
-                    .world
-                    .get::<MeshMaterial3d<WorldMaterial>>(at)
-                    .is_some()
-                && self.world.get::<Aabb>(at).is_some()
-            {
-                found.push(at);
-            }
-            if let Some(children) = self.world.get::<Children>(at) {
-                pending.extend(children.iter().map(|child| (child, held)));
-            }
-        }
-        found
+        drawn_with_in(self.world, thing.entity)
+            .into_iter()
+            .filter(|(at, held)| {
+                let wanted = match self.instance.part {
+                    VfxPart::Whole | VfxPart::Node { .. } => true,
+                    VfxPart::Held => *held,
+                    VfxPart::Body => !held,
+                };
+                wanted
+                    && self
+                        .world
+                        .get::<MeshMaterial3d<WorldMaterial>>(*at)
+                        .is_some()
+                    && self.world.get::<Aabb>(*at).is_some()
+            })
+            .map(|(at, _)| at)
+            .collect()
     }
 
     /// Where the part of the thing the vfx plays on is: the bounds of its meshes as they were
@@ -430,25 +424,22 @@ fn middle(world: &World, actor: Entity) -> Option<Vec3> {
     Some(thing.feet + Vec3::Y * thing.height / 2.0)
 }
 
-/// The node named `name` among those of `thing` and of whatever hangs from it: of a body, the
-/// joint of its rig, which is posed, before any node of that name its skins carry at rest.
+/// The node named `name` among those of `thing` and of whatever hangs from it or it holds: of a
+/// body, the joint of its rig, which is posed, before any node of that name its skins carry at
+/// rest.
 fn named_node(world: &World, thing: Entity, name: &str) -> Option<Entity> {
     if let Some(joint) = world.get::<Body>(thing).and_then(|body| body.joint(name)) {
         return Some(joint);
     }
-    let mut pending: Vec<Entity> = world.get::<Children>(thing)?.iter().collect();
-    while let Some(node) = pending.pop() {
-        if world
-            .get::<Name>(node)
-            .is_some_and(|named| named.as_str() == name)
-        {
-            return Some(node);
-        }
-        if let Some(children) = world.get::<Children>(node) {
-            pending.extend(children.iter());
-        }
-    }
-    None
+    drawn_with_in(world, thing)
+        .into_iter()
+        .map(|(node, _)| node)
+        .filter(|node| *node != thing)
+        .find(|node| {
+            world
+                .get::<Name>(*node)
+                .is_some_and(|named| named.as_str() == name)
+        })
 }
 
 /// Where `node` stands in the world as its own transform and those of everything that holds it

@@ -32,6 +32,8 @@ pub fn surface_normal(k: usize) -> String {
 
 /// The way a cone of velocities points in the world.
 pub const WAY: &str = "way";
+/// How fast the place a layer emits from moves through the world, in meters a second.
+pub const MOTION: &str = "motion";
 /// An area's measures: a circle's radius, a rectangle's width and depth, a cone's half angle in
 /// radians and its length.
 pub const AREA: &str = "area";
@@ -119,7 +121,27 @@ pub fn effect(
         }
     };
     let accel = AccelModifier::new(writer.lit(Vec3::Y * -layer.gravity).expr());
-    let drag = LinearDragModifier::new(writer.lit(layer.drag).expr());
+    let air = (layer.carried > 0.0).then(|| {
+        writer.prop(writer.add_property(MOTION, Vec3::ZERO.into())) * writer.lit(layer.carried)
+    });
+    let born_in_air = air.clone().map(|air| {
+        SetAttributeModifier::new(
+            Attribute::VELOCITY,
+            (writer.attr(Attribute::VELOCITY) + air).expr(),
+        )
+    });
+    let drag: BoxedModifier = match air {
+        Some(air) => {
+            let kept = (writer.lit(1.0) - writer.lit(layer.drag) * writer.delta_time())
+                .max(writer.lit(0.0));
+            let against = writer.attr(Attribute::VELOCITY) - air.clone();
+            Box::new(SetAttributeModifier::new(
+                Attribute::VELOCITY,
+                (air + against * kept).expr(),
+            ))
+        }
+        None => Box::new(LinearDragModifier::new(writer.lit(layer.drag).expr())),
+    };
     let mut color = bevy_hanabi::Gradient::new();
     for (t, c) in colors {
         color.add_key(*t, *c);
@@ -147,7 +169,7 @@ pub fn effect(
         _ => OrientModifier::new(OrientMode::FaceCameraPosition),
     };
     let module = writer.finish();
-    EffectAsset::new(capacity, spawner, module)
+    let effect = EffectAsset::new(capacity, spawner, module)
         .with_simulation_space(SimulationSpace::Global)
         .with_alpha_mode(match layer.blend {
             VfxBlend::Add => bevy_hanabi::AlphaMode::Add,
@@ -161,7 +183,7 @@ pub fn effect(
         .init(init_size)
         .init(init_seed)
         .update(accel)
-        .update(drag)
+        .add_modifier(ModifierContext::Update, drag)
         .render(ColorOverLifetimeModifier {
             gradient: color,
             blend: ColorBlendMode::Overwrite,
@@ -172,7 +194,11 @@ pub fn effect(
             screen_space_size: false,
         })
         .render(orient)
-        .render(LookModifier::from(&layer.look))
+        .render(LookModifier::from(&layer.look));
+    match born_in_air {
+        Some(born) => effect.init(born),
+        None => effect,
+    }
 }
 
 /// Where a particle is born, relative to its emitter.
