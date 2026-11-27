@@ -324,18 +324,36 @@ async fn start_releases() -> String {
     format!("http://{address}/download")
 }
 
+/// A game client with a run of zeros in it, which a binary may have and its file on disk holds as a
+/// hole.
 fn release_client(platform: &str) -> Vec<u8> {
-    format!("the game client for {platform}").into_bytes()
+    let mut client = format!("the game client for {platform}").into_bytes();
+    client.resize(CLIENT_HOLE, 0);
+    client.extend_from_slice(b"and its end");
+    client
 }
 
+const CLIENT_HOLE: usize = 1 << 20;
+
+/// `bytes` archived from a file on disk with its zeros left as a hole, so the archive may hold it
+/// as a sparse entry.
 fn tar_gz(name: &str, bytes: &[u8]) -> Vec<u8> {
+    use std::io::{Seek, SeekFrom, Write};
+    use std::os::unix::fs::PermissionsExt;
+    let held = tempfile::NamedTempFile::new().expect("a file");
+    let mut file = held.as_file();
+    let start = bytes.iter().position(|byte| *byte == 0).expect("a hole");
+    let end = bytes.iter().rposition(|byte| *byte == 0).expect("a hole") + 1;
+    file.write_all(&bytes[..start]).expect("written");
+    file.seek(SeekFrom::Start(end as u64))
+        .expect("past the hole");
+    file.write_all(&bytes[end..]).expect("written");
+    file.set_permissions(std::fs::Permissions::from_mode(0o755))
+        .expect("executable");
     let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     let mut archive = tar::Builder::new(gz);
-    let mut header = tar::Header::new_gnu();
-    header.set_size(bytes.len() as u64);
-    header.set_mode(0o755);
     archive
-        .append_data(&mut header, name, bytes)
+        .append_path_with_name(held.path(), name)
         .expect("a tar entry");
     archive
         .into_inner()
