@@ -6,32 +6,34 @@ exe := if os_family() == "windows" { ".exe" } else { "" }
 # asks for the optimized build that ships. `archives` and `profile` build release whatever this says.
 profile := "dev"
 out_dir := if profile == "dev" { "target/debug" } else if profile == "release" { "target/release" } else { error("the profiles are dev and release, not " + profile) }
+# What every cargo build here passes, picking its targets after it with `--bin` or `--test`: the
+# whole workspace, so every recipe builds the dependencies with the same features and none rebuilds
+# bevy and the engine for a feature set of its own, on the one profile.
+shared := "--workspace --profile " + profile
 
-# Every build resolves the whole workspace and picks its targets from it, so each recipe builds the
-# dependencies with the same features as every other and none rebuilds what another built.
 [doc("rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates.")]
 lint:
     cargo fmt --check
-    cargo build --workspace --profile {{profile}} --quiet --bin lint --bin rift
+    cargo build {{shared}} --quiet --bin lint --bin rift
     {{out_dir}}/lint
-    cargo clippy --workspace --profile {{profile}} --all-targets -- -D warnings
+    cargo clippy {{shared}} --all-targets -- -D warnings
     {{out_dir}}/rift check editor/templates/new_game
 
 [doc("Bakes the maps of the editor's templates, which `just lint` holds to being baked. Needs a GPU.")]
 bake-templates:
-    cargo build --workspace --profile {{profile}} --quiet --bin rift
+    cargo build {{shared}} --quiet --bin rift
     {{out_dir}}/rift bake maps editor/templates/new_game
 
 # Every test lives in a tests/ folder, and every example in the docs compiles and runs; the libs' and
 # bins' own test harnesses would build for nothing.
 [doc("The unit and integration tests, and the examples in the docs.")]
 test:
-    cargo test --workspace --profile {{profile}} --test '*'
-    cargo test --workspace --profile {{profile}} --doc
+    cargo test {{shared}} --test '*'
+    cargo test {{shared}} --doc
 
 [doc("Builds the editor and the two game binaries it plays with, then opens it, on FOLDER if given.")]
 editor *folder:
-    cargo build --workspace --profile {{profile}} --bin editor --bin game-server --bin game-client
+    cargo build {{shared}} --bin editor --bin game-server --bin game-client
     {{out_dir}}/editor {{folder}}
 
 # Frame pointers give perf whole call stacks without copying each sampled stack; the profiling
@@ -46,12 +48,12 @@ dist out="target/dist" *extras="":
       *) echo "no extra {{extras}}: the only extra is profiling" >&2; exit 1 ;;
     esac
     rm -rf "$out" && mkdir -p "$out"
-    cargo build --workspace --profile {{profile}} --bin editor --bin game-server --bin game-client --bin rift --bin web-server
+    cargo build {{shared}} --bin editor --bin game-server --bin game-client --bin rift --bin web-server
     for binary in editor game-server game-client rift web-server; do
       cp "{{out_dir}}/$binary{{exe}}" "$out/"
     done
     if [ {{quote(os())}} = linux ] && [ {{quote(extras)}} = profiling ]; then
-      cargo build --workspace --profile {{profile}} --features game-server/profiling --bin game-server
+      cargo build {{shared}} --features game-server/profiling --bin game-server
       cp {{out_dir}}/game-server "$out/game-server-profiling"
     fi
     if [ {{profile}} = release ] && [ {{quote(os_family())}} != windows ]; then
@@ -84,7 +86,7 @@ bench *args: dist
 [doc("Starts the game client from the rift.env the website hands out and checks it draws the game, on the binaries folder BINARIES, else a fresh `just dist`.")]
 smoke binaries="":
     {{ if binaries == "" { "just profile=" + profile + " dist" } else { "true" } }}
-    cargo build --workspace --profile {{profile}} --quiet --bin smoke
+    cargo build {{shared}} --quiet --bin smoke
     {{out_dir}}/smoke {{ if binaries == "" { "target/dist" } else { quote(binaries) } }}
 
 # It samples the binary that ships, so it builds on release.
@@ -112,14 +114,14 @@ build-times:
       "$@" > /dev/null 2>&1 || { echo "$label failed: $*" >&2; exit 1; }
       report+=("$(printf '%-28s %8.1f s' "$label" "$(echo "$(date +%s.%N) - $start" | bc)")")
     }
-    timed "binaries" cargo build --workspace --profile {{profile}} --timings --bin editor --bin game-server --bin game-client --bin rift --bin web-server
+    timed "binaries" cargo build {{shared}} --timings --bin editor --bin game-server --bin game-client --bin rift --bin web-server
     timed "lint: rustfmt" cargo fmt --check
-    timed "lint: lint and rift" cargo build --workspace --profile {{profile}} --bin lint --bin rift
+    timed "lint: lint and rift" cargo build {{shared}} --bin lint --bin rift
     timed "lint: the repo's lints" {{out_dir}}/lint
-    timed "lint: clippy" cargo clippy --workspace --profile {{profile}} --all-targets -- -D warnings
+    timed "lint: clippy" cargo clippy {{shared}} --all-targets -- -D warnings
     timed "lint: rift check" {{out_dir}}/rift check editor/templates/new_game
-    timed "test: compile" cargo test --workspace --profile {{profile}} --test '*' --no-run
-    timed "test: run" cargo test --workspace --profile {{profile}} --test '*'
-    timed "test: docs" cargo test --workspace --profile {{profile}} --doc
+    timed "test: compile" cargo test {{shared}} --test '*' --no-run
+    timed "test: run" cargo test {{shared}} --test '*'
+    timed "test: docs" cargo test {{shared}} --doc
     printf '%s\n' "${report[@]}"
     echo "cargo's report of the binaries' build: target/cargo-timings/cargo-timing.html"

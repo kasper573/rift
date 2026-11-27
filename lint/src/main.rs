@@ -37,7 +37,7 @@ fn main() {
 
     if violations.is_empty() {
         println!(
-            "lint: layering, standalone crates, content keys, JSON keys, mapped messages and builds OK"
+            "lint: layering, standalone crates, content keys, JSON keys, mapped messages and build profiles OK"
         );
         return;
     }
