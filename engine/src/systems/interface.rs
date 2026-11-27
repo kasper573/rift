@@ -220,7 +220,7 @@ pub enum InterfaceSound {
     QuestAccepted,
     QuestCompleted,
     QuestAbandoned,
-    RisingChime,
+    LevelUp,
     TallyTick,
 }
 

@@ -214,6 +214,26 @@ fn a_weapon_put_in_the_basic_attack_slot_is_worn_and_lends_its_attack() {
 }
 
 #[test]
+fn a_weapon_worn_mid_fight_carries_the_attack_on_with_its_own() {
+    let (mut sim, player) = yard();
+    let dummy = dummy(&mut sim, player, Offset::new(1.0, 0.0));
+    let full = stat::effective(&sim.world, dummy, StatKind::Health);
+    request(&mut sim, AttackRequest { target: dummy });
+    assert!(sim.run_until(5.0, |world| {
+        stat::effective(world, dummy, StatKind::Health) < full
+    }));
+
+    sim.give(player, "wand", 1);
+    let wand = sim.slot_of(player, "wand");
+    request(&mut sim, UseItemRequest { slot: wand });
+    assert_eq!(basic_attack(&sim, player), Some(sim.id::<SkillDef>("zap")));
+    let mana = stat::current(&sim.world, player, Vital::Mana);
+    assert!(sim.run_until(5.0, |world| {
+        stat::current(world, player, Vital::Mana) > mana
+    }));
+}
+
+#[test]
 fn slotting_what_the_bar_already_holds_moves_it() {
     let (mut sim, player) = yard();
     let potion = HotbarEntry::Item(sim.id::<ItemDef>("potion"));
@@ -569,6 +589,43 @@ fn yard() -> (Sim, Entity) {
         .script("lunge_strike", "skill", strike_nodes())
         .equipment_category("blade")
         .equipment_category("spear")
+        .row(
+            "skill",
+            "zap",
+            skill(
+                "Zap",
+                json!({
+                    "target": { "type": "single", "affects": "enemy" },
+                    "basic_attack": true,
+                    "levels": [{ "cost": 1, "stats": {} }],
+                }),
+                "zap_strike",
+            ),
+        )
+        .script(
+            "zap_strike",
+            "skill",
+            json!({
+                "used": { "type": "on", "event": "used", "next": "swing" },
+                "swing": { "type": "animate", "action": "attack", "wait": "apex", "next": "drain" },
+                "drain": { "type": "heal", "restores": "mana", "by": 1.0, "next": "hit" },
+                "hit": {
+                    "type": "damage",
+                    "who": { "type": "skill_targets" },
+                    "by": { "type": "stat", "stat": "damage" },
+                },
+            }),
+        )
+        .item(
+            "wand",
+            json!({ "kind": {
+                "type": "equipment",
+                "category": path("equipment_category", "blade"),
+                "wear": "held",
+                "stance": path("stance", "sword"),
+                "grants": [path("skill", "zap")],
+            } }),
+        )
         .item(
             "pike",
             json!({ "kind": {
@@ -622,7 +679,7 @@ fn yard() -> (Sim, Entity) {
         .shader("level_pop")
         .vfx("defeated")
         .sfx("ui_refuse")
-        .sfx("rising_chime")
+        .sfx("level_up")
         .load();
     let mut sim = Sim::new(content);
     sim.serve("yard")
@@ -644,6 +701,7 @@ fn yard() -> (Sim, Entity) {
             actor::playing::progress,
         ))
         .add(reach::mirror_engaged)
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -651,7 +709,7 @@ fn yard() -> (Sim, Entity) {
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);

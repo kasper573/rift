@@ -268,6 +268,7 @@ fn harbour() -> Sim {
             actor::playing::progress,
         ))
         .add((reward::kills, npc::defeated))
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -281,7 +282,7 @@ fn harbour() -> Sim {
             (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
         ))
         .plan(stat::SettleVitals::default())
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     engine::systems::spawn_scripts(&mut sim.world);
     region::hold_whole(&mut sim.world);

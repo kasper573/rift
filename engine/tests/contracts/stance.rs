@@ -527,6 +527,7 @@ fn armed(game: Game) -> (Sim, Entity) {
             actor::playing::progress,
         ))
         .add((status::expire, reward::kills))
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -537,7 +538,7 @@ fn armed(game: Game) -> (Sim, Entity) {
             status::aspect::SettleAspects::default(),
             stat::SettleVitals::default(),
         ))
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);

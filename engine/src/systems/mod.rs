@@ -501,8 +501,12 @@ pub fn server_app(
                     (shop::requests, prompt::requests, crafting::requests).chain(),
                     quest::requests,
                     (emote::requests, emote::rise).chain(),
-                    equipment::equip_requested,
-                    equipment::unequip,
+                    (
+                        equipment::equip_requested,
+                        equipment::unequip,
+                        skill::hotbar::settle_basic_attack,
+                    )
+                        .chain(),
                     skill::reset::expire,
                     (actor::playing::progress, resource::swings, crafting::moves).chain(),
                     reach::mirror_engaged,
@@ -560,7 +564,6 @@ pub fn server_app(
                     player::respawn,
                     (npc::clear_fallen, spawner::tend, npc::dismiss).chain(),
                     combat::defeats,
-                    skill::hotbar::settle_basic_attack,
                     chat::hear,
                     (command::run, command::retire, command::complete::answer).chain(),
                     chat::speak,

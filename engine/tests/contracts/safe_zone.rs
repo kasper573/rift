@@ -186,6 +186,7 @@ fn border(modules: Value) -> Sim {
             combat::request,
             actor::playing::progress,
         ))
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -194,7 +195,7 @@ fn border(modules: Value) -> Sim {
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     region::hold_whole(&mut sim.world);
     engine::systems::spawn_scripts(&mut sim.world);

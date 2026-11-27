@@ -335,7 +335,7 @@ fn arena() -> (Sim, Entity) {
         .vfx("level_up")
         .shader("level_pop")
         .vfx("defeated")
-        .sfx("rising_chime")
+        .sfx("level_up")
         .load();
     let mut sim = Sim::new(content);
     sim.serve("arena")

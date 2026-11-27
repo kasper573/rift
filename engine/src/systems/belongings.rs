@@ -119,7 +119,7 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
             NotificationKind::Milestone {
                 label: messages.level_up().to_owned().into(),
                 topic: HistoryTopic::Notification,
-                sfx: Some(InterfaceSound::RisingChime.id(content)),
+                sfx: Some(InterfaceSound::LevelUp.id(content)),
             },
             LineText::plain(messages.level_reached(now.level)),
         ));

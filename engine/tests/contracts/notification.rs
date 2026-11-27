@@ -531,7 +531,7 @@ fn game() -> Content {
         .sfx("ui_refuse")
         .sfx("ui_close")
         .sfx("ui_chime")
-        .sfx("rising_chime")
+        .sfx("level_up")
         .sfx("tally_tick")
         .sfx("quest_accepted")
         .sfx("quest_completed")
