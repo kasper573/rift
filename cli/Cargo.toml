@@ -32,6 +32,7 @@ ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 sysinfo.workspace = true
 walkdir.workspace = true
 image.workspace = true
+glob = "0.3"
 schemars = "1"
 
 [lints]

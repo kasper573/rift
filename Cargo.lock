@@ -2736,6 +2736,7 @@ dependencies = [
  "clap",
  "editor",
  "engine",
+ "glob",
  "image",
  "rayon",
  "schemars 1.2.3",
