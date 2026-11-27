@@ -6,7 +6,7 @@ use engine::systems::item::{self, DropItemRequest, ItemDef, UseItemRequest};
 use engine::systems::player::{ArrivalHold, CommandLock};
 use engine::systems::stat;
 use serde_json::json;
-use testkit::{BODY, Game, Map, Sim};
+use testkit::{BODY, GEAR, Game, Map, Sim, path};
 
 #[test]
 fn a_command_lock_or_an_arrival_hold_refuses_use_drop_and_unequip_until_it_lifts() {
@@ -38,11 +38,10 @@ fn camp() -> (Sim, Entity) {
             }),
         )
         .item("tusk", json!({ "kind": { "type": "resource" } }))
-        .item(
+        .equipment(
             "helmet",
-            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" } }),
         )
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("healed")
         .shader("heal_pop")

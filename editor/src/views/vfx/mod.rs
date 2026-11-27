@@ -14,8 +14,11 @@ use ui::sheet;
 use ui::theme;
 
 use engine::core::content::{ContentFile, ContentScope, ErrorPlace, fields_file, rescoped};
-use engine::core::units::Seconds;
-use engine::core::vfx::{ParamFill, VfxDef, VfxLayer, VfxShaderDef, shader_file};
+use engine::core::units::{Degrees, Seconds};
+use engine::core::vfx::{
+    LayerMotion, LayerPlace, LayerRun, MeshFit, MeshLayer, MeshShape, ParamFill, VfxBlend, VfxDef,
+    VfxLayer, VfxShaderDef, shader_file,
+};
 use ui::egui::{Color32, FontId, Ui, Vec2 as EVec2};
 
 use self::preview::preview;
@@ -127,7 +130,13 @@ pub(crate) fn show_shader(editor: &mut Editor, ui: &mut Ui, key: &str) {
             ) else {
                 return;
             };
-            let layer = VfxLayer::Shader {
+            let layer = VfxLayer::Mesh(MeshLayer {
+                shape: MeshShape::Sphere {
+                    angle: Degrees(360.0),
+                    from: Degrees(-90.0),
+                    to: Degrees(90.0),
+                },
+                fit: MeshFit::None,
                 shader,
                 params: def
                     .params
@@ -139,10 +148,14 @@ pub(crate) fn show_shader(editor: &mut Editor, ui: &mut Ui, key: &str) {
                         (param.name.clone(), fill)
                     })
                     .collect(),
-                reach: None,
-                duration: Seconds(1.0),
-                delay: Seconds(0.0),
-            };
+                blend: VfxBlend::Alpha,
+                place: LayerPlace::default(),
+                motion: LayerMotion::default(),
+                run: LayerRun {
+                    delay: Seconds(0.0),
+                    duration: Seconds(1.0),
+                },
+            });
             let specs: Vec<ParamSpec> = def.params.iter().map(ParamSpec::from).collect();
             preview(
                 editor,

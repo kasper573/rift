@@ -202,7 +202,7 @@ fn a_vfx_layer_switched_to_any_of_its_kinds_holds_as_it_is() {
         })
         .collect();
     let files = project.files.clone();
-    assert_eq!(kinds.len(), 3);
+    assert_eq!(kinds.len(), 8);
 
     for (kind, template) in kinds {
         let mut edit = ContentEdit::new(format!("Switch to a {kind} layer"));

@@ -10,7 +10,7 @@ use ui::{dialog, dusk, ink};
 
 use super::{CastAim, Rank, SkillId, Targeting, UseSkillRequest, casting};
 use crate::core::content::fixture::FixtureLock;
-use crate::core::content::{Content, Fixture, Nearby};
+use crate::core::content::{Content, Fixture, Loading, Nearby};
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::math::{Pos, PosSchema};
 use crate::core::render::Pointed;
@@ -18,9 +18,9 @@ use crate::core::text::LineText;
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::core::time::{self};
 use crate::core::units::{Meters, Radians};
-use crate::core::vfx::render::ShaderOverlay;
 use crate::core::vfx::{
-    ParamKind, ParamValue, ShaderParam, Stage, VfxParams, VfxShaderDef, VfxSite,
+    ParamValue, SiteKind, VfxDef, VfxInstance, VfxParam, VfxParams, VfxPart, VfxSite,
+    check_fixtures_played,
 };
 use crate::core::{gui, render};
 use crate::systems::actor::{self, Actor};
@@ -35,42 +35,65 @@ use crate::systems::mount::{self, MountId, Travels};
 use crate::systems::player::session;
 use crate::systems::{movement, notification};
 
-/// The parameter the engine sets when it draws the ground an area skill is aimed at: whether the
-/// skill hurts whom it lands on.
+/// The parameters the engine fills in the vfx it shows while a skill is aimed: whether the skill
+/// hurts whom it lands on, and whether it is swung from where the character stands.
 pub const HOSTILE: &str = "hostile";
+pub const MELEE: &str = "melee";
 
-/// The shaders every game provides for the ground an area skill is aimed at.
+/// The vfx every game provides for a skill being aimed: the ground its area would land on, the
+/// ring of how far it reaches round the character, and the mark on each actor its area would
+/// land on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
-pub enum AreaShader {
+pub enum AimVfx {
     SkillArea,
+    SkillReach,
+    SkillTarget,
 }
 
-impl Fixture for AreaShader {
-    type Row = VfxShaderDef;
+impl Fixture for AimVfx {
+    type Row = VfxDef;
     const FOLDER: Option<&'static str> = Some("vfx");
 
     fn locks(self) -> Vec<FixtureLock> {
-        VfxShaderDef::fixture_locks(Stage::GROUND, &Self::params())
+        VfxDef::fixture_locks(&self.params())
     }
 
-    fn fresh(self, near: &Nearby) -> Result<VfxShaderDef, String> {
-        VfxShaderDef::fixture_fresh(near, Stage::GROUND, Self::params())
-    }
-}
-
-impl AreaShader {
-    fn params() -> Vec<ShaderParam> {
-        vec![ShaderParam::of(HOSTILE, ParamKind::Bool)]
+    fn fresh(self, near: &Nearby) -> Result<VfxDef, String> {
+        VfxDef::fixture_fresh(near, self.params())
     }
 }
 
-/// What a press armed, waiting for the click that aims it, and the surface drawn on the ground
-/// where an area skill would land.
+/// Refuses a layer of an aim's vfx that the site the engine shows it on cannot carry.
+pub fn check_vfx(loading: &mut Loading) {
+    check_fixtures_played::<AimVfx>(loading, |fixture| match fixture {
+        AimVfx::SkillArea | AimVfx::SkillReach => &[SiteKind::Area],
+        AimVfx::SkillTarget => &[SiteKind::Actor],
+    });
+}
+
+impl AimVfx {
+    fn params(self) -> Vec<VfxParam> {
+        let flag = |name: &str| VfxParam {
+            name: name.to_owned(),
+            default: ParamValue::Bool(false),
+        };
+        match self {
+            AimVfx::SkillArea => vec![flag(HOSTILE), flag(MELEE)],
+            AimVfx::SkillReach => Vec::new(),
+            AimVfx::SkillTarget => vec![flag(HOSTILE)],
+        }
+    }
+}
+
+/// What a press armed, waiting for the click that aims it, and the vfx shown for it: the ground
+/// an area skill would land on, the ring of its reach, and the mark on each actor it would land on.
 #[derive(Resource, Default)]
 pub struct Aiming {
     armed: Option<Aimed>,
-    surface: Option<Entity>,
+    area: Option<Entity>,
+    reach: Option<Entity>,
+    targets: Vec<(Entity, Entity)>,
 }
 
 /// What waits on a click to aim it: a skill, or the ground to step off a mount for.
@@ -180,7 +203,17 @@ pub fn aiming(world: &World) -> Option<Aimed> {
 
 pub fn forget(world: &mut World) {
     disarm(world);
-    clear_surface(world);
+    let shown = std::mem::take(&mut *world.resource_mut::<Aiming>());
+    for entity in shown
+        .area
+        .into_iter()
+        .chain(shown.reach)
+        .chain(shown.targets.into_iter().map(|(_, mark)| mark))
+    {
+        if let Ok(entity) = world.get_entity_mut(entity) {
+            entity.despawn();
+        }
+    }
 }
 
 /// What is armed forgets itself once the character could no longer do it: a skill they stopped
@@ -198,37 +231,116 @@ pub fn settle(world: &mut World) {
     }
 }
 
-/// Keeps the ground the armed skill's area would cover painted through the game's area shader,
-/// following the pointer, and takes it away when no area is aimed.
+/// Shows what is armed while it is aimed: the ground an area skill would cover under the pointer,
+/// the ring of how far it reaches round the character, and a mark on each actor the area would
+/// land on, each through the game's own vfx; and takes them away as the aim ends.
 pub fn surface(world: &mut World) {
-    let Some((footprint, hostile)) = aiming(world).and_then(|aimed| aimed_area(world, aimed))
-    else {
-        clear_surface(world);
-        return;
-    };
     let content = world.resource::<Content>().clone();
-    let uptime = time::uptime(world);
-    let shown = world
-        .resource::<Aiming>()
-        .surface
-        .filter(|entity| world.get_entity(*entity).is_ok());
-    let since = shown
-        .and_then(|entity| world.get::<ShaderOverlay>(entity))
-        .map_or(uptime, |overlay| overlay.since);
-    let overlay = ShaderOverlay {
-        shader: AreaShader::SkillArea.id(&content),
-        site: VfxSite::Area(footprint),
-        params: VfxParams(vec![(HOSTILE.to_owned(), ParamValue::Bool(hostile))]),
-        since,
+    let armed = aiming(world);
+    let area = armed.and_then(|aimed| aimed_area(world, aimed));
+    let me = session::me(world);
+    let reach = armed
+        .zip(me)
+        .and_then(|(aimed, me)| Some((reach_of(world, me, aimed)?, movement::position(world, me)?)))
+        .filter(|(radius, _)| radius.0 > 0.0)
+        .map(|(radius, from)| {
+            PlacedShape::centred(Shape::Circle { radius }, from, Radians::default())
+        });
+    let shown = world.resource::<Aiming>().area;
+    let area_flags = area.as_ref().map(|aimed| {
+        VfxParams(vec![
+            (HOSTILE.to_owned(), ParamValue::Bool(aimed.hostile)),
+            (MELEE.to_owned(), ParamValue::Bool(aimed.melee)),
+        ])
+    });
+    let site = area.as_ref().map(|aimed| VfxSite::Area(aimed.footprint));
+    let area_shown = show(
+        world,
+        shown,
+        AimVfx::SkillArea.id(&content),
+        site.zip(area_flags),
+    );
+    world.resource_mut::<Aiming>().area = area_shown;
+    let shown = world.resource::<Aiming>().reach;
+    let reach_shown = show(
+        world,
+        shown,
+        AimVfx::SkillReach.id(&content),
+        reach.map(|reach| (VfxSite::Area(reach), VfxParams::default())),
+    );
+    world.resource_mut::<Aiming>().reach = reach_shown;
+    let caught: Vec<Entity> = match (&area, me) {
+        (Some(aimed), Some(me)) => world
+            .query_filtered::<Entity, With<Actor>>()
+            .iter(world)
+            .filter(|actor| *actor != me)
+            .filter(|actor| {
+                movement::position(world, *actor).is_some_and(|at| aimed.footprint.contains(at))
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let was = std::mem::take(&mut world.resource_mut::<Aiming>().targets);
+    let mut marks = Vec::new();
+    for (actor, mark) in &was {
+        if !caught.contains(actor)
+            && let Ok(mark) = world.get_entity_mut(*mark)
+        {
+            mark.despawn();
+        }
+    }
+    for actor in caught {
+        let kept = was
+            .iter()
+            .find(|(marked, _)| *marked == actor)
+            .map(|(_, mark)| *mark);
+        let hostile = area.as_ref().is_some_and(|aimed| aimed.hostile);
+        let flags = VfxParams(vec![(HOSTILE.to_owned(), ParamValue::Bool(hostile))]);
+        let target = AimVfx::SkillTarget.id(&content);
+        if let Some(mark) = show(world, kept, target, Some((VfxSite::Actor(actor), flags))) {
+            marks.push((actor, mark));
+        }
+    }
+    world.resource_mut::<Aiming>().targets = marks;
+}
+
+/// Keeps `vfx` playing on `site` with `params`, as `shown` already does, or takes it away when
+/// there is no site: what the client shows of its own accord, which no server sends.
+fn show(
+    world: &mut World,
+    shown: Option<Entity>,
+    vfx: crate::core::vfx::VfxId,
+    site: Option<(VfxSite, VfxParams)>,
+) -> Option<Entity> {
+    let shown = shown.filter(|entity| world.get_entity(*entity).is_ok());
+    let Some((site, params)) = site else {
+        if let Some(entity) = shown {
+            world.despawn(entity);
+        }
+        return None;
+    };
+    let started = shown
+        .and_then(|entity| world.get::<VfxInstance>(entity))
+        .map(|instance| instance.started)
+        .or_else(|| time::server_now(world))?;
+    let instance = VfxInstance {
+        vfx,
+        site,
+        part: VfxPart::Whole,
+        params,
+        dealer: None,
+        heading: None,
+        started,
+        until: None,
     };
     match shown {
         Some(entity) => {
-            world.entity_mut(entity).insert(overlay);
+            if world.get::<VfxInstance>(entity) != Some(&instance) {
+                world.entity_mut(entity).insert(instance);
+            }
+            Some(entity)
         }
-        None => {
-            let entity = world.spawn(overlay).id();
-            world.resource_mut::<Aiming>().surface = Some(entity);
-        }
+        None => Some(world.spawn(instance).id()),
     }
 }
 
@@ -298,10 +410,9 @@ impl Claimant for AimClaimant {
     }
 }
 
-/// How far what is armed reaches around the character, drawn as a ring. An area lies on the
-/// ground, kept by `surface`, and says on its own what it takes; a spot is marked where the
-/// pointer points, washed gold where it will do and red with what it has against it where it will
-/// not, under a prompt that names what is being picked.
+/// A spot is marked where the pointer points, washed gold where it will do and red with what it
+/// has against it where it will not, under a prompt that names what is being picked. The ring of
+/// what is armed's reach and the ground an area would cover are vfx, kept by `surface`.
 pub fn draw_aim(world: &mut World) {
     let Some(aimed) = aiming(world) else {
         return;
@@ -312,13 +423,6 @@ pub fn draw_aim(world: &mut World) {
     let Some(me) = session::me(world) else {
         return;
     };
-    let Some(from) = movement::position(world, me) else {
-        return;
-    };
-    let ring = reach_of(world, me, aimed).and_then(|radius| {
-        let reach = PlacedShape::centred(Shape::Circle { radius }, from, Radians::default());
-        outline(world, &reach)
-    });
     let spot = spot_aim(world);
     let mark = spot.as_ref().and_then(|spot| {
         let shape = Shape::Circle {
@@ -335,12 +439,6 @@ pub fn draw_aim(world: &mut World) {
     let area = gui::world_area(world, "aim preview");
     area.fixed_pos(screen.min).show(&gui, |ui| {
         let painter = ui.painter();
-        if let Some(ring) = ring {
-            painter.add(egui::Shape::closed_line(
-                ring,
-                Stroke::new(1.0, ink::wash(ink::GOLD2, 0.45)),
-            ));
-        }
         let Some((ring, refused, said)) = mark else {
             return;
         };
@@ -487,16 +585,15 @@ fn aim_at(world: &mut World, pointed: &Pointed, targeting: Targeting) -> Option<
     }
 }
 
-fn clear_surface(world: &mut World) {
-    if let Some(entity) = world.resource_mut::<Aiming>().surface.take()
-        && world.get_entity(entity).is_ok()
-    {
-        world.despawn(entity);
-    }
+/// Where an armed area skill would land, whether it harms what it takes, and whether it is swung
+/// from where the character stands.
+struct AimedArea {
+    footprint: PlacedShape,
+    hostile: bool,
+    melee: bool,
 }
 
-/// Where the armed skill's area lies, with whether the skill harms what it takes.
-fn aimed_area(world: &mut World, aimed: Aimed) -> Option<(PlacedShape, bool)> {
+fn aimed_area(world: &mut World, aimed: Aimed) -> Option<AimedArea> {
     let me = session::me(world)?;
     let content = world.resource::<Content>().clone();
     let Aimed::Skill { skill, rank } = aimed else {
@@ -506,5 +603,9 @@ fn aimed_area(world: &mut World, aimed: Aimed) -> Option<(PlacedShape, bool)> {
     let shape = def.shape_at(rank)?;
     let from = movement::position(world, me)?;
     let point = render::cursor_ground(world)?;
-    Some((def.target.place(shape, from, point), def.target.hostile()))
+    Some(AimedArea {
+        footprint: def.target.place(shape, from, point),
+        hostile: def.target.hostile(),
+        melee: matches!(def.target, Targeting::MeleeArea { .. }),
+    })
 }

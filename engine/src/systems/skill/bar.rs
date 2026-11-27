@@ -20,12 +20,14 @@ use super::{
 };
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
+use crate::core::geometry::Shape;
 use crate::core::gui::{self, Tier};
 use crate::core::text::{self, TextLook};
 use crate::core::text::{LineText, SpanText};
 use crate::core::time;
 use crate::core::units::Seconds;
 use crate::systems::chat::ChatEmbed;
+use crate::systems::equipment::category;
 use crate::systems::equipment::{self, EquipmentPlace, UnequipRequest};
 use crate::systems::hud::{self, Carried, Confirm};
 use crate::systems::input::InputMessages;
@@ -39,6 +41,7 @@ use crate::systems::item::widget::{ItemSlotLook, SLOT, SlotRarity, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemKind, UseItemRequest, card as item_card};
 use crate::systems::mention::Mention;
 use crate::systems::mount::{self, RiderAct};
+use crate::systems::movement;
 use crate::systems::player::session;
 use crate::systems::reach::Engaged;
 use crate::systems::requirement;
@@ -512,7 +515,9 @@ fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> SlotFill
             left,
         };
     }
-    if requirement::first_unmet(world, me, def.requires.iter()).is_some() {
+    if requirement::first_unmet(world, me, def.requires.iter()).is_some()
+        || !category::equips_any(world, me, &def.equipment_categories)
+    {
         return SlotFill::Blocked(Glyph::Lock);
     }
     let bag = world.get::<Inventory>(me);
@@ -1044,6 +1049,20 @@ fn use_skill(world: &mut World, skill: SkillId) -> bool {
                 None => aim_or_cast(world, skill, rank),
             }
         }
+        // A circle round where the caster stands is the same whichever way it is aimed.
+        Targeting::MeleeArea {
+            shape: Shape::Circle { .. },
+            ..
+        } => match movement::position(world, me) {
+            Some(at) => {
+                world.write_message(UseSkillRequest {
+                    skill,
+                    aim: CastAim::Point(at),
+                });
+                true
+            }
+            None => false,
+        },
         Targeting::RangedArea { .. } | Targeting::MeleeArea { .. } | Targeting::Spot { .. } => {
             aim_or_cast(world, skill, rank)
         }

@@ -262,7 +262,7 @@ impl Fixture for LevelVfx {
 }
 
 pub fn check_all(loading: &mut Loading) {
-    check_fixtures_played::<LevelVfx>(loading, &[SiteKind::Actor]);
+    check_fixtures_played::<LevelVfx>(loading, |_| &[SiteKind::Actor]);
     let content = loading.content();
     for (id, def) in loading.rows::<ClassDef>(&content) {
         let mut check = RowCheck::default();

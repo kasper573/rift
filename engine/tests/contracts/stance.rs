@@ -20,7 +20,7 @@ use engine::systems::skill::{self, SkillDef};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{GameSettings, reward, status};
 use serde_json::{Value, json};
-use testkit::{APEX, BODY, CLIP, Game, Map, Sim, path, rig_clips};
+use testkit::{APEX, BODY, CLIP, GEAR, Game, Map, Sim, path, rig_clips};
 
 /// How long each clip of a stance plays, and when it lands.
 const SLASH: (Millis, Millis) = (Millis(600.0), Millis(400.0));
@@ -418,7 +418,6 @@ fn armoury() -> Game {
         .area("field", &Map::open(11, 11), json!([]))
         .hero("field", 5.0, 5.0)
         .npc("brute", 25.0, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .script(
@@ -447,9 +446,9 @@ fn armoury() -> Game {
         .stance("sword_and_shield", 1, "main")
         .stance("greatsword", 2, "main")
         .stance("shield", 1, "off")
-        .item(
+        .equipment(
             "helm",
-            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" } }),
         )
         .slots(BODY, &["head"]);
     let game = skill(game, "strike", json!({ "action": "attack" }));
@@ -467,11 +466,11 @@ fn armoury() -> Game {
             .map(|skill| path("skill", skill))
             .into_iter()
             .collect();
-        game.item(
+        game.equipment(
             name,
             json!({
                 "kind": {
-                    "type": "equipment",
+                    "type": "equipment", "category": path("equipment_category", GEAR),
                     "wear": "held",
                     "stance": path("stance", stance),
                     "grants": grants,
@@ -528,6 +527,7 @@ fn armed(game: Game) -> (Sim, Entity) {
             actor::playing::progress,
         ))
         .add((status::expire, reward::kills))
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -538,7 +538,7 @@ fn armed(game: Game) -> (Sim, Entity) {
             status::aspect::SettleAspects::default(),
             stat::SettleVitals::default(),
         ))
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);

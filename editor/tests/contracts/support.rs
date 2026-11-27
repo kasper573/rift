@@ -112,6 +112,7 @@ pub fn object(name: &str) -> SceneNode {
     SceneNode::Module(ModuleNode::new(AreaModule::Object(ObjectDef {
         name: Some(name.to_owned()),
         title: None,
+        nameplate: false,
         shape: ObjectShape::Point(Pos::new(1.5, 1.5)),
         look: None,
         yaw: Degrees::default(),

@@ -4,7 +4,6 @@
 
 pub mod afloat;
 pub mod backdrop;
-pub mod billboard;
 pub mod body;
 pub mod clouds;
 pub mod cover;
@@ -22,6 +21,7 @@ pub mod outline;
 pub mod paint;
 pub mod plumb;
 pub mod rig_clip;
+pub mod shine;
 pub mod sky;
 pub mod sky_picture;
 pub mod terrain;
@@ -50,6 +50,7 @@ use wgpu::Backend;
 
 use super::Look;
 use super::camera::{self, CameraRig};
+use super::transition::WorldViewSystems;
 use super::video::VideoPreferences;
 
 /// The width of each cascade of the sun's shadow map in texels.
@@ -73,12 +74,14 @@ impl Plugin for WorldScenePlugin {
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::shader::load_shader_library!(app, "clearing.wesl");
         bevy::shader::load_shader_library!(app, "opacity.wesl");
+        bevy::shader::load_shader_library!(app, "shine.wesl");
         bevy::asset::embedded_asset!(app, "material.wesl");
         bevy::asset::embedded_asset!(app, "material_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
         bevy::asset::embedded_asset!(app, "backdrop.wesl");
         bevy::asset::embedded_asset!(app, "afloat.wesl");
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
+        shine::install(app);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             let progress = RenderProgress::default();
             render_app
@@ -145,13 +148,15 @@ impl Plugin for WorldScenePlugin {
                 super::video::show_window.run_if(resource_changed::<VideoPreferences>),
                 lights::cast_shadows,
                 lights::cast_lamp_shadows,
-                lights::shine,
                 mannequin::hold,
                 terrain::stack_pictures,
                 material::forget_dropped,
                 cover::forget_dropped,
             ),
         )
+        // A lamp is lit, placed and faded with what carries it, a vfx or a held light, as the world
+        // is viewed; dimmed before that, a lamp new this frame would shine its brightest once.
+        .add_systems(PostUpdate, lights::shine.after(WorldViewSystems))
         .add_systems(
             PostUpdate,
             lights::turn_cascades_in_place
@@ -160,10 +165,8 @@ impl Plugin for WorldScenePlugin {
         )
         .add_systems(
             PostUpdate,
-            (
-                decal::lay_decals.run_if(resource_exists::<super::GroundHeights>),
-                billboard::face_camera,
-            )
+            decal::lay_decals
+                .run_if(resource_exists::<super::GroundHeights>)
                 .run_if(resource_exists::<CameraRig>)
                 .after(camera::place)
                 .before(bevy::transform::TransformSystems::Propagate),
@@ -172,7 +175,7 @@ impl Plugin for WorldScenePlugin {
             PostUpdate,
             (
                 let_depth_be_read,
-                opacity::thin,
+                shine::tag.in_set(shine::MeshesTagged),
                 afloat::lid_the_floating,
                 plumb::hang
                     .after(BodiesOnJoints)

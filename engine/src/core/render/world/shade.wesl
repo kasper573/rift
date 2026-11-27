@@ -45,9 +45,15 @@ fn caster_way() -> vec3<f32> {
     return way;
 }
 
-// The colour of a pixel of a standard material in the world's light, or glowing with its own
-// colour when its vertices say so; fogged and finished the way every pixel of the world is.
-fn lit_color(in: VertexOutput, is_front: bool) -> vec4<f32> {
+// A pixel of a standard material lit, before the fog and finish every pixel of the world gets.
+struct Lit {
+    input: PbrInput,
+    color: vec4<f32>,
+}
+
+// A pixel of a standard material in the world's light, or glowing with its own colour when its
+// vertices say so, not yet fogged or finished.
+fn lit(in: VertexOutput, is_front: bool) -> Lit {
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = worn(alpha_discard(
         pbr_input.material.flags,
@@ -62,5 +68,19 @@ fn lit_color(in: VertexOutput, is_front: bool) -> vec4<f32> {
     } else {
         color = lighting(pbr_input);
     }
-    return main_pass_post_lighting_processing(pbr_input, color);
+    var out: Lit;
+    out.input = pbr_input;
+    out.color = color;
+    return out;
+}
+
+// A lit pixel fogged and finished the way every pixel of the world is.
+fn finished(pixel: Lit) -> vec4<f32> {
+    return main_pass_post_lighting_processing(pixel.input, pixel.color);
+}
+
+// The colour of a pixel of a standard material in the world's light, or glowing with its own
+// colour when its vertices say so; fogged and finished the way every pixel of the world is.
+fn lit_color(in: VertexOutput, is_front: bool) -> vec4<f32> {
+    return finished(lit(in, is_front));
 }

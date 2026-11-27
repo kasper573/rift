@@ -15,7 +15,7 @@ use engine::systems::actor::{ActorModel, Appearance, ModelDef};
 use engine::systems::item::{Grip, ItemDef, PropAxis, PropHold};
 use serde_json::{Value, json};
 use strum::VariantArray;
-use testkit::{BODY, Declared, Game, part_file, path, png, rig, rig_clips, skin_glb};
+use testkit::{BODY, Declared, GEAR, Game, part_file, path, png, rig, rig_clips, skin_glb};
 
 use crate::support::game;
 
@@ -795,9 +795,9 @@ fn dressed(game: Game) -> Game {
     let game = worn(game, "mail", "chest", json!([path("model_part", "mail")]));
     let game = worn(game, "helm", "head", json!([path("model_part", "helm")]));
     let game = worn(game, "cloak", "back", json!([path("model_part", "cloak")]));
-    game.item(
+    game.equipment(
         "ring",
-        json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "chest" } }),
+        json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "chest" } }),
     )
 }
 
@@ -832,10 +832,10 @@ fn painted(game: Game) -> Game {
 
 /// An item worn in `slot`, laying `parts` over a body of [`built`]'s skeleton.
 fn worn(game: Game, name: &str, slot: &str, parts: Value) -> Game {
-    game.item(
+    game.equipment(
         name,
         json!({ "kind": {
-            "type": "equipment",
+            "type": "equipment", "category": path("equipment_category", GEAR),
             "wear": "worn",
             "slot": slot,
             "looks": [{ "skeleton": path("skeleton", "frame"), "parts": parts }],

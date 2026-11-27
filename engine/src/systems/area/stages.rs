@@ -6,7 +6,7 @@ use super::heavens::SKY_PICTURE;
 use super::rain::{LEANING, OPEN_TOP, SHELTER_DEPTH, SHELTER_STEP, SHELTER_STEPS};
 use super::shown_weather::{LIMBS_PER_TREAD, RIPPLE_WINDOW, TREADS};
 use crate::core::render::world::sky::AIR_WAYS;
-use crate::core::vfx::shader::CLOCK_CHECK;
+use crate::core::vfx::shader::{CLOCK_CHECK, site_prelude};
 use crate::core::vfx::stage::{BLANK_VFX, main_defs, main_pass, prepass_defs, with_defs};
 use crate::core::vfx::{ShaderPass, Stage, StageKind, StageSpec, Stages};
 
@@ -16,6 +16,7 @@ pub const COVER: Stage = Stage::registered(&StageSpec {
     kind: StageKind::Pass,
     header: cover_header,
     check_header: cover_check_header,
+    prelude: site_prelude,
     required: &["vfx", "sway"],
     blank: concat!(
         "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n",
@@ -48,6 +49,7 @@ pub const PROP: Stage = Stage::registered(&StageSpec {
     kind: StageKind::Pass,
     header: prop_header,
     check_header: prop_check_header,
+    prelude: site_prelude,
     required: &["vfx", "sway"],
     blank: concat!(
         "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}\n",
@@ -74,6 +76,7 @@ pub const SKY: Stage = Stage::registered(&StageSpec {
     kind: StageKind::Pass,
     header: sky_header,
     check_header: sky_check_header,
+    prelude: site_prelude,
     required: &["vfx"],
     blank: BLANK_VFX,
     wesl: true,
@@ -104,6 +107,7 @@ pub const RAIN: Stage = Stage::registered(&StageSpec {
     kind: StageKind::Pass,
     header: rain_header,
     check_header: rain_check_header,
+    prelude: site_prelude,
     required: &["vfx"],
     blank: BLANK_VFX,
     wesl: true,

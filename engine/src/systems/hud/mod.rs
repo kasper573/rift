@@ -39,6 +39,7 @@ use crate::systems::item::{ItemId, ItemStack};
 use crate::systems::messages::{self, Messages, messages};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
+use crate::systems::settings::Placed;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
 use crate::systems::{
     area_instance, equipment, item, market, mount, party, quest, social_request, trade,
@@ -310,6 +311,23 @@ static WIDGETS: &[(&str, &dyn HudWidget)] = &[
 struct WindowsDrawn {
     last: HashSet<WindowKey>,
     now: HashSet<WindowKey>,
+    placed_last: Vec<PlacedWindow>,
+    placed_now: Vec<PlacedWindow>,
+}
+
+/// A window the player places, as it was last drawn up: where it stands, the band that moves it
+/// and the corner that resizes it, when it has one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PlacedWindow {
+    pub of: Placed,
+    pub rect: Rect,
+    pub band: Rect,
+    pub corner: Option<Rect>,
+}
+
+/// The windows the player places that were drawn up last frame.
+pub(crate) fn placed_windows(world: &World) -> Vec<PlacedWindow> {
+    world.resource::<WindowsDrawn>().placed_last.clone()
 }
 
 #[derive(Resource, Default)]
@@ -400,6 +418,7 @@ pub(crate) fn sheets_front_first(world: &World) -> Vec<WindowKey> {
 fn forget_drawn(mut drawn: ResMut<WindowsDrawn>) {
     let drawn = &mut *drawn;
     drawn.last = std::mem::take(&mut drawn.now);
+    drawn.placed_last = std::mem::take(&mut drawn.placed_now);
 }
 
 fn draw_hud(world: &mut World) {

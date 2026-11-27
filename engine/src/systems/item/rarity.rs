@@ -10,9 +10,9 @@ use crate::core::content::serial;
 use crate::core::content::{
     ContentFile, ContentId, ImageRef, Loading, NamedContent, Nearby, RowCheck,
 };
-use crate::core::math::{ColorGradient, Rgb, Rgba};
+use crate::core::math::{ColorGradient, Rgb};
 use crate::core::units::Seconds;
-use crate::core::vfx::{ParamKind, ParamValue, SiteKind, VfxId, VfxParams, check_played};
+use crate::core::vfx::{SiteKind, VfxPlay, check_play, check_played};
 
 pub type ItemRarityId = ContentId<ItemRarityDef>;
 
@@ -43,35 +43,16 @@ pub struct DroppedRarity {
     pub named: DropNaming,
     /// Played over and over on the item for as long as it lies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vfx: Option<VfxId>,
+    pub vfx: Option<VfxPlay>,
     /// Played once on the item as it lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub landing_vfx: Option<VfxId>,
+    pub landing_vfx: Option<VfxPlay>,
     /// Heard once as it lands, over the item's own drop sound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sfx: Option<SfxId>,
     /// Whether the item is marked on the minimap, with the rarity's icon.
     #[serde(default, skip_serializing_if = "serial::is_false")]
     pub on_minimap: bool,
-}
-
-/// The colour parameters a vfx a rarity plays may declare, which the rarity fills with the two
-/// colours of its gradient.
-pub const RARITY_FROM: &str = "rarity_from";
-pub const RARITY_TO: &str = "rarity_to";
-
-impl ItemRarityDef {
-    /// What the rarity plays its vfx with: its two colours, for a vfx that asks for them.
-    pub fn vfx_params(&self) -> VfxParams {
-        let color = |rgb: Rgb| {
-            let [red, green, blue] = rgb.0;
-            ParamValue::Color(Rgba::from([red, green, blue, 255]))
-        };
-        VfxParams(vec![
-            (RARITY_FROM.to_owned(), color(self.gradient.from)),
-            (RARITY_TO.to_owned(), color(self.gradient.to)),
-        ])
-    }
 }
 
 /// When a dropped item is named without being asked.
@@ -183,26 +164,15 @@ pub fn check_all(loading: &mut Loading) {
             );
         }
         let played = [
-            ("vfx", rarity.dropped.vfx),
-            ("landing_vfx", rarity.dropped.landing_vfx),
+            ("vfx", &rarity.dropped.vfx),
+            ("landing_vfx", &rarity.dropped.landing_vfx),
         ];
-        for (field, vfx) in played {
-            let Some(vfx) = vfx else {
+        for (field, play) in played {
+            let Some(play) = play else {
                 continue;
             };
-            check_played(loading, vfx, &[SiteKind::Object], id.path(&content));
-            for name in [RARITY_FROM, RARITY_TO] {
-                if let Some(kind) = vfx.get(&content).declares(name)
-                    && kind != ParamKind::Color
-                {
-                    check.error(
-                        format!("/dropped/{field}"),
-                        "wrong type",
-                        format!("{} declares {name} as no color", vfx.path(&content)),
-                        format!("a vfx whose {name} is a color, which the rarity fills"),
-                    );
-                }
-            }
+            check_played(loading, play.vfx, &[SiteKind::Object], id.path(&content));
+            check_play(&content, play, &format!("/dropped/{field}"), &mut check);
         }
         loading.row_errors(id, check);
     }

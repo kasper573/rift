@@ -18,7 +18,7 @@ use crate::core::render::{self, window_point};
 use crate::core::units::Meters;
 use crate::systems::GameSettings;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
-use crate::systems::area::AreaObject;
+use crate::systems::area::{self, AreaObject};
 use crate::systems::attention;
 use crate::systems::combat::Attitude;
 use crate::systems::messages;
@@ -128,7 +128,7 @@ pub fn label_of(world: &World, content: &Content, actor: Entity) -> Option<Plate
         world.get::<PlayedBy>(actor),
         world.get::<Away>(actor).is_some(),
         world.get::<Attitude>(actor),
-        world.get::<AreaObject>(actor).is_some(),
+        world.get::<AreaObject>(actor),
     )
 }
 
@@ -202,7 +202,7 @@ pub fn draw_plates(world: &mut World) {
             Option<&PlayedBy>,
             Has<Away>,
             Option<&Attitude>,
-            Has<AreaObject>,
+            Option<&AreaObject>,
             Option<&RenderPosition>,
             &Position,
             &Hitbox,
@@ -220,6 +220,7 @@ pub fn draw_plates(world: &mut World) {
         )
         .collect();
     labelled.extend(resource::render::plates(world));
+    labelled.extend(area::render::object_plates(world));
     let mut plates: Vec<(f32, Plate)> = labelled
         .into_iter()
         .filter_map(|(actor, label, at, hitbox)| {
@@ -411,11 +412,11 @@ fn label(
     owner: Option<&PlayedBy>,
     away: bool,
     attitude: Option<&Attitude>,
-    object: bool,
+    object: Option<&AreaObject>,
 ) -> Option<PlateLabel> {
-    if object {
+    if let Some(object) = object {
         return Some(PlateLabel {
-            name: None,
+            name: object.title.clone().filter(|_| object.nameplate),
             state: None,
             color: Color32::WHITE,
         });

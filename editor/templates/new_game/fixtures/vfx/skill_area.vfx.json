@@ -1,0 +1,33 @@
+{
+  "name": "Skill area",
+  "params": [
+    {
+      "name": "hostile",
+      "default": false
+    },
+    {
+      "name": "melee",
+      "default": false
+    }
+  ],
+  "layers": [
+    {
+      "type": "ground",
+      "shader": "vfx/shaders/aim.vfx_shader",
+      "params": {
+        "hostile": {
+          "param": "hostile"
+        },
+        "melee": {
+          "param": "melee"
+        }
+      },
+      "blend": "alpha",
+      "size": 1.25,
+      "fit": true,
+      "run": {
+        "duration": 5.9
+      }
+    }
+  ]
+}

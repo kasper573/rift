@@ -214,6 +214,26 @@ fn a_weapon_put_in_the_basic_attack_slot_is_worn_and_lends_its_attack() {
 }
 
 #[test]
+fn a_weapon_worn_mid_fight_carries_the_attack_on_with_its_own() {
+    let (mut sim, player) = yard();
+    let dummy = dummy(&mut sim, player, Offset::new(1.0, 0.0));
+    let full = stat::effective(&sim.world, dummy, StatKind::Health);
+    request(&mut sim, AttackRequest { target: dummy });
+    assert!(sim.run_until(5.0, |world| {
+        stat::effective(world, dummy, StatKind::Health) < full
+    }));
+
+    sim.give(player, "wand", 1);
+    let wand = sim.slot_of(player, "wand");
+    request(&mut sim, UseItemRequest { slot: wand });
+    assert_eq!(basic_attack(&sim, player), Some(sim.id::<SkillDef>("zap")));
+    let mana = stat::current(&sim.world, player, Vital::Mana);
+    assert!(sim.run_until(5.0, |world| {
+        stat::current(world, player, Vital::Mana) > mana
+    }));
+}
+
+#[test]
 fn slotting_what_the_bar_already_holds_moves_it() {
     let (mut sim, player) = yard();
     let potion = HotbarEntry::Item(sim.id::<ItemDef>("potion"));
@@ -387,6 +407,39 @@ fn a_skill_needs_its_cost_in_items_and_in_mana_and_takes_both_on_use() {
 }
 
 #[test]
+fn a_skill_asking_for_equipment_categories_is_used_only_with_one_of_them_equipped() {
+    let (mut sim, player) = yard();
+    request(&mut sim, learn(&[("lunge", 1)]));
+    let dummy = dummy(&mut sim, player, Offset::new(1.0, 0.0));
+    let health = |sim: &Sim| stat::effective(&sim.world, dummy, StatKind::Health);
+    let full = health(&sim);
+    let lunge = sim.id::<SkillDef>("lunge");
+
+    cast(&mut sim, lunge, CastAim::Actor(dummy));
+    sim.run(0.5);
+    assert!(
+        sim.errors(1)
+            .iter()
+            .any(|text| text.contains("blade or spear")),
+        "a sword of another category is not enough, and the refusal names every category that is"
+    );
+    assert_eq!(health(&sim), full);
+
+    sim.give(player, "pike", 1);
+    let pike = sim.id::<ItemDef>("pike");
+    equipment::equip_from_bag(&mut sim.world, player, pike).expect("the pike is worn");
+    cast(&mut sim, lunge, CastAim::Actor(dummy));
+    assert!(
+        sim.run_until(10.0, |world| stat::effective(
+            world,
+            dummy,
+            StatKind::Health
+        ) < full),
+        "any one of the categories will do"
+    );
+}
+
+#[test]
 fn a_single_target_cast_engages_its_target_while_walking_and_lets_go_after() {
     let (mut sim, player) = yard();
     request(&mut sim, learn(&[("throw_knife", 1)]));
@@ -465,6 +518,7 @@ fn yard() -> (Sim, Entity) {
                 },
                 "throw_knife": { "skill": "throw_knife.skill.json", "at": { "x": 160.0, "y": 0.0 } },
                 "sweep": { "skill": "sweep.skill.json", "at": { "x": 240.0, "y": 0.0 } },
+                "lunge": { "skill": "lunge.skill.json", "at": { "x": 320.0, "y": 0.0 } },
             });
         })
         .row(
@@ -519,6 +573,68 @@ fn yard() -> (Sim, Entity) {
             ),
         )
         .script("sweep_strike", "skill", strike_nodes())
+        .row(
+            "skill",
+            "lunge",
+            skill(
+                "Lunge",
+                json!({
+                    "target": { "type": "single", "affects": "enemy" },
+                    "equipment_categories": [path("equipment_category", "blade"), path("equipment_category", "spear")],
+                    "levels": [{ "cost": 1, "stats": {} }],
+                }),
+                "lunge_strike",
+            ),
+        )
+        .script("lunge_strike", "skill", strike_nodes())
+        .equipment_category("blade")
+        .equipment_category("spear")
+        .row(
+            "skill",
+            "zap",
+            skill(
+                "Zap",
+                json!({
+                    "target": { "type": "single", "affects": "enemy" },
+                    "basic_attack": true,
+                    "levels": [{ "cost": 1, "stats": {} }],
+                }),
+                "zap_strike",
+            ),
+        )
+        .script(
+            "zap_strike",
+            "skill",
+            json!({
+                "used": { "type": "on", "event": "used", "next": "swing" },
+                "swing": { "type": "animate", "action": "attack", "wait": "apex", "next": "drain" },
+                "drain": { "type": "heal", "restores": "mana", "by": 1.0, "next": "hit" },
+                "hit": {
+                    "type": "damage",
+                    "who": { "type": "skill_targets" },
+                    "by": { "type": "stat", "stat": "damage" },
+                },
+            }),
+        )
+        .item(
+            "wand",
+            json!({ "kind": {
+                "type": "equipment",
+                "category": path("equipment_category", "blade"),
+                "wear": "held",
+                "stance": path("stance", "sword"),
+                "grants": [path("skill", "zap")],
+            } }),
+        )
+        .item(
+            "pike",
+            json!({ "kind": {
+                "type": "equipment",
+                "category": path("equipment_category", "spear"),
+                "wear": "held",
+                "stance": path("stance", "sword"),
+            } }),
+        )
         .row("skill", "guard", self_skill("Guard", "guard_breathe"))
         .script("guard_breathe", "skill", breathing())
         .row("skill", "second_wind", self_skill("Second Wind", "second_wind_breathe"))
@@ -558,13 +674,12 @@ fn yard() -> (Sim, Entity) {
             }),
         )
         .npc("dummy", 100.0, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("level_up")
         .shader("level_pop")
         .vfx("defeated")
         .sfx("ui_refuse")
-        .sfx("rising_chime")
+        .sfx("level_up")
         .load();
     let mut sim = Sim::new(content);
     sim.serve("yard")
@@ -586,6 +701,7 @@ fn yard() -> (Sim, Entity) {
             actor::playing::progress,
         ))
         .add(reach::mirror_engaged)
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -593,7 +709,7 @@ fn yard() -> (Sim, Entity) {
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);

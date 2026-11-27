@@ -1,15 +1,257 @@
 {
-  "name": "defeated",
+  "name": "Defeated",
   "layers": [
     {
-      "type": "sprite",
-      "sheet": "blank.png",
-      "frame": {
-        "width": 1,
-        "height": 1
+      "type": "surface",
+      "rim": {
+        "keys": [
+          [
+            0.0,
+            {
+              "color": [
+                255,
+                255,
+                255,
+                255
+              ],
+              "brightness": 2.8
+            }
+          ],
+          [
+            1.0,
+            {
+              "color": [
+                0,
+                0,
+                0,
+                255
+              ],
+              "alpha": 0.0
+            }
+          ]
+        ],
+        "ease": "in_out"
       },
-      "frames": 1,
-      "fps": 1.0
+      "glow": {
+        "keys": [
+          [
+            0.0,
+            {
+              "color": [
+                255,
+                255,
+                255,
+                255
+              ],
+              "brightness": 0.14
+            }
+          ],
+          [
+            1.0,
+            {
+              "color": [
+                0,
+                0,
+                0,
+                255
+              ],
+              "alpha": 0.0
+            }
+          ]
+        ],
+        "ease": "in_out"
+      },
+      "run": {
+        "duration": 0.2
+      }
+    },
+    {
+      "type": "particles",
+      "emit": {
+        "type": "burst",
+        "count": 18
+      },
+      "from": {
+        "type": "disc",
+        "radius": 0.5,
+        "rim": true
+      },
+      "velocity": {
+        "type": "out",
+        "speed": [
+          1.0,
+          2.0
+        ],
+        "up": 0.6
+      },
+      "gravity": -0.3,
+      "drag": 4.0,
+      "life": [
+        0.6,
+        1.1
+      ],
+      "size": [
+        [
+          0.0,
+          0.12
+        ],
+        [
+          0.3,
+          0.32
+        ],
+        [
+          1.0,
+          0.42
+        ]
+      ],
+      "size_spread": [
+        0.7,
+        1.3
+      ],
+      "color": [
+        [
+          0.0,
+          {
+            "color": [
+              255,
+              222,
+              179,
+              255
+            ],
+            "brightness": 0.4793,
+            "alpha": 0.0
+          }
+        ],
+        [
+          0.1,
+          {
+            "color": [
+              255,
+              222,
+              179,
+              255
+            ],
+            "brightness": 0.4793,
+            "alpha": 0.7
+          }
+        ],
+        [
+          1.0,
+          {
+            "color": [
+              255,
+              235,
+              205,
+              255
+            ],
+            "brightness": 0.5776,
+            "alpha": 0.0
+          }
+        ]
+      ],
+      "look": {
+        "type": "puff"
+      },
+      "blend": "alpha",
+      "place": {
+        "offset": [
+          0.0,
+          0.05,
+          0.0
+        ]
+      },
+      "run": {
+        "delay": 0.55,
+        "duration": 0.05
+      }
+    },
+    {
+      "type": "particles",
+      "emit": {
+        "type": "burst",
+        "count": 10
+      },
+      "from": {
+        "type": "body",
+        "radius": 0.3,
+        "height": 0.6
+      },
+      "velocity": {
+        "type": "cone",
+        "way": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "spread": 30.0,
+        "speed": [
+          0.4,
+          0.9
+        ]
+      },
+      "life": [
+        0.8,
+        1.4
+      ],
+      "size": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.2,
+          0.08
+        ],
+        [
+          1.0,
+          0.0
+        ]
+      ],
+      "size_spread": [
+        0.7,
+        1.3
+      ],
+      "color": [
+        [
+          0.0,
+          {
+            "color": [
+              224,
+              232,
+              255,
+              255
+            ],
+            "brightness": 3.0
+          }
+        ],
+        [
+          1.0,
+          {
+            "color": [
+              197,
+              216,
+              255,
+              255
+            ],
+            "brightness": 0.6308
+          }
+        ]
+      ],
+      "look": {
+        "type": "glow"
+      },
+      "blend": "add",
+      "place": {
+        "offset": [
+          0.0,
+          0.3,
+          0.0
+        ]
+      },
+      "run": {
+        "delay": 0.6,
+        "duration": 0.05
+      }
     }
   ]
 }

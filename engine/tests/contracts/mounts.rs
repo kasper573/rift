@@ -822,7 +822,6 @@ fn game() -> Game {
         .hero("village", 9.0, 6.0)
         .sword()
         .sfx("ui_refuse")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .npc("dummy", 100.0, json!([]))
@@ -996,6 +995,7 @@ fn server_of(game: Game) -> Server {
                 item::use_item,
                 mount::seat::requests,
             ))
+            .add(skill::hotbar::settle_basic_attack)
             .plan((
                 status::aspect::SettleAspects::default(),
                 status::aspect::TickAspects::default(),
@@ -1014,7 +1014,6 @@ fn server_of(game: Game) -> Server {
                 resource::gathering,
                 resource::work,
                 combat::defeats,
-                skill::hotbar::settle_basic_attack,
             ))
             .plan(actor::SettleActions::default());
         engine::systems::spawn_scripts(&mut sim.world);

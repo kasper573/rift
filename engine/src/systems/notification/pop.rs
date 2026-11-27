@@ -23,7 +23,7 @@ use crate::core::units::{Meters, Seconds};
 use crate::core::vfx::render::{
     Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
 };
-use crate::core::vfx::uniform::ParamsUniform;
+use crate::core::vfx::uniform::{ParamsUniform, ShaderValue};
 use crate::core::vfx::{Stage, VfxParams, VfxShaderDef, VfxShaderId};
 use crate::systems::GameSettings;
 use crate::systems::actor::Hitbox;
@@ -241,7 +241,9 @@ fn burst(world: &mut World) {
             },
         );
         let content = world.resource::<Content>().clone();
-        let packed = ParamsUniform::pack(pop.shader.get(&content), |name| pop.params.get(name));
+        let packed = ParamsUniform::pack(pop.shader.get(&content), |name| {
+            pop.params.get(name).map(ShaderValue::from)
+        });
         let run = Run {
             progress: t / lasts.0,
             time: age,

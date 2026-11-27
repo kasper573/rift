@@ -1,7 +1,10 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{BasicAttack, Hotbar, HotbarEntry, HotbarSlot, ItemId, Learned, SkillId, SkillKind};
+use super::{
+    BasicAttack, CastAim, CastWay, Hotbar, HotbarEntry, HotbarSlot, ItemId, Learned, SkillId,
+    SkillKind,
+};
 use crate::core::content::Content;
 use crate::core::text::LineText;
 use crate::systems::GameSettings;
@@ -13,6 +16,7 @@ use crate::systems::messages;
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::RequestNeeds;
 use crate::systems::player::player_requests;
+use crate::systems::reach::{self, ReachAct};
 use schemars::JsonSchema;
 
 #[derive(JsonSchema, Message, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -86,7 +90,7 @@ pub fn assign(
 }
 
 /// Puts a known, flagged skill in the basic attack slot, or a weapon's attack once it is worn, or
-/// empties the slot.
+/// empties the slot. An attack under way goes on with what the slot then holds.
 pub fn assign_basic_attack(
     world: &mut World,
     player: Entity,
@@ -127,6 +131,7 @@ pub fn assign_basic_attack(
             .to_owned()
     })?;
     slot.0 = skill;
+    follow_attack(world, player);
     Ok(())
 }
 
@@ -141,7 +146,8 @@ pub fn holds_item(world: &World, actor: Entity, item: ItemId) -> bool {
 type Stirred = Or<(Changed<Equipment>, Changed<Learned>, Added<BasicAttack>)>;
 
 /// Empties the basic attack slot when its skill stops being known, and fills an empty slot with
-/// the first flagged skill the worn equipment grants, so swapping weapons swaps the attack.
+/// the first flagged skill the worn equipment grants, so swapping weapons swaps the attack. An
+/// attack under way goes on with whatever the slot then holds, and ends when it holds nothing.
 pub fn settle_basic_attack(
     world: &mut World,
     changed: &mut QueryState<Entity, (With<BasicAttack>, Stirred)>,
@@ -161,6 +167,7 @@ pub fn settle_basic_attack(
             .get::<BasicAttack>(player)
             .is_some_and(|slot| slot.0.is_none());
         if !empty {
+            follow_attack(world, player);
             continue;
         }
         let worn = equipment::worn(world, player);
@@ -170,6 +177,7 @@ pub fn settle_basic_attack(
         if let Some(mut slot) = world.get_mut::<BasicAttack>(player) {
             slot.0 = Some(skill);
         }
+        follow_attack(world, player);
         let def = skill.get(&content);
         notification::notify(
             world,
@@ -183,5 +191,39 @@ pub fn settle_basic_attack(
             )
             .icon(def.icon.clone()),
         );
+    }
+}
+
+/// Keeps `player`'s attack under way on the skill their basic attack slot holds.
+fn follow_attack(world: &mut World, player: Entity) {
+    let Some(intent) = reach::current(world, player) else {
+        return;
+    };
+    let (
+        ReachAct::Cast {
+            skill,
+            way: CastWay::Repeated,
+        },
+        Some(target),
+    ) = (intent.act, intent.target.actor())
+    else {
+        return;
+    };
+    match world.get::<BasicAttack>(player).and_then(|slot| slot.0) {
+        Some(slotted) if slotted == skill => {}
+        Some(slotted) => {
+            if super::cast(
+                world,
+                player,
+                slotted,
+                CastAim::Actor(target),
+                CastWay::Repeated,
+            )
+            .is_err()
+            {
+                reach::forget(world, player);
+            }
+        }
+        None => reach::forget(world, player),
     }
 }

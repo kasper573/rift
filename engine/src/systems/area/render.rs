@@ -11,6 +11,8 @@ use super::shown_weather::ShownWeather;
 use super::{AreaId, AreaObject, AreaTag, PropDef, PropId};
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
+use crate::core::geometry::Capsule;
+use crate::core::math::Pos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::sky::{Daylight, SkyAir, SkyLights};
@@ -20,9 +22,11 @@ use crate::core::stage::{SkyLampLight, StageSkyLight};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::render::SiteExtent;
 use crate::core::vfx::standing::StandingVfx;
+use crate::systems::actor::Hitbox;
+use crate::systems::actor::plate::{self, PlateLabel};
 use crate::systems::area::rain::RainHeard;
 use crate::systems::area::sky::{self, Sky};
-use crate::systems::movement::RenderPosition;
+use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
 use crate::systems::water::ripples::RippleSpot;
@@ -253,6 +257,30 @@ fn light_cards(world: &mut World, area: &super::Area, daylight: Daylight) {
     if changed {
         told.0 = light;
     }
+}
+
+/// The plate over every object of the shown world that wears its title on one, hung over the top
+/// of the prop it looks like.
+pub fn object_plates(world: &mut World) -> Vec<(Entity, PlateLabel, Pos<Meters>, Hitbox)> {
+    let content = world.resource::<Content>().clone();
+    let plated: Vec<(Entity, Pos<Meters>, Option<PropId>)> = world
+        .query::<(Entity, &AreaObject, &Position, Option<&ShowsProp>)>()
+        .iter(world)
+        .filter(|(_, object, ..)| object.nameplate)
+        .map(|(entity, _, at, look)| (entity, at.pos, look.map(|look| look.0)))
+        .collect();
+    plated
+        .into_iter()
+        .filter_map(|(entity, at, look)| {
+            let label = plate::label_of(world, &content, entity)?;
+            let flat = Capsule {
+                radius: Meters(0.0),
+                height: Meters(0.0),
+            };
+            let body = look.map_or(flat, |look| look.get(&content).body(&content));
+            Some((entity, label, at, Hitbox(body)))
+        })
+        .collect()
 }
 
 /// Gives every object of the shown world a place on the ground, the extent of its shape and the

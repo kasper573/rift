@@ -6,7 +6,7 @@ use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::area::prop::Footprint;
 use engine::systems::area::{AreaModuleKind, Pictured, TerrainDef};
 use engine::systems::movement::Bodies;
-use engine::systems::resource::{self, ResourceDef};
+use engine::systems::resource::ResourceDef;
 use engine::systems::{GameSettings, messages};
 use std::collections::{BTreeMap, HashMap};
 
@@ -194,7 +194,7 @@ fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     let def = id.get(&content);
-    let body = resource::body(&content, id);
+    let body = def.look.get(&content).body(&content);
     let reach = Bodies::of(&content).map(|bodies| Meters(body.radius.0 + bodies.spacing().0));
     let view_key = format!("preview:{}/{key}", ResourceDef::TABLE);
     let mut state = editor

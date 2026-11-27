@@ -1853,18 +1853,28 @@ fn check_placed(content: &Content, id: AreaId, modules: &[Flattened], check: &mu
     for placed in modules {
         let site = |field: &str| module_pointer(placed, field);
         match &placed.module {
-            AreaModule::Object(ObjectDef {
-                name: Some(name), ..
-            }) => {
-                if let Some((_, first)) = names.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+            AreaModule::Object(object) => {
+                if let Some(name) = &object.name {
+                    if let Some((_, first)) =
+                        names.iter().find(|(n, _)| n.eq_ignore_ascii_case(name))
+                    {
+                        check.error(
+                            site(""),
+                            "duplicate name",
+                            format!("{name}, from {} and {}", first, placed.describe(content)),
+                            "object names unique in the area ignoring case",
+                        );
+                    } else {
+                        names.push((name.clone(), placed.describe(content)));
+                    }
+                }
+                if object.nameplate && object.title.is_none() {
                     check.error(
-                        site(""),
-                        "duplicate name",
-                        format!("{name}, from {} and {}", first, placed.describe(content)),
-                        "object names unique in the area ignoring case",
+                        site("nameplate"),
+                        "nameplate without a title",
+                        placed.describe(content),
+                        "a title for the plate to show",
                     );
-                } else {
-                    names.push((name.clone(), placed.describe(content)));
                 }
             }
             AreaModule::Resident(resident) => {

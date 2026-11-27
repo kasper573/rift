@@ -21,8 +21,8 @@ struct Site {
 
 const HALF_PI: f32 = 1.5707964;
 
-// Every world site is drawn on a quad with a margin on each side, site_margin() wide; the screen,
-// text and sprites as they are.
+// Every world site is drawn on a quad with a margin on each side, site_margin() wide; text as it
+// is.
 // `site_uv` runs 0..1 over the site itself and past that range on the margin. The margin is for
 // what the effect sheds, drifting clear of the body and dissolving: smoke, sparks, mist, the
 // outer wash of a glow. The effect proper keeps to the body the data describes.
@@ -49,13 +49,13 @@ fn bands(level: f32, steps: f32) -> f32 {
     return floor(clamp(level, 0.0, 0.9999) * steps + 1.0) / steps * step(0.001, level);
 }
 
-// Every site has a body: an area's footprint, the corridor along a path, the image of a sprite or
-// of the screen. The `site_*` functions below read it the same way whatever the site is, so one
+// Every site has a body: an area's footprint, the corridor along a path, the image of a line of
+// text. The `site_*` functions below read it the same way whatever the site is, so one
 // shader draws right on all of them.
 const PATH_HALF_WIDTH: f32 = 0.5;
 
 // Where a site uv lies in metres from the site's point, along its facing then across it. An area's
-// point is where it was aimed, a path's its first point, a sprite's or the screen's its centre.
+// point is where it was aimed, a path's its first point, a line of text's its centre.
 // site.facing is in screen terms (y up) where uv, like metres, runs y down.
 fn site_local(uv: vec2<f32>) -> vec2<f32> {
     let offset = (uv - site.origin) * site.metres;
@@ -65,8 +65,8 @@ fn site_local(uv: vec2<f32>) -> vec2<f32> {
 }
 
 // The way the vfx travels, as a unit vector in local metres: from whoever dealt a blow toward the
-// sprite it lands on, so a stroke struck on an actor comes from the right side; along an area's
-// facing it is (1, 0). site.heading is in screen terms like site.facing.
+// one it lands on, so a stroke struck on an actor comes from the right side; along an area's facing
+// it is (1, 0). site.heading is in screen terms like site.facing.
 fn site_heading() -> vec2<f32> {
     let turn = site.heading - site.facing;
     return vec2<f32>(cos(turn), -sin(turn));
@@ -133,7 +133,7 @@ fn site_distance(uv: vec2<f32>) -> f32 {
 }
 
 // How far out a site uv lies from the site's point: 0 there, 1 at the far rim of the body and past
-// 1 beyond it. That rim is a circle's or a sprite's edge all round, a rectangle's edge, a cone's
+// 1 beyond it. That rim is a circle's or an image's edge all round, a rectangle's edge, a cone's
 // arc, a line's far end or a path's end, so a front at a growing reach spreads out of the point,
 // fans down a cone and runs the length of a line or path. The sides of a cone, a line or a path
 // are not counted: a shader clips to them with site_distance where it matters.
@@ -163,7 +163,7 @@ fn site_reach(uv: vec2<f32>) -> f32 {
 }
 
 // How much of the site's body a site uv covers, 1 inside and 0 out, softened over a tenth of a
-// metre at the edge: a sprite's or the screen's is its image's own alpha.
+// metre at the edge: an image's is its own alpha.
 fn site_cover(uv: vec2<f32>) -> f32 {
     if site_has_image() {
         return sample(uv).a;
@@ -180,13 +180,12 @@ fn sheet(at: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(1.0, 1.0, 1.0, site_cover(at) * 0.6);
 }
 
-// Whether the site is an image: a sprite's sheet, the screen, a line of text drawn white in its
-// glyphs' coverage, or the lit surface of the thing a surface shader runs in.
+// Whether the site is an image: a line of text drawn white in its glyphs' coverage.
 fn site_has_image() -> bool {
     return site.image != 0u;
 }
 
-// `effect` drawn over `image`: what a shader returns to show through to the sprite it is on.
+// `effect` drawn over `image`: what a shader returns to show through to the image it is on.
 fn over(effect: vec4<f32>, image: vec4<f32>) -> vec4<f32> {
     let a = effect.a + image.a * (1.0 - effect.a);
     let rgb = (effect.rgb * effect.a + image.rgb * image.a * (1.0 - effect.a)) / max(a, 1e-4);

@@ -20,6 +20,7 @@ use crate::core::script::Scripts;
 use crate::core::script::Value;
 use crate::core::script::ValueType;
 use crate::core::script::Vocabulary;
+use crate::systems::equipment::category::EquipmentCategoryId;
 use crate::systems::skill::SKILL_RUNNER;
 use std::borrow::Cow;
 
@@ -1225,6 +1226,7 @@ impl ItemDef {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ItemKind {
     Equipment {
+        category: EquipmentCategoryId,
         #[serde(flatten)]
         wear: Wear,
         #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -21,6 +21,7 @@ use engine::core::render::transition::WorldViewSystems;
 use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
+use engine::core::render::world::shine::{HeldPiece, Holds};
 use engine::core::render::{
     Animator, CameraPreferences, CameraRig, GroundHeights, Orbit, Shot, capsule_hit,
     facing_rotation, ground_pos, world_point,
@@ -31,7 +32,7 @@ use engine::core::units::{
     Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
 };
 use engine::systems::actor::held::{HandsAtWork, Held, ToolInHand};
-use engine::systems::actor::render::{self, HeldProp, Puppet, RenderActor};
+use engine::systems::actor::render::{self, Puppet, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{
@@ -49,7 +50,7 @@ use engine::systems::player::session::MyCharacter;
 use engine::systems::screen::ClientScreen;
 use engine::systems::view::CameraFollowPlugin;
 use serde_json::json;
-use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, RUN_PACE, WALK_PACE, path, png};
+use testkit::{APEX, BODY, CLIP, GEAR, Game, HEIGHTS, Map, RUN_PACE, WALK_PACE, path, png};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -712,9 +713,9 @@ fn a_held_prop_hangs_from_its_hand_and_leaves_with_it() {
             "bow",
             json!({ "name": "bow", "hands": 2, "hand": "main", "prop": "last" }),
         )
-        .item(
+        .equipment(
             "bow",
-            json!({ "kind": { "type": "equipment", "wear": "held", "stance": path("stance", "bow") } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": path("stance", "bow") } }),
         );
     let folder = tempfile::tempdir().expect("a scratch folder");
     let (mut app, content) = viewer(game, folder.path());
@@ -813,6 +814,12 @@ fn a_rider_lays_what_they_hold_on_their_mount_and_keeps_the_tool_they_work_with_
         vec![(gear, sword_look)],
         "the rider's sword lies in the boat's gear place"
     );
+    assert_eq!(
+        held_by(&mut app, rider),
+        vec![sword_look],
+        "the sword on the boat is still what the rider holds, and none of the boat's own"
+    );
+    assert!(held_by(&mut app, steed).is_empty());
     let at_work = ToolInHand {
         prop: rod,
         grip: Grip::default(),
@@ -830,6 +837,16 @@ fn a_rider_lays_what_they_hold_on_their_mount_and_keeps_the_tool_they_work_with_
         hung_as(&mut app),
         vec![(gear, sword_look)],
         "the work done, the sword lies in the boat again"
+    );
+    let fishing_rod =
+        testkit::Declared::declared::<ItemDef>(&content, "fishing_rod").expect("a fishing rod");
+    app.world_mut().entity_mut(rider).insert(Held {
+        hands: BTreeMap::from([(HandIndex::MAIN, fishing_rod)]),
+    });
+    assert_eq!(
+        hung_as(&mut app),
+        vec![(hand, fishing_rod.get(&content).look)],
+        "a rod from the tool slot, shown while the rider fishes with it, stays in their hand"
     );
 }
 
@@ -937,10 +954,10 @@ fn a_body_holding_an_item_closes_its_hand_as_the_clasp_poses_it_and_carries_it_a
         .hero("field", 2.0, 2.0)
         .sword()
         .stance("wand", 1, "main")
-        .item(
+        .equipment(
             "wand",
             json!({ "kind": {
-                "type": "equipment",
+                "type": "equipment", "category": path("equipment_category", GEAR),
                 "wear": "held",
                 "stance": path("stance", "wand"),
             } }),
@@ -1088,10 +1105,10 @@ fn a_prop_strapped_to_the_arm_turns_with_the_arm_and_the_hand_holding_it_as_its_
             .area("field", &Map::open(5, 5), json!([]))
             .hero("field", 2.0, 2.0)
             .sword()
-            .item(
+            .equipment(
                 "shield",
                 json!({ "kind": {
-                    "type": "equipment",
+                    "type": "equipment", "category": path("equipment_category", GEAR),
                     "wear": "held",
                     "stance": path("stance", "sword"),
                     "grip": { "hold": "strapped" },
@@ -1230,6 +1247,28 @@ fn boat_game() -> Game {
         .hero("field", 2.0, 2.0)
         .sword()
         .prop("rod", json!({ "type": "none" }))
+        .cursor("cast")
+        .sfx("reel")
+        .row(
+            "tool_type",
+            "line",
+            json!({
+                "name": "Line",
+                "work": "sit",
+                "cursor": path("cursor", "cast"),
+                "sfx": { "swing": path("sfx", "reel"), "ran_out": path("sfx", "reel") },
+            }),
+        )
+        .equipment(
+            "fishing_rod",
+            json!({ "kind": {
+                "type": "equipment",
+                "category": path("equipment_category", testkit::GEAR),
+                "wear": "tool",
+                "tool": path("tool_type", "line"),
+                "stance": path("stance", "sword"),
+            } }),
+        )
         .model("boat", 1.0, json!([]))
         .row(
             "mount",
@@ -1855,7 +1894,7 @@ fn joint(app: &mut App, name: &str) -> Option<Entity> {
 fn prop_under(app: &mut App, above: Entity) -> Option<(Mat4, Mat4)> {
     let world = app.world_mut();
     let (in_hand, mut at) = world
-        .query_filtered::<(&Transform, &ChildOf), With<HeldProp>>()
+        .query_filtered::<(&Transform, &ChildOf), With<HeldPiece>>()
         .iter(world)
         .next()
         .map(|(placed, hand)| (placed.to_matrix(), hand.parent()))?;
@@ -1876,10 +1915,24 @@ fn joint_of(app: &mut App, body: Entity, name: &str) -> Option<Entity> {
 fn shown_props(app: &mut App) -> Vec<(Entity, PropId)> {
     let world = app.world_mut();
     world
-        .query_filtered::<(&ChildOf, &ShowsProp), With<HeldProp>>()
+        .query_filtered::<(&ChildOf, &ShowsProp), With<HeldPiece>>()
         .iter(world)
         .map(|(joint, shown)| (joint.parent(), shown.0))
         .collect()
+}
+
+/// The props `holder` holds, wherever each hangs.
+fn held_by(app: &mut App, holder: Entity) -> Vec<PropId> {
+    let world = app.world();
+    world
+        .get::<Holds>(holder)
+        .map(|holds| {
+            holds
+                .iter()
+                .filter_map(|piece| world.get::<ShowsProp>(piece).map(|shown| shown.0))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Every prop hanging from a hand, by the joint it hangs from and the item it shows.
@@ -1887,7 +1940,7 @@ fn props(app: &mut App) -> Vec<(Entity, engine::systems::item::ItemId)> {
     let world = app.world_mut();
     let mut held = Vec::new();
     for (prop, parent) in world
-        .query_filtered::<(Entity, &ChildOf), With<HeldProp>>()
+        .query_filtered::<(Entity, &ChildOf), With<HeldPiece>>()
         .iter(world)
     {
         held.push((prop, parent.parent()));

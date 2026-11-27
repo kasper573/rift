@@ -14,7 +14,11 @@
     "list_pair": "{first} and {second}",
     "list_start": "{first}, {rest}",
     "list_middle": "{first}, {rest}",
-    "list_end": "{first} and {last}"
+    "list_end": "{first} and {last}",
+    "either_pair": "{first} or {second}",
+    "either_start": "{first}, {rest}",
+    "either_middle": "{first}, {rest}",
+    "either_end": "{first} or {last}"
   },
   "time": {
     "seconds": "{count, number} s",
@@ -824,6 +828,7 @@
     "skill_stat": "{skill} {stat, select, power {Power} cooldown {Cooldown} range {Range} radius {Radius} duration {Duration} mana {Mana} other {}}",
     "offered": "{item} offered",
     "worn": "{item} worn",
+    "worn_any": "{categories} worn",
     "on_quest": "On {quest}",
     "quest_cooling": "{quest} done for today",
     "task_done": "{quest} · {task}",

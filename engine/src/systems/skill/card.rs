@@ -22,6 +22,7 @@ use crate::systems::messages::{self, Direction, Messages};
 use crate::core::script::condition;
 use crate::core::text::LineText;
 use crate::systems::equipment::Equipment;
+use crate::systems::equipment::category;
 use crate::systems::hud::{self, WindowKey};
 use crate::systems::item::card::{self as item_card, CardLook};
 use crate::systems::item::{Inventory, ItemId, ItemStack};
@@ -401,6 +402,10 @@ fn use_lines(
             (what, met)
         })
         .collect();
+    if !def.equipment_categories.is_empty() {
+        let met = me.is_some_and(|me| category::equips_any(world, me, &def.equipment_categories));
+        lines.push((category::wanted(content, &def.equipment_categories), met));
+    }
     let mana = def.mana_at(rank.max(Rank::FIRST));
     if mana > 0.0 {
         let held = me.map_or(0.0, |me| stat::current(world, me, Vital::Mana));

@@ -39,7 +39,6 @@ fn field() -> (Sim, Entity) {
         .area("field", &Map::open(5, 5), json!([]))
         .hero("field", 2.0, 2.0)
         .npc("brute", 25.0, json!([]))
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();

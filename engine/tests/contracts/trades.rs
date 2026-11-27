@@ -433,7 +433,6 @@ fn game() -> Game {
         .area("forest", &Map::open(9, 9), json!([]))
         .hero("village", 2.0, 4.0)
         .sfx("ui_refuse")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .item(

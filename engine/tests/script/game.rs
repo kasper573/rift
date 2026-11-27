@@ -24,7 +24,7 @@ use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, skill};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, path};
+use testkit::{GEAR, Game, Map, Sim, path};
 
 use crate::{compile, flow};
 
@@ -188,7 +188,7 @@ pub fn game() -> Game {
         )
         .item("gold", json!({ "name": "Gold", "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 1000 }] }))
         .stance("shield", 1, "off")
-        .item("pass", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "shield.stance.json" } }))
+        .equipment("pass", json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "held", "stance": "shield.stance.json" } }))
         .item(
             "map",
             json!({
@@ -269,7 +269,6 @@ pub fn game() -> Game {
         .sfx("ui_pick")
         .sfx("ui_refuse")
         .sfx("ui_close")
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("healed")
         .shader("heal_pop")

@@ -1,0 +1,15 @@
+{
+  "name": "Skill reach",
+  "layers": [
+    {
+      "type": "ground",
+      "shader": "vfx/shaders/reach.vfx_shader",
+      "blend": "add",
+      "size": 1.05,
+      "fit": true,
+      "run": {
+        "duration": 5.9
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ use engine::systems::item::{self, Inventory, ItemDef, ItemId};
 use engine::systems::stat::{self, StatKind, Stats, Vital};
 use engine::systems::status;
 use serde_json::json;
-use testkit::{BODY, Game, Map, Sim};
+use testkit::{BODY, GEAR, Game, Map, Sim, path};
 
 #[test]
 fn a_lowered_maximum_pulls_health_and_mana_down_to_it() {
@@ -151,20 +151,20 @@ fn wardrobe() -> (Sim, Entity) {
         .hero("room", 2.0, 2.0)
         .slots(BODY, &["head"])
         .sfx("ui_refuse")
-        .item(
+        .equipment(
             "rock",
             json!({
-                "kind": { "type": "equipment", "wear": "worn", "slot": "head" },
+                "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" },
                 "modules": [{ "type": "script", "script": "rock_lower.script.json" }],
             }),
         )
-        .item(
+        .equipment(
             "hat",
-            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "head" } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" } }),
         )
-        .item(
+        .equipment(
             "boots",
-            json!({ "kind": { "type": "equipment", "wear": "worn", "slot": "feet" } }),
+            json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "feet" } }),
         )
         .item(
             "potion",

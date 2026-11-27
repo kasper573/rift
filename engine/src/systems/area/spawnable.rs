@@ -85,6 +85,7 @@ pub fn spawn(world: &mut World, spawnable: SpawnableId, at: Pos<Meters>) -> Opti
         index: None,
         name: None,
         title: Some(def.title.clone()),
+        nameplate: false,
         shape: ObjectShape::Point(at),
         look: Some(def.look.path(&content).to_owned()),
         yaw: Degrees(0.0),

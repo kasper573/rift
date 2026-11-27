@@ -191,7 +191,6 @@ fn a_player_crossing_into_another_area_stays_immortal() {
         .area("field", &Map::open(7, 7), json!([]))
         .area("meadow", &Map::open(7, 7), json!([]))
         .hero("field", 3.0, 3.0)
-        .vfx("damage_taken")
         .shader("damage_pop")
         .load();
     let mut field = Sim::new(content.clone());
@@ -223,7 +222,6 @@ fn fight() -> (Sim, Entity) {
             hunter["basic_attack"] = json!(path("skill", "strike"));
             hunter["stats"]["range"] = json!(2.5);
         })
-        .vfx("damage_taken")
         .shader("damage_pop")
         .vfx("defeated")
         .load();
@@ -231,6 +229,7 @@ fn fight() -> (Sim, Entity) {
     sim.serve("field")
         .accept::<AttackRequest>()
         .add((combat::request, actor::playing::progress))
+        .add(skill::hotbar::settle_basic_attack)
         .plan(skill::casting::StepCasts::default())
         .plan((
             engine::systems::roster::ListRoster::default(),
@@ -239,7 +238,7 @@ fn fight() -> (Sim, Entity) {
             movement::AdvanceWalks::default(),
         ))
         .plan(stat::SettleVitals::default())
-        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .add(combat::defeats)
         .plan(actor::SettleActions::default());
     engine::systems::spawn_scripts(&mut sim.world);
     let player = sim.join(1);
