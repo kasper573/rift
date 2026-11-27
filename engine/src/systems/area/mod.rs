@@ -980,9 +980,13 @@ pub struct Area {
     pub scatter_clearing: ScatterClearing,
     /// What its props that snap to the ground rest on.
     pub snap_surfaces: SnapSurfaces,
+    /// Every prop `props` stands, once each and in order.
+    pub prop_kinds: Arc<[PropId]>,
     /// The modules that stand the area's props, placed and scattered, in the order `props`
     /// expands them: what any chunk's props are worked out from alone.
     pub prop_sources: Vec<AreaModule>,
+    /// Which of `prop_sources` reach each chunk of the area's ground.
+    pub sources_by_chunk: Arc<scenery::expand::SourcesByChunk>,
     /// Where each of `prop_sources` was written: the path of the node in the area's scene that is
     /// the module or brings it.
     pub prop_origins: Vec<String>,
@@ -1740,6 +1744,13 @@ fn build_area(
             !prop.effects.is_empty() || prop.ripples.is_some()
         })
         .collect();
+    let mut prop_kinds: Vec<PropId> = props.iter().map(|placed| placed.prop).collect();
+    prop_kinds.sort_unstable();
+    prop_kinds.dedup();
+    let sources_by_chunk = Arc::new(scenery::expand::SourcesByChunk::of(
+        &prop_sources,
+        ground.size.meters().bounds(),
+    ));
     let area = Area {
         size: ground.size.meters(),
         max_slope: ground.max_slope,
@@ -1778,7 +1789,9 @@ fn build_area(
         stood,
         scatter_clearing,
         snap_surfaces,
+        prop_kinds: prop_kinds.into(),
         prop_sources,
+        sources_by_chunk,
         prop_origins,
         lights,
         acting,

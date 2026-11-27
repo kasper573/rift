@@ -21,7 +21,7 @@ use super::covers::CopyPiece;
 use super::expand::{self, ChunkSpan, PaintChunk, SceneryChunk, SourcesByChunk};
 use super::plan::{AHEAD, Detail, KEEP_SHARE, OFF_MIDDLE, Plan, Seen, Sight};
 use super::props;
-use super::{Shortfall, Shortfalls, Streaming, distance_to, ground_loaded, props_of};
+use super::{Shortfall, Shortfalls, Streaming, distance_to, ground_loaded};
 use crate::core::assets;
 use crate::core::content::load::FileHashes;
 use crate::core::content::{Content, ImageRef};
@@ -59,7 +59,7 @@ pub(super) struct Instances {
     /// Every prop the area stands, placed or scattered: the far field keeps those of them whose
     /// models are wide enough to show, and the canopy shows the rest from above, so every one's
     /// model is wanted until its size and its look from above are known.
-    area_props: Vec<PropId>,
+    area_props: Arc<[PropId]>,
     /// Which of the area's prop sources reach each chunk, for the lots worked out off the frame.
     filed: Arc<SourcesByChunk>,
     /// How big each area prop's model is, as far as the models have been prepared.
@@ -102,8 +102,8 @@ impl Instances {
         Instances {
             arena: InstanceArena::default(),
             copies,
-            area_props: props_of(area),
-            filed: Arc::new(SourcesByChunk::of(&area.prop_sources, area.size.bounds())),
+            area_props: area.prop_kinds.clone(),
+            filed: area.sources_by_chunk.clone(),
             sizes: HashMap::default(),
             looks: HashMap::default(),
             impostor_keys: HashMap::default(),
@@ -161,18 +161,18 @@ impl Instances {
     }
 
     /// Takes in the area's prop sources changed, the props they stood standing until what
-    /// replaces them does: the lots of props on the stretches of `ground` in `touched` stand
+    /// replaces them does: the lots of props on the stretches of its ground in `touched` stand
     /// anew, and every other lot keeps standing, each of its props standing for the source
     /// `moved` tells, by its place before.
     pub(super) fn sources_changed(
         &mut self,
         area: &Area,
-        ground: Rect<Meters>,
         touched: &[Rect<Meters>],
         moved: impl Fn(u32) -> Option<u32>,
     ) {
-        self.area_props = props_of(area);
-        self.filed = Arc::new(SourcesByChunk::of(&area.prop_sources, ground));
+        let ground = area.size.bounds();
+        self.area_props = area.prop_kinds.clone();
+        self.filed = area.sources_by_chunk.clone();
         let props = |lot: &Lot| matches!(lot, Lot::Props(_) | Lot::Far(..));
         self.expanding.retain(|_, (lot, _)| !props(lot));
         self.expanded.retain(|(_, lot, _)| !props(lot));
@@ -796,7 +796,7 @@ fn farthest_from(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
 fn sizes(world: &mut World, streaming: &mut Streaming) -> Option<Extents> {
     let looks_wanted = world.contains_resource::<ImpostorStore>();
     let area_props = streaming.instances.area_props.clone();
-    for prop in area_props {
+    for prop in area_props.iter().copied() {
         let instances = &streaming.instances;
         let known = instances.sizes.contains_key(&prop)
             && (!looks_wanted || instances.looks.contains_key(&prop));

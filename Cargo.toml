@@ -90,11 +90,16 @@ openidconnect = "4"
 
 [profile.release]
 lto = "thin"
-codegen-units = 1
+codegen-units = 16
 incremental = false
 
+# Built for iterating: the workspace's own crates at the least optimization that keeps the game
+# within its bench floors, and line tables alone, so a panic still names its line; the
+# dependencies, built once, optimized and with no debug info, which is most of what a link reads.
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
+debug = false

@@ -41,7 +41,7 @@ use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
 
 use super::heavens::{self, Heavens, RainMaterial, SkyMaterial, SkyWeather};
 use super::lighting::DomeLook;
-use super::prop::{PropDef, PropId, PropPlacement};
+use super::prop::{PropDef, PropPlacement};
 use super::rain::RainField;
 use super::shown_weather::{ShownWeather, ShownWeatherPlugin};
 use super::terrain::PieceShape;
@@ -384,7 +384,7 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
             .collect();
         streaming
             .instances
-            .sources_changed(area, area.size.bounds(), &touched, |source| {
+            .sources_changed(area, &touched, |source| {
                 let source = source as usize;
                 if source < first {
                     Some(source as u32)
@@ -433,7 +433,7 @@ pub struct Sources(Vec<(String, FileHash)>);
 impl Sources {
     pub fn of(content: &Content, area: &Area) -> Sources {
         let mut files: BTreeSet<&str> = BTreeSet::new();
-        let mut props = props_of(area);
+        let mut props = area.prop_kinds.to_vec();
         for terrain in &area.terrains {
             files.insert(terrain.path(content));
             let Some(cover) = &terrain.get(content).cover else {
@@ -512,14 +512,6 @@ fn file_bound(file: &str) -> String {
     format!("{file}0")
 }
 
-/// The props standing in the area, each once.
-pub(super) fn props_of(area: &Area) -> Vec<PropId> {
-    let mut props: Vec<PropId> = area.props.iter().map(|placed| placed.prop).collect();
-    props.sort_unstable();
-    props.dedup();
-    props
-}
-
 /// Whether every shader `area`'s covers and props draw with is compiled, so the scenery can stand
 /// whole: the shaders follow the content into the world a frame behind it.
 pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
@@ -543,7 +535,7 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
     covers
         && sky
         && rain
-        && props_of(area).iter().all(|prop| {
+        && area.prop_kinds.iter().all(|prop| {
             prop.get(content).materials.values().all(|material| {
                 material
                     .get(content)

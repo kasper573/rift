@@ -646,6 +646,11 @@ mod values {
         fn blank(scale: Self::Scale) -> Self;
         fn decode(bytes: Vec<u8>) -> Vec<Self>;
         fn encode(values: &[Self]) -> Vec<u8>;
+        /// Which indices `values` name, for values that are indices: worked out where a tile is
+        /// read, off the frame, so no frame that first asks waits on every one of its values.
+        fn names(_values: &[Self]) -> Option<super::PaintNames> {
+            None
+        }
     }
 
     impl Value for u16 {
@@ -687,6 +692,10 @@ mod values {
 
         fn encode(values: &[u8]) -> Vec<u8> {
             values.to_vec()
+        }
+
+        fn names(values: &[u8]) -> Option<super::PaintNames> {
+            Some(super::PaintNames::of(values))
         }
     }
 
@@ -1549,13 +1558,13 @@ impl TileGrid {
 
     fn decode_tile<T: Value>(&self, at: TileAt, bytes: &[u8]) -> Result<Tile<T>, ContentProblem> {
         let (columns, rows) = self.tile_dims(at);
-        let pixels = decode_png(bytes, columns, rows, T::CHANNELS)?;
+        let values = T::decode(decode_png(bytes, columns, rows, T::CHANNELS)?);
         Ok(Tile {
             columns,
             rows,
-            values: T::decode(pixels),
+            names: T::names(&values).map_or_else(OnceLock::new, OnceLock::from),
+            values,
             peaks: OnceLock::new(),
-            names: OnceLock::new(),
             revision: next_revision(),
             encoded: Some(Arc::from(bytes)),
         })
