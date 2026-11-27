@@ -8,6 +8,7 @@ use super::super::{
     LayerPlace, ParamValue, PathStop, VfxAnchor, VfxDef, VfxInstance, VfxPart, VfxSite,
 };
 use crate::core::geometry::Shape;
+use crate::core::render::world::body::Body;
 use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::opacity::Opacity;
 use crate::core::render::world::shine::HeldPiece;
@@ -429,8 +430,12 @@ fn middle(world: &World, actor: Entity) -> Option<Vec3> {
     Some(thing.feet + Vec3::Y * thing.height / 2.0)
 }
 
-/// The node named `name` among those of `thing` and of whatever hangs from it.
+/// The node named `name` among those of `thing` and of whatever hangs from it: of a body, the
+/// joint of its rig, which is posed, before any node of that name its skins carry at rest.
 fn named_node(world: &World, thing: Entity, name: &str) -> Option<Entity> {
+    if let Some(joint) = world.get::<Body>(thing).and_then(|body| body.joint(name)) {
+        return Some(joint);
+    }
     let mut pending: Vec<Entity> = world.get::<Children>(thing)?.iter().collect();
     while let Some(node) = pending.pop() {
         if world

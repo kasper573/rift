@@ -32,6 +32,7 @@ use bevy_hanabi::HanabiPlugin;
 
 use super::{CompiledVfxShaders, VfxShaderId, standing};
 use crate::core::content::Content;
+use crate::core::render::camera::CameraShake;
 use crate::core::render::sample::FrameWork;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::BodiesPosed;
@@ -70,6 +71,7 @@ impl Plugin for VfxRenderPlugin {
         app.add_plugins((VfxMaterialsPlugin, HanabiPlugin))
             .init_resource::<play::ParticleAssets>()
             .init_resource::<play::Shining>()
+            .init_resource::<CameraShake>()
             .add_observer(play::forget)
             .add_systems(
                 Update,
