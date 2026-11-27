@@ -86,13 +86,34 @@ fn settings_file(folder: &Path, config: &ClientConfig) {
 }
 
 #[test]
-fn a_binary_takes_its_settings_from_the_file_beside_it_or_its_environment_alone() {
+fn a_binary_takes_its_settings_from_the_file_beside_it_its_environment_over_it_and_paths_from_its_folder()
+ {
     let folder = tempfile::tempdir().expect("a folder");
     settings_file(folder.path(), &client_config());
     let settings = LaunchSettings::read(folder.path(), []);
     assert_eq!(
         settings.get::<ClientConfig>(CLIENT_ENV_PREFIX),
         client_config()
+    );
+    assert_eq!(
+        settings.path(Path::new("content")),
+        folder.path().join("content"),
+        "a relative path is relative to the binary's folder"
+    );
+    let elsewhere = tempfile::tempdir().expect("another folder");
+    assert_eq!(settings.path(elsewhere.path()), elsewhere.path());
+
+    let overridden = LaunchSettings::read(
+        folder.path(),
+        [(format!("{CLIENT_ENV_PREFIX}AUTH"), "fake".to_owned())],
+    );
+    assert_eq!(
+        overridden.get::<ClientConfig>(CLIENT_ENV_PREFIX),
+        ClientConfig {
+            auth: AuthMode::Fake,
+            ..client_config()
+        },
+        "the environment overrides the file"
     );
 
     let without_a_file = tempfile::tempdir().expect("a folder");
@@ -104,33 +125,4 @@ fn a_binary_takes_its_settings_from_the_file_beside_it_or_its_environment_alone(
         settings.get::<ClientConfig>(CLIENT_ENV_PREFIX),
         client_config()
     );
-}
-
-#[test]
-fn the_environment_overrides_the_settings_file() {
-    let folder = tempfile::tempdir().expect("a folder");
-    settings_file(folder.path(), &client_config());
-    let settings = LaunchSettings::read(
-        folder.path(),
-        [(format!("{CLIENT_ENV_PREFIX}AUTH"), "fake".to_owned())],
-    );
-    assert_eq!(
-        settings.get::<ClientConfig>(CLIENT_ENV_PREFIX),
-        ClientConfig {
-            auth: AuthMode::Fake,
-            ..client_config()
-        }
-    );
-}
-
-#[test]
-fn a_relative_path_is_relative_to_the_binarys_folder() {
-    let folder = tempfile::tempdir().expect("a folder");
-    let settings = LaunchSettings::read(folder.path(), []);
-    assert_eq!(
-        settings.path(Path::new("content")),
-        folder.path().join("content")
-    );
-    let elsewhere = tempfile::tempdir().expect("another folder");
-    assert_eq!(settings.path(elsewhere.path()), elsewhere.path());
 }

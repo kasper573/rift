@@ -13,11 +13,10 @@ pub struct FolderWatcher {
     _watcher: Option<RecommendedWatcher>,
     events: ChannelInbox<notify::Result<notify::Event>>,
     pending: Vec<PathBuf>,
+    quiet: Duration,
     quiet_since: Option<Instant>,
     lost: bool,
 }
-
-pub const QUIET: Duration = Duration::from_millis(500);
 
 /// What changed in a watched folder, once it has kept quiet a moment.
 pub enum FolderChange {
@@ -28,7 +27,9 @@ pub enum FolderChange {
 }
 
 impl FolderWatcher {
-    pub fn on(root: &Path) -> FolderWatcher {
+    /// Watches `root`, telling what changed once it has kept `quiet` that long, so a burst of
+    /// writes is one change.
+    pub fn on(root: &Path, quiet: Duration) -> FolderWatcher {
         let (sender, events) = channel();
         let watcher = notify::recommended_watcher(move |event| {
             let _ = sender.send(event);
@@ -43,6 +44,7 @@ impl FolderWatcher {
             _watcher: watcher,
             events: ChannelInbox::new(events),
             pending: Vec::new(),
+            quiet,
             quiet_since: None,
             lost: false,
         }
@@ -59,7 +61,7 @@ impl FolderWatcher {
             self.quiet_since = Some(Instant::now());
         }
         let quiet = self.quiet_since?;
-        if quiet.elapsed() < QUIET {
+        if quiet.elapsed() < self.quiet {
             return None;
         }
         self.quiet_since = None;

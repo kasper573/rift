@@ -31,6 +31,8 @@ use engine::systems::area::{self, AreaDef};
 use serde_json::json;
 use testkit::{Game, Map, box_glb, path};
 
+use crate::gpu::Gpu;
+
 const FIELD: f32 = 32.0;
 const SIDE: u32 = 256;
 const FOV: Degrees = Degrees(50.0);
@@ -74,12 +76,12 @@ const LOWER: UVec2 = UVec2::new(CELL_PIXELS / 2, 5 * CELL_PIXELS / 8);
 /// from there instead of baking them again.
 #[test]
 fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
-    let _gpu = crate::gpu::exclusive();
+    let gpu = crate::gpu::exclusive();
     let folder = tempfile::tempdir().expect("a scratch folder");
     let profile = tempfile::tempdir().expect("a scratch profile");
     field().write_to(folder.path());
 
-    let (mut baked, image) = stand(field(), folder.path(), profile.path(), FAR);
+    let (mut baked, image) = stand(&gpu, field(), folder.path(), profile.path(), FAR);
     let atlases = atlases_under(profile.path());
     assert_eq!(
         atlases.len(),
@@ -147,7 +149,7 @@ fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
         rows(&blue)
     );
 
-    let (mut again, image) = stand(field(), folder.path(), profile.path(), NEAR);
+    let (mut again, image) = stand(&gpu, field(), folder.path(), profile.path(), NEAR);
     let atlases = atlases_under(profile.path());
     assert_eq!(atlases.len(), 2, "the same atlases: {atlases:?}");
     let near = picture(&mut again, &image);
@@ -187,7 +189,7 @@ fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
 /// A field with the two blocks on it, standing before a camera `eye` off the field's middle
 /// through the whole render app on `profile` until nothing is readying: the app, kept so what it
 /// holds can be asked, and the camera's picture.
-fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<Image>) {
+fn stand(gpu: &Gpu, game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<Image>) {
     let content = game.load();
     let id = content
         .by_path::<AreaDef>(&path("area", "field"))
@@ -204,7 +206,8 @@ fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<I
                 exit_condition: ExitCondition::DontExit,
                 ..default()
             })
-            .disable::<bevy::winit::WinitPlugin>(),
+            .disable::<bevy::winit::WinitPlugin>()
+            .set(gpu.renderer()),
     )
     .insert_resource(Rng::new(testkit::drawn_seed()))
     .insert_resource(Handoff::NextFrame)

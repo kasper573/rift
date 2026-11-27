@@ -48,42 +48,15 @@ fn wild_monsters_never_set_foot_in_a_safe_zone() {
 }
 
 #[test]
-fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone() {
+fn a_wild_monster_gives_up_a_player_who_reaches_a_safe_zone_and_a_summoned_one_follows_them_in() {
     let mut sim = border(json!([]));
     let player = sim.join(1);
     sim.equip(player, "sword");
     movement::relocate(&mut sim.world, player, DOORSTEP);
-    let hunter = spawn(&mut sim, "hunter", LAIR);
-    sim.world.entity_mut(hunter).insert(Wild);
-    assert!(hunted_by(&mut sim, hunter, player));
-
-    let conn = sim.conn(1);
-    sim.send(
-        conn,
-        MoveRequest {
-            pos: REFUGE,
-            seq: MoveSeq(1),
-        },
-    );
-    let mut trespassed = false;
-    sim.run_until(10.0, |world| {
-        trespassed |= on_safe_ground(world, hunter);
-        false
-    });
-
-    assert!(on_safe_ground(&sim.world, player));
-    assert!(!trespassed);
-    assert_eq!(reach::attacking(&sim.world, hunter), None);
-}
-
-#[test]
-fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
-    let mut sim = border(json!([]));
-    let player = sim.join(1);
-    sim.equip(player, "sword");
-    movement::relocate(&mut sim.world, player, DOORSTEP);
+    let wild = spawn(&mut sim, "hunter", LAIR);
+    sim.world.entity_mut(wild).insert(Wild);
     let hunter = sim.id::<NpcDef>("hunter");
-    let guard = npc::summon(
+    let summoned = npc::summon(
         &mut sim.world,
         hunter,
         1,
@@ -95,7 +68,8 @@ fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
     .first()
     .copied()
     .expect("summoned");
-    assert!(hunted_by(&mut sim, guard, player));
+    assert!(hunted_by(&mut sim, wild, player));
+    assert!(hunted_by(&mut sim, summoned, player));
 
     let conn = sim.conn(1);
     sim.send(
@@ -105,9 +79,18 @@ fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
             seq: MoveSeq(1),
         },
     );
+    let (mut trespassed, mut followed) = (false, false);
+    sim.run_until(10.0, |world| {
+        trespassed |= on_safe_ground(world, wild);
+        followed |= on_safe_ground(world, summoned);
+        false
+    });
 
-    assert!(sim.run_until(10.0, |world| on_safe_ground(world, guard)));
-    assert_eq!(reach::attacking(&sim.world, guard), Some(player));
+    assert!(on_safe_ground(&sim.world, player));
+    assert!(!trespassed, "the wild one never sets foot inside");
+    assert_eq!(reach::attacking(&sim.world, wild), None, "and gives up");
+    assert!(followed, "the summoned one follows in");
+    assert_eq!(reach::attacking(&sim.world, summoned), Some(player));
 }
 
 #[test]

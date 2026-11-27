@@ -5,7 +5,7 @@ use std::mem;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use ui::egui;
 use ui::words;
 
@@ -128,6 +128,9 @@ const FRAME_RATE_MARGIN: f32 = 8.0;
 /// The most bytes of content an edit's check decodes on the frame: one decoding more is applied
 /// at once, and the load after it vouches for it.
 const CHECKED_ON_THE_FRAME: usize = 256 << 10;
+/// How long the game folder keeps quiet before the editor takes in what changed on disk, so a
+/// tool writing many files is taken in once.
+const FOLDER_QUIET: Duration = Duration::from_millis(500);
 
 /// A line per frame, each a [`FrameRecord`] in JSON, written once the frame's sample has settled.
 #[derive(Resource)]
@@ -420,7 +423,7 @@ impl Editor {
         Editor {
             user,
             settings,
-            shapes: Arc::new(SchemaShapes::load()),
+            shapes: SchemaShapes::load(),
             project: None,
             lock: None,
             watcher: None,
@@ -504,7 +507,7 @@ impl Editor {
         self.run_busy(
             format!("Opening {}", shell::start::game_name(&folder)),
             move |progress| {
-                let watcher = FolderWatcher::on(&root);
+                let watcher = FolderWatcher::on(&root, FOLDER_QUIET);
                 (Project::open(&root, shapes, progress), watcher)
             },
             move |editor, (opened, watcher)| editor.opened(&folder, opened, watcher, recovered),

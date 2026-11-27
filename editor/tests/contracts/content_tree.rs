@@ -9,11 +9,11 @@ use editor::shell::dialogs;
 use editor::tabs::EditorTab;
 use editor::tree::TreeRow;
 use editor::user::{TreeView, UserFolder};
-use editor::views::area::pins;
+use editor::views::area::{nodes, pins};
 use engine::core::content::Fixture;
 use engine::core::content::{FIXTURES_DIR, parent_of, table_of};
-use engine::systems::area::AreaDef;
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
+use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::npc::NpcDef;
 use engine::systems::registry;
 use serde_json::json;
@@ -64,9 +64,24 @@ fn view(editor: &mut Editor) -> &mut TreeView {
 }
 
 #[test]
-fn a_folder_lists_its_folders_first_then_its_files_each_by_name() {
+fn the_tree_lists_folders_then_files_by_name_a_bundle_as_one_file_counted_once() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(camp(), &scratch);
+
+    let listed = names(&content_tree::listed(&editor, ""));
+
+    assert!(listed.contains(&"orc.npc".to_owned()), "{listed:?}");
+    assert!(listed.contains(&"pew.blueprint".to_owned()), "{listed:?}");
+    assert!(listed.contains(&"README.md".to_owned()), "{listed:?}");
+    assert!(
+        listed.iter().all(|name| !name.contains("scene")),
+        "{listed:?}"
+    );
+    assert!(
+        content_tree::listed(&editor, &path("blueprint", "pew")).is_empty(),
+        "a bundle's parts never show"
+    );
+
     rows::new_folder(&mut editor, "").expect("a folder");
     rows::rename(&mut editor, "folder", "zeta").expect("renamed");
     editor.finish_busy();
@@ -92,32 +107,7 @@ fn a_folder_lists_its_folders_first_then_its_files_each_by_name() {
     sorted.sort();
     assert_eq!(files, sorted);
     assert!(listed[folders.len()..].iter().all(|(_, row)| !row.folder));
-}
 
-#[test]
-fn a_content_file_reads_as_its_name_and_type_and_a_bundle_as_one_file() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let editor = support::open(camp(), &scratch);
-
-    let listed = names(&content_tree::listed(&editor, ""));
-
-    assert!(listed.contains(&"orc.npc".to_owned()), "{listed:?}");
-    assert!(listed.contains(&"pew.blueprint".to_owned()), "{listed:?}");
-    assert!(listed.contains(&"README.md".to_owned()), "{listed:?}");
-    assert!(
-        listed.iter().all(|name| !name.contains("scene")),
-        "{listed:?}"
-    );
-    assert!(
-        content_tree::listed(&editor, &path("blueprint", "pew")).is_empty(),
-        "a bundle's parts never show"
-    );
-}
-
-#[test]
-fn a_folder_counts_its_files_at_any_depth_a_bundle_counting_as_one() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp(), &scratch);
     let kit = rows::new_folder(&mut editor, "").expect("a folder");
     rows::move_into(&mut editor, &[path("blueprint", "pew")], &kit).expect("moved");
     let inner = rows::new_folder(&mut editor, &kit).expect("a folder");
@@ -136,7 +126,7 @@ fn a_folder_counts_its_files_at_any_depth_a_bundle_counting_as_one() {
 }
 
 #[test]
-fn searching_lists_the_hits_under_the_folders_above_them_in_grey() {
+fn searching_or_showing_some_kinds_narrows_the_tree_to_them() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(camp(), &scratch);
     editor.content_tree.search = "cap".to_owned();
@@ -148,12 +138,8 @@ fn searching_lists_the_hits_under_the_folders_above_them_in_grey() {
     assert!(top[0].1.dim);
     assert_eq!(names(&inside), ["cap.png"]);
     assert!(!inside[0].1.dim);
-}
 
-#[test]
-fn show_narrows_the_tree_to_the_kinds_ticked_and_can_drop_folders_left_empty() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp(), &scratch);
+    editor.content_tree.search.clear();
     let kinds: Vec<String> = editor
         .shapes
         .order
@@ -185,41 +171,47 @@ fn show_narrows_the_tree_to_the_kinds_ticked_and_can_drop_folders_left_empty() {
 fn a_missing_fixture_shows_where_it_belongs_and_making_it_writes_its_default() {
     let mut tables: Vec<&str> = registry().fixture_paths().filter_map(table_of).collect();
     tables.dedup();
-    for table in tables {
-        let fixture = registry()
-            .fixture_paths()
-            .find(|path| table_of(path) == Some(table))
-            .expect("a fixture")
-            .to_owned();
-        let game = camp();
-        let inside = format!("{fixture}/");
-        let gone: Vec<String> = game
-            .folder()
-            .files
-            .keys()
-            .filter(|file| **file == fixture || file.starts_with(&inside))
-            .cloned()
-            .collect();
-        let game = gone.iter().fold(game, |game, file| game.remove(file));
-        let scratch = tempfile::tempdir().expect("scratch");
-        let mut editor = support::open_as_is(game, &scratch);
+    let fixtures: Vec<String> = tables
+        .into_iter()
+        .map(|table| {
+            registry()
+                .fixture_paths()
+                .find(|path| table_of(path) == Some(table))
+                .expect("a fixture")
+                .to_owned()
+        })
+        .collect();
+    let game = camp();
+    let gone: Vec<String> = game
+        .folder()
+        .files
+        .keys()
+        .filter(|file| {
+            fixtures
+                .iter()
+                .any(|fixture| *file == fixture || file.starts_with(&format!("{fixture}/")))
+        })
+        .cloned()
+        .collect();
+    let game = gone.iter().fold(game, |game, file| game.remove(file));
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut editor = support::open_as_is(game, &scratch);
 
-        let listed = content_tree::listed(&editor, parent_of(&fixture));
+    for fixture in &fixtures {
+        let listed = content_tree::listed(&editor, parent_of(fixture));
         let (_, row) = listed
             .iter()
-            .find(|(path, _)| *path == fixture)
+            .find(|(path, _)| path == fixture)
             .expect("a placeholder where the fixture belongs");
         assert!(row.dim, "{fixture}");
         assert!(row.problem.is_some(), "{fixture}");
-
-        rows::make_fixture(&mut editor, &fixture).expect("made");
-        assert!(
-            support::settled(&mut editor)
-                .files
-                .index()
-                .is_content(&fixture),
-            "{fixture}"
-        );
+    }
+    for fixture in &fixtures {
+        rows::make_fixture(&mut editor, fixture).expect("made");
+    }
+    let project = support::settled(&mut editor);
+    for fixture in &fixtures {
+        assert!(project.files.index().is_content(fixture), "{fixture}");
     }
 }
 
@@ -335,7 +327,7 @@ fn a_duplicated_area_gets_its_own_card_beside_the_original_on_the_world_map() {
 }
 
 #[test]
-fn moving_a_file_into_a_folder_rewrites_what_names_it_in_one_undo_step() {
+fn moving_or_renaming_a_file_rewrites_what_names_it_in_one_undo_step() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(camp(), &scratch);
     let orc = path("npc", "orc");
@@ -347,23 +339,66 @@ fn moving_a_file_into_a_folder_rewrites_what_names_it_in_one_undo_step() {
     editor.undo();
     assert_eq!(support::residents(&mut editor), std::slice::from_ref(&orc));
     assert!(support::files(&mut editor).contains(&orc));
+
+    rows::rename(&mut editor, &path("prop", "plank"), "board").expect("renamed");
+    support::settled(&mut editor);
+    let reader = editor.reader().expect("a reader");
+    let props: Vec<Option<&str>> =
+        nodes::modules(&support::scene(&editor, &path("blueprint", "pew")))
+            .iter()
+            .filter_map(|module| match module.module() {
+                AreaModule::Prop(prop) => Some(reader.path_of(prop.prop)),
+                _ => None,
+            })
+            .collect();
+    assert_eq!(
+        props,
+        [Some(path("prop", "board").as_str())],
+        "renaming a prop rewrites the blueprint scenes that name it"
+    );
 }
 
 #[test]
-fn deleting_a_file_can_point_what_named_it_at_another_in_one_step() {
+fn deleting_a_file_can_point_what_named_it_at_another_in_one_step_where_the_game_takes_it() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp().npc("goblin", 8.0, json!([])), &scratch);
+    let crier = path("npc", "crier");
+    let game = camp()
+        .npc("goblin", 8.0, json!([]))
+        .babble("crier")
+        .npc(
+            "crier",
+            8.0,
+            json!([{ "type": "voice", "babble": path("babble", "crier") }]),
+        )
+        .row(
+            "notification",
+            "call",
+            json!({ "kind": { "type": "speech", "speaker": crier }, "text": ["Hear ye!"] }),
+        );
+    let mut editor = support::open(game, &scratch);
     let (orc, goblin) = (path("npc", "orc"), path("npc", "goblin"));
-
-    rows::delete_dialog(&mut editor, vec![orc.clone()]);
-    let Some(ModalDialog::Delete(mut dialog)) = editor.dialogs.pop() else {
-        panic!("a delete dialog");
+    let repointed = |editor: &mut Editor, gone: &str, to: &str| {
+        rows::delete_dialog(editor, vec![gone.to_owned()]);
+        let Some(ModalDialog::Delete(mut dialog)) = editor.dialogs.pop() else {
+            panic!("a delete dialog");
+        };
+        for group in &mut dialog.groups {
+            group.decision = UsageDecision::Repoint(to.to_owned());
+        }
+        support::delete(editor, dialog)
     };
-    for group in &mut dialog.groups {
-        group.decision = UsageDecision::Repoint(goblin.clone());
-    }
-    support::delete(&mut editor, dialog).expect("deleted");
 
+    let refused = repointed(&mut editor, &crier, &orc);
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|reason| reason.contains("voice")),
+        "a speaker with no voice is refused: {refused:?}"
+    );
+    assert!(support::files(&mut editor).contains(&crier));
+    assert!(editor.project.as_ref().expect("a project").loads());
+
+    repointed(&mut editor, &orc, &goblin).expect("deleted");
     assert!(!support::files(&mut editor).contains(&orc));
     assert_eq!(support::residents(&mut editor), [goblin]);
     support::settled(&mut editor);
@@ -449,50 +484,13 @@ fn deleting_refuses_to_take_entries_from_a_file_changed_on_disk_since_it_was_rea
 }
 
 #[test]
-fn deleting_a_file_refuses_to_point_what_named_it_where_the_game_would_refuse_it() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let crier = path("npc", "crier");
-    let game = camp()
-        .babble("crier")
-        .npc(
-            "crier",
-            8.0,
-            json!([{ "type": "voice", "babble": path("babble", "crier") }]),
-        )
-        .row(
-            "notification",
-            "call",
-            json!({ "kind": { "type": "speech", "speaker": crier }, "text": ["Hear ye!"] }),
-        );
-    let mut editor = support::open(game, &scratch);
-
-    rows::delete_dialog(&mut editor, vec![crier.clone()]);
-    let Some(ModalDialog::Delete(mut dialog)) = editor.dialogs.pop() else {
-        panic!("a delete dialog");
-    };
-    for group in &mut dialog.groups {
-        group.decision = UsageDecision::Repoint(path("npc", "orc"));
-    }
-    let refused = support::delete(&mut editor, dialog);
-
-    assert!(
-        refused
-            .as_ref()
-            .is_err_and(|reason| reason.contains("voice")),
-        "{refused:?}"
-    );
-    assert!(support::files(&mut editor).contains(&crier));
-    assert!(editor.project.as_ref().expect("a project").loads());
-}
-
-#[test]
 fn new_of_any_type_is_typed_for_walked_to_by_arrows_and_made_by_enter() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut editor = support::open(camp(), &scratch);
     for (typed, downs, made) in [
         ("test_char", 0, "test_character"),
         ("babble", 1, "babble_bank"),
     ] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let mut editor = support::open(camp(), &scratch);
         let before = support::files(&mut editor).paths_of(made).len();
         let mut frames = Frames::new(egui::vec2(1600.0, 1000.0));
         content_tree::new_of_type_dialog(&mut editor, String::new());
@@ -517,22 +515,6 @@ fn new_of_any_type_is_typed_for_walked_to_by_arrows_and_made_by_enter() {
         );
         assert!(editor.dialogs.is_empty(), "{typed}");
     }
-}
-
-#[test]
-fn a_fixture_never_moves() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp(), &scratch);
-    let fixture = registry()
-        .fixture_paths()
-        .next()
-        .expect("a fixture")
-        .to_owned();
-
-    let moved = rows::move_into(&mut editor, std::slice::from_ref(&fixture), "icons");
-
-    assert!(moved.is_err_and(|refusal| refusal.contains("stays")));
-    assert!(support::files(&mut editor).index().is_content(&fixture));
 }
 
 #[test]
@@ -776,14 +758,15 @@ fn a_row_named_in_its_edit_box_shows_the_box_then_scrolls_to_wherever_its_new_na
 
 #[test]
 fn a_tree_that_shrinks_shows_its_first_rows_however_far_down_it_was_scrolled() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = (0..10).fold(camp(), |game, n| {
+        game.asset(&format!("icons/f{n}/cap.png"), png(16, 16))
+    });
+    let mut editor = support::open(game, &scratch);
+    let rows_closed = content_tree::listed(&editor, "").len() as f32;
+    let height = (rows_closed + 12.0) * 31.0;
     for search in [true, false] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let game = (0..10).fold(camp(), |game, n| {
-            game.asset(&format!("icons/f{n}/cap.png"), png(16, 16))
-        });
-        let mut editor = support::open(game, &scratch);
-        let rows_closed = content_tree::listed(&editor, "").len() as f32;
-        let height = (rows_closed + 12.0) * 31.0;
+        editor.content_tree.search.clear();
         view(&mut editor).open.insert("icons".to_owned());
         let mut frames = Frames::new(egui::vec2(TREE_WIDTH, height));
         frames.run(Vec::new(), |ui| content_tree::show(&mut editor, ui));
@@ -842,21 +825,7 @@ const TREE_WIDTH: f32 = 320.0;
 const ROW_END: f32 = TREE_WIDTH - 8.0;
 
 #[test]
-fn a_card_on_the_world_map_is_called_by_its_file_name_not_its_path() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp(), &scratch);
-    let mut frames = Frames::new(egui::vec2(1200.0, 900.0));
-    let mut drawn = Drawn::default();
-    for _ in 0..3 {
-        drawn = frames.run(Vec::new(), |ui| editor::views::world::show(&mut editor, ui));
-    }
-
-    assert!(drawn.rect(support::AREA).is_some(), "{drawn:?}");
-    assert!(drawn.rect(&area()).is_none(), "{drawn:?}");
-}
-
-#[test]
-fn an_arrival_into_an_area_is_called_by_the_file_and_object_leading_there_not_their_paths() {
+fn an_arrival_or_a_card_on_the_world_map_is_called_by_its_files_name_not_its_path() {
     let scratch = tempfile::tempdir().expect("scratch");
     let warp = json!({
         "runs_on": "object",
@@ -879,13 +848,22 @@ fn an_arrival_into_an_area_is_called_by_the_file_and_object_leading_there_not_th
         support::game()
             .row("script", "warp", warp)
             .area("hall", &testkit::Map::open(4, 4), door);
-    let editor = support::open(game, &scratch);
+    let mut editor = support::open(game, &scratch);
 
     let names: Vec<(String, Option<String>)> = pins::arrivals(&editor, &area())
         .iter()
         .filter(|arrival| !arrival.initial_spawn)
         .map(|arrival| arrival.names(&editor))
         .collect();
-
     assert_eq!(names, [("hall".to_owned(), Some("door".to_owned()))]);
+
+    let mut frames = Frames::new(egui::vec2(1200.0, 900.0));
+    let mut drawn = Drawn::default();
+    for _ in 0..3 {
+        drawn = frames.run(Vec::new(), |ui| editor::views::world::show(&mut editor, ui));
+    }
+    assert!(
+        drawn.rect("hall").is_some() && drawn.rect(&path("area", "hall")).is_none(),
+        "a card on the world map is called by its file name: {drawn:?}"
+    );
 }

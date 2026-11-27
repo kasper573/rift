@@ -89,18 +89,20 @@ pub struct ContentRegistry {
     named: Vec<(&'static str, ShownNameOf)>,
     list_kinds: Vec<ListKind>,
     json_parts: Vec<JsonPart>,
-    // Hashing every shape takes a while, and a registry is read far more often than it changes.
+    // Working out every shape takes a while, and a registry is read far more often than it
+    // changes.
+    shapes: OnceLock<ContentShapes>,
     version: OnceLock<ContentVersion>,
 }
 
 /// The shape of every table and of the game's settings, for tools that edit content.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ContentShapes {
     pub tables: Vec<TableShape>,
     pub settings: Option<serde_json::Value>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct TableShape {
     pub table: String,
     /// Whether each file is a bundle of its config and parts.
@@ -472,7 +474,14 @@ impl ContentRegistry {
             .clone()
     }
 
-    pub fn shapes(&self, settings: &SchemaSettings) -> ContentShapes {
+    /// The shape of every table and of the game's settings, as JSON Schema 2020-12 with every
+    /// subschema written out where it is used.
+    pub fn shapes(&self) -> &ContentShapes {
+        self.shapes
+            .get_or_init(|| self.shapes_in(&shape_settings()))
+    }
+
+    fn shapes_in(&self, settings: &SchemaSettings) -> ContentShapes {
         let tables = self
             .rows
             .iter()
@@ -1934,6 +1943,12 @@ pub(super) trait TableLoader: Send + Sync {
     fn write_rows(&self, content: &Content, writer: &mut FileWriter) -> io::Result<()>;
     fn write_row(&self, row: &dyn Any, path: &str, writer: &mut FileWriter) -> io::Result<()>;
     fn fresh_row(&self, near: &Nearby) -> Result<AnyRow, String>;
+}
+
+/// The schema settings every shape is worked out in, shared with the tools that work out shapes
+/// of their own, so theirs read as the registry's do.
+pub fn shape_settings() -> SchemaSettings {
+    SchemaSettings::draft2020_12().with(|settings| settings.inline_subschemas = true)
 }
 
 fn shape_of<T: JsonSchema>(settings: &SchemaSettings) -> serde_json::Value {

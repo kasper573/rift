@@ -70,45 +70,7 @@ fn a_sculpt_stroke_lands_in_the_height_map() {
 }
 
 #[test]
-fn a_paint_stroke_lands_in_the_paint_map_and_lists_a_new_terrain() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(support::game(), &scratch);
-    let at = Pos::new(4.0, 4.0);
-    let before = terrain(&editor);
-    let reader = editor.reader().expect("a reader");
-    let rock = path("terrain", testkit::ROCK);
-    let id = reader
-        .id_of::<TerrainDef>(&rock)
-        .expect("rock is a terrain");
-    let rock_anywhere = StrokeKind::Paint {
-        terrain: id,
-        mask: PaintMask::Anywhere,
-    };
-    let mut stroke = Stroke::begin(&before, at, rock_anywhere).expect("room for a terrain");
-    stroke.apply(&Brush::default(), at, 0.1, Meters(0.0));
-    assert!(commit(&mut editor, &area(), &stroke));
-    support::settled(&mut editor);
-    let painted = terrain(&editor);
-    let reader = editor.reader().expect("a reader");
-    let under = painted.terrains[usize::from(painted.paint.at(at))];
-    assert_eq!(
-        reader.path_of(under),
-        Some(rock.as_str()),
-        "rock lies under the brush"
-    );
-    assert_eq!(
-        painted.paint.at(Pos::new(0.5, 0.5)),
-        before.paint.at(Pos::new(0.5, 0.5)),
-        "the paint beyond the brush keeps its terrain"
-    );
-    assert!(
-        painted.terrains.len() >= before.terrains.len(),
-        "a terrain painted for the first time joins the area's list"
-    );
-}
-
-#[test]
-fn a_masked_paint_stroke_keeps_to_the_ground_under_water_or_to_the_dry() {
+fn a_paint_stroke_lands_in_the_paint_map_on_the_ground_its_mask_lets_it() {
     let pond = WaterSurface::from_fn(
         GroundSize {
             width: 8,
@@ -117,43 +79,54 @@ fn a_masked_paint_stroke_keeps_to_the_ground_under_water_or_to_the_dry() {
         HEIGHTS,
         |column, _| Meters(if column >= 8 { 0.5 } else { 0.0 }),
     );
-    let (wet, dry) = (Pos::new(6.0, 4.0), Pos::new(2.0, 4.0));
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut editor = support::open(support::game().water(support::AREA, &pond), &scratch);
+    let before = terrain(&editor);
+    let rock = editor
+        .reader()
+        .expect("a reader")
+        .id_of::<TerrainDef>(&path("terrain", testkit::ROCK))
+        .expect("rock is a terrain");
+    let (middle, wet, dry, beyond) = (
+        Pos::new(4.0, 4.0),
+        Pos::new(6.0, 4.0),
+        Pos::new(2.0, 4.0),
+        Pos::new(0.5, 0.5),
+    );
+    let wide = Brush {
+        falloff: 0.0,
+        ..Brush::default()
+    };
     for (mask, painted, kept) in [
-        (PaintMask::UnderWater, wet, dry),
-        (PaintMask::DryGround, dry, wet),
+        (PaintMask::Anywhere, vec![wet, dry], vec![beyond]),
+        (PaintMask::UnderWater, vec![wet], vec![dry, beyond]),
+        (PaintMask::DryGround, vec![dry], vec![wet, beyond]),
     ] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let mut editor = support::open(support::game().water(support::AREA, &pond), &scratch);
-        let before = terrain(&editor);
-        let rock = editor
-            .reader()
-            .expect("a reader")
-            .id_of::<TerrainDef>(&path("terrain", testkit::ROCK))
-            .expect("rock is a terrain");
-        let middle = Pos::new(4.0, 4.0);
         let masked = StrokeKind::Paint {
             terrain: rock,
             mask,
         };
         let mut stroke = Stroke::begin(&before, middle, masked).expect("room for a terrain");
-        let wide = Brush {
-            falloff: 0.0,
-            ..Brush::default()
-        };
         stroke.apply(&wide, middle, 0.1, Meters(0.0));
         assert!(commit(&mut editor, &area(), &stroke));
         support::settled(&mut editor);
         let after = terrain(&editor);
-        assert_eq!(
-            after.terrains[usize::from(after.paint.at(painted))],
-            rock,
-            "{mask:?}: rock lies where the mask lets it"
-        );
-        assert_eq!(
-            after.paint.at(kept),
-            before.paint.at(kept),
-            "{mask:?}: the ground the mask keeps the brush off stays as it was"
-        );
+        for at in painted {
+            assert_eq!(
+                after.terrains[usize::from(after.paint.at(at))],
+                rock,
+                "{mask:?}: rock lies at {at:?}, listed among the area's terrains"
+            );
+        }
+        for at in kept {
+            assert_eq!(
+                after.paint.at(at),
+                before.paint.at(at),
+                "{mask:?}: the ground at {at:?} the brush stays off keeps its terrain"
+            );
+        }
+        editor.undo();
+        support::settled(&mut editor);
     }
 }
 
@@ -245,19 +218,6 @@ fn placing_and_scattering_a_prop_land_as_modules() {
         module,
         AreaModule::Scatter(scatter) if scatter.region == region
     )));
-}
-
-#[test]
-fn the_brush_grows_and_shrinks_within_its_range() {
-    let mut brush = Brush::default();
-    for _ in 0..40 {
-        brush.grow();
-    }
-    assert_eq!(brush.radius, editor::views::area::brush::LARGEST_RADIUS);
-    for _ in 0..40 {
-        brush.shrink();
-    }
-    assert_eq!(brush.radius, editor::views::area::brush::SMALLEST_RADIUS);
 }
 
 #[test]

@@ -48,7 +48,7 @@ fn wading(limbs: &[TreadingLimb]) -> Option<LimbsInWater<'_>> {
 }
 
 #[test]
-fn water_broken_at_a_place_sends_a_ring_outward_at_the_ripples_speed_that_fades() {
+fn water_broken_at_a_place_sends_a_ring_outward_at_the_ripples_speed_that_fades_and_stays_there() {
     let mut still = RippleField::default();
     pass(&mut still, 1.0, CALM);
     assert_eq!(crest(&still, Vec2::ZERO, Vec2::X).1, 0.0);
@@ -73,6 +73,20 @@ fn water_broken_at_a_place_sends_a_ring_outward_at_the_ripples_speed_that_fades(
     let (calm, gale) = (after(1.0, CALM)[0].1, after(1.0, GALE)[0].1);
     assert!(gale < calm * 0.2, "a gale leaves {gale} of a calm's {calm}");
     assert_eq!(after(4.5, GALE)[0].1, 0.0, "spent, the water lies still");
+
+    let struck = Vec2::new(2.0, 1.0);
+    let mut field = RippleField::default();
+    field.follow(Vec2::ZERO);
+    field.strike(struck, Meters(0.5), 1.0);
+    let held = field.height_at(struck);
+    field.follow(Vec2::new(-12.0, 9.0));
+    assert_eq!(
+        field.height_at(struck),
+        held,
+        "ripples stay where they are as the field follows its middle"
+    );
+    field.follow(Vec2::new(500.0, 0.0));
+    assert_eq!(field.height_at(struck), 0.0);
 }
 
 #[test]
@@ -137,17 +151,4 @@ fn flesh_stirs_the_water_only_where_it_moves_through_the_surface() {
 
     field.part(None, wading(&[leg(stood)]), FRAME, &RIPPLES);
     assert!(field.height_at(stood) > 0.0, "a leg come into the water");
-}
-
-#[test]
-fn ripples_stay_where_they_are_as_the_field_follows_its_middle() {
-    let struck = Vec2::new(2.0, 1.0);
-    let mut field = RippleField::default();
-    field.follow(Vec2::ZERO);
-    field.strike(struck, Meters(0.5), 1.0);
-    let held = field.height_at(struck);
-    field.follow(Vec2::new(-12.0, 9.0));
-    assert_eq!(field.height_at(struck), held);
-    field.follow(Vec2::new(500.0, 0.0));
-    assert_eq!(field.height_at(struck), 0.0);
 }

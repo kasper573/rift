@@ -21,20 +21,6 @@ use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
 #[test]
-fn a_fresh_fighter_wears_the_sword_and_its_strike_fills_the_basic_attack_slot() {
-    let (sim, player) = yard();
-    let strike = sim.id::<SkillDef>("strike");
-
-    assert_eq!(
-        sim.world.get::<BasicAttack>(player),
-        Some(&BasicAttack(Some(strike)))
-    );
-    assert_eq!(sim.world.get::<Hotbar>(player), Some(&Hotbar::default()));
-    assert_eq!(sim.world.get::<Learned>(player), Some(&Learned::default()));
-    assert_eq!(class::points_to_spend(&sim.world, player), SkillPoints(1));
-}
-
-#[test]
 fn learning_takes_the_whole_plan_or_nothing() {
     let (mut sim, player) = yard();
 
@@ -109,13 +95,34 @@ fn a_slot_takes_only_what_you_have_and_keeps_it_when_it_goes() {
         basic_attack(&sim, player),
         Some(sim.id::<SkillDef>("strike"))
     );
+
+    sim.give(player, "potion", 1);
+    request(&mut sim, assign(3, potion));
+    request(&mut sim, assign(2, strike));
+    let bar = sim.world.get::<Hotbar>(player).expect("hotbar").clone();
+    assert_eq!(
+        (bar.entry(HotbarSlot(1)), bar.entry(HotbarSlot(3))),
+        (HotbarEntry::Empty, potion),
+        "slotting what the bar already holds moves it"
+    );
+    assert_eq!(bar.entry(HotbarSlot(0)), HotbarEntry::Empty);
+    assert_eq!(bar.entry(HotbarSlot(2)), strike);
+    request(&mut sim, assign(2, potion));
+    request(&mut sim, assign(3, strike));
+    let bar = sim.world.get::<Hotbar>(player).expect("hotbar");
+    assert_eq!(bar.entry(HotbarSlot(2)), potion);
+    assert_eq!(bar.entry(HotbarSlot(3)), strike);
 }
 
 #[test]
-fn the_basic_attack_slot_accepts_only_known_flagged_skills() {
+fn a_fresh_fighters_strike_fills_the_basic_attack_slot_which_accepts_only_known_flagged_skills() {
     let (mut sim, player) = yard();
     let strike = sim.id::<SkillDef>("strike");
     let cleave = sim.id::<SkillDef>("cleave");
+    assert_eq!(basic_attack(&sim, player), Some(strike));
+    assert_eq!(sim.world.get::<Hotbar>(player), Some(&Hotbar::default()));
+    assert_eq!(sim.world.get::<Learned>(player), Some(&Learned::default()));
+    assert_eq!(class::points_to_spend(&sim.world, player), SkillPoints(1));
 
     request(
         &mut sim,
@@ -188,6 +195,17 @@ fn a_weapon_put_in_the_basic_attack_slot_is_worn_and_lends_its_attack() {
             pick: BasicAttackPick::Empty,
         },
     );
+    let dummy = dummy(&mut sim, player, Offset::new(1.0, 0.0));
+    let full = stat::effective(&sim.world, dummy, StatKind::Health);
+    request(&mut sim, AttackRequest { target: dummy });
+    assert!(
+        sim.errors(1)
+            .iter()
+            .any(|text| text == "Nothing to attack with"),
+        "an empty basic attack slot says so on a click"
+    );
+    assert_eq!(stat::effective(&sim.world, dummy, StatKind::Health), full);
+    sim.forget_notified();
     request(
         &mut sim,
         AssignBasicAttackRequest {
@@ -231,49 +249,6 @@ fn a_weapon_worn_mid_fight_carries_the_attack_on_with_its_own() {
     assert!(sim.run_until(5.0, |world| {
         stat::current(world, player, Vital::Mana) > mana
     }));
-}
-
-#[test]
-fn slotting_what_the_bar_already_holds_moves_it() {
-    let (mut sim, player) = yard();
-    let potion = HotbarEntry::Item(sim.id::<ItemDef>("potion"));
-    let strike = skill_entry(&sim, "strike");
-    sim.give(player, "potion", 2);
-
-    request(&mut sim, assign(0, potion));
-    request(&mut sim, assign(3, potion));
-    request(&mut sim, assign(1, strike));
-    let bar = sim.world.get::<Hotbar>(player).expect("hotbar").clone();
-    assert_eq!(bar.entry(HotbarSlot(0)), HotbarEntry::Empty);
-    assert_eq!(bar.entry(HotbarSlot(3)), potion);
-
-    request(&mut sim, assign(1, potion));
-    request(&mut sim, assign(3, strike));
-    let bar = sim.world.get::<Hotbar>(player).expect("hotbar");
-    assert_eq!(bar.entry(HotbarSlot(1)), potion);
-    assert_eq!(bar.entry(HotbarSlot(3)), strike);
-}
-
-#[test]
-fn an_empty_basic_attack_slot_says_so_on_a_click() {
-    let (mut sim, player) = yard();
-    let dummy = dummy(&mut sim, player, Offset::new(1.0, 0.0));
-    let full = stat::effective(&sim.world, dummy, StatKind::Health);
-
-    request(
-        &mut sim,
-        AssignBasicAttackRequest {
-            pick: BasicAttackPick::Empty,
-        },
-    );
-    request(&mut sim, AttackRequest { target: dummy });
-
-    assert!(
-        sim.errors(1)
-            .iter()
-            .any(|text| text == "Nothing to attack with")
-    );
-    assert_eq!(stat::effective(&sim.world, dummy, StatKind::Health), full);
 }
 
 #[test]

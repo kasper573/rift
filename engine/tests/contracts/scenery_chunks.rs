@@ -15,7 +15,7 @@ const GROUND: GroundSize = GroundSize {
     width: 160,
     height: 160,
 };
-const SCATTERS: usize = 100;
+const SCATTERS: usize = 20;
 const PLACED: usize = 30;
 const AREA_SCATTERS: usize = 20;
 

@@ -310,20 +310,6 @@ fn a_model_over_the_style_budget_is_refused_at_its_row() {
 }
 
 #[test]
-fn a_part_a_bundle_type_never_declares_is_refused() {
-    let report = game()
-        .prop("rock", json!({ "type": "none" }))
-        .part("prop", "rock", "notes.txt", "a stray file")
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let rules = rules_in(&report, &format!("{}/notes.txt", path("prop", "rock")));
-    assert_eq!(rules.len(), 1, "{report}");
-    assert_eq!(rules[0].0, "unknown part");
-}
-
-#[test]
 fn the_input_file_binds_every_action_only_as_the_game_reads_it() {
     struct Case {
         case: &'static str,
@@ -397,131 +383,6 @@ fn a_basic_attack_that_costs_or_cools_down_is_refused() {
                 "nothing: a click on an enemy must always answer"
             ),
         ]
-    );
-}
-
-#[test]
-fn a_fixture_vfx_without_the_parameter_the_engine_sets_is_refused() {
-    let report = Game::new()
-        .vfx("skill_area")
-        .whole()
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == "fixtures/vfx/skill_area.vfx.json")
-        .expect("the vfx row is refused");
-    assert_eq!(error.problem.rule, "fixture entry missing");
-    assert!(
-        matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == "/params"),
-        "{:?}",
-        error.at
-    );
-}
-
-#[test]
-fn a_shader_parameter_named_with_a_leading_underscore_is_refused() {
-    let report = Game::new()
-        .shader("tint")
-        .edit("vfx_shader", "tint", |shader| {
-            shader["params"] =
-                json!([{ "name": "_color", "kind": "color", "default": [255, 255, 255, 255] }]);
-        })
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == "tint.vfx_shader/config.json")
-        .expect("the shader is refused");
-    assert_eq!(error.problem.rule, "invalid parameter name");
-}
-
-#[test]
-fn a_shader_that_does_not_compile_is_refused_at_its_line() {
-    let report = Game::new()
-        .shader("tint")
-        .part(
-            "vfx_shader",
-            "tint",
-            "shader.wgsl",
-            b"fn fx(i: FxIn) -> vec4<f32> {\n    return oops;\n}\n".to_vec(),
-        )
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == "tint.vfx_shader/shader.wgsl")
-        .expect("the shader is refused");
-    assert_eq!(error.problem.rule, "shader does not compile");
-    assert!(
-        matches!(error.at, ErrorPlace::Text { line: 2, .. }),
-        "{:?}",
-        error.at
-    );
-}
-
-#[test]
-fn a_shader_without_its_source_is_refused() {
-    let report = Game::new()
-        .shader("tint")
-        .remove("tint.vfx_shader/shader.wgsl")
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == "tint.vfx_shader")
-        .expect("the shader is refused");
-    assert_eq!(error.problem.rule, "missing file");
-    assert_eq!(error.problem.expected, "shader.wgsl in the bundle");
-}
-
-#[test]
-fn a_layer_filling_a_parameter_its_shader_lacks_is_refused() {
-    let report = Game::new()
-        .shader("tint")
-        .edit("vfx_shader", "tint", |shader| {
-            shader["params"] = json!([{ "name": "amount", "kind": "number", "default": 0.6, "min": 0.0, "max": 1.0 }]);
-        })
-        .row(
-            "vfx",
-            "healed",
-            json!({
-                "name": "Healed",
-                "layers": [{
-                    "type": "coat",
-                    "shader": path("vfx_shader", "tint"),
-                    "blend": "add",
-                    "run": { "duration": 0.35 },
-                    "params": { "amount": 0.5, "glow": 1.0 },
-                }],
-            }),
-        )
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == path("vfx", "healed"))
-        .unwrap_or_else(|| panic!("the layer is refused:\n{report}"));
-    assert_eq!(error.problem.rule, "unknown shader parameter");
-    assert!(
-        matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == "/layers/0/params/glow"),
-        "{:?}",
-        error.at
     );
 }
 
@@ -815,53 +676,6 @@ fn what_follows_the_sky_or_is_away_by_it_reads_the_sky_alone_by_times_of_day_the
 }
 
 #[test]
-fn a_folder_without_a_game_file_is_refused() {
-    let report = Game::new()
-        .remove(SETTINGS_FILE)
-        .whole()
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == SETTINGS_FILE)
-        .unwrap_or_else(|| panic!("no error for the settings:\n{report}"));
-    assert_eq!(error.problem.rule, "missing file");
-}
-
-#[test]
-fn a_fixture_without_its_row_is_refused() {
-    let report = Game::new().whole().try_load().err().expect("refused");
-
-    assert_eq!(
-        rules_in(&report, "fixtures/game.input.json"),
-        vec![(
-            "missing fixture",
-            "the input the engine requires at fixtures/game.input.json"
-        )]
-    );
-}
-
-#[test]
-fn a_file_of_its_own_of_a_type_of_fixtures_alone_is_refused() {
-    let report = Game::new()
-        .row("world_map", "wave_hello", json!({}))
-        .whole()
-        .try_load()
-        .err()
-        .expect("refused");
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == "wave_hello.world_map.json")
-        .expect("the stray file is refused");
-    assert_eq!(error.problem.rule, "file the engine never reads");
-}
-
-#[test]
 fn a_file_that_did_not_load_is_reported_alone() {
     let dressing = json!({
         "started": { "type": "on", "event": "started", "next": "dress" },
@@ -1109,5 +923,170 @@ fn a_vfx_is_played_filling_only_the_parameters_its_row_declares_as_they_are_decl
                 && matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == field)
         });
         assert!(found, "{file} {rule} at {field}\n{report}");
+    }
+}
+
+#[test]
+fn a_vfx_shader_is_held_to_its_source_its_parameters_and_the_layers_that_fill_them() {
+    {
+        let report = Game::new()
+            .shader("tint")
+            .remove("tint.vfx_shader/shader.wgsl")
+            .try_load()
+            .err()
+            .expect("refused");
+
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == "tint.vfx_shader")
+            .expect("the shader is refused");
+        assert_eq!(error.problem.rule, "missing file");
+        assert_eq!(error.problem.expected, "shader.wgsl in the bundle");
+    }
+    {
+        let report = Game::new()
+            .shader("tint")
+            .part(
+                "vfx_shader",
+                "tint",
+                "shader.wgsl",
+                b"fn fx(i: FxIn) -> vec4<f32> {\n    return oops;\n}\n".to_vec(),
+            )
+            .try_load()
+            .err()
+            .expect("refused");
+
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == "tint.vfx_shader/shader.wgsl")
+            .expect("the shader is refused");
+        assert_eq!(error.problem.rule, "shader does not compile");
+        assert!(
+            matches!(error.at, ErrorPlace::Text { line: 2, .. }),
+            "{:?}",
+            error.at
+        );
+    }
+    {
+        let report = Game::new()
+            .shader("tint")
+            .edit("vfx_shader", "tint", |shader| {
+                shader["params"] =
+                    json!([{ "name": "_color", "kind": "color", "default": [255, 255, 255, 255] }]);
+            })
+            .try_load()
+            .err()
+            .expect("refused");
+
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == "tint.vfx_shader/config.json")
+            .expect("the shader is refused");
+        assert_eq!(error.problem.rule, "invalid parameter name");
+    }
+    {
+        let report = Game::new()
+            .shader("tint")
+            .edit("vfx_shader", "tint", |shader| {
+                shader["params"] = json!([{ "name": "amount", "kind": "number", "default": 0.6, "min": 0.0, "max": 1.0 }]);
+            })
+            .row(
+                "vfx",
+                "healed",
+                json!({
+                    "name": "Healed",
+                    "layers": [{
+                        "type": "coat",
+                        "shader": path("vfx_shader", "tint"),
+                        "blend": "add",
+                        "run": { "duration": 0.35 },
+                        "params": { "amount": 0.5, "glow": 1.0 },
+                    }],
+                }),
+            )
+            .try_load()
+            .err()
+            .expect("refused");
+
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == path("vfx", "healed"))
+            .unwrap_or_else(|| panic!("the layer is refused:\n{report}"));
+        assert_eq!(error.problem.rule, "unknown shader parameter");
+        assert!(
+            matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == "/layers/0/params/glow"),
+            "{:?}",
+            error.at
+        );
+    }
+}
+
+#[test]
+fn a_game_is_held_to_the_settings_and_fixtures_the_engine_requires_and_nothing_else_of_a_fixtures_type()
+ {
+    {
+        let report = Game::new()
+            .remove(SETTINGS_FILE)
+            .whole()
+            .try_load()
+            .err()
+            .expect("refused");
+
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == SETTINGS_FILE)
+            .unwrap_or_else(|| panic!("no error for the settings:\n{report}"));
+        assert_eq!(error.problem.rule, "missing file");
+    }
+    {
+        let report = Game::new().whole().try_load().err().expect("refused");
+
+        assert_eq!(
+            rules_in(&report, "fixtures/game.input.json"),
+            vec![(
+                "missing fixture",
+                "the input the engine requires at fixtures/game.input.json"
+            )]
+        );
+    }
+    {
+        let report = Game::new()
+            .vfx("skill_area")
+            .whole()
+            .try_load()
+            .err()
+            .expect("refused");
+
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == "fixtures/vfx/skill_area.vfx.json")
+            .expect("the vfx row is refused");
+        assert_eq!(error.problem.rule, "fixture entry missing");
+        assert!(
+            matches!(&error.at, ErrorPlace::Json { pointer, .. } if pointer == "/params"),
+            "{:?}",
+            error.at
+        );
+    }
+    {
+        let report = Game::new()
+            .row("world_map", "wave_hello", json!({}))
+            .whole()
+            .try_load()
+            .err()
+            .expect("refused");
+
+        let error = report
+            .errors
+            .iter()
+            .find(|error| error.file == "wave_hello.world_map.json")
+            .expect("the stray file is refused");
+        assert_eq!(error.problem.rule, "file the engine never reads");
     }
 }

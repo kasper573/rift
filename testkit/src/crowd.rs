@@ -1,11 +1,11 @@
 //! A game to bench a server on: one wide area crowded with monsters that hunt whoever comes near
-//! and townsfolk who roam, and the test characters a bench's players join as, who fight with what
-//! they hold and carry gold and goods to the market. Every file is a placeholder, as a
-//! server's cost is in its counts and its simulation.
+//! and townsfolk who roam and stop to talk, and the test characters a bench's players join as,
+//! who fight with what they hold, drink potions, and carry gold and goods to the market. Every
+//! file is a placeholder, as a server's cost is in its counts and its simulation.
 
 use serde_json::json;
 
-use crate::script::hunting;
+use crate::script::{dialogue, hunting, said};
 use crate::{Game, Map, path};
 
 /// The area every player of the crowd starts in.
@@ -57,7 +57,23 @@ pub fn crowd() -> Game {
         .npc(
             "townsfolk",
             30.0,
-            json!([{ "type": "script", "script": path("script", "townsfolk_roam") }]),
+            json!([
+                { "type": "script", "script": path("script", "townsfolk_roam") },
+                { "type": "script", "script": path("script", "townsfolk_talk") },
+            ]),
+        )
+        .script(
+            "townsfolk_talk",
+            "npc",
+            json!({
+                "talked": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "greet" },
+                "greet": dialogue(
+                    "Fine weather for it.",
+                    json!([{ "label": ["What news?"], "to": "news" }, { "label": ["Goodbye."] }]),
+                ),
+                "news": said("Raiders on the north road again.", "parting"),
+                "parting": dialogue("Mind how you go.", json!([{ "label": ["Goodbye."] }])),
+            }),
         )
         .script(
             "townsfolk_roam",
@@ -69,6 +85,22 @@ pub fn crowd() -> Game {
             }),
         );
     game = game
+        .item(
+            "potion",
+            json!({
+                "name": "Potion",
+                "kind": { "type": "usable" },
+                "modules": [{ "type": "stack", "max": 50 }, { "type": "script", "script": path("script", "potion_used") }],
+            }),
+        )
+        .script(
+            "potion_used",
+            "item",
+            json!({
+                "used": { "type": "on", "event": "used", "next": "heal" },
+                "heal": { "type": "heal", "by": 25.0 },
+            }),
+        )
         .item(
             "gold",
             json!({ "name": "Gold", "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 100000 }] }),
@@ -100,7 +132,10 @@ pub fn crowd() -> Game {
                 let good = GOODS[(fighter * 3 + nth) % GOODS.len()];
                 json!({ "slot": nth, "item": path("item", &file_name(good)), "count": 50 })
             })
-            .chain([json!({ "slot": 3, "item": path("item", "gold"), "count": 5000 })])
+            .chain([
+                json!({ "slot": 3, "item": path("item", "gold"), "count": 5000 }),
+                json!({ "slot": 4, "item": path("item", "potion"), "count": 50 }),
+            ])
             .collect();
         game = game.row(
             "test_character",

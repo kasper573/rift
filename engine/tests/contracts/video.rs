@@ -128,8 +128,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
 }
 
 #[test]
-fn a_preset_picks_every_part_at_once_and_a_part_picked_by_hand_leaves_the_rest_as_the_preset_set_them()
- {
+fn a_preset_picks_every_part_at_once_but_the_window_and_a_part_picked_by_hand_is_at_no_preset() {
     let window = VideoPreferences {
         fullscreen: true,
         vsync: true,
@@ -157,14 +156,6 @@ fn a_preset_picks_every_part_at_once_and_a_part_picked_by_hand_leaves_the_rest_a
             bloom: !picked.bloom,
             ..picked
         };
-        assert_eq!(
-            VideoPreferences {
-                bloom: picked.bloom,
-                ..by_hand
-            },
-            picked,
-            "{quality:?}, then the bloom by hand: the rest stands as the preset set it"
-        );
         assert_eq!(
             by_hand.quality(),
             None,

@@ -90,25 +90,22 @@ fn a_crafting_prompt_makes_what_its_books_and_subsets_allow_and_nothing_else() {
         shown(&sim, player).is_some(),
         "a crafting prompt hands no offer to its script"
     );
-}
+    sim.leave(1);
 
-#[test]
-fn with_several_recipes_the_one_chosen_is_made_with_everything_it_gives() {
-    let mut sim = forge(game(|_| {}));
-    let player = sim.join(1);
     sim.give(player, "blade", 4);
     let (_, crafting) = open(&mut sim, 1, "salvager");
     assert_eq!(made_by(&sim, &crafting), ["ingot + strap", "strap"]);
-
+    let ingots = sim.count(player, "ingot");
     craft(&mut sim, 1, &[("blade", 2)], STRAPS);
     assert_eq!(
         (sim.count(player, "strap"), sim.count(player, "ingot")),
-        (6, 0)
+        (6, ingots),
+        "of several recipes from the same materials, the one chosen is made"
     );
     craft(&mut sim, 1, &[("blade", 2)], PARTS);
     assert_eq!(
         (sim.count(player, "strap"), sim.count(player, "ingot")),
-        (10, 2),
+        (10, ingots + 2),
         "two crafts of an ingot and two straps each"
     );
     assert_eq!(sim.count(player, "blade"), 0);

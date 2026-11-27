@@ -28,8 +28,8 @@ pub struct Scenario {
     /// passed.
     pub duration: Seconds,
     pub script: Vec<Step>,
-    /// Other players connected to the server while it plays, each standing where the game's
-    /// characters start.
+    /// Other players connected to the server while it plays, each walking about where the
+    /// game's characters start.
     pub players: u32,
 }
 

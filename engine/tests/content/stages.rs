@@ -71,7 +71,7 @@ fn sphere() -> Value {
 }
 
 #[test]
-fn a_vfx_layer_fits_the_site_it_is_played_on() {
+fn a_vfx_layer_fits_the_site_it_is_played_on_and_draws_only_with_a_shader_of_its_stage() {
     let place = json!({ "type": "place" });
     let along = json!({ "type": "path" });
     let targets = Some(json!({ "type": "skill_targets" }));
@@ -210,10 +210,6 @@ fn a_vfx_layer_fits_the_site_it_is_played_on() {
             "{case}"
         );
     }
-}
-
-#[test]
-fn an_effect_layer_draws_only_with_an_effect_shader() {
     let covering =
         playing(mesh(sphere(), None), json!({ "type": "place" }), None).shader_on("glare", COVER);
     assert!(refused_at_the_layer(
@@ -222,10 +218,6 @@ fn an_effect_layer_draws_only_with_an_effect_shader() {
         &path("vfx", "glow"),
         "a shape drawn with a cover shader"
     ));
-}
-
-#[test]
-fn the_engines_own_vfx_play_on_actors() {
     let healed_over_an_area = game().engine_rows().whole().shader("glare").row(
         "vfx",
         "healed",

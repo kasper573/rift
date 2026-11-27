@@ -17,43 +17,58 @@ use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path, said};
 
 #[test]
-fn asking_a_keeper_opens_the_shop_and_buying_trades_the_price_for_the_goods() {
-    let mut sim = market();
-    let player = sim.join(1);
-    sim.give(player, "gold", 10);
-
-    let opened = browse(&mut sim, 1, "merchant");
-    assert_eq!(opened.shop, sim.id::<ShopDef>("wares"));
-
-    let conn = sim.conn(1);
-    let ware = ware_of(&sim, "wares", "potion");
-    sim.send(conn, ShopRequest::Buy { ware });
-    sim.tick();
-
-    assert_eq!(sim.count(player, "gold"), 4);
-    assert_eq!(sim.count(player, "potion"), 1);
-}
-
-#[test]
-fn a_purchase_you_cannot_cover_changes_nothing_and_the_keeper_says_so() {
+fn a_keeper_or_an_object_opens_its_shop_and_buying_trades_the_price_for_the_goods_or_changes_nothing()
+ {
     let mut sim = market();
     let player = sim.join(1);
     sim.give(player, "gold", 12);
     let merchant = sim.npc("merchant");
     let opened = browse(&mut sim, 1, "merchant");
+    assert_eq!(opened.shop, sim.id::<ShopDef>("wares"));
+    let conn = sim.conn(1);
+
     let tonic = ware_of(&sim, "wares", "tonic");
     assert!(opened.wares[tonic as usize].refusal.is_some());
-
-    let conn = sim.conn(1);
     sim.send(conn, ShopRequest::Buy { ware: tonic });
     sim.tick();
-
-    assert_eq!(sim.count(player, "gold"), 12);
-    assert_eq!(sim.count(player, "tonic"), 0);
+    assert_eq!(
+        (sim.count(player, "gold"), sim.count(player, "tonic")),
+        (12, 0),
+        "a purchase the bag cannot cover changes nothing"
+    );
     let talking = sim.conversation(1).expect("still browsing");
     assert_eq!(talking.with, Some(merchant));
     let remark = talking.remark.expect("the merchant reacts");
     assert_eq!(remark.line.by, Speaker::Npc(sim.id::<NpcDef>("merchant")));
+
+    let potion = ware_of(&sim, "wares", "potion");
+    sim.send(conn, ShopRequest::Buy { ware: potion });
+    sim.tick();
+    assert_eq!(sim.count(player, "gold"), 6);
+    assert_eq!(sim.count(player, "potion"), 1);
+    sim.leave(1);
+
+    let honesty_box = sim.object("box");
+    sim.send(
+        conn,
+        InteractRequest {
+            target: honesty_box,
+        },
+    );
+    assert!(sim.run_until(20.0, |world| world.get::<ShopView>(player).is_some()));
+    assert_eq!(
+        shown(&sim, player).map(|opened| opened.shop),
+        Some(sim.id::<ShopDef>("box"))
+    );
+    assert!(
+        sim.conversation(1).is_some(),
+        "the box keeps its shop inside a conversation"
+    );
+    let steak = ware_of(&sim, "box", "steak");
+    sim.send(conn, ShopRequest::Buy { ware: steak });
+    sim.tick();
+    assert_eq!(sim.count(player, "steak"), 1);
+    assert_eq!(sim.count(player, "gold"), 3);
 }
 
 #[test]
@@ -107,6 +122,21 @@ fn a_collector_pays_in_his_own_currency_for_all_or_part_of_a_stack_and_buyback_c
     assert!(
         sim.conversation(1).is_some(),
         "a shop without reactions still keeps its conversation"
+    );
+    let token = sim.id::<ItemDef>("token");
+    assert!(
+        matches!(
+            &quote(&opened, &sim, "bone").expect("quoted").verdict,
+            SaleVerdict::Pays(pays) if pays.iter().any(|stack| stack.item == token)
+        ),
+        "the view quotes what each bag item fetches"
+    );
+    assert!(
+        matches!(
+            quote(&opened, &sim, "tusk").expect("quoted").verdict,
+            SaleVerdict::Refused(_)
+        ),
+        "or why it does not sell"
     );
 
     let conn = sim.conn(1);
@@ -172,26 +202,6 @@ fn a_collector_pays_in_his_own_currency_for_all_or_part_of_a_stack_and_buyback_c
 }
 
 #[test]
-fn the_view_quotes_what_each_bag_item_fetches_or_why_it_does_not_sell() {
-    let mut sim = market();
-    let player = sim.join(1);
-    sim.give(player, "bone", 7);
-    sim.give(player, "tusk", 1);
-
-    browse(&mut sim, 1, "collector");
-
-    let view = shown(&sim, player).expect("open");
-    let token = sim.id::<ItemDef>("token");
-    let bone = quote(&view, &sim, "bone").expect("quoted");
-    assert!(matches!(
-        &bone.verdict,
-        SaleVerdict::Pays(pays) if pays.iter().any(|stack| stack.item == token)
-    ));
-    let tusk = quote(&view, &sim, "tusk").expect("quoted");
-    assert!(matches!(tusk.verdict, SaleVerdict::Refused(_)));
-}
-
-#[test]
 fn leaving_the_conversation_or_walking_out_of_reach_closes_the_shop() {
     let mut sim = market();
     let player = sim.join(1);
@@ -208,37 +218,6 @@ fn leaving_the_conversation_or_walking_out_of_reach_closes_the_shop() {
     sim.tick();
 
     assert!(shown(&sim, player).is_none());
-}
-
-#[test]
-fn a_map_object_can_keep_a_shop() {
-    let mut sim = market();
-    let player = sim.join(1);
-    sim.give(player, "gold", 3);
-    let honesty_box = sim.object("box");
-
-    let conn = sim.conn(1);
-    sim.send(
-        conn,
-        InteractRequest {
-            target: honesty_box,
-        },
-    );
-    assert!(sim.run_until(20.0, |world| world.get::<ShopView>(player).is_some()));
-    assert_eq!(
-        shown(&sim, player).map(|opened| opened.shop),
-        Some(sim.id::<ShopDef>("box"))
-    );
-    assert!(
-        sim.conversation(1).is_some(),
-        "the box keeps its shop inside a conversation"
-    );
-
-    let ware = ware_of(&sim, "box", "steak");
-    sim.send(conn, ShopRequest::Buy { ware });
-    sim.tick();
-    assert_eq!(sim.count(player, "steak"), 1);
-    assert_eq!(sim.count(player, "gold"), 0);
 }
 
 /// A sale of every one of `stacks`, each out of the slot of the bag it is paired with.

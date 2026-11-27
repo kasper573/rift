@@ -24,7 +24,7 @@
 - Prioritize simplicity, stability (extensible, not brittle), readability — then performance.
 - small, simple `macro_rules!` codegen is allowed to reduce boilerplate, but complex macros are entirely forbidden.
 - Files read consumer-first: public API at top, private helpers at the bottom.
-- No inline tests: every test lives in its crate's `tests/` folder, against the public API.
+- No inline tests: every test lives in its crate's `tests/` folder, against the public API. No doc tests either: code in documentation is marked `ignore`, since `cargo test --doc` costs seconds on every crate for what the crate's tests already check.
 - Use `Option`/`Result` and sum types over sentinels/casts. No `unsafe` without a justifying comment.
   Avoid `unwrap`/`panic!` off the test path unless an invariant is truly guaranteed.
 - Newtype every float/int that carries a precise unit or id (`Seconds`, `Millis`, `NpcId`) — never

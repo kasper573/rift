@@ -14,41 +14,28 @@ use serde_json::{Value, json};
 use testkit::{BODY, GEAR, Game, Map, Sim, dialogue, path, said};
 
 #[test]
-fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items() {
+fn accepting_a_quest_logs_it_tracks_it_and_hands_over_its_items_which_abandoning_takes_back() {
     let mut sim = harbour();
     let player = sim.join(1);
-
-    let greeting = sim.talk(1, "giver");
-    assert!(sim.labels(&greeting).contains(&"A Letter".to_owned()));
-    let offer = sim.pick(1, "A Letter").expect("the offer");
-    assert!(sim.labels(&offer).contains(&"I'll take it.".to_owned()));
-    sim.pick(1, "I'll take it.");
-
-    let log = log(&sim, player);
     let letter = sim.id::<QuestDef>("letter");
-    assert!(log.active(letter).is_some());
-    assert!(log.tracked.contains(&letter));
-    assert_eq!(sim.count(player, "letter"), 1);
-}
+    for round in ["first", "again"] {
+        let greeting = sim.talk(1, "giver");
+        assert!(sim.labels(&greeting).contains(&"A Letter".to_owned()));
+        let offer = sim.pick(1, "A Letter").expect("the offer");
+        assert!(sim.labels(&offer).contains(&"I'll take it.".to_owned()));
+        sim.pick(1, "I'll take it.");
 
-#[test]
-fn abandoning_takes_the_quest_items_back_and_accepting_again_returns_them() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    accept(&mut sim, player, "letter");
-    assert_eq!(sim.count(player, "letter"), 1);
+        let accepted = log(&sim, player);
+        assert!(accepted.active(letter).is_some(), "{round}");
+        assert!(accepted.tracked.contains(&letter), "{round}");
+        assert_eq!(sim.count(player, "letter"), 1, "{round}");
 
-    let conn = sim.conn(1);
-    let quest = sim.id::<QuestDef>("letter");
-    sim.send(conn, QuestRequest::Abandon { quest });
-    sim.tick();
-    assert!(log(&sim, player).active.is_empty());
-    assert_eq!(sim.count(player, "letter"), 0);
-
-    sim.talk(1, "giver");
-    sim.pick(1, "A Letter");
-    sim.pick(1, "I'll take it.");
-    assert_eq!(sim.count(player, "letter"), 1);
+        let conn = sim.conn(1);
+        sim.send(conn, QuestRequest::Abandon { quest: letter });
+        sim.tick();
+        assert!(log(&sim, player).active.is_empty(), "{round}");
+        assert_eq!(sim.count(player, "letter"), 0, "{round}");
+    }
 }
 
 #[test]
@@ -153,6 +140,18 @@ fn kills_count_only_for_the_credited_player() {
     let defeated = |sim: &Sim, player| log(sim, player).active(bats).map(|on| on.counts[0]);
     assert_eq!(defeated(&sim, hunter), Some(1));
     assert_eq!(defeated(&sim, bystander), Some(0));
+
+    let at = movement::position(&sim.world, hunter).expect("player position");
+    let area = sim.world.resource::<engine::systems::WorldArea>().0;
+    let bat = sim.id::<npc::NpcDef>("bat");
+    let unclaimed = npc::spawn(&mut sim.world, bat, at, area, None);
+    combat::inflict(&mut sim.world, unclaimed, None, 1_000_000.0);
+    sim.run(0.2);
+    assert_eq!(
+        (defeated(&sim, hunter), defeated(&sim, bystander)),
+        (Some(1), Some(0)),
+        "a foe that falls to no one's blow counts for nobody"
+    );
 }
 
 #[test]
@@ -179,6 +178,26 @@ fn quest_drops_fall_only_for_players_on_the_quest() {
         slay(&mut sim, player, "bat");
     }
     assert!(keys(&mut sim) >= 1);
+    let fell_at = movement::position(&sim.world, player).expect("player position");
+    let scatter = sim
+        .content()
+        .built::<engine::systems::GameSettings>()
+        .drops
+        .scatter;
+    let lying: Vec<_> = sim
+        .world
+        .query::<(&DroppedItem, &movement::Position)>()
+        .iter(&sim.world)
+        .filter(|(dropped, _)| dropped.item == key)
+        .map(|(_, at)| at.pos)
+        .collect();
+    assert!(
+        lying
+            .iter()
+            .all(|at| engine::core::units::MeterPos::distance(*at, fell_at)
+                <= scatter + engine::core::units::Meters(1e-3)),
+        "a quest drop lies where its foe fell: {lying:?} from {fell_at:?}"
+    );
 }
 
 #[test]
@@ -294,7 +313,7 @@ fn a_timed_quest_fails_when_time_runs_out_and_is_offered_again() {
 }
 
 #[test]
-fn an_item_starts_its_quest_and_offers_it_again_after_abandoning() {
+fn an_item_starts_its_quest_offers_it_again_after_abandoning_and_exploring_its_spot_readies_it() {
     let mut sim = harbour();
     let player = sim.join(1);
     sim.give(player, "map", 1);
@@ -327,16 +346,8 @@ fn an_item_starts_its_quest_and_offers_it_again_after_abandoning() {
             .get::<dialogue::Conversation>(player)
             .is_some_and(|now| now.panel == Some(ConversationPanel::QuestOffer(quest)))
     }));
-}
-
-#[test]
-fn exploring_the_marked_spot_readies_the_quest_for_the_object_there() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    sim.give(player, "map", 1);
-    accept(&mut sim, player, "x_marks");
+    sim.pick(1, "Accept");
     sim.run(0.5);
-    let quest = sim.id::<QuestDef>("x_marks");
 
     let stone = sim.object("stone");
     sim.open_with(1, stone);
@@ -347,9 +358,9 @@ fn exploring_the_marked_spot_readies_the_quest_for_the_object_there() {
     }));
     assert_eq!(
         sim.conversation(1).and_then(|now| now.panel),
-        Some(ConversationPanel::QuestTurnIn(quest))
+        Some(ConversationPanel::QuestTurnIn(quest)),
+        "exploring the marked spot readies the quest for the object there"
     );
-
     sim.pick(1, "Dig where the cross says.");
     assert_eq!(sim.count(player, "map"), 0);
     assert_eq!(sim.count(player, "cutlass"), 1);

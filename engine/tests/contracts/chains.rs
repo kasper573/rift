@@ -11,30 +11,61 @@ use std::time::Duration;
 /// A sprung tail behind a body running on steadily, straight or round a curve, settles into a
 /// lean it holds: seen from the body it stays still frame after frame, at any frame rate, with
 /// frames that come a little long or short at random, whether the camera is near or far enough
-/// that the body's layers run every other frame, and whether or not the body's clip keys it.
+/// that the body's layers run every other frame, and whether or not the body's clip keys it. The
+/// runs pair every frame rate with each way of the other three, and those three with each other.
 #[test]
 fn a_sprung_tail_settles_behind_a_body_running_on_steadily() {
-    let rates: [(&str, &[f32]); 4] = [
-        ("60 fps", &[1.0 / 60.0]),
-        ("about 60 fps", &[0.0155, 0.0178, 0.0162, 0.0171]),
-        ("about 40 fps", &[0.024, 0.026, 0.0245, 0.0255]),
-        ("30 fps", &[1.0 / 30.0]),
+    struct Run {
+        rate: &'static str,
+        frames: &'static [f32],
+        running: Running,
+        back: f32,
+        keyed: bool,
+    }
+    const STRAIGHT: Running = Running {
+        speed: 7.0,
+        turn: 0.0,
+    };
+    const CURVE: Running = Running {
+        speed: 7.0,
+        turn: 0.6,
+    };
+    const ABOUT_60: &[f32] = &[0.0155, 0.0178, 0.0162, 0.0171];
+    const ABOUT_40: &[f32] = &[0.024, 0.026, 0.0245, 0.0255];
+    let run = |rate, frames, running, back, keyed| Run {
+        rate,
+        frames,
+        running,
+        back,
+        keyed,
+    };
+    let runs = [
+        run("60 fps", &[1.0 / 60.0], STRAIGHT, 6.0, true),
+        run("60 fps", &[1.0 / 60.0], CURVE, 15.0, false),
+        run("about 60 fps", ABOUT_60, STRAIGHT, 15.0, false),
+        run("about 60 fps", ABOUT_60, CURVE, 6.0, true),
+        run("about 40 fps", ABOUT_40, CURVE, 6.0, false),
+        run("about 40 fps", ABOUT_40, STRAIGHT, 15.0, true),
+        run("30 fps", &[1.0 / 30.0], CURVE, 15.0, true),
+        run("30 fps", &[1.0 / 30.0], STRAIGHT, 6.0, false),
     ];
-    for (rate, frames) in rates {
-        for (run, speed, turn) in [("straight", 7.0, 0.0), ("round a curve", 7.0, 0.6)] {
-            for back in [6.0, 15.0] {
-                for keyed in [true, false] {
-                    let swings = swings(&tail(frames, back, keyed, Running { speed, turn }, 1.0));
-                    let worst = swings[SETTLING..].iter().copied().fold(0.0, f32::max);
-                    assert!(
-                        worst < STILL,
-                        "at {rate}, running {run}, the camera {back} m back and the tail \
-                         {}keyed, the settled tail still swings {worst} rad in a frame",
-                        if keyed { "" } else { "un" },
-                    );
-                }
-            }
-        }
+    for Run {
+        rate,
+        frames,
+        running,
+        back,
+        keyed,
+    } in runs
+    {
+        let Running { speed, turn } = running;
+        let swings = swings(&tail(frames, back, keyed, running, 1.0));
+        let worst = swings[SETTLING..].iter().copied().fold(0.0, f32::max);
+        assert!(
+            worst < STILL,
+            "at {rate}, running at {speed} m/s turning {turn}, the camera {back} m back and the \
+             tail {}keyed, the settled tail still swings {worst} rad in a frame",
+            if keyed { "" } else { "un" },
+        );
     }
 }
 

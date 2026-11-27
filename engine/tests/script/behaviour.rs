@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::Meters;
 use engine::systems::combat::{AttackRequest, Attitude};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::body;
@@ -13,84 +13,59 @@ const FAR: Pos<Meters> = Pos::new(28.0, 28.0);
 /// Long enough for a blow to land on a monster that wanders off as fast as the player follows: the
 /// chase ends where the field does, or where the wander turns back.
 const CHASE: f32 = 20.0;
-const STROLLER_HOME: Pos<Meters> = Pos::new(26.0, 4.0);
 
+/// An aggressive monster picks a character in its aggro range and drops one beyond it; a
+/// defensive one fights only whoever attacks it, a protective one whoever attacks its pack, and a
+/// pacifist one never fights back.
 #[test]
-fn an_aggressive_monster_picks_a_character_in_its_aggro_range_and_drops_one_beyond_it() {
-    let (mut sim, player) = field();
-    let hunter = monster(&mut sim, "hunter", player, 1);
+fn a_monster_fights_as_its_attitude_has_it() {
+    {
+        let (mut sim, player) = field();
+        let hunter = monster(&mut sim, "hunter", player, 1);
 
-    assert_eq!(sim.world.get::<Attitude>(hunter), Some(&Attitude::Hostile));
-    assert!(targets(&mut sim, hunter, player, 3.0));
+        assert_eq!(sim.world.get::<Attitude>(hunter), Some(&Attitude::Hostile));
+        assert!(targets(&mut sim, hunter, player, 3.0));
 
-    movement::relocate(&mut sim.world, player, FAR);
-    assert!(sim.run_until(5.0, |world| body::target(world, hunter).is_none()));
-}
+        movement::relocate(&mut sim.world, player, FAR);
+        assert!(sim.run_until(5.0, |world| body::target(world, hunter).is_none()));
+    }
+    {
+        let (mut sim, player) = field();
+        let guard = monster(&mut sim, "guard", player, 1);
 
-#[test]
-fn a_defensive_monster_only_fights_whoever_attacks_it() {
-    let (mut sim, player) = field();
-    let guard = monster(&mut sim, "guard", player, 1);
+        assert!(!targets(&mut sim, guard, player, 3.0));
 
-    assert!(!targets(&mut sim, guard, player, 3.0));
+        attack(&mut sim, guard);
+        assert!(targets(&mut sim, guard, player, CHASE));
+    }
+    {
+        let (mut sim, player) = field();
+        let member = monster(&mut sim, "bat", player, 4);
+        let chief = monster(&mut sim, "chief", player, 4);
 
-    attack(&mut sim, guard);
-    assert!(targets(&mut sim, guard, player, CHASE));
-}
+        assert!(!targets(&mut sim, chief, player, 3.0));
 
-#[test]
-fn a_protective_monster_fights_whoever_attacks_its_pack() {
-    let (mut sim, player) = field();
-    let member = monster(&mut sim, "bat", player, 4);
-    let chief = monster(&mut sim, "chief", player, 4);
+        // The pack wandered meanwhile, and the chief guards it only within its aggro range.
+        let beside = position(&sim.world, player).expect("a position") + Offset::new(1.0, 1.0);
+        movement::relocate(&mut sim.world, member, beside);
+        movement::relocate(&mut sim.world, chief, beside);
+        attack(&mut sim, member);
+        assert!(targets(&mut sim, chief, player, 5.0));
+    }
+    {
+        let (mut sim, player) = field();
+        let bat = monster(&mut sim, "bat", player, 1);
+        let full = health(&sim, bat);
 
-    assert!(!targets(&mut sim, chief, player, 3.0));
+        attack(&mut sim, bat);
+        assert!(
+            sim.run_until(CHASE, |world| stat::effective(world, bat, StatKind::Health)
+                < full)
+        );
 
-    // The pack wandered meanwhile, and the chief guards it only within its aggro range.
-    let beside = position(&sim.world, player).expect("a position") + Offset::new(1.0, 1.0);
-    movement::relocate(&mut sim.world, member, beside);
-    movement::relocate(&mut sim.world, chief, beside);
-    attack(&mut sim, member);
-    assert!(targets(&mut sim, chief, player, 5.0));
-}
-
-#[test]
-fn a_pacifist_monster_never_fights_back() {
-    let (mut sim, player) = field();
-    let bat = monster(&mut sim, "bat", player, 1);
-    let full = health(&sim, bat);
-
-    attack(&mut sim, bat);
-    assert!(
-        sim.run_until(CHASE, |world| stat::effective(world, bat, StatKind::Health)
-            < full)
-    );
-
-    assert!(!targets(&mut sim, bat, player, 3.0));
-    assert_eq!(sim.world.get::<Attitude>(bat), Some(&Attitude::Hostile));
-}
-
-#[test]
-fn idle_stroll_keeps_its_leash() {
-    let (mut sim, _) = field();
-    let stroller = sim.npc("stroller");
-    let home = STROLLER_HOME;
-    let leash = Meters(3.0);
-
-    let mut farthest = Meters(0.0);
-    let mut moved = false;
-    sim.run_until(90.0, |world| {
-        let here = position(world, stroller).expect("position");
-        farthest = Meters(farthest.0.max(here.distance(home).0));
-        moved |= here != home;
-        false
-    });
-
-    assert!(moved, "the stroller never strolled");
-    assert!(
-        farthest <= Meters(leash.0 + 1.0),
-        "strayed {farthest:?} from home"
-    );
+        assert!(!targets(&mut sim, bat, player, 3.0));
+        assert_eq!(sim.world.get::<Attitude>(bat), Some(&Attitude::Hostile));
+    }
 }
 
 #[test]

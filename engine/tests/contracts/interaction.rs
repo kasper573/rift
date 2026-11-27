@@ -12,38 +12,43 @@ use testkit::{Game, Map, Sim, dialogue, path};
 const DAY: u64 = 24 * 3_600_000;
 
 #[test]
-fn reading_a_map_object_opens_its_conversation_with_the_object() {
+fn a_map_object_opens_its_conversation_and_a_chest_gives_each_player_its_gold_once_a_day() {
     let mut sim = beach();
-    let player = sim.join(1);
+    let first = sim.join(1);
+    let second = sim.join(2);
     let board = sim.object("board");
-
-    let opened = sim.open_with(1, board);
-
-    assert_eq!(
-        sim.lines(&opened),
-        vec!["Notices flap on the post.".to_owned()]
-    );
-    assert_eq!(opened.with, Some(board));
-    assert!(commands_locked(&sim.world, player));
-}
-
-#[test]
-fn a_chest_gives_its_gold_once_a_day() {
-    let mut sim = beach();
-    let player = sim.join(1);
     let chest = sim.object("chest");
 
-    let found = sim.open_with(1, chest);
+    let read = sim.open_with(1, board);
     assert_eq!(
-        sim.lines(&found),
-        vec!["Five coins glint in the sand.".to_owned()]
+        sim.lines(&read),
+        vec!["Notices flap on the post.".to_owned()]
     );
-    assert_eq!(sim.count(player, "gold"), 5);
+    assert_eq!(read.with, Some(board));
+    assert!(commands_locked(&sim.world, first));
     sim.leave(1);
+
+    for client in [1, 2] {
+        let conn = sim.conn(client);
+        sim.send(conn, InteractRequest { target: chest });
+    }
+    assert!(sim.run_until(20.0, |world| {
+        world.get::<Conversation>(first).is_some() && world.get::<Conversation>(second).is_some()
+    }));
+    for (client, player) in [(1, first), (2, second)] {
+        let opened = sim.conversation(client).expect("open");
+        assert_eq!(
+            sim.lines(&opened),
+            vec!["Five coins glint in the sand.".to_owned()],
+            "each player opens the chest for themselves"
+        );
+        assert_eq!(sim.count(player, "gold"), 5);
+        sim.leave(client);
+    }
 
     let empty = sim.open_with(1, chest);
     assert_eq!(sim.lines(&empty), vec!["Only sand.".to_owned()]);
-    assert_eq!(sim.count(player, "gold"), 5);
+    assert_eq!(sim.count(first, "gold"), 5);
     sim.leave(1);
 
     sim.world.insert_resource(WallClock {
@@ -55,32 +60,7 @@ fn a_chest_gives_its_gold_once_a_day() {
         sim.lines(&refilled),
         vec!["Five coins glint in the sand.".to_owned()]
     );
-    assert_eq!(sim.count(player, "gold"), 10);
-}
-
-#[test]
-fn two_players_open_the_same_chest_for_themselves() {
-    let mut sim = beach();
-    let first = sim.join(1);
-    let second = sim.join(2);
-    let chest = sim.object("chest");
-
-    for client in [1, 2] {
-        let conn = sim.conn(client);
-        sim.send(conn, InteractRequest { target: chest });
-    }
-    assert!(sim.run_until(20.0, |world| {
-        world.get::<Conversation>(first).is_some() && world.get::<Conversation>(second).is_some()
-    }));
-
-    for (client, player) in [(1, first), (2, second)] {
-        let opened = sim.conversation(client).expect("open");
-        assert_eq!(
-            sim.lines(&opened),
-            vec!["Five coins glint in the sand.".to_owned()]
-        );
-        assert_eq!(sim.count(player, "gold"), 5);
-    }
+    assert_eq!(sim.count(first, "gold"), 10);
 }
 
 #[test]

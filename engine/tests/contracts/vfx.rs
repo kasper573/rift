@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use testkit::{Declared, Game, Map, Sim, path};
 
 #[test]
-fn healing_shows_but_regeneration_does_not() {
+fn healing_and_a_level_reached_play_on_the_actor_for_everyone_but_regeneration_does_not() {
     let (mut sim, player) = arena();
     stat::apply_damage(&mut sim.world, player, 6.0);
     sim.tick();
@@ -35,11 +35,6 @@ fn healing_shows_but_regeneration_does_not() {
     let shown = instances(&mut sim, "healed");
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].site, VfxSite::Actor(player));
-}
-
-#[test]
-fn a_level_reached_plays_on_the_actor_for_everyone() {
-    let (mut sim, player) = arena();
 
     class::grant_xp(&mut sim.world, player, 30);
     sim.tick();
@@ -60,67 +55,67 @@ fn a_level_reached_plays_on_the_actor_for_everyone() {
 }
 
 #[test]
-fn a_skill_plays_its_vfx_on_every_target_and_once_on_its_area() {
-    let (mut sim, player) = arena();
-    learn(&mut sim, player, "cleave");
-    let near = dummy_toward(&mut sim, player, 1.0);
-    let far = dummy_toward(&mut sim, player, 2.0);
-    let full = stat::effective(&sim.world, near, StatKind::Health);
-    let at = position(&sim.world, near).expect("position");
+fn a_skill_plays_its_vfx_on_every_target_it_struck_and_once_on_its_area_but_not_on_its_caster() {
+    {
+        let (mut sim, player) = arena();
+        learn(&mut sim, player, "cleave");
+        let near = dummy_toward(&mut sim, player, 1.0);
+        let far = dummy_toward(&mut sim, player, 2.0);
+        let full = stat::effective(&sim.world, near, StatKind::Health);
+        let at = position(&sim.world, near).expect("position");
 
-    cast(&mut sim, "cleave", at);
-    assert!(sim.run_until(10.0, |world| any_shown(world, "slash_hit")));
+        cast(&mut sim, "cleave", at);
+        assert!(sim.run_until(10.0, |world| any_shown(world, "slash_hit")));
 
-    let mut hit: Vec<VfxSite> = instances(&mut sim, "slash_hit")
-        .iter()
-        .map(|instance| instance.site.clone())
-        .collect();
-    hit.sort_by_key(|site| format!("{site:?}"));
-    let mut struck: Vec<VfxSite> = [near, far]
-        .into_iter()
-        .filter(|dummy| stat::effective(&sim.world, *dummy, StatKind::Health) < full)
-        .map(VfxSite::Actor)
-        .collect();
-    struck.sort_by_key(|site| format!("{site:?}"));
-    assert!(!struck.is_empty());
-    assert_eq!(hit, struck);
-    let sweeps = instances(&mut sim, "swoosh");
-    assert_eq!(sweeps.len(), 1);
-    assert!(
-        matches!(sweeps[0].site, VfxSite::Area(_)),
-        "{:?}",
-        sweeps[0].site
-    );
-}
+        let mut hit: Vec<VfxSite> = instances(&mut sim, "slash_hit")
+            .iter()
+            .map(|instance| instance.site.clone())
+            .collect();
+        hit.sort_by_key(|site| format!("{site:?}"));
+        let mut struck: Vec<VfxSite> = [near, far]
+            .into_iter()
+            .filter(|dummy| stat::effective(&sim.world, *dummy, StatKind::Health) < full)
+            .map(VfxSite::Actor)
+            .collect();
+        struck.sort_by_key(|site| format!("{site:?}"));
+        assert!(!struck.is_empty());
+        assert_eq!(hit, struck);
+        let sweeps = instances(&mut sim, "swoosh");
+        assert_eq!(sweeps.len(), 1);
+        assert!(
+            matches!(sweeps[0].site, VfxSite::Area(_)),
+            "{:?}",
+            sweeps[0].site
+        );
+    }
+    {
+        let (mut sim, player) = arena();
+        learn(&mut sim, player, "fireball");
+        let dummy = dummy_toward(&mut sim, player, 1.0);
+        let feet = position(&sim.world, player).expect("position");
 
-#[test]
-fn an_area_vfx_reaches_the_targets_it_struck_and_not_the_caster() {
-    let (mut sim, player) = arena();
-    learn(&mut sim, player, "fireball");
-    let dummy = dummy_toward(&mut sim, player, 1.0);
-    let feet = position(&sim.world, player).expect("position");
+        cast(&mut sim, "fireball", feet);
+        assert!(sim.run_until(10.0, |world| any_shown(world, "blast")));
 
-    cast(&mut sim, "fireball", feet);
-    assert!(sim.run_until(10.0, |world| any_shown(world, "blast")));
-
-    let blasts = instances(&mut sim, "blast");
-    let circles: Vec<PlacedShape> = blasts
-        .iter()
-        .filter_map(|blast| match blast.site {
-            VfxSite::Area(footprint) => Some(footprint),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(circles.len(), 1);
-    assert!(circles[0].contains(feet));
-    let struck: Vec<(Entity, Option<Radians>)> = blasts
-        .iter()
-        .filter_map(|blast| match blast.site {
-            VfxSite::Actor(actor) => Some((actor, blast.heading)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(struck, vec![(dummy, Some(circles[0].facing))]);
+        let blasts = instances(&mut sim, "blast");
+        let circles: Vec<PlacedShape> = blasts
+            .iter()
+            .filter_map(|blast| match blast.site {
+                VfxSite::Area(footprint) => Some(footprint),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(circles.len(), 1);
+        assert!(circles[0].contains(feet));
+        let struck: Vec<(Entity, Option<Radians>)> = blasts
+            .iter()
+            .filter_map(|blast| match blast.site {
+                VfxSite::Actor(actor) => Some((actor, blast.heading)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(struck, vec![(dummy, Some(circles[0].facing))]);
+    }
 }
 
 #[test]

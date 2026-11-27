@@ -6,13 +6,31 @@ use testkit::{Game, path, png};
 use crate::support::game;
 
 #[test]
-fn content_loads_from_any_folder_and_is_named_by_its_path() {
+fn a_game_folder_holds_anything_beside_its_content_each_file_named_by_its_path() {
+    let mut broken_model = testkit::glb(&[]);
+    broken_model.truncate(broken_model.len() - 20);
     let content = game()
         .file(
             "world/forest/npcs/orc.npc.json",
             npc_fields("Orc", &path("model", "hero")),
         )
         .file("world/forest/notes.md", "Orcs live here.")
+        .file("todo.txt", "later")
+        .file("downloads/Human Basic Motions 2.5.pdf", "a manual")
+        .file(
+            "downloads/Human Basic Motions 2.5/HumanM@Walk01 - Forward.glb",
+            "not read",
+        )
+        .file("downloads/old.npc/config.json", "{ not content }")
+        .file("downloads/archive.zip", "packed")
+        .file("downloads/Broken Model.glb", broken_model)
+        .file("downloads/Noise.wav", b"not a sound".to_vec())
+        .file(".git/HEAD", "ref: refs/heads/main")
+        .file("world/.DS_Store", "")
+        .asset("art/icons/axe.png", png(1, 1))
+        .edit("class", "hero", |hero| {
+            hero["icon"] = json!("art/icons/axe.png")
+        })
         .load();
 
     let orc = content
@@ -23,105 +41,83 @@ fn content_loads_from_any_folder_and_is_named_by_its_path() {
 }
 
 #[test]
-fn a_file_of_no_known_type_is_refused_naming_the_nearest_type() {
-    let report = refused(game().file("orc.ncp.json", "{}"));
-    let error = only(&report, "orc.ncp.json");
-    assert_eq!(error.0, "unknown type");
-    assert_eq!(error.1.as_deref(), Some("\"npc\""));
-}
-
-#[test]
-fn a_file_the_game_never_reads_stays_beside_its_content() {
-    game()
-        .file("todo.txt", "later")
-        .file("downloads/Human Basic Motions 2.5.pdf", "a manual")
-        .file(
-            "downloads/Human Basic Motions 2.5/HumanM@Walk01 - Forward.glb",
-            "not read",
-        )
-        .file("downloads/old.npc/config.json", "{ not content }")
-        .file("downloads/archive.zip", "packed")
-        .load();
-}
-
-#[test]
-fn the_settings_anywhere_but_their_place_are_refused_saying_where_they_belong() {
-    let report = refused(game().file("game.config.json", "{}"));
-
-    let error = report
-        .errors
-        .iter()
-        .find(|error| error.file == "game.config.json")
-        .unwrap_or_else(|| panic!("{report}"));
-    assert_eq!(error.problem.rule, "unknown file");
-    assert!(error.problem.expected.contains(SETTINGS_FILE), "{report}");
-}
-
-#[test]
-fn a_name_a_disk_or_a_url_would_change_is_refused() {
+fn a_file_the_loader_cannot_place_by_its_name_or_where_it_lies_is_refused() {
+    let npc = || npc_fields("Orc", &path("model", "hero"));
+    let mut cases: Vec<(String, Game, &str)> = vec![
+        (
+            "orc.ncp.json".to_owned(),
+            game().file("orc.ncp.json", "{}"),
+            "unknown type",
+        ),
+        (
+            "lamp.prop.json".to_owned(),
+            game().file("lamp.prop.json", "{}"),
+            "bundle kept as one file",
+        ),
+        (
+            "hero.class.json".to_owned(),
+            game()
+                .prop("rock", json!({ "type": "none" }))
+                .edit("class", "hero", |hero| {
+                    hero["icon"] = json!(format!("{}/model.glb", path("prop", "rock")))
+                }),
+            "part of a bundle",
+        ),
+        (
+            format!("{}/notes.txt", path("prop", "rock")),
+            game().prop("rock", json!({ "type": "none" })).part(
+                "prop",
+                "rock",
+                "notes.txt",
+                "a stray file",
+            ),
+            "unknown part",
+        ),
+    ];
     for name in [
         "Orc.npc.json",
         "big orc.npc.json",
         "con.npc.json",
         "-orc.npc.json",
     ] {
-        let report = refused(game().file(name, npc_fields("Orc", &path("model", "hero"))));
-
-        assert_eq!(only(&report, name).0, "invalid name", "{name}");
+        cases.push((name.to_owned(), game().file(name, npc()), "invalid name"));
     }
+    for (file, game, rule) in cases {
+        let report = refused(game);
+        assert_eq!(only(&report, &file).0, rule, "{file}");
+    }
+    assert_eq!(
+        only(&refused(game().file("orc.ncp.json", "{}")), "orc.ncp.json")
+            .1
+            .as_deref(),
+        Some("\"npc\""),
+        "an unknown type names the nearest"
+    );
 
     let numbered = "orc (2).npc.json";
-    let content = game()
-        .file(numbered, npc_fields("Orc", &path("model", "hero")))
-        .load();
+    let content = game().file(numbered, npc()).load();
     assert!(content.by_path::<NpcDef>(numbered).is_some());
-}
 
-#[test]
-fn names_that_differ_only_by_case_clash() {
     let report = refused(game().file("caves/a.md", "one").file("Caves/b.md", "two"));
+    assert!(
+        report
+            .errors
+            .iter()
+            .any(|error| error.problem.rule == "case clash"),
+        "names that differ only by case clash: {report}"
+    );
 
-    let rules: Vec<&str> = report
+    let report = refused(game().file("game.config.json", "{}"));
+    let error = report
         .errors
         .iter()
-        .map(|error| error.problem.rule)
-        .collect();
-    assert!(rules.contains(&"case clash"), "{report}");
-}
-
-#[test]
-fn a_bundle_kept_as_one_json_file_is_refused() {
-    let report = refused(game().file("lamp.prop.json", "{}"));
-    assert_eq!(only(&report, "lamp.prop.json").0, "bundle kept as one file");
-}
-
-#[test]
-fn hidden_files_are_left_alone() {
-    game()
-        .file(".git/HEAD", "ref: refs/heads/main")
-        .file("world/.DS_Store", "")
-        .load();
-}
-
-#[test]
-fn a_bundles_part_is_never_named_from_outside_it() {
-    let report = refused(game().prop("rock", json!({ "type": "none" })).edit(
-        "class",
-        "hero",
-        |hero| hero["icon"] = json!(format!("{}/model.glb", path("prop", "rock"))),
-    ));
-
-    assert_eq!(only(&report, "hero.class.json").0, "part of a bundle");
-}
-
-#[test]
-fn media_is_named_by_its_path_from_the_game_folder() {
-    game()
-        .asset("art/icons/axe.png", png(1, 1))
-        .edit("class", "hero", |hero| {
-            hero["icon"] = json!("art/icons/axe.png")
-        })
-        .load();
+        .find(|error| error.file == "game.config.json")
+        .unwrap_or_else(|| panic!("{report}"));
+    assert_eq!(error.problem.rule, "unknown file");
+    assert!(
+        error.problem.expected.contains(SETTINGS_FILE),
+        "the settings anywhere but their place say where they belong: {report}"
+    );
 }
 
 fn npc_fields(name: &str, model: &str) -> Vec<u8> {

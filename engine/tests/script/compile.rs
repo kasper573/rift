@@ -113,7 +113,7 @@ fn a_script_module_reads_and_writes_as_a_row_lists_it() {
 }
 
 #[test]
-fn may_do_lists_exactly_what_a_script_reaches() {
+fn may_do_lists_exactly_what_a_script_reaches_deciding_a_path_and_both_arrows_of_an_if() {
     let gold = id::<ItemDef>("gold");
     let pass = id::<ItemDef>("pass");
     let bribed = id::<MemoryDef>("bribed");
@@ -144,102 +144,27 @@ fn may_do_lists_exactly_what_a_script_reaches() {
     assert_eq!(may_do.answers, vec![EventKind::of::<Started>()]);
     assert!(may_do.reaches.is_empty());
     assert!(!may_do.waits);
-}
+    {
+        let procedures = compile(NPC_RUNNER, &[&module("compile_decision")]).expect("compiles");
+        let reaches = &procedures[0].may_do.reaches;
 
-#[test]
-fn a_node_is_named_by_letters_digits_and_underscores_alone() {
-    for (name, kept) in [
-        ("Hello_2", true),
-        ("has space", false),
-        ("dash-ed", false),
-        ("ünï", false),
-        ("", false),
-    ] {
-        let content = game()
-            .row(
-                "script",
-                "named",
-                json!({
-                    "runs_on": NPC_RUNNER,
-                    "nodes": {
-                        "on": entry(NPC_RUNNER, name),
-                        name: { "type": "wait", "seconds": 1, "at_most": 1.0 },
-                    },
-                }),
-            )
-            .load();
-        let script: ScriptModule = parse_in(&content, json!({ "script": path("script", "named") }));
-        let compiled = compile_in(&content, NPC_RUNNER, &[&script]);
-        assert_eq!(
-            compiled.as_ref().map(|_| ()).map_err(|error| error.rule),
-            if kept { Ok(()) } else { Err("invalid name") },
-            "a node named {name:?}"
+        assert!(
+            reaches_in(reaches, Decides(id::<QuestDef>("plea"))),
+            "{reaches:?}"
+        );
+        assert!(
+            !reaches_in(reaches, Completes(id::<QuestDef>("plea"))),
+            "{reaches:?}"
         );
     }
-}
+    {
+        let procedures = compile(AREA_RUNNER, &[&module("compile_if_taken")]).expect("compiles");
 
-#[test]
-fn a_loop_without_a_wait_is_refused() {
-    let error = compile(NPC_RUNNER, &[&module("compile_loop")])
-        .err()
-        .expect("refused");
-
-    assert_eq!(error.rule, "loop without a wait");
-    assert_eq!(error.expected, "a → b → a");
-}
-
-#[test]
-fn too_many_steps_between_pauses_are_refused() {
-    let error = compile(NPC_RUNNER, &[&module("compile_too_many")])
-        .err()
-        .expect("refused");
-
-    assert_eq!(error.rule, "too many steps");
-}
-
-#[test]
-fn a_decision_reaches_as_deciding_a_path_not_completing_a_task() {
-    let procedures = compile(NPC_RUNNER, &[&module("compile_decision")]).expect("compiles");
-    let reaches = &procedures[0].may_do.reaches;
-
-    assert!(
-        reaches_in(reaches, Decides(id::<QuestDef>("plea"))),
-        "{reaches:?}"
-    );
-    assert!(
-        !reaches_in(reaches, Completes(id::<QuestDef>("plea"))),
-        "{reaches:?}"
-    );
-}
-
-#[test]
-fn an_effect_or_query_refuses_by_its_own_rule() {
-    for key in ["compile_effect", "compile_query"] {
-        let error = compile(NPC_RUNNER, &[&module(key)]).err().expect("refused");
-
-        assert_eq!(error.rule, "unknown task");
-        assert_eq!(error.node.as_deref(), Some("a"));
-    }
-}
-
-#[test]
-fn a_script_that_runs_itself_is_refused() {
-    let error = compile(NPC_RUNNER, &[&module("calls_loops")])
-        .err()
-        .expect("refused");
-
-    assert_eq!(error.rule, "runs itself");
-    assert!(error.expected.contains("loops"), "{}", error.expected);
-}
-
-#[test]
-fn an_if_always_taken_still_compiles_both_arrows() {
-    let procedures = compile(AREA_RUNNER, &[&module("compile_if_taken")]).expect("compiles");
-
-    let reaches = &procedures[0].may_do.reaches;
-    for notification in ["gulls", "intro"] {
-        let notifies = Notifies(id::<NotificationDef>(notification));
-        assert!(reaches_in(reaches, notifies), "{reaches:?}");
+        let reaches = &procedures[0].may_do.reaches;
+        for notification in ["gulls", "intro"] {
+            let notifies = Notifies(id::<NotificationDef>(notification));
+            assert!(reaches_in(reaches, notifies), "{reaches:?}");
+        }
     }
 }
 
@@ -269,14 +194,78 @@ fn every_expression_shape_serializes_back_to_the_json_it_was_read_from() {
 }
 
 #[test]
-fn an_event_field_reads_only_where_every_entry_reaching_the_node_raises_it() {
-    compile(SHOP_RUNNER, &[&module("compile_trade_field")]).expect("compiles");
+fn a_script_the_compiler_cannot_run_safely_is_refused_naming_why() {
+    {
+        for (name, kept) in [
+            ("Hello_2", true),
+            ("has space", false),
+            ("dash-ed", false),
+            ("ünï", false),
+            ("", false),
+        ] {
+            let content = game()
+                .row(
+                    "script",
+                    "named",
+                    json!({
+                        "runs_on": NPC_RUNNER,
+                        "nodes": {
+                            "on": entry(NPC_RUNNER, name),
+                            name: { "type": "wait", "seconds": 1, "at_most": 1.0 },
+                        },
+                    }),
+                )
+                .load();
+            let script: ScriptModule =
+                parse_in(&content, json!({ "script": path("script", "named") }));
+            let compiled = compile_in(&content, NPC_RUNNER, &[&script]);
+            assert_eq!(
+                compiled.as_ref().map(|_| ()).map_err(|error| error.rule),
+                if kept { Ok(()) } else { Err("invalid name") },
+                "a node named {name:?}"
+            );
+        }
+    }
+    {
+        let error = compile(NPC_RUNNER, &[&module("compile_loop")])
+            .err()
+            .expect("refused");
 
-    let error = compile(OBJECT_RUNNER, &[&module("compile_event_field")])
-        .err()
-        .expect("refused");
+        assert_eq!(error.rule, "loop without a wait");
+        assert_eq!(error.expected, "a → b → a");
+    }
+    {
+        let error = compile(NPC_RUNNER, &[&module("compile_too_many")])
+            .err()
+            .expect("refused");
 
-    assert_eq!(error.rule, "unknown field");
+        assert_eq!(error.rule, "too many steps");
+    }
+    {
+        for key in ["compile_effect", "compile_query"] {
+            let error = compile(NPC_RUNNER, &[&module(key)]).err().expect("refused");
+
+            assert_eq!(error.rule, "unknown task");
+            assert_eq!(error.node.as_deref(), Some("a"));
+        }
+    }
+    {
+        let error = compile(NPC_RUNNER, &[&module("calls_loops")])
+            .err()
+            .expect("refused");
+
+        assert_eq!(error.rule, "runs itself");
+        assert!(error.expected.contains("loops"), "{}", error.expected);
+    }
+    {
+        compile(SHOP_RUNNER, &[&module("compile_trade_field")]).expect("compiles");
+
+        let error = compile(OBJECT_RUNNER, &[&module("compile_event_field")])
+            .err()
+            .expect("refused");
+
+        assert_eq!(error.rule, "unknown field");
+    }
 }
 
 fn id<Row: ContentFile>(key: &str) -> ContentId<Row> {

@@ -24,12 +24,10 @@ bake-templates:
     cargo build {{shared}} --quiet --bin rift
     {{out_dir}}/rift bake maps editor/templates/new_game
 
-# Every test lives in a tests/ folder, and every example in the docs compiles and runs; the libs' and
-# bins' own test harnesses would build for nothing.
-[doc("The unit and integration tests, and the examples in the docs.")]
+# Every test lives in a tests/ folder; the libs' and bins' own test harnesses would build for nothing.
+[doc("The unit and integration tests.")]
 test:
     cargo test {{shared}} --test '*'
-    cargo test {{shared}} --doc
 
 [doc("Builds the editor and the two game binaries it plays with, then opens it, on FOLDER if given.")]
 editor *folder:
@@ -121,6 +119,5 @@ build-times:
     timed "lint: rift check" {{out_dir}}/rift check editor/templates/new_game
     timed "test: compile" cargo test {{shared}} --test '*' --no-run
     timed "test: run" cargo test {{shared}} --test '*'
-    timed "test: docs" cargo test {{shared}} --doc
     printf '%s\n' "${report[@]}"
     echo "cargo's report of the binaries' build: target/cargo-timings/cargo-timing.html"

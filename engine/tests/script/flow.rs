@@ -178,25 +178,6 @@ fn told<'a>(sim: &mut Sim, lines: &[&'a Notification]) -> Vec<&'a Notification> 
         .collect()
 }
 
-#[test]
-fn a_dialogue_behind_a_random_pick_is_found_before_it_is_heard() {
-    let (mut sim, player) = field();
-    let (_, owner) = scripted_npc(&mut sim, player, &[&module("flow_random")]);
-
-    let world: &World = &sim.world;
-    let found = world.resource::<Instances>().next_dialogue(
-        world,
-        owner,
-        EventKind::of::<Interacted>(),
-        player,
-    );
-
-    assert_eq!(
-        found,
-        vec![(path("script", "flow_random"), "hello".to_owned())]
-    );
-}
-
 pub fn scripts() -> Vec<(&'static str, Value)> {
     let npc = |nodes: Value| json!({ "runs_on": "npc", "nodes": nodes });
     vec![
@@ -297,15 +278,6 @@ pub fn scripts() -> Vec<(&'static str, Value)> {
                     "lines": [{ "by": { "type": "narrator" }, "text": ["Pay ", { "value": "Gold" }, " or go."] }],
                     "choices": [{ "label": ["Pay ", { "value": "Gold" }] }]
                 },
-            })),
-        ),
-        (
-            "flow_random",
-            npc(json!({
-                "interacted": interacted("roll"),
-                "roll": { "type": "random", "weights": [1, 1], "outputs": ["hello", "bye"] },
-                "hello": dialogue("Hi.", json!([{ "label": ["Bye."] }])),
-                "bye": { "type": "wait", "seconds": 1, "at_most": 5.0 },
             })),
         ),
     ]

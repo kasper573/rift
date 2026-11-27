@@ -5,8 +5,11 @@
 
 use std::time::{Duration, Instant};
 
+use engine::core::math::Pos;
+use engine::core::units::Meters;
 use engine::systems::TICK_HZ;
 use engine::systems::launch::{TICK_METRIC, fake_token};
+use engine::systems::movement::{MoveRequest, MoveSeq};
 use engine::systems::player::headless::HeadlessClient;
 
 use crate::search::{Search, budget_ms, verdict};
@@ -93,11 +96,20 @@ pub fn run_dyn(http_url: &str) -> Result<Pool, String> {
         }
         None => println!("[loadtest] the first probe already exceeded the budget"),
     }
-    Ok(Pool(clients))
+    Ok(Pool {
+        clients,
+        strides: 0,
+        next_stride: Instant::now(),
+    })
 }
 
 /// Simulated players, connected for as long as it's kept and pumped.
-pub struct Pool(Vec<HeadlessClient>);
+pub struct Pool {
+    clients: Vec<HeadlessClient>,
+    /// How many strides the players walking about have taken, and when they take the next.
+    strides: u32,
+    next_stride: Instant,
+}
 
 impl Pool {
     /// `count` players connected to the server at `http_url`, as many as it let in.
@@ -105,18 +117,61 @@ impl Pool {
         let mut clients = Vec::new();
         let mut next_id = 0usize;
         set_player_count(&mut clients, http_url, &mut next_id, count);
-        Pool(clients)
+        Pool {
+            clients,
+            strides: 0,
+            next_stride: Instant::now(),
+        }
     }
 
     pub fn connected(&self) -> usize {
-        connected_count(&self.0)
+        connected_count(&self.clients)
     }
 
     /// Keeps every client answering the server for `lasting`.
     pub fn hold(&mut self, lasting: Duration) {
-        pump(&mut self.0, lasting);
+        pump(&mut self.clients, lasting);
+    }
+
+    /// Has every player in the world walk about `around` for `lasting`, each a stride ahead
+    /// every [`STRIDE_EVERY`] on a ring of its own: a crowd milling about a place it came to.
+    pub fn walk_about(&mut self, around: Pos<Meters>, lasting: Duration) {
+        let deadline = Instant::now() + lasting;
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            if let Some(wait) = self.next_stride.checked_duration_since(Instant::now()) {
+                pump(&mut self.clients, wait.min(left));
+                continue;
+            }
+            self.strides += 1;
+            self.next_stride = Instant::now() + STRIDE_EVERY;
+            for (index, client) in self.clients.iter_mut().enumerate() {
+                if !client.in_world() {
+                    continue;
+                }
+                let heading = (self.strides as usize + index) as f32 * GOLDEN_ANGLE;
+                let reach = NEAREST_RING.0 + (index % RINGS) as f32 * RING_STEP.0;
+                client.send(MoveRequest {
+                    pos: Pos::new(
+                        around.x + heading.cos() * reach,
+                        around.y + heading.sin() * reach,
+                    ),
+                    seq: MoveSeq(self.strides),
+                });
+            }
+        }
     }
 }
+
+/// How often a player walking about strides ahead.
+const STRIDE_EVERY: Duration = Duration::from_millis(1500);
+/// The rings players walk about a place on: how far the nearest lies, how far apart they lie,
+/// and how many there are.
+const NEAREST_RING: Meters = Meters(3.0);
+const RING_STEP: Meters = Meters(2.0);
+const RINGS: usize = 4;
+/// A turn that never comes round to the same heading, so a player's strides fan out about its
+/// ring rather than pace a line.
+const GOLDEN_ANGLE: f32 = 2.399_963;
 
 /// Brings the live client pool to exactly `target` players: drops surplus clients (each dropped
 /// connection says goodbye, which the server sees as a disconnect) or opens new ones. New clients

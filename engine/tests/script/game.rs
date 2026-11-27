@@ -123,7 +123,7 @@ pub fn game() -> Game {
         .area(
             "field",
             &Map::open(32, 32),
-            json!([{ "type": "resident", "npc": "stroller.npc.json", "at": { "x": 26.0, "y": 4.0 } }]),
+            json!([]),
         )
         .area("forest", &Map::open(8, 20), json!([]))
         .area("vault", &Map::open(8, 8), json!([]))
@@ -149,7 +149,6 @@ pub fn game() -> Game {
         .npc("guard", 30.0, fighter("defends"))
         .npc("chief", 30.0, fighter("protects"))
         .npc("bat", 30.0, json!([{ "type": "script", "script": "flees.script.json" }]))
-        .npc("stroller", 30.0, json!([{ "type": "script", "script": "strolls.script.json" }]))
         .npc("brawler", 30.0, fighter("brawls"))
         .edit("npc", "fighter", striking)
         .edit("npc", "hunter", striking)
@@ -171,18 +170,6 @@ pub fn game() -> Game {
                     "hostile": { "type": "set_attitude", "attitude": "hostile", "next": "roam" },
                     "roam": { "type": "wander", "priority": 1, "next": "tick" },
                     "tick": { "type": "wait", "seconds": 1, "at_most": 1.0, "next": "roam" },
-                },
-            }),
-        )
-        .row(
-            "script",
-            "strolls",
-            json!({
-                "runs_on": "npc",
-                "nodes": {
-                    "spawned": { "type": "on", "event": "started", "next": "roam" },
-                    "roam": { "type": "wander", "leash": 3, "priority": 1, "next": "rest" },
-                    "rest": { "type": "wait", "seconds": 1, "at_most": 2.0, "next": "roam" },
                 },
             }),
         )

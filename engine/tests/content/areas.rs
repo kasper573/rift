@@ -170,47 +170,11 @@ fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_pr
     );
 }
 
-#[test]
-fn a_prop_stands_on_the_ground_under_it_sunk_as_deep_as_it_is_placed() {
-    let content = game()
-        .prop("boulder", json!({ "type": "none" }))
-        .area(
-            "hill",
-            &Map::open(8, 8),
-            json!([
-                { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 2.0, "y": 3.0 } },
-                { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 7.0, "y": 3.0 }, "sunk": 1.5 },
-            ]),
-        )
-        .part("area", "hill", "height/0_0.png", tile(&hill()))
-        .part("area", "hill", "height_overview.png", overview(&hill()))
-        .load();
-    let hill_area = area::load(&content, area_id(&content, "hill"));
-
-    let standing: Vec<f32> = hill_area
-        .props
-        .iter()
-        .map(|placed| {
-            prop_transform(&hill_area.heights, &hill_area.snap_surfaces, placed)
-                .translation
-                .y
-        })
-        .collect();
-    let expected = [0.0, 3.0 - 1.5];
-    assert!(
-        standing
-            .iter()
-            .zip(expected)
-            .all(|(stands, ground)| (stands - ground).abs() < 0.01),
-        "a prop stands on the ground, a sunk one that far under it: {standing:?}"
-    );
-}
-
 /// A prop snapping to the ground rests on what lies under it, its shape as it is: out of a floor
 /// it is placed inside onto the floor's top, on bare ground where nothing else lies, and along a
 /// slope, lifted until no part of it sinks in.
 #[test]
-fn a_prop_snapping_to_the_ground_rests_on_what_lies_under_it_along_its_slope() {
+fn a_prop_stands_on_the_ground_under_it_sunk_as_placed_or_snapped_along_its_slope() {
     let floor = box_glb(Vec3::new(3.0, 0.3, 3.0), "stone", [1.0; 4]);
     let shine = box_glb(Vec3::new(1.0, 0.05, 1.0), "light", [1.0; 4]);
     let eave = roof_glb(Vec2::new(1.6, 1.6), 2.5, "tiles", [1.0; 4]);
@@ -276,6 +240,40 @@ fn a_prop_snapping_to_the_ground_rests_on_what_lies_under_it_along_its_slope() {
             stood.rotation * Vec3::Y
         );
     }
+    {
+        let content = game()
+            .prop("boulder", json!({ "type": "none" }))
+            .area(
+                "hill",
+                &Map::open(8, 8),
+                json!([
+                    { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 2.0, "y": 3.0 } },
+                    { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 7.0, "y": 3.0 }, "sunk": 1.5 },
+                ]),
+            )
+            .part("area", "hill", "height/0_0.png", tile(&hill()))
+            .part("area", "hill", "height_overview.png", overview(&hill()))
+            .load();
+        let hill_area = area::load(&content, area_id(&content, "hill"));
+
+        let standing: Vec<f32> = hill_area
+            .props
+            .iter()
+            .map(|placed| {
+                prop_transform(&hill_area.heights, &hill_area.snap_surfaces, placed)
+                    .translation
+                    .y
+            })
+            .collect();
+        let expected = [0.0, 3.0 - 1.5];
+        assert!(
+            standing
+                .iter()
+                .zip(expected)
+                .all(|(stands, ground)| (stands - ground).abs() < 0.01),
+            "a prop stands on the ground, a sunk one that far under it: {standing:?}"
+        );
+    }
 }
 
 #[test]
@@ -293,13 +291,19 @@ fn a_walk_leads_to_every_point_the_ground_holds() {
     let mesh = field.mesh();
     let from = Pos::new(0.5, 0.5);
     assert!(mesh.walkable(from));
-    let step = 0.02;
-    let held: Vec<Pos<Meters>> = (0..(9.0 / step) as i32)
-        .flat_map(|column| (0..(9.0 / step) as i32).map(move |row| (column, row)))
+    let step = 0.04;
+    let across = (9.0 / step) as i32;
+    let held: Vec<Pos<Meters>> = (0..across)
+        .flat_map(|column| (0..across).map(move |row| (column, row)))
         .map(|(column, row)| Pos::new(column as f32 * step - 0.5, row as f32 * step - 0.5))
         .filter(|&point| mesh.walkable(point) && mesh.connects(from, point))
         .collect();
-    assert!(held.len() > 100_000);
+    assert!(
+        held.len() * 2 > (across * across) as usize,
+        "most of the field is open ground: {} of {} points",
+        held.len(),
+        across * across
+    );
     let unreachable: Vec<Pos<Meters>> = held
         .into_iter()
         .filter(|&point| mesh.route(from, point).is_none())

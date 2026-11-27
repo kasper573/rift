@@ -25,7 +25,7 @@ const SAVED_BY_THE_OLD_INTERFACE: &str = r#"{
       "keys": { "3": { "key": "KeyQ" }, "4": null }
     }
   },
-  "text": { "letters_per_second": 42.0 },
+  "text": { "characters_per_second": 42.0 },
   "sound": { "master": 0.25, "music": 0.5, "ambience": 0.5, "effects": 0.5, "voice": 0.75 },
   "screen": { "transition": "Mosaic", "frame_rate": true },
   "skills": { "quick_cast": true },

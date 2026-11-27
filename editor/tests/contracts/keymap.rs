@@ -4,27 +4,27 @@ use ui::egui;
 use ui::egui::{Context, Event, Key, Modifiers, RawInput};
 
 #[test]
-fn a_chord_with_more_modifiers_held_claims_its_key_alone() {
-    let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
-    assert_eq!(pressed_by(Key::Z, ctrl_shift), vec![EditorKey::Redo]);
-    assert_eq!(
-        pressed_by(Key::Z, Modifiers::COMMAND),
-        vec![EditorKey::Undo]
-    );
-    assert_eq!(
-        pressed_by(Key::F5, Modifiers::SHIFT),
-        vec![EditorKey::StopPlay]
-    );
-    assert_eq!(
-        pressed_by(Key::P, Modifiers::SHIFT),
-        vec![EditorKey::FootprintsOverlay]
-    );
-}
-
-#[test]
-fn a_modifier_held_for_a_finer_step_keeps_the_key_it_steps_with() {
-    let pressed = pressed_by(Key::ArrowLeft, Modifiers::SHIFT);
-    assert_eq!(pressed, vec![EditorKey::Move]);
+fn a_chord_claims_its_key_alone_with_more_modifiers_held_and_a_finer_step_keeps_its_key() {
+    {
+        let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        assert_eq!(pressed_by(Key::Z, ctrl_shift), vec![EditorKey::Redo]);
+        assert_eq!(
+            pressed_by(Key::Z, Modifiers::COMMAND),
+            vec![EditorKey::Undo]
+        );
+        assert_eq!(
+            pressed_by(Key::F5, Modifiers::SHIFT),
+            vec![EditorKey::StopPlay]
+        );
+        assert_eq!(
+            pressed_by(Key::P, Modifiers::SHIFT),
+            vec![EditorKey::FootprintsOverlay]
+        );
+    }
+    {
+        let pressed = pressed_by(Key::ArrowLeft, Modifiers::SHIFT);
+        assert_eq!(pressed, vec![EditorKey::Move]);
+    }
 }
 
 #[test]

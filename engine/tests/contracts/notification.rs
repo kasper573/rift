@@ -5,7 +5,7 @@ use engine::core::content::Content;
 use engine::core::math::{Offset, Pos};
 use engine::core::text::LineText;
 use engine::core::units::Meters;
-use engine::core::vfx::{VfxParams, VfxShaderDef, VfxShaderId};
+use engine::core::vfx::{VfxShaderDef, VfxShaderId};
 use engine::systems::area::vfx;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::chat::{ChatChannel, ChatSpeaker};
@@ -53,31 +53,6 @@ fn stepping_onto_the_pier_narrates_the_gulls_once_even_during_a_conversation() {
     assert_eq!(sim.told(1), Vec::new());
     assert!(sim.remembers(player, "heard_gulls"));
     assert!(sim.conversation(1).is_some());
-}
-
-#[test]
-fn history_keeps_every_notice_and_refusal_raised_and_never_a_pop() {
-    let mut sim = island(&game());
-    let player = sim.join(1);
-    sim.run(0.5);
-    let gulls = sim.spoken("gulls");
-    let refused = refusal(&sim);
-
-    notification::notify(&mut sim.world, player, None, gulls);
-    notification::notify(&mut sim.world, player, None, refused);
-    notification::pop(&mut sim.world, player, "Ouch", None, VfxParams::default());
-    sim.tick();
-
-    let records = recorded(&sim, player);
-    assert!(records.contains(&(
-        HistoryTopic::Notification,
-        Some("Gulls".to_owned()),
-        "Gulls squabble over a fish head.".to_owned(),
-        1
-    )));
-    assert!(records.contains(&(HistoryTopic::Error, None, "Needs 10 Gold".to_owned(), 1)));
-    assert!(!records.iter().any(|(_, _, text, _)| text == "Ouch"));
-    assert_eq!(pops(&mut sim, 1).len(), 1);
 }
 
 #[test]
@@ -216,31 +191,39 @@ fn completing_a_quest_and_reaching_a_level_are_milestones() {
 }
 
 #[test]
-fn the_same_line_from_the_same_speaker_goes_out_once_per_window_and_merges_in_history() {
-    let mut sim = island(&game());
+fn what_a_player_is_told_is_throttled_by_line_and_rate_but_every_refusal_and_history_keep_all() {
+    let game = game();
+
+    let mut sim = island(&game);
     let player = sim.join(1);
     let gulls = sim.spoken("gulls");
     for _ in 0..25 {
         notification::notify(&mut sim.world, player, None, gulls.clone());
     }
-    assert_eq!(sim.told(1), vec![gulls.clone()]);
-    let repeats = |sim: &Sim| {
-        recorded(sim, player)
-            .into_iter()
+    assert_eq!(
+        sim.told(1),
+        vec![gulls.clone()],
+        "the same line from the same speaker goes out once per window"
+    );
+    let records = recorded(&sim, player);
+    assert_eq!(
+        records
+            .iter()
             .filter(|(_, by, ..)| by.as_deref() == Some("Gulls"))
-            .map(|(.., repeats)| repeats)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(repeats(&sim), vec![25]);
-
+            .map(|(topic, _, text, repeats)| (*topic, text.as_str(), *repeats))
+            .collect::<Vec<_>>(),
+        vec![(
+            HistoryTopic::Notification,
+            "Gulls squabble over a fish head.",
+            25
+        )],
+        "and merges in history"
+    );
     sim.later(11.0);
     notification::notify(&mut sim.world, player, None, gulls.clone());
     assert_eq!(sim.told(1), vec![gulls.clone(), gulls]);
-}
 
-#[test]
-fn a_flood_goes_out_in_a_burst_and_then_at_the_refill_rate() {
-    let mut sim = island(&game());
+    let mut sim = island(&game);
     let player = sim.join(1);
     for line in 0..15 {
         notification::notify(
@@ -250,15 +233,15 @@ fn a_flood_goes_out_in_a_burst_and_then_at_the_refill_rate() {
             narration(format!("Beat {line}")),
         );
     }
-    assert_eq!(sim.told(1).len(), 10);
+    assert_eq!(sim.told(1).len(), 10, "a flood goes out in a burst");
     assert_eq!(
         recorded(&sim, player)
             .iter()
             .filter(|(_, by, ..)| by.as_deref() == Some("Drums"))
             .count(),
-        15
+        15,
+        "history keeps all of it"
     );
-
     sim.later(1.0);
     for line in 15..20 {
         notification::notify(
@@ -268,22 +251,32 @@ fn a_flood_goes_out_in_a_burst_and_then_at_the_refill_rate() {
             narration(format!("Beat {line}")),
         );
     }
-    assert_eq!(sim.told(1).len(), 12);
-}
+    assert_eq!(sim.told(1).len(), 12, "and then at the refill rate");
 
-#[test]
-fn every_refusal_answers_its_action_however_many_come() {
-    let mut sim = island(&game());
+    let mut sim = island(&game);
     let player = sim.join(1);
     let refused = refusal(&sim);
     for _ in 0..20 {
         notification::notify(&mut sim.world, player, None, refused.clone());
     }
-    assert_eq!(sim.told(1), vec![refused; 20]);
+    assert_eq!(
+        sim.told(1),
+        vec![refused; 20],
+        "every refusal answers its action"
+    );
+    assert!(
+        recorded(&sim, player)
+            .iter()
+            .any(|(topic, by, text, _)| *topic == HistoryTopic::Error
+                && by.is_none()
+                && text == "Needs 10 Gold"),
+        "and history keeps refusals"
+    );
 }
 
 #[test]
-fn a_hit_pops_its_amount_out_of_the_one_struck_for_everyone_who_sees_it() {
+fn a_hit_healing_a_level_and_a_status_pop_with_their_own_look_for_everyone_who_sees_and_never_in_history()
+ {
     let mut sim = island(&game());
     let player = sim.join(1);
     sim.join(2);
@@ -292,27 +285,20 @@ fn a_hit_pops_its_amount_out_of_the_one_struck_for_everyone_who_sees_it() {
     let def = sim.id::<NpcDef>("dummy");
     let dummy = npc::spawn(&mut sim.world, def, at + Offset::new(1.0, 0.0), area, None);
     sim.world.entity_mut(dummy).insert(Attitude::Hostile);
+    stat::apply_damage(&mut sim.world, player, 6.0);
     sim.run(0.5);
     sim.forget_notified();
 
     combat::inflict(&mut sim.world, dummy, Some(player), 4.0);
     sim.tick();
-
-    let damage_pop = Some(sim.id::<VfxShaderDef>("damage_pop"));
+    let shader = |sim: &Sim, key: &str| Some(sim.id::<VfxShaderDef>(key));
     for client in [1, 2] {
         assert_eq!(
             pops(&mut sim, client),
-            vec![(Some(dummy), "4".to_owned(), damage_pop)]
+            vec![(Some(dummy), "4".to_owned(), shader(&sim, "damage_pop"))],
+            "a hit pops its amount out of the one struck for everyone who sees it"
         );
     }
-}
-
-#[test]
-fn healing_a_level_and_a_status_each_pop_with_their_own_look_unless_the_status_keeps_quiet() {
-    let mut sim = island(&game());
-    let player = sim.join(1);
-    stat::apply_damage(&mut sim.world, player, 6.0);
-    sim.tick();
     sim.forget_notified();
 
     stat::heal(&mut sim.world, player, 3.0);
@@ -323,13 +309,26 @@ fn healing_a_level_and_a_status_each_pop_with_their_own_look_unless_the_status_k
     status::apply(&mut sim.world, player, kindled, 10.0, None);
     sim.run(0.5);
 
-    let shader = |key: &str| Some(sim.id::<VfxShaderDef>(key));
     let looks = vec![
-        (Some(player), "+3".to_owned(), shader("heal_pop")),
-        (Some(player), "Level 2".to_owned(), shader("level_pop")),
-        (Some(player), "Guarded".to_owned(), shader("status_pop")),
+        (Some(player), "+3".to_owned(), shader(&sim, "heal_pop")),
+        (
+            Some(player),
+            "Level 2".to_owned(),
+            shader(&sim, "level_pop"),
+        ),
+        (
+            Some(player),
+            "Guarded".to_owned(),
+            shader(&sim, "status_pop"),
+        ),
     ];
-    assert_eq!(pops(&mut sim, 1), looks);
+    assert_eq!(pops(&mut sim, 1), looks, "unless a status keeps quiet");
+    assert!(
+        !recorded(&sim, player)
+            .iter()
+            .any(|(_, _, text, _)| text == "+3" || text == "4"),
+        "a pop is never kept in history"
+    );
 }
 
 #[test]

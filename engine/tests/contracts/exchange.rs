@@ -47,42 +47,37 @@ fn a_hand_in_frees_the_slot_its_reward_needs() {
 }
 
 #[test]
-fn a_refused_exchange_changes_nothing() {
-    let content = goods().load();
+fn a_refused_exchange_changes_nothing_and_reads_as_what_is_needed() {
+    let content = goods()
+        .area("field", &Map::open(4, 4), json!([]))
+        .hero("field", 1.0, 1.0)
+        .load();
     let [gold, bone, sword] = items(&content, ["gold", "bone", "sword"]);
     let original = bag(2, &[ItemStack::new(gold, 10), ItemStack::new(bone, 1)]);
+    let refuses = |costs: &[ItemStack], gains: &[ItemStack], refusal, says: &str| {
+        let mut tried = original.clone();
+        assert_eq!(tried.exchange(&content, costs, gains), Err(refusal));
+        assert_eq!(tried, original, "{says}");
+        assert_eq!(refusal.line(&content).plain_words(&content), says);
+    };
 
-    let mut short = original.clone();
-    assert_eq!(
-        short.exchange(&content, &[ItemStack::new(gold, 15)], &[]),
-        Err(ExchangeRefusal::Missing(ItemStack::new(gold, 5)))
+    refuses(
+        &[ItemStack::new(gold, 15)],
+        &[],
+        ExchangeRefusal::Missing(ItemStack::new(gold, 5)),
+        "Needs 5 Gold more",
     );
-    assert_eq!(short, original);
-
-    let mut full = original.clone();
-    assert_eq!(
-        full.exchange(
-            &content,
-            &[ItemStack::new(gold, 1)],
-            &[ItemStack::new(sword, 1)]
-        ),
-        Err(ExchangeRefusal::NoRoom { slots: 1 })
+    refuses(
+        &[ItemStack::new(gold, 6), ItemStack::new(gold, 6)],
+        &[],
+        ExchangeRefusal::Missing(ItemStack::new(gold, 2)),
+        "Needs 2 Gold more",
     );
-    assert_eq!(full, original);
-}
-
-#[test]
-fn costs_of_the_same_item_add_up() {
-    let content = goods().load();
-    let [gold] = items(&content, ["gold"]);
-    let mut inventory = bag(5, &[ItemStack::new(gold, 20)]);
-    assert_eq!(
-        inventory.exchange(
-            &content,
-            &[ItemStack::new(gold, 15), ItemStack::new(gold, 10)],
-            &[]
-        ),
-        Err(ExchangeRefusal::Missing(ItemStack::new(gold, 5)))
+    refuses(
+        &[ItemStack::new(gold, 1)],
+        &[ItemStack::new(sword, 1)],
+        ExchangeRefusal::NoRoom { slots: 1 },
+        "Needs 1 free slot",
     );
 }
 
@@ -98,27 +93,6 @@ fn a_stack_without_limit_holds_every_coin_in_one_slot() {
         .exchange(&content, &[], &[ItemStack::new(gold, 10)])
         .expect("gold still fits in the one slot");
     assert_eq!(inventory.count(gold), u32::MAX);
-}
-
-#[test]
-fn refusals_read_as_what_is_needed() {
-    let content = goods()
-        .area("field", &Map::open(4, 4), json!([]))
-        .hero("field", 1.0, 1.0)
-        .load();
-    let [gold] = items(&content, ["gold"]);
-    assert_eq!(
-        ExchangeRefusal::NoRoom { slots: 1 }
-            .line(&content)
-            .plain_words(&content),
-        "Needs 1 free slot"
-    );
-    assert_eq!(
-        ExchangeRefusal::Missing(ItemStack::new(gold, 20))
-            .line(&content)
-            .plain_words(&content),
-        "Needs 20 Gold more"
-    );
 }
 
 #[test]

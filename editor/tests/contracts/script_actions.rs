@@ -24,7 +24,7 @@ use crate::support::{self, Drawn, Frames, click, key};
 const SCREEN: egui::Vec2 = egui::vec2(1600.0, 1000.0);
 
 #[test]
-fn deleting_several_selected_nodes_deletes_every_one_of_them() {
+fn duplicating_or_deleting_several_selected_nodes_takes_every_one_of_them() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = open(support::game(), &scratch);
     let at = talk();
@@ -32,6 +32,25 @@ fn deleting_several_selected_nodes_deletes_every_one_of_them() {
     frames.run(&mut editor, &at, Vec::new());
     select(&mut editor, &at, &["ask", "answer"]);
 
+    frames.run(
+        &mut editor,
+        &at,
+        key(egui::Key::D, egui::Modifiers::COMMAND),
+    );
+    let script = read(&editor);
+    let saying = |said: &str| {
+        script
+            .nodes
+            .values()
+            .filter(|node| matches!(node, Node::Dialogue(dialogue) if dialogue.lines.iter().any(|line| editor::spans::plain(&line.downcast_ref::<ScriptLine>().expect("a script line").text) == said)))
+            .count()
+    };
+    assert_eq!((saying("Well?"), saying("Fine.")), (2, 2));
+
+    editor.undo();
+    let mut frames = ScriptFrames::new();
+    frames.run(&mut editor, &at, Vec::new());
+    select(&mut editor, &at, &["ask", "answer"]);
     frames.run(
         &mut editor,
         &at,
@@ -90,40 +109,14 @@ fn a_closed_script_view_leaves_its_keys_to_the_view_shown_where_it_was() {
 }
 
 #[test]
-fn duplicating_several_selected_nodes_copies_every_one_of_them() {
+fn enter_on_a_line_keeps_what_was_typed_into_it_and_adds_one_after() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = open(support::game(), &scratch);
     let at = talk();
-    let mut frames = ScriptFrames::new();
-    frames.run(&mut editor, &at, Vec::new());
-    select(&mut editor, &at, &["ask", "answer"]);
-
-    frames.run(
-        &mut editor,
-        &at,
-        key(egui::Key::D, egui::Modifiers::COMMAND),
-    );
-
-    let script = read(&editor);
-    let saying = |said: &str| {
-        script
-            .nodes
-            .values()
-            .filter(|node| matches!(node, Node::Dialogue(dialogue) if dialogue.lines.iter().any(|line| editor::spans::plain(&line.downcast_ref::<ScriptLine>().expect("a script line").text) == said)))
-            .count()
-    };
-    assert_eq!((saying("Well?"), saying("Fine.")), (2, 2));
-}
-
-#[test]
-fn enter_on_a_line_keeps_what_was_typed_into_it_and_adds_one_after() {
     for (caret, typed, lines) in [
-        (egui::Key::End, " Speak up.", ["Well? Speak up.", ""]),
         (egui::Key::Home, "", ["Well?", ""]),
+        (egui::Key::End, " Speak up.", ["Well? Speak up.", ""]),
     ] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let mut editor = open(support::game(), &scratch);
-        let at = talk();
         let mut frames = ScriptFrames::new();
         frames.run(&mut editor, &at, Vec::new());
         select(&mut editor, &at, &["ask"]);
@@ -161,6 +154,7 @@ fn enter_on_a_line_keeps_what_was_typed_into_it_and_adds_one_after() {
             })
             .collect();
         assert_eq!(shown, lines, "{caret:?}");
+        editor.undo();
     }
 }
 
@@ -250,12 +244,12 @@ fn a_condition_inside_a_query_is_shown_as_a_condition_within_the_screen() {
             },
         },
     });
-    for (script, nodes, node, last) in [
-        ("watch", watch, "found", "target"),
-        ("steel", steel, "harden", "12345"),
-    ] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let mut editor = open(support::game().row("script", script, nodes), &scratch);
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = support::game()
+        .row("script", "watch", watch)
+        .row("script", "steel", steel);
+    let mut editor = open(game, &scratch);
+    for (script, node, last) in [("watch", "found", "target"), ("steel", "harden", "12345")] {
         let at = ScriptRow::new(path("script", script));
         let mut frames = ScriptFrames::new();
         frames.run(&mut editor, &at, Vec::new());
@@ -320,38 +314,38 @@ fn every_node_a_script_offers_lands_after_its_event_or_is_refused_for_what_it_is
     });
     let wolf = json!([{ "type": "script", "script": path("script", "wolf_hunting") }]);
     let mut refused = Vec::new();
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = support::game()
+        .file("icons/cap.png", testkit::png(16, 16))
+        .sfx("swish")
+        .vfx("spark")
+        .row("skill", "lunge", skill.clone())
+        .item("coin", json!({ "kind": { "type": "resource" } }))
+        .edit_settings(|settings| {
+            settings["market"] = json!({
+                "default_currency": path("item", "coin"),
+                "deposit_currency": path("item", "coin"),
+                "max_goods_items": 3,
+                "max_price_items": 3,
+                "durations": [3600.0],
+                "deposit": 5,
+                "max_listings": 10,
+                "page_rows": 50,
+            });
+        })
+        .npc("wolf", 10.0, wolf.clone())
+        .script(
+            "lunge_used",
+            "skill",
+            json!({ "used": { "type": "on", "event": "used" } }),
+        )
+        .script(
+            "wolf_hunting",
+            "npc",
+            json!({ "used": { "type": "on", "event": "started" } }),
+        );
+    let mut editor = support::open(game, &scratch);
     for (name, kind) in [("lunge_used", SKILL_RUNNER), ("wolf_hunting", NPC_RUNNER)] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let game = support::game()
-            .file("icons/cap.png", testkit::png(16, 16))
-            .sfx("swish")
-            .vfx("spark")
-            .row("skill", "lunge", skill.clone())
-            .item("coin", json!({ "kind": { "type": "resource" } }))
-            .edit_settings(|settings| {
-                settings["market"] = json!({
-                    "default_currency": path("item", "coin"),
-                    "deposit_currency": path("item", "coin"),
-                    "max_goods_items": 3,
-                    "max_price_items": 3,
-                    "durations": [3600.0],
-                    "deposit": 5,
-                    "max_listings": 10,
-                    "page_rows": 50,
-                });
-            })
-            .npc("wolf", 10.0, wolf.clone())
-            .script(
-                "lunge_used",
-                "skill",
-                json!({ "used": { "type": "on", "event": "used" } }),
-            )
-            .script(
-                "wolf_hunting",
-                "npc",
-                json!({ "used": { "type": "on", "event": "started" } }),
-            );
-        let mut editor = support::open(game, &scratch);
         let at = ScriptRow::new(path("script", name));
         let offered: Vec<String> = editor
             .project
@@ -526,13 +520,19 @@ fn the_canvas_and_outline_chips_switch_the_view_by_a_click() {
 }
 
 #[test]
-fn a_heal_heals_fully_or_by_an_expression_picked_in_its_inspector() {
+fn a_variant_picked_or_a_field_added_in_a_nodes_inspector_starts_filled_in_as_the_game_takes_it() {
     let scratch = tempfile::tempdir().expect("scratch");
     let game = support::game()
+        .memory("warned", "never")
         .npc(
             "healer",
             10.0,
             json!([{ "type": "script", "script": path("script", "mend") }]),
+        )
+        .npc(
+            "crier",
+            10.0,
+            json!([{ "type": "script", "script": path("script", "call") }]),
         )
         .script(
             "mend",
@@ -541,121 +541,161 @@ fn a_heal_heals_fully_or_by_an_expression_picked_in_its_inspector() {
                 "start": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "heal" },
                 "heal": { "type": "heal", "by": "full" },
             }),
+        )
+        .script(
+            "watch",
+            "npc",
+            json!({
+                "start": { "type": "on", "event": "started", "next": "found" },
+                "found": { "type": "if", "test": { "type": "in_area", "area": support::area() } },
+            }),
+        )
+        .script(
+            "call",
+            "npc",
+            json!({
+                "start": { "type": "on", "event": "started", "next": "shout" },
+                "shout": { "type": "say", "text": ["Hear ye"], "next": "roam" },
+                "roam": { "type": "wander", "priority": 1 },
+            }),
         );
     let mut editor = support::open(game, &scratch);
-    let at = ScriptRow::new(path("script", "mend"));
-    let selection = RowSelection::parts("script", &at.key, vec!["node:heal".to_owned()]);
-    let mut frames = Frames::new(SCREEN);
-    let mut inspect = |editor: &mut Editor, events: Vec<egui::Event>| {
-        frames.run(events, |ui| {
-            let doc = ScriptDoc::load(editor, &at).expect("the script");
-            script::inspect::show(editor, ui, &doc, &selection);
-        })
-    };
-    inspect(&mut editor, Vec::new());
-    let full = inspect(&mut editor, Vec::new()).at("Full");
-    assert!(
-        !inspect(&mut editor, Vec::new())
-            .0
-            .iter()
-            .filter(|(text, _)| text == "Full")
-            .nth(1)
-            .is_some(),
-        "Full shows once"
-    );
-    for events in click(full) {
-        inspect(&mut editor, events);
-    }
-    let expression = inspect(&mut editor, Vec::new()).at("Expression");
-
-    for events in click(expression) {
-        inspect(&mut editor, events);
-    }
-    support::files(&mut editor);
-
-    let refused = editor
-        .project
-        .as_mut()
-        .and_then(|project| project.take_refused());
-    assert!(
-        refused.is_none(),
-        "{:?}",
-        refused.map(|taken| taken.refusal.sentence())
-    );
-    let script = editor
-        .read::<ScriptDef>(&at.key)
-        .expect("a project")
-        .expect("the script reads");
-    let Node::Effect(effect) = &script.nodes["heal"] else {
-        panic!("heal is an effect");
-    };
-    let heal = effect.downcast_ref::<Heal>().expect("heal is a heal");
-    assert!(matches!(heal.by, HealBy::Amount(_)));
-}
-
-#[test]
-fn a_query_picked_as_an_if_test_starts_filled_in_with_values_of_the_types_it_takes() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game().memory("warned", "never").script(
-        "watch",
-        "npc",
-        json!({
-            "start": { "type": "on", "event": "started", "next": "found" },
-            "found": { "type": "if", "test": { "type": "in_area", "area": support::area() } },
-        }),
-    );
-    let mut editor = support::open(game, &scratch);
-    let at = ScriptRow::new(path("script", "watch"));
-    let selection = RowSelection::parts("script", &at.key, vec!["node:found".to_owned()]);
-    let mut frames = Frames::new(SCREEN);
-    let mut inspect = |editor: &mut Editor, events: Vec<egui::Event>| {
-        frames.run(events, |ui| {
-            let doc = ScriptDoc::load(editor, &at).expect("the script");
-            script::inspect::show(editor, ui, &doc, &selection);
-        })
-    };
-
-    let mut shown = "in area";
-    let mut refused = Vec::new();
-    for query in ["set within", "present", "is npc", "walking", "hostile"] {
+    {
+        let at = ScriptRow::new(path("script", "mend"));
+        let selection = RowSelection::parts("script", &at.key, vec!["node:heal".to_owned()]);
+        let mut frames = Frames::new(SCREEN);
+        let mut inspect = |editor: &mut Editor, events: Vec<egui::Event>| {
+            frames.run(events, |ui| {
+                let doc = ScriptDoc::load(editor, &at).expect("the script");
+                script::inspect::show(editor, ui, &doc, &selection);
+            })
+        };
         inspect(&mut editor, Vec::new());
-        let chip = inspect(&mut editor, Vec::new()).at(shown);
-        for events in click(chip) {
+        let full = inspect(&mut editor, Vec::new()).at("Full");
+        assert!(
+            !inspect(&mut editor, Vec::new())
+                .0
+                .iter()
+                .filter(|(text, _)| text == "Full")
+                .nth(1)
+                .is_some(),
+            "Full shows once"
+        );
+        for events in click(full) {
             inspect(&mut editor, events);
         }
-        let mut entry = inspect(&mut editor, Vec::new()).seen(query);
-        for _ in 0..20 {
-            if entry.is_some() {
-                break;
-            }
-            let wheel = vec![
-                egui::Event::PointerMoved(chip + egui::vec2(0.0, 120.0)),
-                egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: egui::vec2(0.0, -120.0),
-                    modifiers: egui::Modifiers::NONE,
-                    phase: egui::TouchPhase::Move,
-                },
-            ];
-            inspect(&mut editor, wheel);
-            for _ in 0..20 {
-                entry = inspect(&mut editor, Vec::new()).seen(query);
-            }
-        }
-        for events in click(entry.expect("the query is offered").center()) {
+        let expression = inspect(&mut editor, Vec::new()).at("Expression");
+
+        for events in click(expression) {
             inspect(&mut editor, events);
         }
         support::files(&mut editor);
 
-        if let Some(taken) = editor.project.as_mut().and_then(|p| p.take_refused()) {
-            refused.push(format!("{query}: {}", taken.refusal.sentence()));
-        } else if !inspect(&mut editor, Vec::new()).any(|text| text == query) {
-            refused.push(format!("{query}: not picked"));
-        } else {
-            shown = query;
+        let refused = editor
+            .project
+            .as_mut()
+            .and_then(|project| project.take_refused());
+        assert!(
+            refused.is_none(),
+            "{:?}",
+            refused.map(|taken| taken.refusal.sentence())
+        );
+        let script = editor
+            .read::<ScriptDef>(&at.key)
+            .expect("a project")
+            .expect("the script reads");
+        let Node::Effect(effect) = &script.nodes["heal"] else {
+            panic!("heal is an effect");
+        };
+        let heal = effect.downcast_ref::<Heal>().expect("heal is a heal");
+        assert!(matches!(heal.by, HealBy::Amount(_)));
+    }
+    {
+        let at = ScriptRow::new(path("script", "watch"));
+        let selection = RowSelection::parts("script", &at.key, vec!["node:found".to_owned()]);
+        let mut frames = Frames::new(SCREEN);
+        let mut inspect = |editor: &mut Editor, events: Vec<egui::Event>| {
+            frames.run(events, |ui| {
+                let doc = ScriptDoc::load(editor, &at).expect("the script");
+                script::inspect::show(editor, ui, &doc, &selection);
+            })
+        };
+
+        let mut shown = "in area";
+        let mut refused = Vec::new();
+        for query in ["set within", "present", "is npc", "walking", "hostile"] {
+            inspect(&mut editor, Vec::new());
+            let chip = inspect(&mut editor, Vec::new()).at(shown);
+            for events in click(chip) {
+                inspect(&mut editor, events);
+            }
+            let mut entry = inspect(&mut editor, Vec::new()).seen(query);
+            for _ in 0..20 {
+                if entry.is_some() {
+                    break;
+                }
+                let wheel = vec![
+                    egui::Event::PointerMoved(chip + egui::vec2(0.0, 120.0)),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -120.0),
+                        modifiers: egui::Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ];
+                inspect(&mut editor, wheel);
+                for _ in 0..20 {
+                    entry = inspect(&mut editor, Vec::new()).seen(query);
+                }
+            }
+            for events in click(entry.expect("the query is offered").center()) {
+                inspect(&mut editor, events);
+            }
+            support::files(&mut editor);
+
+            if let Some(taken) = editor.project.as_mut().and_then(|p| p.take_refused()) {
+                refused.push(format!("{query}: {}", taken.refusal.sentence()));
+            } else if !inspect(&mut editor, Vec::new()).any(|text| text == query) {
+                refused.push(format!("{query}: not picked"));
+            } else {
+                shown = query;
+            }
+        }
+        assert!(refused.is_empty(), "{refused:#?}");
+    }
+    {
+        let at = ScriptRow::new(path("script", "call"));
+        for (node, field) in [("shout", "+ within"), ("roam", "+ leash")] {
+            let selection = RowSelection::parts("script", &at.key, vec![format!("node:{node}")]);
+            let mut frames = Frames::new(SCREEN);
+            let mut inspect = |editor: &mut Editor, events: Vec<egui::Event>| {
+                frames.run(events, |ui| {
+                    let doc = ScriptDoc::load(editor, &at).expect("the script");
+                    script::inspect::show(editor, ui, &doc, &selection);
+                })
+            };
+            inspect(&mut editor, Vec::new());
+            let add = inspect(&mut editor, Vec::new()).at(field);
+            for events in click(add) {
+                inspect(&mut editor, events);
+            }
+            support::files(&mut editor);
+
+            let refused = editor
+                .project
+                .as_mut()
+                .and_then(|project| project.take_refused());
+            assert!(
+                refused.is_none(),
+                "{field}: {:?}",
+                refused.map(|taken| taken.refusal.sentence())
+            );
+            assert!(
+                !inspect(&mut editor, Vec::new()).any(|text| text == field),
+                "{field} is set"
+            );
         }
     }
-    assert!(refused.is_empty(), "{refused:#?}");
 }
 
 #[test]
@@ -733,58 +773,6 @@ fn a_local_declared_in_the_scripts_header_is_what_a_fresh_set_value_writes() {
         "the set writes prey"
     );
     assert!(inspect(&mut editor, Vec::new()).any(|text| text == "local prey"));
-}
-
-#[test]
-fn an_optional_amount_added_to_a_node_starts_as_a_number_the_game_takes() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game()
-        .npc(
-            "crier",
-            10.0,
-            json!([{ "type": "script", "script": path("script", "call") }]),
-        )
-        .script(
-            "call",
-            "npc",
-            json!({
-                "start": { "type": "on", "event": "started", "next": "shout" },
-                "shout": { "type": "say", "text": ["Hear ye"], "next": "roam" },
-                "roam": { "type": "wander", "priority": 1 },
-            }),
-        );
-    let mut editor = support::open(game, &scratch);
-    let at = ScriptRow::new(path("script", "call"));
-    for (node, field) in [("shout", "+ within"), ("roam", "+ leash")] {
-        let selection = RowSelection::parts("script", &at.key, vec![format!("node:{node}")]);
-        let mut frames = Frames::new(SCREEN);
-        let mut inspect = |editor: &mut Editor, events: Vec<egui::Event>| {
-            frames.run(events, |ui| {
-                let doc = ScriptDoc::load(editor, &at).expect("the script");
-                script::inspect::show(editor, ui, &doc, &selection);
-            })
-        };
-        inspect(&mut editor, Vec::new());
-        let add = inspect(&mut editor, Vec::new()).at(field);
-        for events in click(add) {
-            inspect(&mut editor, events);
-        }
-        support::files(&mut editor);
-
-        let refused = editor
-            .project
-            .as_mut()
-            .and_then(|project| project.take_refused());
-        assert!(
-            refused.is_none(),
-            "{field}: {:?}",
-            refused.map(|taken| taken.refusal.sentence())
-        );
-        assert!(
-            !inspect(&mut editor, Vec::new()).any(|text| text == field),
-            "{field} is set"
-        );
-    }
 }
 
 fn talk() -> ScriptRow {

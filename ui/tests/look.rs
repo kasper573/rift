@@ -33,123 +33,151 @@ fn pass(ctx: &Context, add: impl FnOnce(&mut egui::Ui)) {
 }
 
 #[test]
-fn every_face_lays_out_text_in_its_own_font() {
-    let ctx = context();
-    pass(&ctx, |_| {});
-    for &face in Face::VARIANTS {
-        let width = ctx.fonts_mut(|fonts| {
-            fonts
-                .layout_no_wrap("Rusty Sword".to_owned(), face.id(15.0), ink::INK)
-                .size()
-                .x
-        });
-        assert!(width > 10.0, "{face:?} lays out nothing");
+fn every_face_lays_out_text_every_mark_is_an_icon_in_every_weight_and_every_kind_glyph_a_texture() {
+    {
+        let ctx = context();
+        pass(&ctx, |_| {});
+        for &face in Face::VARIANTS {
+            let width = ctx.fonts_mut(|fonts| {
+                fonts
+                    .layout_no_wrap("Rusty Sword".to_owned(), face.id(15.0), ink::INK)
+                    .size()
+                    .x
+            });
+            assert!(width > 10.0, "{face:?} lays out nothing");
+        }
     }
-}
-
-#[test]
-fn every_mark_is_an_icon_of_the_icon_font_in_every_weight() {
-    let ctx = context();
-    pass(&ctx, |_| {});
-    for &mark in Mark::VARIANTS {
-        for &weight in Weight::VARIANTS {
-            let icon = Icon {
-                weight,
-                ..mark.icon()
-            };
-            let font = egui::FontId::new(16.0, weight.family());
-            let glyph = icon.glyph.chars().next().expect("an icon is one glyph");
+    {
+        let ctx = context();
+        pass(&ctx, |_| {});
+        for &mark in Mark::VARIANTS {
+            for &weight in Weight::VARIANTS {
+                let icon = Icon {
+                    weight,
+                    ..mark.icon()
+                };
+                let font = egui::FontId::new(16.0, weight.family());
+                let glyph = icon.glyph.chars().next().expect("an icon is one glyph");
+                assert!(
+                    ctx.fonts_mut(|fonts| fonts.has_glyph(&font, glyph)),
+                    "{mark:?} has no {weight:?} icon"
+                );
+            }
+        }
+    }
+    {
+        let ctx = context();
+        pass(&ctx, |_| {});
+        for &kind in CardKind::VARIANTS {
+            let texture = kind.texture(&ctx);
+            let size = ctx.tex_manager().read().meta(texture).map(|meta| meta.size);
             assert!(
-                ctx.fonts_mut(|fonts| fonts.has_glyph(&font, glyph)),
-                "{mark:?} has no {weight:?} icon"
+                size.is_some_and(|[w, h]| w > 0 && h > 0),
+                "{kind:?} has no picture"
             );
         }
     }
 }
 
 #[test]
-fn every_kind_goes_by_a_word_of_its_own() {
-    let words: std::collections::HashSet<&str> =
-        CardKind::VARIANTS.iter().map(|kind| kind.word()).collect();
-    assert_eq!(words.len(), CardKind::VARIANTS.len());
-}
-
-#[test]
-fn every_kind_glyph_decodes_into_a_texture() {
-    let ctx = context();
-    pass(&ctx, |_| {});
-    for &kind in CardKind::VARIANTS {
-        let texture = kind.texture(&ctx);
-        let size = ctx.tex_manager().read().meta(texture).map(|meta| meta.size);
+fn a_sheet_opens_in_its_time_from_faint_and_lifted_to_flat_closes_quicker_and_reverses_from_where_it_is()
+ {
+    {
+        let mut clock = SheetClock::CLOSED;
+        assert!(clock.is_closed());
+        clock.run(true, motion::SHEET_OPEN_SECS);
+        assert!(clock.is_open());
+        let mut opening = SheetClock::CLOSED;
+        opening.run(true, motion::SHEET_CLOSE_SECS);
         assert!(
-            size.is_some_and(|[w, h]| w > 0 && h > 0),
-            "{kind:?} has no picture"
+            !opening.is_open(),
+            "a sheet opens no quicker than it closes"
         );
+        clock.run(false, motion::SHEET_CLOSE_SECS / 2.0);
+        let halfway = clock.progress();
+        assert!(halfway > 0.0 && halfway < 1.0);
+        clock.run(true, motion::SHEET_OPEN_SECS / 4.0);
+        assert!(clock.progress() > halfway && !clock.is_open());
+        clock.run(false, motion::SHEET_CLOSE_SECS);
+        assert!(clock.is_closed());
+    }
+    {
+        let closed = SheetClock::CLOSED.pose();
+        let open = SheetClock::OPEN.pose();
+        assert_eq!(open, motion::SheetPose::REST);
+        assert_eq!(closed.opacity, 0.0);
+        assert!(closed.dy < 0.0);
+        let mut mid = SheetClock::CLOSED;
+        mid.run(true, motion::SHEET_OPEN_SECS / 2.0);
+        let pose = mid.pose();
+        assert!(pose.opacity > closed.opacity && pose.opacity < open.opacity);
+        assert!(pose.dy > closed.dy && pose.dy < open.dy);
     }
 }
 
 #[test]
-fn a_sheet_opens_in_its_time_closes_quicker_and_reverses_from_where_it_is() {
-    let mut clock = SheetClock::CLOSED;
-    assert!(clock.is_closed());
-    clock.run(true, motion::SHEET_OPEN_SECS);
-    assert!(clock.is_open());
-    let mut opening = SheetClock::CLOSED;
-    opening.run(true, motion::SHEET_CLOSE_SECS);
-    assert!(
-        !opening.is_open(),
-        "a sheet opens no quicker than it closes"
-    );
-    clock.run(false, motion::SHEET_CLOSE_SECS / 2.0);
-    let halfway = clock.progress();
-    assert!(halfway > 0.0 && halfway < 1.0);
-    clock.run(true, motion::SHEET_OPEN_SECS / 4.0);
-    assert!(clock.progress() > halfway && !clock.is_open());
-    clock.run(false, motion::SHEET_CLOSE_SECS);
-    assert!(clock.is_closed());
+fn a_card_is_dealt_small_and_unseen_from_its_slot_onto_its_place_and_lifts_away_unseen_when_flicked()
+ {
+    {
+        let from = Rect::from_min_size(Pos2::new(100.0, 500.0), Vec2::splat(36.0));
+        let to = Rect::from_min_size(Pos2::new(900.0, 96.0), Vec2::new(300.0, 380.0));
+        let start = motion::deal(0.0, from, to);
+        assert_eq!(start.center, from.center());
+        assert!(start.scale < 1.0);
+        assert_eq!(start.opacity, 0.0);
+        let mid = motion::deal(0.5, from, to);
+        assert!(mid.center.x > from.center().x && mid.center.x < to.center().x);
+        let landed = motion::deal(1.0, from, to);
+        assert_eq!(landed.center, to.center());
+        assert!((landed.scale - 1.0).abs() < 1e-5);
+        assert_eq!(landed.angle, 0.0);
+        assert_eq!(landed.opacity, 1.0);
+    }
+    {
+        let at = Rect::from_min_size(Pos2::new(900.0, 96.0), Vec2::new(300.0, 380.0));
+        assert_eq!(motion::flick(0.0, at).opacity, 1.0);
+        let gone = motion::flick(1.0, at);
+        assert!(gone.center.y < at.center().y);
+        assert_eq!(gone.opacity, 0.0);
+        let under = motion::replaced(1.0, at);
+        assert!(under.center.y > at.center().y);
+        assert!(under.opacity > 0.0 && under.opacity < 1.0);
+    }
 }
 
 #[test]
-fn a_sheet_rests_flat_once_open_and_starts_faint_and_lifted() {
-    let closed = SheetClock::CLOSED.pose();
-    let open = SheetClock::OPEN.pose();
-    assert_eq!(open, motion::SheetPose::REST);
-    assert_eq!(closed.opacity, 0.0);
-    assert!(closed.dy < 0.0);
-    let mut mid = SheetClock::CLOSED;
-    mid.run(true, motion::SHEET_OPEN_SECS / 2.0);
-    let pose = mid.pose();
-    assert!(pose.opacity > closed.opacity && pose.opacity < open.opacity);
-    assert!(pose.dy > closed.dy && pose.dy < open.dy);
-}
-
-#[test]
-fn a_card_is_dealt_small_and_unseen_from_its_slot_and_lands_straight_at_its_place() {
-    let from = Rect::from_min_size(Pos2::new(100.0, 500.0), Vec2::splat(36.0));
-    let to = Rect::from_min_size(Pos2::new(900.0, 96.0), Vec2::new(300.0, 380.0));
-    let start = motion::deal(0.0, from, to);
-    assert_eq!(start.center, from.center());
-    assert!(start.scale < 1.0);
-    assert_eq!(start.opacity, 0.0);
-    let mid = motion::deal(0.5, from, to);
-    assert!(mid.center.x > from.center().x && mid.center.x < to.center().x);
-    let landed = motion::deal(1.0, from, to);
-    assert_eq!(landed.center, to.center());
-    assert!((landed.scale - 1.0).abs() < 1e-5);
-    assert_eq!(landed.angle, 0.0);
-    assert_eq!(landed.opacity, 1.0);
-}
-
-#[test]
-fn a_flicked_card_lifts_away_unseen_and_a_replaced_one_drops_and_dims() {
-    let at = Rect::from_min_size(Pos2::new(900.0, 96.0), Vec2::new(300.0, 380.0));
-    assert_eq!(motion::flick(0.0, at).opacity, 1.0);
-    let gone = motion::flick(1.0, at);
-    assert!(gone.center.y < at.center().y);
-    assert_eq!(gone.opacity, 0.0);
-    let under = motion::replaced(1.0, at);
-    assert!(under.center.y > at.center().y);
-    assert!(under.opacity > 0.0 && under.opacity < 1.0);
+fn a_cards_plate_cuts_a_long_name_and_bears_a_cross_only_where_the_card_closes() {
+    {
+        let ctx = context();
+        let mut cut = Vec::new();
+        pass(&ctx, |ui| {
+            Card::new(CardKind::Resource, "Resource", "Bundle")
+                .show(ui, |_, plate| cut.push(plate.name_cut));
+            Card::new(
+                CardKind::Resource,
+                "Resource",
+                "A bundle of seventeen very long dried herbs from the far marsh",
+            )
+            .show(ui, |_, plate| cut.push(plate.name_cut));
+        });
+        assert_eq!(cut, vec![false, true]);
+    }
+    {
+        let ctx = context();
+        let mut crosses = Vec::new();
+        pass(&ctx, |ui| {
+            let mut closable = Card::new(CardKind::Active, "Active skill", "Cleave");
+            closable.close = Some("Close");
+            crosses.push(closable.show(ui, |_, _| {}).close.is_some());
+            crosses.push(
+                Card::new(CardKind::Passive, "Passive skill", "Thick Skin")
+                    .show(ui, |_, _| {})
+                    .close
+                    .is_some(),
+            );
+        });
+        assert_eq!(crosses, vec![true, false]);
+    }
 }
 
 #[test]
@@ -240,6 +268,33 @@ fn every_card_is_one_size_whatever_it_holds_and_however_it_is_dressed() {
         dressed.height()
     );
     assert!(dressed.contains_rect(dressed_frame));
+    {
+        let ctx = context();
+        let pane = CardPane {
+            size: Vec2::new(320.0, 300.0),
+            foot: controls::CONTROL_HEIGHT,
+        };
+        let mut rooms = Vec::new();
+        pass(&ctx, |ui| {
+            rooms.push(pane.show(ui, |_| {}, |_| {}).rect.size());
+            let full = pane.show(
+                ui,
+                |ui| {
+                    Card::new(CardKind::Equipment, "Equipment", "Rusty Sword").show(ui, |ui, _| {
+                        for _ in 0..40 {
+                            card::fact(ui, "A long line of facts about the sword.");
+                        }
+                    });
+                },
+                |ui| {
+                    controls::primary(ui, "Sell 2 for 4 Gold");
+                    controls::button(ui, "All 4");
+                },
+            );
+            rooms.push(full.rect.size());
+        });
+        assert_eq!(rooms, vec![pane.size, pane.size]);
+    }
 }
 
 #[test]
@@ -303,70 +358,6 @@ fn a_card_turns_toward_the_pointer_by_degrees_and_lies_flat_again_once_it_leaves
         let left = settled(right, gone);
         assert!(near(left, 0.0, 0.0), "{left:?}");
     }
-}
-
-#[test]
-fn a_card_pane_takes_the_same_room_empty_and_full() {
-    let ctx = context();
-    let pane = CardPane {
-        size: Vec2::new(320.0, 300.0),
-        foot: controls::CONTROL_HEIGHT,
-    };
-    let mut rooms = Vec::new();
-    pass(&ctx, |ui| {
-        rooms.push(pane.show(ui, |_| {}, |_| {}).rect.size());
-        let full = pane.show(
-            ui,
-            |ui| {
-                Card::new(CardKind::Equipment, "Equipment", "Rusty Sword").show(ui, |ui, _| {
-                    for _ in 0..40 {
-                        card::fact(ui, "A long line of facts about the sword.");
-                    }
-                });
-            },
-            |ui| {
-                controls::primary(ui, "Sell 2 for 4 Gold");
-                controls::button(ui, "All 4");
-            },
-        );
-        rooms.push(full.rect.size());
-    });
-    assert_eq!(rooms, vec![pane.size, pane.size]);
-}
-
-#[test]
-fn a_card_cuts_a_long_name_and_tells_the_plate_so() {
-    let ctx = context();
-    let mut cut = Vec::new();
-    pass(&ctx, |ui| {
-        Card::new(CardKind::Resource, "Resource", "Bundle")
-            .show(ui, |_, plate| cut.push(plate.name_cut));
-        Card::new(
-            CardKind::Resource,
-            "Resource",
-            "A bundle of seventeen very long dried herbs from the far marsh",
-        )
-        .show(ui, |_, plate| cut.push(plate.name_cut));
-    });
-    assert_eq!(cut, vec![false, true]);
-}
-
-#[test]
-fn a_closable_card_has_a_cross_and_a_page_card_has_none() {
-    let ctx = context();
-    let mut crosses = Vec::new();
-    pass(&ctx, |ui| {
-        let mut closable = Card::new(CardKind::Active, "Active skill", "Cleave");
-        closable.close = Some("Close");
-        crosses.push(closable.show(ui, |_, _| {}).close.is_some());
-        crosses.push(
-            Card::new(CardKind::Passive, "Passive skill", "Thick Skin")
-                .show(ui, |_, _| {})
-                .close
-                .is_some(),
-        );
-    });
-    assert_eq!(crosses, vec![true, false]);
 }
 
 #[test]

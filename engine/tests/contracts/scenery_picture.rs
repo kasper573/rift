@@ -12,7 +12,6 @@ use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::window::ExitCondition;
 use engine::core::audio::playback::Listener;
 use engine::core::content::Content;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::os::Profile;
@@ -32,6 +31,8 @@ use engine::systems::area::{self, AreaDef};
 use serde_json::json;
 use tempfile::TempDir;
 use testkit::{Game, Map, box_glb, path, plain_png};
+
+use crate::gpu::Gpu;
 
 /// The picture is `SIDE` pixels square, looking down at the middle of a field `FIELD` metres
 /// across from `EYE_HEIGHT` metres over it and `EYE_BACK` metres toward the viewer, tilted enough
@@ -64,14 +65,21 @@ const PROP_TALL: f32 = 12.0;
 
 /// A picture of a scenery shows every prop the view sees, each drawn as its material asks: in
 /// the world's own material, in a picture of the game's, through a shader of the game's, and
-/// strewn as a cover's copies,
-/// among the cover's blades; and the props cast their shadows on the ground. The picture is
-/// taken as soon as nothing has been readying for two frames running, with the smoothing started
-/// over, as a client lifts its veil, so what is first seen is seen whole.
+/// strewn as a cover's copies, among the cover's blades; and the props cast their shadows on the
+/// ground. Far enough off the eye that the view thins a crowd of props away, the ground under them
+/// shows their colour from above by how much of it they cover, so a wood thinned to nothing leaves
+/// no bare ground behind. The picture is taken as soon as nothing has been readying for two frames
+/// running, with the smoothing started over, as a client lifts its veil, so what is first seen is
+/// seen whole.
+///
+/// Pointing at a pixel of the picture names the prop the view shows there, by where the area wrote
+/// it: a prop a shader of the game's moves is named where the view shows it, not where its model
+/// stands unmoved, and the bare ground names nothing. Outlining props singles them out: a line in
+/// the outline's colour runs round each one's shape, outside it, where the picture shows the prop.
 #[test]
-fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_ground() {
-    let _gpu = crate::gpu::exclusive();
-    let mut staged = stage(field(), EYE_BACK);
+fn a_picture_of_a_scenery_shows_its_props_names_the_one_pointed_at_and_edges_the_outlined() {
+    let gpu = crate::gpu::exclusive();
+    let mut staged = stage(&gpu, field(), EYE_BACK);
     let picture = staged.shoot();
 
     let [r, g, b] = picture.around(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 1);
@@ -126,16 +134,7 @@ fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_g
         blades > 60,
         "the magenta blades grown on the turf show: {blades} magenta pixels"
     );
-}
 
-/// Far enough off the eye that the view thins a crowd of props away, the ground under them
-/// shows their colour from above by how much of it they cover, so a wood thinned to nothing
-/// leaves no bare ground behind.
-#[test]
-fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
-    let _gpu = crate::gpu::exclusive();
-    let mut staged = stage(field(), EYE_BACK);
-    let picture = staged.shoot();
     let redness = |[r, g, _]: [f32; 3]| r - g;
     let bare: Vec<f32> = picture
         .colors(Pos::new(18.0, 26.0), Pos::new(22.0, 30.0))
@@ -154,15 +153,20 @@ fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
         strewn > bare + 15.0,
         "the ground under the red specks reads redder than the bare rock: {strewn} against {bare}"
     );
-}
+    drop(picture);
 
-/// Outlining props singles them out on the picture: a line in the outline's colour runs round
-/// each one's shape, outside it, where the picture shows the prop: round where a shader of the
-/// game's stands it, not where its model stands unmoved.
-#[test]
-fn an_outlined_prop_is_edged_in_the_outlines_colour() {
-    let _gpu = crate::gpu::exclusive();
-    let mut staged = stage(field(), EYE_BACK);
+    let up = |at: Pos<Meters>| Vec3::new(at.x, PROP_HEIGHT, at.y);
+    let moved = up(VANE) + Vec3::X * VANE_MOVED;
+    for (what, at, named) in [
+        ("the block", up(BLOCK), Some("/0")),
+        ("the lantern", up(LANTERN), Some("/1")),
+        ("the vane where it shows", moved, Some("/2")),
+        ("where the vane's model stands", up(VANE), None),
+        ("the bare rock", Vec3::new(20.0, 0.0, 28.0), None),
+    ] {
+        assert_eq!(staged.pointed(at).as_deref(), named, "pointing at {what}");
+    }
+
     let picture = staged.shoot();
     let cyan = |[r, g, b]: [f32; 3]| g > 150.0 && r < 0.9 * g && b > 0.9 * g;
     let bare = picture.counted_near(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 12, cyan);
@@ -213,26 +217,6 @@ fn an_outlined_prop_is_edged_in_the_outlines_colour() {
         moved > 20 && left == 0,
         "the vane is edged where it shows: {moved} cyan pixels about it, {left} about its model"
     );
-}
-
-/// Pointing at a pixel of the picture names the prop the view shows there, by where the area
-/// wrote it: a prop a shader of the game's moves is named where the view shows it, not where its
-/// model stands unmoved, and the bare ground names nothing.
-#[test]
-fn pointing_at_the_picture_names_the_prop_it_shows_there() {
-    let _gpu = crate::gpu::exclusive();
-    let mut staged = stage(field(), EYE_BACK);
-    let up = |at: Pos<Meters>| Vec3::new(at.x, PROP_HEIGHT, at.y);
-    let moved = up(VANE) + Vec3::X * VANE_MOVED;
-    for (what, at, named) in [
-        ("the block", up(BLOCK), Some("/0")),
-        ("the lantern", up(LANTERN), Some("/1")),
-        ("the vane where it shows", moved, Some("/2")),
-        ("where the vane's model stands", up(VANE), None),
-        ("the bare rock", Vec3::new(20.0, 0.0, 28.0), None),
-    ] {
-        assert_eq!(staged.pointed(at).as_deref(), named, "pointing at {what}");
-    }
 }
 
 /// The field standing whole before a camera whose picture is read back: the app, kept so what
@@ -324,78 +308,7 @@ impl Staged {
     }
 }
 
-/// A prop snapping to the ground lies along a slope, its shape as it is, where one standing as it
-/// is sinks into the rising ground.
-#[test]
-fn a_prop_snapping_to_the_ground_lies_along_a_slope_where_one_standing_as_it_is_sinks_into_it() {
-    let _gpu = crate::gpu::exclusive();
-    let mut staged = stage(slope(), OVERHEAD);
-    let picture = staged.shoot();
-    let uphill = PLATE + PLATE_LONG / 2.0 - 1.0;
-    let on = |row: f32| Vec3::new(uphill, rise(uphill) + PLATE_THICK, row);
-    let [r, g, b] = picture.around(on(LYING), 1);
-    assert!(
-        r > 2.0 * g && b > 2.0 * g,
-        "the plate snapping to the ground shows magenta up the slope: {r} {g} {b}"
-    );
-    let [r, g, b] = picture.around(on(STANDING), 1);
-    assert!(
-        g > r && g > b,
-        "the plate standing as it is lies under the ground up the slope: {r} {g} {b}"
-    );
-}
-
-/// How high the sloped field's ground lies `x` metres along it, rising a metre every two.
-fn rise(x: f32) -> f32 {
-    (x - FIELD / 2.0) / 2.0
-}
-
-/// How far toward the viewer the eye looking down on the slope stands: all but straight overhead,
-/// so each point of the picture shows whatever lies highest there.
-const OVERHEAD: f32 = 0.1;
-/// How far along the slope the plates' middles are laid, the rows they lie along, how far each
-/// runs up it and how thick each is.
-const PLATE: f32 = 16.0;
-const LYING: f32 = 10.0;
-const STANDING: f32 = 22.0;
-const PLATE_LONG: f32 = 8.0;
-const PLATE_THICK: f32 = 0.3;
-
-/// A field of turf rising eastward, a magenta plate snapping to the ground on it and another
-/// standing on it as it is.
-fn slope() -> Game {
-    let size = GroundSize {
-        width: FIELD as u32,
-        height: FIELD as u32,
-    };
-    let heights = Heightfield::from_fn(size, testkit::HEIGHTS, |column, _| {
-        Meters(rise(column as f32 / SAMPLES_PER_METER as f32))
-    });
-    let plate = box_glb(
-        Vec3::new(PLATE_LONG, PLATE_THICK, 2.0),
-        "paint",
-        [1.0, 0.0, 1.0, 1.0],
-    );
-    Game::new()
-        .prop_of(
-            "lying",
-            plate.clone(),
-            json!({ "footprint": { "type": "none" }, "snap_to_ground": true }),
-        )
-        .prop_of("standing", plate, json!({ "footprint": { "type": "none" } }))
-        .area(
-            "field",
-            &Map::open(FIELD as usize, FIELD as usize),
-            json!([
-                { "type": "prop", "prop": path("prop", "lying"), "at": { "x": PLATE, "y": LYING } },
-                { "type": "prop", "prop": path("prop", "standing"), "at": { "x": PLATE, "y": STANDING } },
-            ]),
-        )
-        .ground("field", &heights)
-        .hero("field", 2.0, 2.0)
-}
-
-fn stage(game: Game, back: f32) -> Staged {
+fn stage(gpu: &Gpu, game: Game, back: f32) -> Staged {
     let folder = tempfile::tempdir().expect("a scratch folder");
     let profile = tempfile::tempdir().expect("a scratch profile");
     game.write_to(folder.path());
@@ -415,7 +328,8 @@ fn stage(game: Game, back: f32) -> Staged {
                 exit_condition: ExitCondition::DontExit,
                 ..default()
             })
-            .disable::<bevy::winit::WinitPlugin>(),
+            .disable::<bevy::winit::WinitPlugin>()
+            .set(gpu.renderer()),
     )
     .insert_resource(Rng::new(testkit::drawn_seed()))
     .insert_resource(Handoff::NextFrame)

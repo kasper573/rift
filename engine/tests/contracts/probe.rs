@@ -225,12 +225,20 @@ fn a_driver_clicks_the_ground_where_the_probe_shows_it_and_finds_what_the_eye_ca
     ));
 
     let before_the_ridge = Pos::new(9.0, 5.0);
-    let spots = [before_the_ridge, Pos::new(22.0, 5.0), Pos::new(8.5, 6.5)];
-    let [before, behind, blocked] = show(&mut sim.world, &spots)
+    let spots = [
+        before_the_ridge,
+        Pos::new(22.0, 5.0),
+        Pos::new(8.5, 6.5),
+        Pos::new(0.5, 5.0),
+        Pos::new(3.0, 0.2),
+    ];
+    let [before, hidden, blocked, behind, beside] = show(&mut sim.world, &spots)
         .try_into()
         .expect("an answer for each spot");
-    assert_eq!(behind, None, "ground the ridge hides from the eye");
+    assert_eq!(hidden, None, "ground the ridge hides from the eye");
     assert_eq!(blocked, None, "ground nobody walks on");
+    assert_eq!(behind, None, "ground behind the camera");
+    assert_eq!(beside, None, "ground beside the camera, out of the window");
     let before = before.expect("open ground before the ridge");
     assert!(
         before.lands.distance_to(before_the_ridge) <= before.span.0,
@@ -300,15 +308,16 @@ fn a_driver_reads_the_frames_on_from_the_last_it_saw_and_is_told_what_the_ring_l
         "the GPU's passes are told for the frame they timed"
     );
     assert!(frames.since(5).passes.is_empty());
-}
 
-#[test]
-fn a_frame_is_read_once_what_trails_it_has_had_time_to_land() {
-    let mut frames = FrameSamples::new(8, 2);
+    let mut trailed = FrameSamples::new(8, 2);
     for frame in 1..=5 {
-        frames.push(sample(frame, Millis(10.0)), Vec::new());
+        trailed.push(sample(frame, Millis(10.0)), Vec::new());
     }
-    assert_eq!(seen(&frames.since(0)), [1, 2, 3]);
+    assert_eq!(
+        seen(&trailed.since(0)),
+        [1, 2, 3],
+        "a frame is read once what trails it has had time to land"
+    );
 }
 
 #[test]

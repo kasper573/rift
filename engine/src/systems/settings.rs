@@ -1216,7 +1216,7 @@ fn default_snap() -> Option<WindowPx> {
 #[derive(Serialize, Deserialize, Default)]
 struct TextSettings {
     /// None keeps the game's own pace.
-    #[serde(default, alias = "letters_per_second")]
+    #[serde(default)]
     characters_per_second: Option<CharactersPerSecond>,
 }
 

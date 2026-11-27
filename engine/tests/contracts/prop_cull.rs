@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::sync::OnceLock;
 
 use bevy::camera::primitives::{Aabb, Frustum, Sphere};
 use bevy::camera::{CameraProjection, OrthographicProjection, PerspectiveProjection};
@@ -9,8 +8,7 @@ use bevy::render::render_resource::{
     Buffer, BufferInitDescriptor, BufferUsages, Extent3d, TexelCopyBufferLayout, TextureDescriptor,
     TextureDimension, TextureFormat, TextureUsages,
 };
-use bevy::render::renderer::{RenderDevice, RenderQueue, initialize_renderer};
-use bevy::render::settings::{Backends, RenderResources, WgpuSettings};
+use bevy::render::renderer::RenderDevice;
 use bevy::shape::{HalfSpace, ViewFrustum};
 use engine::core::math::Rng;
 use engine::core::render::world::gpu::arena::{
@@ -46,10 +44,10 @@ const STEP: f32 = 0.25;
 /// other one whole. All of it holds the frame after the same view took in the whole field.
 #[test]
 fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
-    let _gpu = crate::gpu::exclusive();
     let seed = testkit::drawn_seed();
     let mut rng = Rng::new(seed);
-    let (device, queue) = renderer();
+    let gpu = crate::gpu::exclusive();
+    let (device, queue) = gpu.device();
     let models: Vec<PlacedModel> = (0..MODELLED).map(|_| model(&mut rng)).collect();
     let mut arena = InstanceArena::default();
     let mut slab = Slab::new("instances", BufferUsages::STORAGE);
@@ -505,21 +503,6 @@ fn hides_level_across_the_field(record: &InstanceRecord, model: &PlacedModel) ->
         && pixels_across > 2.0 * GRAIN_PIXELS
 }
 
-/// The one GPU the kernel's contracts share: the driver takes devices made at once badly.
-fn renderer() -> (RenderDevice, RenderQueue) {
-    static RENDERER: OnceLock<(RenderDevice, RenderQueue)> = OnceLock::new();
-    RENDERER
-        .get_or_init(|| {
-            let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
-                Backends::all(),
-                None,
-                &WgpuSettings::default(),
-            ));
-            (device, queue)
-        })
-        .clone()
-}
-
 fn frustum_eye() -> Vec3 {
     Vec3::new(-FIELD / 3.0, 30.0, -FIELD / 3.0)
 }
@@ -556,8 +539,8 @@ fn no_chunk_standing(device: &RenderDevice) -> Buffer {
 /// and one past twice as far, or in a view without a focus, at the eased width.
 #[test]
 fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
-    let _gpu = crate::gpu::exclusive();
-    let (device, queue) = renderer();
+    let gpu = crate::gpu::exclusive();
+    let (device, queue) = gpu.device();
     let model = PlacedModel {
         bounds: Aabb {
             center: Vec3::new(0.0, 1.0, 0.0).into(),
@@ -822,8 +805,8 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
 /// that ground. A light at the horizon keeps them all.
 #[test]
 fn a_lights_view_leaves_out_the_casters_whose_shadows_fall_short_of_it() {
-    let _gpu = crate::gpu::exclusive();
-    let (device, queue) = renderer();
+    let gpu = crate::gpu::exclusive();
+    let (device, queue) = gpu.device();
     let model = PlacedModel {
         bounds: Aabb {
             center: Vec3::new(0.0, 1.0, 0.0).into(),
@@ -1004,8 +987,8 @@ const ABSENT_CHUNK: u32 = 9;
 /// that depth, one reaching across it, and all of them where nothing was drawn.
 #[test]
 fn the_lit_passes_leave_out_what_the_prepass_depth_hides() {
-    let _gpu = crate::gpu::exclusive();
-    let (device, queue) = renderer();
+    let gpu = crate::gpu::exclusive();
+    let (device, queue) = gpu.device();
     let model = PlacedModel {
         bounds: Aabb {
             center: Vec3::new(0.0, 1.0, 0.0).into(),

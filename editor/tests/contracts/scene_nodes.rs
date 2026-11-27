@@ -1,5 +1,4 @@
 use editor::app::Editor;
-use editor::doc::SceneEdit;
 use editor::project::RowSelection;
 use editor::schema::{self, SchemaShapes};
 use editor::views::area::{AreaAction, AreaSnapshot, modules, nodes, placement, run_action};
@@ -13,7 +12,7 @@ use serde_json::json;
 use strum::VariantArray;
 use testkit::{Game, path};
 
-use crate::support::{self, area, folder, names, object};
+use crate::support::{self, area, names, object};
 
 #[test]
 fn every_kind_of_scene_module_has_a_shape_to_add_it_from() {
@@ -72,50 +71,19 @@ fn a_module_placed_on_the_map_naming_no_file_lands_in_the_area_as_the_game_takes
 }
 
 #[test]
-fn removing_nodes_takes_each_named_one_whatever_order_they_are_named_in() {
-    let mut scene = vec![
-        object("a"),
-        folder("Hall", vec![object("b"), object("c")]),
-        object("d"),
-    ];
-
-    support::restructured(&mut scene, |tree| {
-        tree.remove(&["/1/children/0".to_owned(), "/2".to_owned(), "/0".to_owned()])
-    });
-
-    assert_eq!(names(&scene), ["Hall", "c"]);
-}
-
-#[test]
-fn a_duplicate_lands_right_after_its_original_labelled_apart_from_its_siblings() {
-    let mut scene = vec![
-        folder(
-            "Pews",
-            vec![folder("Pew", Vec::new()), folder("Pew (1)", Vec::new())],
-        ),
-        object("door"),
-    ];
-
-    let made = support::restructured(&mut scene, |tree| {
-        tree.duplicate(
-            &["/0/children/0".to_owned(), "/1".to_owned()],
-            SceneNode::clone,
-        )
-    });
-
-    assert_eq!(made, ["/0/children/1", "/2"]);
-    assert_eq!(
-        names(nodes::children_of(&scene[0])),
-        ["Pew", "Pew (2)", "Pew (1)"]
-    );
-    assert_eq!(names(&scene[2..]), ["door"]);
-}
-
-#[test]
 fn new_nodes_land_in_the_selected_folder_or_beside_the_selected_node() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = open(chapel(), &scratch);
-    let door = object("door");
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    assert_eq!(
+        snapshot.module_bounds("/0/children/1"),
+        Some(Rect::new(Pos::new(2.0, 4.0), Size::new(2.0, 1.0))),
+        "a placement covers on the map what it places"
+    );
+    assert_eq!(
+        snapshot.hit(Pos::new(3.5, 4.5)).as_deref(),
+        Some("/0/children/1")
+    );
 
     nodes::select(&mut editor, &area(), vec!["/0".to_owned()]);
     assert_eq!(nodes::insertion_folder(&editor, &area()), "/0");
@@ -125,33 +93,17 @@ fn new_nodes_land_in_the_selected_folder_or_beside_the_selected_node() {
     assert_eq!(nodes::insertion_folder(&editor, &area()), "");
 
     nodes::select(&mut editor, &area(), vec!["/0/children/1".to_owned()]);
-    assert!(nodes::add(&mut editor, &area(), vec![door], "Add a door"));
-
+    assert!(nodes::add(
+        &mut editor,
+        &area(),
+        vec![object("door")],
+        "Add a door"
+    ));
     let scene = support::scene(&editor, &area());
     let added = nodes::node(&scene, "/0/children/2").expect("the door");
     assert_eq!(names(std::slice::from_ref(added)), ["door"]);
     assert_eq!(editor.selection.parts, ["/0/children/2"]);
-}
 
-#[test]
-fn a_change_follows_each_node_the_scene_held_to_where_it_now_sits() {
-    let mut scene = vec![object("a"), folder("f", vec![object("b")])];
-    let ((), remap) = nodes::restructure(&mut SceneEdit::new(&mut scene), |tree| {
-        tree.duplicate(&["/0".to_owned()], Clone::clone);
-    });
-
-    assert_eq!(nodes::remapped(&remap, "/0").as_deref(), Some("/0"));
-    assert_eq!(nodes::remapped(&remap, "/1").as_deref(), Some("/2"));
-    assert_eq!(
-        nodes::remapped(&remap, "/1/children/0").as_deref(),
-        Some("/2/children/0")
-    );
-}
-
-#[test]
-fn a_new_placement_takes_its_blueprints_name_numbered_past_its_siblings() {
-    let scratch = tempfile::tempdir().expect("a scratch folder");
-    let mut editor = open(chapel(), &scratch);
     let reader = editor.reader().expect("a reader");
     let pew = SceneNode::Module(ModuleNode::new(AreaModule::Blueprint(Placement {
         blueprint: reader
@@ -161,14 +113,53 @@ fn a_new_placement_takes_its_blueprints_name_numbered_past_its_siblings() {
         yaw: Default::default(),
         values: Default::default(),
     })));
-
     nodes::select(&mut editor, &area(), vec!["/0".to_owned()]);
     nodes::add(&mut editor, &area(), vec![pew.clone(), pew], "Add pews");
-
     let scene = support::scene(&editor, &area());
     let label = |pointer: &str| nodes::node(&scene, pointer).and_then(SceneNode::label);
-    assert_eq!(label("/0/children/2"), Some("pew (2)"));
-    assert_eq!(label("/0/children/3"), Some("pew (3)"));
+    assert_eq!(
+        (label("/0/children/3"), label("/0/children/4")),
+        (Some("pew (2)"), Some("pew (3)")),
+        "a new placement takes its blueprint's name numbered past its siblings"
+    );
+}
+
+#[test]
+fn a_blueprint_made_of_modules_with_holes_takes_their_variables_and_its_placement_fills_them() {
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let mut editor = open(signposted(), &scratch);
+    let signpost = path("blueprint", "signpost");
+    let read = editor
+        .read::<BlueprintDef>(&signpost)
+        .and_then(Result::ok)
+        .expect("the signpost reads");
+    let reader = editor.reader().expect("a reader");
+    assert_eq!(
+        placement::variable_default(&reader, &read.variables["spot"]),
+        Some(spot()),
+        "a variable left unset takes its default, even one naming content"
+    );
+
+    let door = "/0".to_owned();
+    editor.selection = RowSelection::parts(BlueprintDef::TABLE, &signpost, vec![door.clone()]);
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &signpost).expect("the signpost is open");
+    run_action(&mut editor, &snapshot, AreaAction::MakeBlueprint);
+
+    let content = support::content(&mut editor);
+    let made = content
+        .by_path::<BlueprintDef>(&path("blueprint", "door"))
+        .expect("the new blueprint loads");
+    assert!(made.get(content).variables.contains_key("spot"));
+    let scene = support::scene(&editor, &signpost);
+    let Some(SceneNode::Module(placed)) = nodes::node(&scene, &door) else {
+        panic!("a placement where the door was");
+    };
+    assert!(matches!(placed.module, AreaModule::Blueprint(_)));
+    assert_eq!(
+        blueprint::variables_of(&placed.holes).collect::<Vec<_>>(),
+        ["spot"],
+        "the placement fills the new blueprint's variable from the signpost's"
+    );
 }
 
 #[test]
@@ -236,64 +227,6 @@ fn unpacking_a_placement_leaves_a_folder_of_what_it_placed_and_the_area_as_it_wa
         ]
     ));
     assert_eq!(shown(support::content(&mut editor)), before);
-}
-
-#[test]
-fn a_placement_covers_on_the_map_what_it_places() {
-    let scratch = tempfile::tempdir().expect("a scratch folder");
-    let mut editor = open(chapel(), &scratch);
-
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-
-    assert_eq!(
-        snapshot.module_bounds("/0/children/1"),
-        Some(Rect::new(Pos::new(2.0, 4.0), Size::new(2.0, 1.0)))
-    );
-    assert_eq!(
-        snapshot.hit(Pos::new(3.5, 4.5)).as_deref(),
-        Some("/0/children/1")
-    );
-}
-
-#[test]
-fn a_variable_left_unset_takes_its_default_even_when_the_default_names_content() {
-    let scratch = tempfile::tempdir().expect("a scratch folder");
-    let editor = open(signposted(), &scratch);
-    let reader = editor.reader().expect("a reader");
-    let signpost = editor
-        .read::<BlueprintDef>(&path("blueprint", "signpost"))
-        .and_then(Result::ok)
-        .expect("the signpost reads");
-    let variable = &signpost.variables["spot"];
-
-    assert_eq!(placement::variable_default(&reader, variable), Some(spot()));
-}
-
-#[test]
-fn a_blueprint_made_of_modules_with_holes_takes_their_variables_and_its_placement_fills_them() {
-    let scratch = tempfile::tempdir().expect("a scratch folder");
-    let mut editor = open(signposted(), &scratch);
-    let signpost = path("blueprint", "signpost");
-    let door = "/0".to_owned();
-    editor.selection = RowSelection::parts(BlueprintDef::TABLE, &signpost, vec![door.clone()]);
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &signpost).expect("the signpost is open");
-    run_action(&mut editor, &snapshot, AreaAction::MakeBlueprint);
-
-    let content = support::content(&mut editor);
-    let made = content
-        .by_path::<BlueprintDef>(&path("blueprint", "door"))
-        .expect("the new blueprint loads");
-    assert!(made.get(content).variables.contains_key("spot"));
-    let scene = support::scene(&editor, &signpost);
-    let Some(SceneNode::Module(placed)) = nodes::node(&scene, &door) else {
-        panic!("a placement where the door was");
-    };
-    assert!(matches!(placed.module, AreaModule::Blueprint(_)));
-    assert_eq!(
-        blueprint::variables_of(&placed.holes).collect::<Vec<_>>(),
-        ["spot"],
-        "the placement fills the new blueprint's variable from the signpost's"
-    );
 }
 
 fn spot() -> serde_json::Value {

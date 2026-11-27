@@ -79,7 +79,7 @@ fn laid_out_width(editor: &mut Editor, body: impl Fn(&mut Editor, &mut egui::Ui)
 }
 
 #[test]
-fn a_node_inspector_fits_the_width_it_is_given() {
+fn a_node_inspector_or_a_row_naming_a_long_path_fits_the_width_it_is_given() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = open(&scratch);
     for (script, node) in [("greeting", "cold"), ("watch", "found")] {
@@ -93,14 +93,8 @@ fn a_node_inspector_fits_the_width_it_is_given() {
         });
         assert!(width <= WIDTH, "{node}: {width}");
     }
-}
-
-#[test]
-fn a_row_naming_a_long_path_fits_the_width_it_is_given() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = open(&scratch);
     let width = laid_out_width(&mut editor, |editor, ui| {
         row_form::show_row(editor, ui, "npc", &path("npc", GUARD));
     });
-    assert!(width <= WIDTH, "{width}");
+    assert!(width <= WIDTH, "a row naming a long path: {width}");
 }

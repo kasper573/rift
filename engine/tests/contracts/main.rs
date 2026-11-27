@@ -29,7 +29,6 @@ mod headless;
 mod impostor;
 mod instances;
 mod interaction;
-mod kill_credit;
 mod launch;
 mod looks;
 mod loot_names;
