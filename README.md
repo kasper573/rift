@@ -526,7 +526,6 @@ just bench            # the server bench on the generated game, in a few seconds
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests
 just smoke            # download the game client from the website, start it, and see it draw the game
-just build-times      # how long each of these builds takes, as the build cache stands
 ```
 
 Every recipe builds on the `dev` profile, made for iterating, and every recipe shares one build, so

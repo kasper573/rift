@@ -100,24 +100,32 @@ render *args: dist
 rift *args: dist
     target/dist/rift {{args}}
 
-[doc("How long each build of the recipes takes, as the build cache stands: the binaries, each step of `just lint`, and the tests' compile apart from their run. The binaries' build also writes cargo's timing report.")]
+# An edit appends a function the build has never seen: a touched file costs cargo a fraction of what
+# an edit does.
+[doc("Measuring only, and slow (many minutes; it edits the engine's and the editor's crate roots and puts them back): how long `just lint`, `just test` and `just dist` each take on their own from an up-to-date build, with nothing changed and after an edit to the engine or to the editor. Also writes cargo's timing report of the binaries' build after an engine edit.")]
 build-times:
     #!/usr/bin/env bash
     set -euo pipefail
-    report=()
-    timed() {
-      local label=$1; shift
-      local start=$(date +%s.%N)
-      "$@" > /dev/null 2>&1 || { echo "$label failed: $*" >&2; exit 1; }
-      report+=("$(printf '%-28s %8.1f s' "$label" "$(echo "$(date +%s.%N) - $start" | bc)")")
-    }
-    timed "binaries" cargo build {{shared}} --timings --bin editor --bin game-server --bin game-client --bin rift --bin web-server
-    timed "lint: rustfmt" cargo fmt --check
-    timed "lint: lint and rift" cargo build {{shared}} --bin lint --bin rift
-    timed "lint: the repo's lints" {{out_dir}}/lint
-    timed "lint: clippy" cargo clippy {{shared}} --all-targets -- -D warnings
-    timed "lint: rift check" {{out_dir}}/rift check editor/templates/new_game
-    timed "test: compile" cargo test {{shared}} --test '*' --no-run
-    timed "test: run" cargo test {{shared}} --test '*'
-    printf '%s\n' "${report[@]}"
-    echo "cargo's report of the binaries' build: target/cargo-timings/cargo-timing.html"
+    crates=(engine editor)
+    kept=$(mktemp -d)
+    for crate in "${crates[@]}"; do cp "$crate/src/lib.rs" "$kept/$crate.rs"; done
+    trap 'for crate in "${crates[@]}"; do cp "$kept/$crate.rs" "$crate/src/lib.rs"; done; rm -rf "$kept"' EXIT
+    edit() { printf '\npub fn build_times_%s() -> u64 {\n    %s\n}\n' "$(date +%s%N)" "$(date +%s%N)" >> "$1/src/lib.rs"; }
+    recipes=(lint test dist)
+    each() { local recipe; for recipe in "${recipes[@]}"; do just profile={{profile}} "$recipe" > /dev/null 2>&1; done; }
+    printf '%-18s' "after"; printf '%10s' "${recipes[@]}"; echo
+    for change in nothing "${crates[@]}"; do
+      printf '%-18s' "$change edited"
+      for recipe in "${recipes[@]}"; do
+        each
+        [ "$change" = nothing ] || edit "$change"
+        start=$(date +%s.%N)
+        just profile={{profile}} "$recipe" > /dev/null 2>&1 || { echo; echo "just $recipe failed" >&2; exit 1; }
+        printf '%9.1fs' "$(echo "$(date +%s.%N) - $start" | bc)"
+      done
+      echo
+    done
+    each
+    edit engine
+    cargo build {{shared}} --timings --bin editor --bin game-server --bin game-client --bin rift --bin web-server > /dev/null 2>&1
+    echo "cargo's report of the binaries' build after an engine edit: target/cargo-timings/cargo-timing.html"
