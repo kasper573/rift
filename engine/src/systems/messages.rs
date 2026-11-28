@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use formatjs_icu_messageformat::{IcuMessageFormat, Part, Value};
 use formatjs_icu_messageformat_parser::types::{
@@ -258,16 +258,10 @@ impl TryFrom<String> for Phrase {
         if source.trim().is_empty() {
             return Err("blank: a message the game says has words".to_owned());
         }
-        let format = IcuMessageFormat::try_new(&source)
-            .map_err(|error| format!("not ICU MessageFormat: {}", error.message))?;
-        let plain = message_arguments(format.get_ast())
-            .is_empty()
-            .then(|| format.format_to_string("und", &HashMap::new()).ok())
-            .flatten()
-            .map(Arc::from);
+        let Parsed { format, plain } = parsed(&source)?;
         Ok(Phrase {
             source: source.into(),
-            format: Arc::new(format),
+            format,
             plain,
             locale: Locale::default(),
         })
@@ -814,4 +808,45 @@ fn kind_name(kind: ArgumentKind) -> &'static str {
         ArgumentKind::Select => "a select",
         ArgumentKind::Tag => "a tag",
     }
+}
+
+#[derive(Clone)]
+struct Parsed {
+    format: Arc<IcuMessageFormat>,
+    plain: Option<Arc<str>>,
+}
+
+/// Each text that parses is parsed once per process: a folder loads again on every edit, and
+/// parsing a message also builds the format crate's whole table of named formats for it, which
+/// costs more than the parse.
+fn parsed(source: &str) -> Result<Parsed, String> {
+    static PARSED: LazyLock<Mutex<HashMap<Arc<str>, Parsed>>> = LazyLock::new(Mutex::default);
+    let known = PARSED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(source)
+        .cloned();
+    if let Some(known) = known {
+        return Ok(known);
+    }
+    let parsed = parse(source)?;
+    PARSED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(source.into(), parsed.clone());
+    Ok(parsed)
+}
+
+fn parse(source: &str) -> Result<Parsed, String> {
+    let format = IcuMessageFormat::try_new(source)
+        .map_err(|error| format!("not ICU MessageFormat: {}", error.message))?;
+    let plain = message_arguments(format.get_ast())
+        .is_empty()
+        .then(|| format.format_to_string("und", &HashMap::new()).ok())
+        .flatten()
+        .map(Arc::from);
+    Ok(Parsed {
+        format: Arc::new(format),
+        plain,
+    })
 }
