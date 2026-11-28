@@ -108,19 +108,30 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
     }));
     let kernel = CullKernel::new(&device);
     let gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
-    let hider = records
+    let mut hiders: Vec<(&InstanceRecord, Vec3)> = records
         .iter()
         .flatten()
         .filter(|record| record.prop < MODELLED && fades(record.prop))
         .map(|record| (record, &models[record.prop as usize]))
         .filter(|&(record, model)| hides_level_across_the_field(record, model))
-        .map(|(record, model)| middle_of(record, model))
-        .min_by(|a, b| {
-            a.distance(frustum_eye())
-                .total_cmp(&b.distance(frustum_eye()))
+        .map(|(record, model)| (record, middle_of(record, model)))
+        .collect();
+    hiders.sort_by(|(_, a), (_, b)| {
+        a.distance(frustum_eye())
+            .total_cmp(&b.distance(frustum_eye()))
+    });
+    let subject = hiders
+        .into_iter()
+        .find_map(|(record, middle)| {
+            let subject = frustum_eye() + (middle - frustum_eye()) * 2.0;
+            let (frustum, _) = camera(subject);
+            let drawn = reference(record, &models, &table, &frustum)
+                .is_some_and(|commands| !commands.is_empty());
+            let cleared =
+                faded(record, &models, frustum_eye(), subject).is_some_and(|shown| shown < 1.0);
+            (drawn && cleared).then_some(subject)
         })
-        .expect("an instance to hide the camera's subject");
-    let subject = frustum_eye() + (hider - frustum_eye()) * 2.0;
+        .expect("an instance the reference draws and clears, to hide the camera's subject");
     let (frustum, view) = camera(subject);
     let seen = seen_chunks(&chunks, &table, &frustum, &view);
     let mut culled = ViewCull::new(&device, &gpu_table);
