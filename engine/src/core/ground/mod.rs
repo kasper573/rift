@@ -817,7 +817,13 @@ impl ShareMap {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        encode_png(&self.shares, self.columns, self.rows, Channels::Grey8)
+        encode_png(
+            &self.shares,
+            self.columns,
+            self.rows,
+            Channels::Grey8,
+            png::Compression::Balanced,
+        )
     }
 }
 use values::{Channels, Value};
@@ -1233,11 +1239,15 @@ impl<T: Value> GroundGrid<T> {
         {
             return Some(bytes.to_vec());
         }
+        // An overview is the whole area's ground, written again with every edit to any of it:
+        // compressed as tightly as a tile, a large area's took the editor most of a second, for
+        // about a seventh fewer bytes than it takes now.
         Some(encode_png(
             &T::encode(&overview.values),
             overview.columns,
             overview.rows,
             T::CHANNELS,
+            png::Compression::Fast,
         ))
     }
 
@@ -1481,6 +1491,7 @@ impl<T: Value> Tile<T> {
                 self.columns,
                 self.rows,
                 T::CHANNELS,
+                png::Compression::Balanced,
             )),
         }
     }
@@ -1716,12 +1727,20 @@ fn read_png(
     Ok((found, pixels))
 }
 
-/// Raw pixel `bytes` of `channels` as a `columns` × `rows` greyscale PNG.
-fn encode_png(bytes: &[u8], columns: u32, rows: u32, channels: Channels) -> Vec<u8> {
+/// Raw pixel `bytes` of `channels` as a `columns` × `rows` greyscale PNG, compressed as
+/// `compression` asks.
+fn encode_png(
+    bytes: &[u8],
+    columns: u32,
+    rows: u32,
+    channels: Channels,
+    compression: png::Compression,
+) -> Vec<u8> {
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(&mut out, columns, rows);
     encoder.set_color(png::ColorType::Grayscale);
     encoder.set_depth(png_depth(channels).0);
+    encoder.set_compression(compression);
     let mut writer = encoder
         .write_header()
         .expect("a png header writes to memory");
