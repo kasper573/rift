@@ -100,6 +100,12 @@ openidconnect = "4"
 opt-level = 1
 debug = "line-tables-only"
 
+# rustc merges a crate's modules into at most this many units to compile, and an edit that shifts
+# the merge compiles most of them again: the engine has more modules than the default 256, so
+# capping it above their count keeps an edit to one module from rebuilding the rest.
+[profile.dev.package.engine]
+codegen-units = 4096
+
 [profile.dev.package."*"]
 opt-level = 3
 debug = false
