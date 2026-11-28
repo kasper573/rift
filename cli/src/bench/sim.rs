@@ -235,7 +235,8 @@ impl Bench {
         self.ticks += 1;
         for (ordinal, (app, roster)) in self.worlds.iter_mut().zip(&self.rosters).enumerate() {
             let world = app.world_mut();
-            play::act(world, &self.content, roster, self.ticks, self.size);
+            let first = ordinal * roster.len();
+            play::act(world, &self.content, roster, first, self.ticks, self.size);
             for (index, &conn) in roster.iter().enumerate().step_by(market::TRADER_EVERY) {
                 if let Some(player) = play::player_of(world, conn) {
                     let trader = market::Trader {

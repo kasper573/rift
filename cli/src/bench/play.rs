@@ -87,11 +87,14 @@ pub fn join_as(world: &mut World, conn: Entity, character: &(CharacterSnapshot, 
     });
 }
 
-/// Every player whose turn it is this tick plays it, in its role, on ground of `size`.
+/// Every player whose turn it is this tick plays it, in its role, on ground of `size`. The
+/// world's players are numbered from `first` among every world's, and each plays its own rounds
+/// by its number, so no two worlds play out alike.
 pub fn act(
     world: &mut World,
     content: &Content,
     roster: &[Entity],
+    first: usize,
     tick: usize,
     size: Size<Meters>,
 ) {
@@ -100,7 +103,7 @@ pub fn act(
             continue;
         };
         let turn = |every: usize| (tick + index).is_multiple_of(every);
-        let round = |every: usize| tick / every + index;
+        let round = |every: usize| tick / every + first + index;
         match Role::of(index) {
             Role::Fighter => {
                 if turn(CAST_EVERY) {
