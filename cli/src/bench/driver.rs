@@ -30,6 +30,7 @@ use super::hands::{self, BUDGET, Driven, Failure};
 use super::playtest::Playtest;
 use super::scenario::{Button, CameraOp, Cond, Scenario, Step};
 use crate::render::VideoPreset;
+use crate::server::Freeing;
 
 /// A game client on a server, played through its window.
 pub struct Driver {
@@ -61,8 +62,15 @@ impl Driver {
         profile: &Path,
         steps: &Path,
     ) -> Result<Driver, Failure> {
-        let play = Playtest::start(game, content, character, video.preferences(), profile)
-            .map_err(Failure::Crashed)?;
+        let play = Playtest::start(
+            game,
+            content,
+            character,
+            video.preferences(),
+            profile,
+            Freeing::AsShipped,
+        )
+        .map_err(Failure::Crashed)?;
         let steps = File::options()
             .append(true)
             .create(true)

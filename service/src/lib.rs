@@ -34,6 +34,11 @@ macro_rules! allocator {
     };
 }
 
+/// The variable, and its value, that has a binary on [`allocator!`] hand what it frees back to the
+/// system at once rather than over the seconds after: slower, but what the system sees the process
+/// hold is then what it holds.
+pub const FREEING_AT_ONCE: (&str, &str) = ("MALLOC_CONF", "dirty_decay_ms:0,muzzy_decay_ms:0");
+
 /// The binary's allocator, as [`allocator!`] sets it, sampling what is allocated for heap profiles.
 #[macro_export]
 macro_rules! heap_profiling {
