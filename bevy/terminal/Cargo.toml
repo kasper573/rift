@@ -6,6 +6,11 @@ description = "Server-authoritative terminal with slash commands for networked b
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 
+[lib]
+test = false
+doctest = false
+bench = false
+
 [dependencies]
 bevy_app = { workspace = true }
 bevy_ecs = { workspace = true }

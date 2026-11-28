@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 description = "The content editor: opens a content folder, edits it through the engine's loader and writer, and play-tests it with the engine's own binaries"
 
+[lib]
+test = false
+doctest = false
+bench = false
+
 [[bin]]
 name = "editor"
 path = "src/main.rs"

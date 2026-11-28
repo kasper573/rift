@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 description = "Shared conventions for rift's HTTP services"
 
+[lib]
+test = false
+doctest = false
+bench = false
+
 [dependencies]
 axum.workspace = true
 axum-prometheus.workspace = true

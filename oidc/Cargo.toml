@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 description = "Sign-in through any OpenID Connect provider: checking its access tokens, and signing a native app's user in through the system browser"
 
+[lib]
+test = false
+doctest = false
+bench = false
+
 [dependencies]
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 oauth2 = { version = "5", default-features = false }
