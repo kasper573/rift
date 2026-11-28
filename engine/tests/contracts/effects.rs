@@ -25,35 +25,29 @@ use serde_json::{Value, json};
 use testkit::{GEAR, Game, Map, Sim, path};
 
 #[test]
-fn a_status_holds_its_boost_until_its_time_runs_out() {
-    let (mut sim, player) = clinic();
-    let base = stat::max_health(&sim.world, player);
-    let guarded = sim.id::<StatusEffectDef>("guarded");
-
-    status::apply(&mut sim.world, player, guarded, 10.0, Some(Seconds(5.0)));
-    sim.run(0.5);
-    assert_eq!(stat::max_health(&sim.world, player), base + 10.0);
-
-    sim.later(5.0);
-    assert_eq!(stat::max_health(&sim.world, player), base);
-    assert!(!status::has(&sim.world, player, guarded));
-}
-
-#[test]
-fn applying_a_held_status_refreshes_it_instead_of_stacking() {
+fn a_status_holds_its_boost_until_its_time_runs_out_and_applying_it_again_refreshes_it() {
     let (mut sim, player) = clinic();
     let base = stat::max_health(&sim.world, player);
     let guarded = sim.id::<StatusEffectDef>("guarded");
 
     status::apply(&mut sim.world, player, guarded, 10.0, Some(Seconds(1.0)));
     sim.run(0.5);
+    assert_eq!(stat::max_health(&sim.world, player), base + 10.0);
+
     status::apply(&mut sim.world, player, guarded, 18.0, Some(Seconds(5.0)));
     sim.run(0.5);
-    assert_eq!(statuses(&sim, player).0.len(), 1);
+    assert_eq!(statuses(&sim, player).0.len(), 1, "it does not stack");
     assert_eq!(stat::max_health(&sim.world, player), base + 18.0);
-
     sim.later(1.5);
-    assert_eq!(stat::max_health(&sim.world, player), base + 18.0);
+    assert_eq!(
+        stat::max_health(&sim.world, player),
+        base + 18.0,
+        "it lasts as long as it was applied again for"
+    );
+
+    sim.later(5.0);
+    assert_eq!(stat::max_health(&sim.world, player), base);
+    assert!(!status::has(&sim.world, player, guarded));
 }
 
 #[test]
@@ -117,7 +111,7 @@ fn a_status_on_an_interval_strikes_or_heals_every_period_while_it_holds() {
 }
 
 #[test]
-fn worn_gear_boosts_only_while_it_is_worn() {
+fn an_items_boost_holds_only_while_it_is_worn_or_carried_as_its_script_asks() {
     let (mut sim, player) = clinic();
     let bare = stat::effective(&sim.world, player, StatKind::Damage);
 
@@ -139,19 +133,19 @@ fn worn_gear_boosts_only_while_it_is_worn() {
         },
     );
     sim.run(0.5);
-    assert_eq!(stat::effective(&sim.world, player, StatKind::Damage), bare);
-}
+    assert_eq!(
+        stat::effective(&sim.world, player, StatKind::Damage),
+        bare,
+        "a blade in the bag boosts nothing"
+    );
 
-#[test]
-fn a_carried_charm_boosts_only_while_it_is_carried() {
-    let (mut sim, player) = clinic();
     let base = stat::effective(&sim.world, player, StatKind::MovementSpeed);
-
     sim.give(player, "wing", 1);
     sim.run(0.5);
     assert_eq!(
         stat::effective(&sim.world, player, StatKind::MovementSpeed),
-        base + 0.5
+        base + 0.5,
+        "a charm boosts from the bag"
     );
 
     let wing = sim.id::<ItemDef>("wing");

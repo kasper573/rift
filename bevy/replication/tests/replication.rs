@@ -14,7 +14,7 @@ use schemars::{JsonSchema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 #[test]
-fn a_client_is_shown_what_the_server_replicates_as_it_changes() {
+fn a_client_is_shown_what_the_server_replicates_as_it_changes_until_its_connection_is_lost() {
     let mut net = Net::new();
     let player = net.connect();
     let wolf = net
@@ -76,6 +76,21 @@ fn a_client_is_shown_what_the_server_replicates_as_it_changes() {
     net.step();
     assert_eq!(net.client_entity(player, wolf), None);
     assert_eq!(net.remote_count(player), 0);
+
+    net.server
+        .world_mut()
+        .spawn((Replicated, Name("wolf".into())));
+    net.step();
+    assert_eq!(net.remote_count(player), 1);
+    net.clients[player]
+        .world_mut()
+        .remove_resource::<ServerLink>();
+    net.step();
+    assert_eq!(
+        net.remote_count(player),
+        0,
+        "a lost connection takes everything it showed"
+    );
 }
 
 #[test]
@@ -252,23 +267,6 @@ fn a_client_sends_the_message_json_names_as_one_of_its_own() {
         .map(|from| (from.client, from.message))
         .collect();
     assert_eq!(picked, [(link, Pick(pup))]);
-}
-
-#[test]
-fn a_lost_connection_takes_everything_it_showed() {
-    let mut net = Net::new();
-    let player = net.connect();
-    net.server
-        .world_mut()
-        .spawn((Replicated, Name("wolf".into())));
-    net.step();
-    assert_eq!(net.remote_count(player), 1);
-
-    net.clients[player]
-        .world_mut()
-        .remove_resource::<ServerLink>();
-    net.step();
-    assert_eq!(net.remote_count(player), 0);
 }
 
 #[test]

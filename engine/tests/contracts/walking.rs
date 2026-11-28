@@ -15,7 +15,8 @@ use testkit::{BODY, Game, HEIGHTS, Map, RUN_PACE, Sim, WALK_PACE, path, rig_clip
 const TICKS: usize = 240;
 
 #[test]
-fn asking_again_or_further_along_as_a_walk_goes_walks_on_as_one_without_a_pause() {
+fn asking_again_or_further_along_as_a_walk_goes_walks_on_as_one_without_a_pause_a_point_on_the_way_ends_it_and_turning_back_turns_at_once()
+ {
     let straight = [
         Offset::new(8.0, 0.0),
         Offset::new(0.0, -8.0),
@@ -80,53 +81,38 @@ fn asking_again_or_further_along_as_a_walk_goes_walks_on_as_one_without_a_pause(
         trail[..=arrived].windows(2).all(|pair| pair[0] != pair[1]),
         "paused on the way to the drifted goal"
     );
-}
+    {
+        let end = Offset::new(8.0, 3.0);
+        let once = Walk::start().toward(end).trail();
+        let stop = waypoints(end)[4];
+        let mut walk = Walk::start().toward(end);
+        let mut ticks = 0;
+        let cut = walk.trail_while(|walk| {
+            ticks += 1;
+            if ticks == 5 {
+                walk.ask(stop);
+            }
+        });
 
-#[test]
-fn a_point_on_the_way_ends_the_walk_there() {
-    let end = Offset::new(8.0, 3.0);
-    let once = Walk::start().toward(end).trail();
-    let stop = waypoints(end)[4];
-    let mut walk = Walk::start().toward(end);
-    let mut ticks = 0;
-    let cut = walk.trail_while(|walk| {
-        ticks += 1;
-        if ticks == 5 {
-            walk.ask(stop);
-        }
-    });
+        let at_stop = |at: &Offset<Meters>| (*at - stop).length() < 1e-3;
+        let arrived = cut
+            .iter()
+            .position(at_stop)
+            .expect("the walk to reach the point on the way");
+        assert_same_trail(&cut[..arrived], &once[..arrived], "up to the stop");
+        assert!(cut[arrived..].iter().all(at_stop));
+    }
+    {
+        let mut walk = Walk::start().toward(Offset::new(6.0, 0.0));
+        walk.ticks(3);
+        let before = walk.at();
+        assert!(before.x > 0.0 && before.x < 1.0, "on the way: {before:?}");
 
-    let at_stop = |at: &Offset<Meters>| (*at - stop).length() < 1e-3;
-    let arrived = cut
-        .iter()
-        .position(at_stop)
-        .expect("the walk to reach the point on the way");
-    assert_same_trail(&cut[..arrived], &once[..arrived], "up to the stop");
-    assert!(cut[arrived..].iter().all(at_stop));
-}
+        walk.ask(Offset::new(-6.0, 0.0));
+        walk.ticks(1);
 
-#[test]
-fn turning_back_mid_walk_turns_at_once() {
-    let mut walk = Walk::start().toward(Offset::new(6.0, 0.0));
-    walk.ticks(3);
-    let before = walk.at();
-    assert!(before.x > 0.0 && before.x < 1.0, "on the way: {before:?}");
-
-    walk.ask(Offset::new(-6.0, 0.0));
-    walk.ticks(1);
-
-    assert!(walk.at().x < before.x);
-    assert_eq!(walk.at().y, 0.0);
-}
-
-#[test]
-fn a_walk_over_open_ground_keeps_to_the_straight_line() {
-    for end in [
-        Offset::new(7.0, 3.0),
-        Offset::new(-2.0, 8.0),
-        Offset::new(6.0, -5.0),
-    ] {
-        assert_keeps_to_the_line(&Walk::start().toward(end).trail(), end);
+        assert!(walk.at().x < before.x);
+        assert_eq!(walk.at().y, 0.0);
     }
 }
 
@@ -138,6 +124,13 @@ fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
     let radius = radius();
     let give = radius / 10.0;
     let wide = || Map::open(500, 250);
+    for end in [
+        Offset::new(7.0, 3.0),
+        Offset::new(-2.0, 8.0),
+        Offset::new(6.0, -5.0),
+    ] {
+        assert_keeps_to_the_line(&Walk::start().toward(end).trail(), end);
+    }
     for end in [Offset::new(480.0, 0.0), Offset::new(480.0, 230.0)] {
         let open = Walk::on(
             Game::new()

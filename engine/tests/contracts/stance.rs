@@ -59,87 +59,68 @@ fn a_held_item_plays_its_stances_clip_where_the_body_has_its_set() {
 }
 
 #[test]
-fn the_hands_put_their_wearer_in_one_stance() {
-    let cases: [(&str, &[&str], [&str; 2], &str); 3] = [
-        (
-            "two daggers",
-            &["dagger", "dagger"],
-            ["dagger", "dagger"],
-            "dual_daggers",
-        ),
-        (
-            "a sword, then a dagger",
-            &["sword", "dagger"],
-            ["sword", "dagger"],
-            "sword",
-        ),
-        (
-            "a dagger, then a sword",
-            &["dagger", "sword"],
-            ["sword", "dagger"],
-            "sword",
-        ),
-    ];
-    for (case, equipped, [main, off], stance) in cases {
-        let (mut sim, player) = armed(armoury());
-        for item in equipped {
-            wear(&mut sim, player, item);
-        }
-
-        assert_eq!(
-            hands(&sim, player),
-            BTreeMap::from([
-                (HandIndex::MAIN, sim.id::<ItemDef>(main)),
-                (HandIndex::OFF, sim.id::<ItemDef>(off)),
-            ]),
-            "{case}"
-        );
-        assert_eq!(
-            held::stance_of(&sim.world, player),
-            Some(sim.id::<StanceDef>(stance)),
-            "{case}"
-        );
-    }
-}
-
-#[test]
-fn a_player_holds_any_held_item_in_whichever_hand_they_drop_it_on() {
+fn the_hands_put_their_wearer_in_one_stance_whichever_hand_each_held_item_is_worn_or_dropped_on() {
     struct Case {
         case: &'static str,
-        dropped: &'static [(&'static str, HandIndex)],
+        put: &'static [(&'static str, Option<HandIndex>)],
         hands: [&'static str; 2],
         stance: &'static str,
     }
     let cases = [
         Case {
-            case: "a shield in the main hand",
-            dropped: &[("shield", HandIndex::MAIN)],
+            case: "two daggers worn",
+            put: &[("dagger", None), ("dagger", None)],
+            hands: ["dagger", "dagger"],
+            stance: "dual_daggers",
+        },
+        Case {
+            case: "a sword, then a dagger worn",
+            put: &[("sword", None), ("dagger", None)],
+            hands: ["sword", "dagger"],
+            stance: "sword",
+        },
+        Case {
+            case: "a dagger, then a sword worn",
+            put: &[("dagger", None), ("sword", None)],
+            hands: ["sword", "dagger"],
+            stance: "sword",
+        },
+        Case {
+            case: "a shield dropped on the main hand",
+            put: &[("shield", Some(HandIndex::MAIN))],
             hands: ["shield", ""],
             stance: "shield",
         },
         Case {
-            case: "a sword in the off hand beside a shield in the main, paired either way round",
-            dropped: &[("shield", HandIndex::MAIN), ("sword", HandIndex::OFF)],
+            case: "a sword dropped on the off hand beside a shield in the main, paired either way round",
+            put: &[
+                ("shield", Some(HandIndex::MAIN)),
+                ("sword", Some(HandIndex::OFF)),
+            ],
             hands: ["shield", "sword"],
             stance: "sword_and_shield",
         },
         Case {
             case: "a greatsword dropped on the off hand, taking both",
-            dropped: &[("greatsword", HandIndex::OFF)],
+            put: &[("greatsword", Some(HandIndex::OFF))],
             hands: ["greatsword", "greatsword"],
             stance: "greatsword",
         },
     ];
     for Case {
         case,
-        dropped,
+        put,
         hands: [main, off],
         stance,
     } in cases
     {
         let (mut sim, player) = armed(armoury());
         let conn = sim.conn(1);
-        for &(item, hand) in dropped {
+        for &(item, hand) in put {
+            let Some(hand) = hand else {
+                wear(&mut sim, player, item);
+                continue;
+            };
             sim.give(player, item, 1);
             let slot =
                 item::bag_slot(&sim.world, player, sim.id::<ItemDef>(item)).expect("in the bag");

@@ -215,33 +215,8 @@ fn a_prop_that_hangs_plumb_stays_upright_from_where_the_hand_grips_it_however_th
 }
 
 #[test]
-fn a_model_draws_each_part_as_cut_for_its_build() {
-    let content = built(game()).load();
-    let drawn = |name: &str| {
-        let model = content.declared::<ModelDef>(name).expect("declared");
-        let skins = ActorModel::get(&content, model).body().skins;
-        skins.into_iter().map(|skin| skin.mesh).collect::<Vec<_>>()
-    };
-    let mesh = |part: &str, file: &str| format!("parts/{part}/{file}.glb");
-
-    assert_eq!(
-        drawn("man"),
-        [
-            mesh("torso", "male"),
-            mesh("cape", "mesh"),
-            mesh("beard", "male"),
-        ],
-        "a part cut for the build, one for every build, and one only the build wears"
-    );
-    assert_eq!(
-        drawn("woman"),
-        [mesh("torso", "female"), mesh("cape", "mesh")],
-        "a part with no mesh for the build is not drawn"
-    );
-}
-
-#[test]
-fn a_body_looks_as_its_model_its_own_parts_and_what_it_wears_laid_over_each_other() {
+fn a_body_looks_as_its_model_its_own_parts_each_cut_for_its_build_and_what_it_wears_laid_over_each_other()
+ {
     struct Case {
         case: &'static str,
         own: &'static [&'static str],
@@ -312,6 +287,30 @@ fn a_body_looks_as_its_model_its_own_parts_and_what_it_wears_laid_over_each_othe
             .map(|laid| laid.part.name(&content))
             .collect();
         assert_eq!(drawn, case.drawn, "{}", case.case);
+    }
+    {
+        let content = built(game()).load();
+        let drawn = |name: &str| {
+            let model = content.declared::<ModelDef>(name).expect("declared");
+            let skins = ActorModel::get(&content, model).body().skins;
+            skins.into_iter().map(|skin| skin.mesh).collect::<Vec<_>>()
+        };
+        let mesh = |part: &str, file: &str| format!("parts/{part}/{file}.glb");
+
+        assert_eq!(
+            drawn("man"),
+            [
+                mesh("torso", "male"),
+                mesh("cape", "mesh"),
+                mesh("beard", "male"),
+            ],
+            "a part cut for the build, one for every build, and one only the build wears"
+        );
+        assert_eq!(
+            drawn("woman"),
+            [mesh("torso", "female"), mesh("cape", "mesh")],
+            "a part with no mesh for the build is not drawn"
+        );
     }
 }
 

@@ -13,10 +13,10 @@ const NOWHERE: &str = "http://127.0.0.1:9/authorize";
 
 #[test]
 fn a_native_app_signs_in_and_up_in_the_browser_for_a_token_the_game_server_takes() {
+    let runtime = Runtime::new().expect("a runtime for the provider");
+    let provider = runtime.block_on(start_provider());
+    let client = runtime.block_on(register(&provider));
     for page in [AuthorizationPage::SignIn, AuthorizationPage::SignUp] {
-        let runtime = Runtime::new().expect("a runtime for the provider");
-        let provider = runtime.block_on(start_provider());
-        let client = runtime.block_on(register(&provider));
         let provider_page = provider.endpoints.authorize.clone();
         let (sign_in_uri, sign_up_uri) = match page {
             AuthorizationPage::SignIn => (provider_page, NOWHERE.to_owned()),

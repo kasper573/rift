@@ -25,11 +25,6 @@ use engine::systems::area::{self, Area, AreaDef, scenery};
 use serde_json::json;
 use testkit::{Game, Map, path};
 
-/// A field whose turf is strewn with pebbles, `ratio` of the ground under them.
-fn field(ratio: f32) -> Game {
-    strewn_field(ratio, &Map::open(16, 16), json!([]))
-}
-
 /// A game whose field is `map` with `scene` on it, its turf strewn with pebbles at `ratio`.
 fn strewn_field(ratio: f32, map: &Map, scene: serde_json::Value) -> Game {
     Game::new()
@@ -361,7 +356,13 @@ fn a_scenery_takes_in_its_area_edited_standing_anew_only_what_the_edit_changed()
     };
     let open_folder = tempfile::tempdir().expect("a scratch folder");
     let (mut app, open) = client(strewn(false), open_folder.path());
+    let bare = held(&app);
     let stood = stand(&mut app, &open);
+    let standing = held(&app);
+    assert!(
+        standing.meshes > bare.meshes && standing.entities > bare.entities,
+        "the field stands: {standing:?} over {bare:?}"
+    );
     let shed_folder = tempfile::tempdir().expect("a scratch folder");
     let (content, shed) = picture(strewn(true), shed_folder.path());
     assert!(
@@ -377,6 +378,15 @@ fn a_scenery_takes_in_its_area_edited_standing_anew_only_what_the_edit_changed()
         shed.props.len(),
         "an object put down over a scatter clears the tufts from under it"
     );
+
+    clear(&mut app, stood, &bare);
+    let again = stand(&mut app, &open);
+    assert_eq!(
+        held(&app),
+        standing,
+        "a scenery that goes lets go of all it held, and stands again as it stood"
+    );
+    clear(&mut app, again, &bare);
 }
 
 /// The field of `game` written to `folder`, as its content pictures it.
@@ -419,21 +429,4 @@ fn overhead(at: Pos<Meters>, reach: Meters, height: f32) -> Sight {
         lens: Lens::new(720.0, Degrees(0.1)),
         eyes: Eyes::standing(Vec3::new(at.x, height, at.y), at, Meters(0.0)),
     }
-}
-
-#[test]
-fn an_areas_scenery_lets_go_of_all_it_held_when_it_goes_and_holds_as_much_each_time_it_stands() {
-    let folder = tempfile::tempdir().expect("a scratch folder");
-    let (mut app, area) = client(field(0.0016), folder.path());
-    let bare = held(&app);
-    let first = stand(&mut app, &area);
-    let standing = held(&app);
-    assert!(
-        standing.meshes > bare.meshes && standing.entities > bare.entities,
-        "the field stands: {standing:?} over {bare:?}"
-    );
-    clear(&mut app, first, &bare);
-    let again = stand(&mut app, &area);
-    assert_eq!(held(&app), standing, "the field stands again as it stood");
-    clear(&mut app, again, &bare);
 }

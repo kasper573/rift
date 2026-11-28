@@ -217,9 +217,7 @@ pub struct LetterId(pub u64);
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LetterSender {
-    #[serde(alias = "game")]
     System,
-    #[serde(alias = "player")]
     Character(AccountId),
 }
 

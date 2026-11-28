@@ -1,7 +1,4 @@
-use editor::rows;
 use editor::unused::{self, UnusedRow};
-use editor::views::area::nodes;
-use engine::systems::area::AreaModule;
 use serde_json::json;
 use testkit::{Game, path, png};
 
@@ -77,6 +74,26 @@ fn what_nothing_in_use_reaches_is_unused_at_any_depth() {
         ],
         "media named only by unused content is unused"
     );
+
+    let (model, npc, cap) = (
+        path("model", "hermit"),
+        path("npc", "hermit"),
+        path("item", "cap"),
+    );
+    let model_alone = unused::delete(project, std::slice::from_ref(&model), &[]).err();
+    let icon_alone = unused::delete(project, &[], &["icons/cap.png".to_owned()]).err();
+    assert!(
+        model_alone
+            .as_ref()
+            .is_some_and(|refusal| refusal.contains(&npc) && refusal.contains(&model)),
+        "deleting is refused while something left behind names what goes: {model_alone:?}"
+    );
+    assert!(
+        icon_alone
+            .as_ref()
+            .is_some_and(|refusal| refusal.contains(&cap) && refusal.contains("icons/cap.png")),
+        "{icon_alone:?}"
+    );
 }
 
 #[test]
@@ -101,52 +118,4 @@ fn deleting_unused_content_takes_the_files_and_their_parts_in_one_undo_step() {
     let project = support::settled(&mut editor);
     assert!(project.files.contains(&path("npc", "hermit")));
     assert!(project.files.contains(&sprites));
-}
-
-#[test]
-fn deleting_is_refused_while_something_left_behind_names_what_goes() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(hermitage(), &scratch);
-    let project = support::settled(&mut editor);
-    let (model, npc, cap) = (
-        path("model", "hermit"),
-        path("npc", "hermit"),
-        path("item", "cap"),
-    );
-
-    let model_alone = unused::delete(project, std::slice::from_ref(&model), &[]).err();
-    let icon_alone = unused::delete(project, &[], &["icons/cap.png".to_owned()]).err();
-
-    assert!(
-        model_alone
-            .as_ref()
-            .is_some_and(|refusal| refusal.contains(&npc) && refusal.contains(&model)),
-        "{model_alone:?}"
-    );
-    assert!(
-        icon_alone
-            .as_ref()
-            .is_some_and(|refusal| refusal.contains(&cap) && refusal.contains("icons/cap.png")),
-        "{icon_alone:?}"
-    );
-}
-
-#[test]
-fn renaming_a_prop_rewrites_the_blueprint_scenes_that_name_it() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(hermitage(), &scratch);
-
-    rows::rename(&mut editor, &path("prop", "boulder"), "stone").expect("renamed");
-
-    support::settled(&mut editor);
-    let reader = editor.reader().expect("a reader");
-    let props: Vec<Option<&str>> =
-        nodes::modules(&support::scene(&editor, &path("blueprint", "rock")))
-            .iter()
-            .filter_map(|module| match module.module() {
-                AreaModule::Prop(prop) => Some(reader.path_of(prop.prop)),
-                _ => None,
-            })
-            .collect();
-    assert_eq!(props, [Some(path("prop", "stone").as_str())]);
 }

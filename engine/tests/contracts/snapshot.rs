@@ -40,7 +40,8 @@ use serde_json::json;
 use testkit::{Declared, GEAR, Game, Map, Sim, path};
 
 #[test]
-fn a_character_joined_from_a_row_is_that_character() {
+fn a_character_joined_from_a_row_is_that_character_and_a_start_of_its_own_moves_it_and_nothing_else()
+ {
     let mut sim = returning_to("forest");
     let content = sim.world.resource::<Content>().clone();
     let forest = sim.id::<AreaDef>("forest");
@@ -137,10 +138,7 @@ fn a_character_joined_from_a_row_is_that_character() {
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].entry.text, hello());
     assert_eq!(records[0].at, joined_at.before(Seconds(5.0)));
-}
 
-#[test]
-fn a_start_of_its_own_moves_the_character_and_nothing_else() {
     let mut sim = returning_to("village");
     let content = sim.world.resource::<Content>().clone();
     let village = sim.id::<AreaDef>("village");

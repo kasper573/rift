@@ -59,7 +59,7 @@ fn camp() -> Game {
 }
 
 #[test]
-fn an_edit_writing_a_field_its_type_does_not_have_is_refused_and_changes_nothing() {
+fn an_edit_the_loader_would_refuse_is_refused_and_changes_nothing() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(camp(), &scratch);
     let before = files(&mut editor);
@@ -74,55 +74,13 @@ fn an_edit_writing_a_field_its_type_does_not_have_is_refused_and_changes_nothing
     let refused = editor.try_apply(edit).expect_err("refused");
     assert!(refused.contains("unknown field"), "{refused}");
     assert_eq!(files(&mut editor).get(&config), before.get(&config));
-}
 
-#[test]
-fn an_edit_writing_an_image_that_does_not_decode_is_refused() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp(), &scratch);
     let mut cut = png(16, 16);
     cut.truncate(cut.len() - 20);
     let mut edit = ContentEdit::new("cut the cap short");
     edit.write("icons/cap.png", FileBytes::from(cut));
-
     let refused = editor.try_apply(edit).expect_err("refused");
     assert!(refused.contains("unreadable image"), "{refused}");
-}
-
-#[test]
-fn a_new_model_wears_the_nearest_finished_skeleton_in_its_first_build() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game()
-        .skeleton_of(
-            "wilds/built",
-            &testkit::rig_clips(),
-            json!({ "builds": ["tall", "short"] }),
-        )
-        .model_part("wilds/cloak", "wilds/built")
-        .skeleton_of(
-            "wilds/kin/draft",
-            &testkit::rig_clips(),
-            json!({ "rig": { "files": [] } }),
-        );
-    let mut editor = support::open(game, &scratch);
-    let made = rows::new_file(&mut editor, "wilds/kin", ModelDef::TABLE).expect("a new model");
-    support::settled(&mut editor);
-    let project = editor.project.as_mut().expect("a project");
-    let taken_back = project.take_refused().map(|taken| taken.refusal.sentence());
-    assert!(taken_back.is_none(), "taken back: {taken_back:?}");
-    let model = editor
-        .read::<ModelDef>(&made)
-        .expect("a project")
-        .expect("the model reads");
-    let reader = editor.reader().expect("a reader");
-    assert_eq!(
-        (
-            reader.path_of(model.skeleton),
-            model.build.as_ref().map(|build| build.as_str())
-        ),
-        (Some(path("skeleton", "wilds/built").as_str()), Some("tall")),
-        "not the nearer skeleton that has no rig yet"
-    );
 }
 
 #[test]
@@ -142,7 +100,20 @@ fn a_new_file_of_any_type_names_the_content_nearest_it_and_holds_as_it_is() {
                 bytes.to_vec(),
             )
         });
-    let mut editor = support::open(game.babble("low"), &scratch);
+    let game = game
+        .babble("low")
+        .skeleton_of(
+            "wilds/built",
+            &testkit::rig_clips(),
+            json!({ "builds": ["tall", "short"] }),
+        )
+        .model_part("wilds/cloak", "wilds/built")
+        .skeleton_of(
+            "wilds/kin/draft",
+            &testkit::rig_clips(),
+            json!({ "rig": { "files": [] } }),
+        );
+    let mut editor = support::open(game, &scratch);
     let tables: Vec<String> = editor
         .shapes
         .order
@@ -174,6 +145,26 @@ fn a_new_file_of_any_type_names_the_content_nearest_it_and_holds_as_it_is() {
     assert_eq!(
         reader.path_of(made.appearance.model),
         Some(format!("wilds/{}", path("model", "wolf")).as_str())
+    );
+
+    let made = rows::new_file(&mut editor, "wilds/kin", ModelDef::TABLE).expect("a new model");
+    support::settled(&mut editor);
+    let project = editor.project.as_mut().expect("a project");
+    let taken_back = project.take_refused().map(|taken| taken.refusal.sentence());
+    assert!(taken_back.is_none(), "taken back: {taken_back:?}");
+    let model = editor
+        .read::<ModelDef>(&made)
+        .expect("a project")
+        .expect("the model reads");
+    let reader = editor.reader().expect("a reader");
+    assert_eq!(
+        (
+            reader.path_of(model.skeleton),
+            model.build.as_ref().map(|build| build.as_str())
+        ),
+        (Some(path("skeleton", "wilds/built").as_str()), Some("tall")),
+        "a new model wears the nearest finished skeleton, not the nearer one with no rig yet, in \
+         its first build"
     );
 }
 
@@ -265,12 +256,12 @@ fn a_sound_and_a_voice_take_their_clips_from_files_under_the_names_their_types_g
     assert!(errors.is_empty(), "{errors:?}");
 }
 
-/// The orc's npc made to wear the elf's model, applied but not yet loaded.
-fn orc_wearing_elf(editor: &mut Editor) {
+/// The orc's npc made to wear `model`, applied but not yet loaded.
+fn orc_wearing(editor: &mut Editor, model: &str) {
     let before = editor.project.as_ref().expect("a project").files.clone();
-    let mut edit = ContentEdit::new("dress the orc as an elf");
+    let mut edit = ContentEdit::new("dress the orc");
     edit.update_json(&before, &fields_file(&path("npc", "orc")), |npc| {
-        npc["appearance"]["model"] = json!(path("model", "elf"));
+        npc["appearance"]["model"] = json!(path("model", model));
         Some(())
     })
     .expect("the npc is there");
@@ -278,21 +269,13 @@ fn orc_wearing_elf(editor: &mut Editor) {
 }
 
 #[test]
-fn renaming_what_an_edit_still_loading_names_rewrites_that_edit_too() {
+fn removing_or_renaming_what_another_file_names_holds_to_it_even_while_that_file_is_still_loading()
+{
     let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp().model("elf", 1.5, json!([])), &scratch);
-    orc_wearing_elf(&mut editor);
-
-    let renamed = rows::rename(&mut editor, &path("model", "elf"), "fae").expect("renames");
-
-    support::settled(&mut editor);
-    assert_eq!(orc_model(&mut editor), renamed);
-}
-
-#[test]
-fn removing_what_another_file_names_is_refused_even_while_that_file_is_still_loading() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(camp().model("elf", 1.5, json!([])), &scratch);
+    let game = camp()
+        .model("elf", 1.5, json!([]))
+        .model("imp", 1.0, json!([]));
+    let mut editor = support::open(game, &scratch);
     let remove = |editor: &mut Editor, model: &str| {
         let mut edit = ContentEdit::new("remove a model");
         for file in editor
@@ -314,9 +297,18 @@ fn removing_what_another_file_names_is_refused_even_while_that_file_is_still_loa
     assert!(refused.contains("missing file"), "{refused}");
     assert!(files(&mut editor).contains(&fields_file(&orc)));
 
-    orc_wearing_elf(&mut editor);
+    orc_wearing(&mut editor, "elf");
     let refused = remove(&mut editor, &path("model", "elf"));
     assert!(refused.contains("missing file"), "{refused}");
+
+    orc_wearing(&mut editor, "imp");
+    let renamed = rows::rename(&mut editor, &path("model", "imp"), "fae").expect("renames");
+    support::settled(&mut editor);
+    assert_eq!(
+        orc_model(&mut editor),
+        renamed,
+        "renaming what an edit still loading names rewrites that edit too"
+    );
 }
 
 /// An area placing a yard blueprint, and a post blueprint the yard may place.

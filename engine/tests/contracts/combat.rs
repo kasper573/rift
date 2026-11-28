@@ -1,6 +1,5 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::time::UnixMillis;
 use engine::core::units::{Meters, Millis, Seconds};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
@@ -11,52 +10,6 @@ use engine::systems::{actor, skill};
 use serde_json::json;
 use strum::VariantArray;
 use testkit::{APEX, BODY, CLIP, Game, Map, Sim, clip, hunting, path, rig_clips};
-
-#[test]
-fn an_attack_walks_into_range_and_strikes() {
-    let (mut sim, player) = fight();
-    let brute = brute(&mut sim, player, Offset::new(4.0, 0.0));
-    let full = stat::effective(&sim.world, brute, StatKind::Health);
-
-    let conn = sim.conn(1);
-    sim.send(conn, AttackRequest { target: brute });
-
-    assert!(sim.run_until(10.0, |world| stat::effective(
-        world,
-        brute,
-        StatKind::Health
-    ) < full));
-    assert_eq!(
-        sim.world.get::<actor::Hurt>(brute),
-        Some(&actor::Hurt(1)),
-        "the blow counts, for its body to flinch at"
-    );
-}
-
-// Right beside the player, so the fight stays where it starts.
-#[test]
-fn an_attacks_timing_comes_from_its_clip_at_the_attackers_speed() {
-    let (mut sim, player) = fight();
-    let speed = stat::effective(&sim.world, player, StatKind::AttackSpeed);
-
-    let playing = actor::playing::play(
-        &mut sim.world,
-        player,
-        actor::Motion::Action(actor::Action::Attack),
-        None,
-    )
-    .expect("an attack plays");
-
-    let since = |at: UnixMillis| (at.0 - playing.started.0) as f32;
-    assert!(
-        (since(playing.apex) - APEX.0 / speed).abs() <= 1.0,
-        "{playing:?}"
-    );
-    assert!(
-        (since(playing.ends) - CLIP.0 / speed).abs() <= 1.0,
-        "{playing:?}"
-    );
-}
 
 #[test]
 fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
@@ -91,7 +44,7 @@ fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
         let mut sim = Sim::new(content);
         sim.serve("field").add(actor::playing::progress);
         let player = sim.join(1);
-        let played: Vec<(usize, f32)> = (0..30)
+        let played: Vec<(usize, f32, f32)> = (0..30)
             .map(|_| {
                 let playing = actor::playing::play(
                     &mut sim.world,
@@ -106,18 +59,26 @@ fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
                         .is_none()),
                     "the swing plays through"
                 );
-                (playing.pick, (playing.ends.0 - playing.started.0) as f32)
+                (
+                    playing.pick,
+                    (playing.apex.0 - playing.started.0) as f32,
+                    (playing.ends.0 - playing.started.0) as f32,
+                )
             })
             .collect();
         let speed = stat::effective(&sim.world, player, StatKind::AttackSpeed);
-        for (pick, lasts) in &played {
+        for (pick, apex, lasts) in &played {
             let clip = if *pick == 2 { long } else { CLIP };
+            assert!(
+                (apex - APEX.0 / speed).abs() <= 1.0,
+                "{order}: pick {pick} strikes at its clip's apex: {played:?}"
+            );
             assert!(
                 (lasts - clip.0 / speed).abs() <= 1.0,
                 "{order}: pick {pick} lasts as its clip does: {played:?}"
             );
         }
-        let picks: Vec<usize> = played.iter().map(|(pick, _)| *pick).collect();
+        let picks: Vec<usize> = played.iter().map(|(pick, ..)| *pick).collect();
         if !plays.is_empty() {
             assert_eq!(picks[..plays.len()], plays[..], "{order}");
         }
@@ -136,9 +97,9 @@ fn an_attacks_clips_take_turns_each_timed_by_its_own_clip() {
 fn an_attacked_monster_is_fought_until_it_falls() {
     let cases = [
         (
-            "a monster that never strikes back",
+            "a monster that never strikes back, out of the sword's reach",
             Foe::Brute,
-            Offset::new(1.0, 0.0),
+            Offset::new(4.0, 0.0),
             1.0,
         ),
         (
@@ -162,9 +123,19 @@ fn an_attacked_monster_is_fought_until_it_falls() {
         };
 
         sim.run_until(before, |_| false);
+        let full = stat::effective(&sim.world, foe, StatKind::Health);
         let conn = sim.conn(1);
         sim.send(conn, AttackRequest { target: foe });
 
+        assert!(
+            sim.run_until(10.0, |world| stat::effective(world, foe, StatKind::Health)
+                < full)
+        );
+        assert_eq!(
+            sim.world.get::<actor::Hurt>(foe),
+            Some(&actor::Hurt(1)),
+            "{case}: the blow counts, for its body to flinch at"
+        );
         assert!(
             sim.run_until(60.0, |world| stat::is_dead(world, foe)),
             "{case}"
@@ -173,36 +144,35 @@ fn an_attacked_monster_is_fought_until_it_falls() {
 }
 
 #[test]
-fn an_immortal_player_is_worn_down_but_never_falls() {
-    let (mut sim, player) = fight();
-    let full = stat::effective(&sim.world, player, StatKind::Health);
-
-    stat::apply_damage(&mut sim.world, player, full * 0.5);
-    assert!(stat::effective(&sim.world, player, StatKind::Health) < full);
-
-    stat::apply_damage(&mut sim.world, player, full * 10.0);
-    sim.tick();
-    assert!(!stat::is_dead(&sim.world, player));
-}
-
-#[test]
-fn a_player_crossing_into_another_area_stays_immortal() {
+fn an_immortal_player_is_worn_down_but_never_falls_in_any_area() {
     let content = Game::new()
         .area("field", &Map::open(7, 7), json!([]))
         .area("meadow", &Map::open(7, 7), json!([]))
         .hero("field", 3.0, 3.0)
         .shader("damage_pop")
+        .vfx("defeated")
         .load();
+    let serve = |sim: &mut Sim, area: &str| {
+        sim.serve(area)
+            .plan(stat::SettleVitals::default())
+            .add(combat::defeats);
+    };
     let mut field = Sim::new(content.clone());
-    field.serve("field");
+    serve(&mut field, "field");
     let mut meadow = Sim::new(content);
-    meadow.serve("meadow");
+    serve(&mut meadow, "meadow");
     let player = field.join(1);
+    let full = stat::effective(&field.world, player, StatKind::Health);
+
+    stat::apply_damage(&mut field.world, player, full * 0.5);
+    assert!(stat::effective(&field.world, player, StatKind::Health) < full);
+    stat::apply_damage(&mut field.world, player, full * 10.0);
+    field.tick();
+    assert!(!stat::is_dead(&field.world, player));
 
     let player = field.cross(player, &mut meadow, Pos::new(3.0, 3.0));
-    let full = stat::effective(&meadow.world, player, StatKind::Health);
     stat::apply_damage(&mut meadow.world, player, full * 10.0);
-
+    meadow.tick();
     assert!(!stat::is_dead(&meadow.world, player));
 }
 

@@ -11,7 +11,8 @@ const TEN_PER_SECOND: TypingPace = TypingPace {
 };
 
 #[test]
-fn characters_appear_at_the_typing_speed_a_key_as_one_and_slow_spans_slower() {
+fn characters_appear_at_the_typing_speed_a_key_as_one_slow_spans_slower_and_a_pause_holds_back_what_follows()
+ {
     let line = [span("abcd")];
     assert_eq!(revealed(&line, TEN_PER_SECOND, ms(0)), 0);
     assert_eq!(revealed(&line, TEN_PER_SECOND, ms(250)), 2);
@@ -22,14 +23,11 @@ fn characters_appear_at_the_typing_speed_a_key_as_one_and_slow_spans_slower() {
 
     let slow = [StyledSpan::plain("abcd").slow().into()];
     assert!(reveal_duration(&slow, TEN_PER_SECOND) > reveal_duration(&line, TEN_PER_SECOND));
-}
 
-#[test]
-fn a_pause_holds_back_what_follows() {
-    let line = [span("ab"), TextPiece::Pause(ms(500)), span("cd")];
-    assert_eq!(revealed(&line, TEN_PER_SECOND, ms(600)), 2);
-    assert_eq!(revealed(&line, TEN_PER_SECOND, ms(800)), 3);
-    assert_eq!(reveal_duration(&line, TEN_PER_SECOND), ms(900));
+    let paused = [span("ab"), TextPiece::Pause(ms(500)), span("cd")];
+    assert_eq!(revealed(&paused, TEN_PER_SECOND, ms(600)), 2);
+    assert_eq!(revealed(&paused, TEN_PER_SECOND, ms(800)), 3);
+    assert_eq!(reveal_duration(&paused, TEN_PER_SECOND), ms(900));
 }
 
 fn span(text: &'static str) -> TextPiece {

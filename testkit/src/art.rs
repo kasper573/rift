@@ -1,5 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Cursor;
+use std::sync::{LazyLock, Mutex, PoisonError};
 
 use bevy_math::{Quat, Vec2, Vec3};
 use engine::core::content::gltf::{
@@ -18,16 +19,25 @@ pub fn png(width: u32, height: u32) -> Vec<u8> {
 
 /// A PNG of `width` × `height` pixels, every one `color`: a picture that shows where it is drawn.
 pub fn plain_png(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    let mut encoder = png::Encoder::new(&mut bytes, width, height);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().expect("a png header");
-    writer
-        .write_image_data(&color.repeat((width * height) as usize))
-        .expect("png pixels");
-    writer.finish().expect("a png");
-    bytes
+    static ENCODED: LazyLock<Mutex<HashMap<PlainPng, Vec<u8>>>> = LazyLock::new(Mutex::default);
+    let key = PlainPng {
+        width,
+        height,
+        color,
+    };
+    let known = ENCODED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&key)
+        .cloned();
+    known.unwrap_or_else(|| {
+        let encoded = encode_plain_png(width, height, color);
+        ENCODED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, encoded.clone());
+        encoded
+    })
 }
 
 /// A library of one clip, `name`, made on `tree`: its joints at rest, and the clip holding each
@@ -335,4 +345,24 @@ pub(crate) fn wav_of(samples: &[i16]) -> Vec<u8> {
     }
     writer.finalize().expect("a wav");
     bytes.into_inner()
+}
+
+fn encode_plain_png(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().expect("a png header");
+    writer
+        .write_image_data(&color.repeat((width * height) as usize))
+        .expect("png pixels");
+    writer.finish().expect("a png");
+    bytes
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PlainPng {
+    width: u32,
+    height: u32,
+    color: [u8; 4],
 }

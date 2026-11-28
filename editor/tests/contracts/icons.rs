@@ -22,46 +22,39 @@ fn every_type_of_content_has_an_icon_of_its_own() {
 }
 
 #[test]
-fn an_image_stands_in_for_its_icon_only_while_it_is_small() {
+fn a_small_image_or_a_content_file_naming_a_picture_stands_in_for_its_icon() {
     let ctx = egui::Context::default();
     let (_scratch, project) = open(
         support::game()
             .asset("cap.png", png(16, 16))
-            .asset("map.png", png(128, 96)),
+            .asset("map.png", png(128, 96))
+            .item("cap", json!({ "kind": { "type": "resource" } }))
+            .area("field", &testkit::Map::open(4, 4), json!([])),
     );
     let mut thumbs = Thumbnails::default();
     let mut budget = u32::MAX;
+    let mut preview = |file: &str| icons::preview(&ctx, &mut thumbs, &project, file, &mut budget);
 
-    let cap = icons::preview(&ctx, &mut thumbs, &project, "cap.png", &mut budget);
-    assert_eq!(cap.map(|cap| cap.size), Some(egui::vec2(16.0, 16.0)));
-    assert!(icons::preview(&ctx, &mut thumbs, &project, "map.png", &mut budget).is_none());
+    assert_eq!(
+        preview("cap.png").map(|cap| cap.size),
+        Some(egui::vec2(16.0, 16.0))
+    );
+    assert!(preview("map.png").is_none(), "a big image keeps its icon");
+    assert_eq!(
+        preview(&testkit::path("item", "cap")).map(|cap| cap.size),
+        Some(egui::vec2(32.0, 32.0)),
+        "an item stands in by the picture it names"
+    );
+    let field = testkit::path("area", "field");
+    assert!(
+        preview(&field).is_none(),
+        "a kind that keeps its icon never stands in by its files' pictures"
+    );
+
     assert!(
         icons::picture(&ctx, &mut thumbs, &project, "map.png", &mut budget).is_some(),
         "a big picture still shows where pictures are large"
     );
-}
-
-#[test]
-fn a_content_file_stands_in_by_the_picture_it_names() {
-    let ctx = egui::Context::default();
-    let (_scratch, project) =
-        open(support::game().item("cap", json!({ "kind": { "type": "resource" } })));
-    let mut thumbs = Thumbnails::default();
-    let mut budget = u32::MAX;
-    let cap = testkit::path("item", "cap");
-    let preview = icons::preview(&ctx, &mut thumbs, &project, &cap, &mut budget);
-    assert_eq!(preview.map(|cap| cap.size), Some(egui::vec2(32.0, 32.0)));
-}
-
-#[test]
-fn a_kind_that_keeps_its_icon_never_stands_in_by_its_files_pictures() {
-    let ctx = egui::Context::default();
-    let (_scratch, project) =
-        open(support::game().area("field", &testkit::Map::open(4, 4), json!([])));
-    let mut thumbs = Thumbnails::default();
-    let mut budget = u32::MAX;
-    let field = testkit::path("area", "field");
-    assert!(icons::preview(&ctx, &mut thumbs, &project, &field, &mut budget).is_none());
     assert!(icons::picture(&ctx, &mut thumbs, &project, &field, &mut budget).is_none());
 }
 

@@ -9,14 +9,17 @@ use testkit::{GEAR, path};
 use crate::support;
 
 const POTION: &str = "potion";
+const FLASK: &str = "flask";
 
 #[test]
 fn an_items_pictures_are_checked_against_the_sizes_the_game_draws() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game().item(POTION, json!({ "kind": { "type": "resource" } }));
-    let mut editor = support::open(game, &scratch);
-    let key = path("item", POTION);
-    let checks = item::pictures(&mut editor, &key);
+    let game = support::game()
+        .item(POTION, json!({ "kind": { "type": "resource" } }))
+        .item(FLASK, json!({ "kind": { "type": "resource" } }))
+        .asset(&format!("icons/{FLASK}.png"), testkit::png(48, 48));
+    let mut editor = support::open_as_is(game, &scratch);
+    let checks = item::pictures(&mut editor, &path("item", POTION));
     assert_eq!(
         checks
             .iter()
@@ -25,12 +28,7 @@ fn an_items_pictures_are_checked_against_the_sizes_the_game_draws() {
         vec![("icon", ICON_SIZE, true), ("card", CARD_SIZE, true)]
     );
 
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game()
-        .item(POTION, json!({ "kind": { "type": "resource" } }))
-        .asset(&format!("icons/{POTION}.png"), testkit::png(48, 48));
-    let mut editor = support::open_as_is(game, &scratch);
-    let checks = item::pictures(&mut editor, &key);
+    let checks = item::pictures(&mut editor, &path("item", FLASK));
     let icon = checks
         .iter()
         .find(|check| check.field == "icon")

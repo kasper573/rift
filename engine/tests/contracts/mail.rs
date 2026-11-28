@@ -2,7 +2,7 @@ use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
 use bevy_replication::ToClient;
 use engine::core::content::{Content, ContentScope, Fixture, ImageRef};
-use engine::core::store::{Record, RecordRow};
+use engine::core::store::RecordRow;
 use engine::core::time::UnixMillis;
 use engine::systems::account::AccountId;
 use engine::systems::friend::{self, AskFriendship};
@@ -10,8 +10,8 @@ use engine::systems::interface::InterfaceIcon;
 use engine::systems::item::deliver::{self, DeliveryReason};
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
 use engine::systems::mail::{
-    DeleteLetter, InboxSender, InboxView, Letter, LetterAnswered, LetterSender, LetterText,
-    OpenLetter, SendLetter, TakeAttached, TakenStack,
+    DeleteLetter, InboxSender, InboxView, LetterAnswered, LetterText, OpenLetter, SendLetter,
+    TakeAttached, TakenStack,
 };
 use engine::systems::notification::{FeedLayout, NotificationKind};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, JoinOrigin};
@@ -321,29 +321,6 @@ fn messages_wait_for_whoever_is_gone_and_are_kept_from_one_server_to_the_next() 
         (rows, inbox.held),
         (vec![("A third", false, 0), ("For later", true, 0)], 2),
         "read, taken, deleted and delivered since: all of it is kept, each under an id of its own"
-    );
-    let saved_before = |from: serde_json::Value| {
-        serde_json::from_value::<Letter>(json!({
-            "id": 1, "to": "hale", "from": from, "title": "Kept", "text": "", "sent": 0
-        }))
-        .expect("a letter saved before loads")
-        .from
-    };
-    assert_eq!(
-        (
-            saved_before(json!("game")),
-            saved_before(json!({ "player": "wren" }))
-        ),
-        (
-            LetterSender::System,
-            LetterSender::Character(AccountId("wren".to_owned()))
-        ),
-        "letters saved when the system was called the game and a character a player still load"
-    );
-    assert_eq!(
-        Letter::KIND,
-        "message",
-        "letters are stored under the kind stores already hold them by"
     );
 }
 

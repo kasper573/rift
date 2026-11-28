@@ -14,6 +14,7 @@ members = [
     "service",
     "web-server",
     "smoke",
+    "suite",
 ]
 
 [workspace.package]
@@ -88,18 +89,23 @@ tiny-skia = { version = "0.12", default-features = false, features = ["std", "si
 oauth2-test-server = "0.2.3"
 openidconnect = "4"
 
+# Cargo's own release profile, without LTO: whole-program optimization makes the binaries only a
+# few percent faster, for builds several times longer and larger than a free CI runner holds.
 [profile.release]
-lto = false
-incremental = true
 
-# Release with the symbols and line tables a sampling profiler reads; full debug info would make
-# the binary too large to publish.
-[profile.profiling]
-inherits = "release"
-debug = "line-tables-only"
-
+# Built for iterating: the workspace's own crates at the least optimization that keeps the game
+# within its bench floors, and line tables alone, so a panic still names its line; the
+# dependencies, built once, optimized and with no debug info, which is most of what a link reads.
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
+
+# rustc merges a crate's modules into at most this many units to compile, and an edit that shifts
+# the merge compiles most of them again: the engine has more modules than the default 256, so
+# capping it above their count keeps an edit to one module from rebuilding the rest.
+[profile.dev.package.engine]
+codegen-units = 4096
 
 [profile.dev.package."*"]
 opt-level = 3
+debug = false

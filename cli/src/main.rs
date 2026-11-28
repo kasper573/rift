@@ -58,18 +58,22 @@ enum Command {
     /// Works out what the designer bakes into a game, off screen, as the editor bakes it.
     #[command(subcommand)]
     Bake(Bake),
-    /// The game server's capacity, on a generated game, the crowd, or on GAME; with GAME, then the
-    /// game client's and the editor's frame rates, and whether the server and the client hold
-    /// their memory level as a player plays it.
+    /// The game server's ticks under a load of players playing, on a generated game, the crowd,
+    /// or on GAME; with GAME, then the game client's and the editor's frame rates, and whether the
+    /// server and the client hold their memory level as a player plays it.
     Bench {
         game: Option<PathBuf>,
         /// Spreads the server bench's players over the area rather than crowding them on its spawn.
         #[arg(long)]
         spread: bool,
-        /// Measures the server at this many areas, `--repeat` times, rather than finding the
-        /// most it sustains: a steady load to compare builds by.
-        #[arg(long)]
+        /// Measures the server at this many areas, `--repeat` times, rather than the bench's own
+        /// load.
+        #[arg(long, conflicts_with = "capacity")]
         areas: Option<usize>,
+        /// Finds the most areas the server ticks within its budget, rather than measuring one
+        /// load to compare builds by.
+        #[arg(long)]
+        capacity: bool,
         /// Runs only these parts of the bench, each named once.
         #[arg(long, value_enum)]
         only: Vec<bench::BenchPart>,
@@ -244,6 +248,7 @@ fn main() {
             game,
             spread,
             areas,
+            capacity,
             only,
             scenario,
             scenarios,
@@ -258,6 +263,7 @@ fn main() {
                 game,
                 spread,
                 areas,
+                capacity,
                 only,
                 scenario,
                 scenarios,

@@ -36,7 +36,7 @@ client. The client inserts a `ServerLink` while it is connected, and each entity
 carries `Remote`. Between updates the transport hands each link the bytes that arrived and sends what the
 link has to send.
 
-```rust
+```rust,ignore
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replication::{
@@ -129,7 +129,7 @@ one that isn't replicated: duplicates count once, and what isn't replicated is n
 A spatial grid is the usual interest: `prepare` files every replicated entity by its cell, and a client
 sees the cells around the entity it plays.
 
-```rust
+```rust,ignore
 use std::collections::HashMap;
 
 use bevy_ecs::prelude::*;
@@ -197,7 +197,7 @@ server entity that the client hasn't been shown yet gets an entity of its own at
 server's later sends fill in. A client entity that the server never sent maps to
 `Entity::PLACEHOLDER`.
 
-```rust
+```rust,ignore
 use bevy_app::App;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
@@ -237,7 +237,7 @@ takes from the world what the send holds of its clients, `plan` works out every 
 it stands, in parallel and with the world shared, and `apply` hands the frames to the links. `plan` may
 run beside other work that reads the world.
 
-```rust
+```rust,ignore
 use bevy_app::App;
 use bevy_replication::{Sender, Sending, ServerReplicationPlugin};
 

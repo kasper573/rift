@@ -17,15 +17,43 @@ fn reader(game: &Game) -> FolderReader {
 }
 
 #[test]
-fn a_file_reads_with_the_parts_of_its_bundle_and_the_media_it_names() {
-    let game = game().model("hero", 1.0, json!([]));
-    let reader = reader(&game);
-    let part: ModelPartDef = reader.read(&path("model_part", "hero")).expect("reads");
+fn a_file_reads_as_its_type_with_its_bundles_parts_and_each_path_it_names_as_an_id_or_not_at_all() {
+    {
+        let game = game().model("hero", 1.0, json!([]));
+        let reader = reader(&game);
+        let part: ModelPartDef = reader.read(&path("model_part", "hero")).expect("reads");
 
-    assert_eq!(
-        part.mesh.expect("a mesh for every build").as_str(),
-        testkit::part_file("hero")
-    );
+        assert_eq!(
+            part.mesh.expect("a mesh for every build").as_str(),
+            testkit::part_file("hero")
+        );
+    }
+    {
+        let step = path("sfx", "step");
+        let game = sand(game(), &step);
+        let reader = reader(&game);
+        let sand: SurfaceDef = reader.read(&path("surface", "sand")).expect("reads");
+
+        assert_eq!(reader.path_of(sand.footstep), Some(step.as_str()));
+        assert_eq!(reader.id_of::<SfxDef>(&step), Some(sand.footstep));
+    }
+    {
+        let game = sand(game(), "nowhere/gone.sfx");
+        let errors = reader(&game)
+            .read::<SurfaceDef>(&path("surface", "sand"))
+            .err()
+            .expect("refused");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.problem.rule == "missing file"),
+            "{errors:?}"
+        );
+    }
+    {
+        let game = game().sfx("hit");
+        assert!(reader(&game).read::<ModelDef>(&path("sfx", "hit")).is_err());
+    }
 }
 
 /// A sand surface stepping with the sound `step`: a file naming another by its path.
@@ -35,32 +63,6 @@ fn sand(game: Game, footstep: &str) -> Game {
         "sand",
         json!({ "name": "Sand", "footstep": footstep }),
     )
-}
-
-#[test]
-fn a_reference_reads_as_the_id_of_the_path_it_names() {
-    let step = path("sfx", "step");
-    let game = sand(game(), &step);
-    let reader = reader(&game);
-    let sand: SurfaceDef = reader.read(&path("surface", "sand")).expect("reads");
-
-    assert_eq!(reader.path_of(sand.footstep), Some(step.as_str()));
-    assert_eq!(reader.id_of::<SfxDef>(&step), Some(sand.footstep));
-}
-
-#[test]
-fn a_file_naming_a_path_no_file_has_does_not_read() {
-    let game = sand(game(), "nowhere/gone.sfx");
-    let errors = reader(&game)
-        .read::<SurfaceDef>(&path("surface", "sand"))
-        .err()
-        .expect("refused");
-    assert!(
-        errors
-            .iter()
-            .any(|error| error.problem.rule == "missing file"),
-        "{errors:?}"
-    );
 }
 
 #[test]
@@ -81,12 +83,6 @@ fn a_file_read_in_another_scope_names_the_ids_of_its_paths() {
             .is_err(),
         "a file the other scope does not hold does not read in it"
     );
-}
-
-#[test]
-fn a_file_of_another_type_does_not_read() {
-    let game = game().sfx("hit");
-    assert!(reader(&game).read::<ModelDef>(&path("sfx", "hit")).is_err());
 }
 
 #[test]
@@ -131,74 +127,71 @@ fn text(files: &BTreeMap<String, Vec<u8>>, file: &str) -> String {
 }
 
 #[test]
-fn a_rename_writes_the_new_path_wherever_a_file_names_the_old_one() {
-    let game = game();
-    let area = path("area", "start");
-    let turf = path("terrain", testkit::TURF);
-    let meadow = path("terrain", "meadow");
+fn a_rename_writes_the_new_path_wherever_a_file_or_the_settings_name_the_old_one_and_leaves_the_rest()
+ {
+    {
+        let game = game();
+        let area = path("area", "start");
+        let turf = path("terrain", testkit::TURF);
+        let meadow = path("terrain", "meadow");
 
-    let written = reader(&game)
-        .rewritten(&area, &renames(&[(&turf, &meadow)]))
-        .expect("rewritten");
+        let written = reader(&game)
+            .rewritten(&area, &renames(&[(&turf, &meadow)]))
+            .expect("rewritten");
 
-    let config = text(&written.files, &format!("{area}/config.json"));
-    assert!(
-        config.contains(&meadow) && !config.contains(&turf),
-        "{config}"
-    );
-    assert!(written.removed.is_empty());
-}
+        let config = text(&written.files, &format!("{area}/config.json"));
+        assert!(
+            config.contains(&meadow) && !config.contains(&turf),
+            "{config}"
+        );
+        assert!(written.removed.is_empty());
+    }
+    {
+        let game = game().sfx("hit");
+        let hit = path("sfx", "hit");
 
-#[test]
-fn a_rename_of_a_path_a_file_does_not_name_writes_it_back_unchanged() {
-    let game = game().sfx("hit");
-    let hit = path("sfx", "hit");
+        let reader = reader(&game);
+        let sfx: SfxDef = reader.read(&hit).expect("reads");
 
-    let reader = reader(&game);
-    let sfx: SfxDef = reader.read(&hit).expect("reads");
+        let written = reader
+            .rewritten(&hit, &renames(&[("elsewhere.npc.json", "moved.npc.json")]))
+            .expect("rewritten");
 
-    let written = reader
-        .rewritten(&hit, &renames(&[("elsewhere.npc.json", "moved.npc.json")]))
-        .expect("rewritten");
+        assert_eq!(
+            written.files,
+            reader.write(&hit, &sfx).expect("writes").files
+        );
+    }
+    {
+        let gone = "lost/step.sfx";
+        let step = path("sfx", "step");
+        let game = sand(game(), gone);
+        let sand = path("surface", "sand");
+        assert!(reader(&game).read::<SurfaceDef>(&sand).is_err());
+        assert!(
+            reader(&game).rewritten(&sand, &BTreeMap::new()).is_err(),
+            "without the move it names, the file is not rewritten"
+        );
 
-    assert_eq!(
-        written.files,
-        reader.write(&hit, &sfx).expect("writes").files
-    );
-}
+        let written = reader(&game)
+            .rewritten(&sand, &renames(&[(gone, &step)]))
+            .expect("rewritten");
 
-#[test]
-fn a_file_naming_a_path_that_moved_away_reads_and_names_where_it_went() {
-    let gone = "lost/step.sfx";
-    let step = path("sfx", "step");
-    let game = sand(game(), gone);
-    let sand = path("surface", "sand");
-    assert!(reader(&game).read::<SurfaceDef>(&sand).is_err());
-    assert!(
-        reader(&game).rewritten(&sand, &BTreeMap::new()).is_err(),
-        "without the move it names, the file is not rewritten"
-    );
+        let fields = text(&written.files, &engine::core::content::fields_file(&sand));
+        assert!(fields.contains(&format!("\"{step}\"")), "{fields}");
+        assert!(!fields.contains(gone), "{fields}");
+    }
+    {
+        let game = game();
+        let start = path("area", "start");
+        let harbour = path("area", "harbour");
 
-    let written = reader(&game)
-        .rewritten(&sand, &renames(&[(gone, &step)]))
-        .expect("rewritten");
+        let written = reader(&game)
+            .rewritten_settings(&renames(&[(&start, &harbour)]))
+            .expect("rewritten");
 
-    let fields = text(&written.files, &engine::core::content::fields_file(&sand));
-    assert!(fields.contains(&format!("\"{step}\"")), "{fields}");
-    assert!(!fields.contains(gone), "{fields}");
-}
-
-#[test]
-fn a_rename_reaches_the_games_settings() {
-    let game = game();
-    let start = path("area", "start");
-    let harbour = path("area", "harbour");
-
-    let written = reader(&game)
-        .rewritten_settings(&renames(&[(&start, &harbour)]))
-        .expect("rewritten");
-
-    let settings = text(&written, engine::core::content::SETTINGS_FILE);
-    assert!(settings.contains(&format!("\"{harbour}\"")), "{settings}");
-    assert!(!settings.contains(&format!("\"{start}\"")), "{settings}");
+        let settings = text(&written, engine::core::content::SETTINGS_FILE);
+        assert!(settings.contains(&format!("\"{harbour}\"")), "{settings}");
+        assert!(!settings.contains(&format!("\"{start}\"")), "{settings}");
+    }
 }

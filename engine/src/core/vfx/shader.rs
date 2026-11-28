@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::sync::{LazyLock, Mutex, PoisonError};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -632,8 +633,29 @@ fn layout(params: &[ShaderParam]) -> Vec<ParamSlot> {
         .collect()
 }
 
-/// Parses and validates a composed shader as the GPU driver would, headless.
+/// Parses and validates a composed shader as the GPU driver would, headless, once per text: a
+/// folder loads again on every edit in the editor, its shaders mostly as they were, and naga's
+/// parse and validation of one outweighs the rest of its load.
 fn validate(composed: &str) -> Result<(), ShaderError> {
+    static VALIDATED: LazyLock<Mutex<HashMap<blake3::Hash, Result<(), ShaderError>>>> =
+        LazyLock::new(Mutex::default);
+    let key = blake3::hash(composed.as_bytes());
+    let known = VALIDATED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&key)
+        .cloned();
+    known.unwrap_or_else(|| {
+        let validated = validate_now(composed);
+        VALIDATED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key, validated.clone());
+        validated
+    })
+}
+
+fn validate_now(composed: &str) -> Result<(), ShaderError> {
     let module = naga::front::wgsl::parse_str(composed).map_err(|error| ShaderError {
         place: place(error.location(composed)),
         message: error.message().to_owned(),

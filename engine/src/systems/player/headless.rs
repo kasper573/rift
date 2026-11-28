@@ -77,6 +77,11 @@ impl HeadlessClient {
         write_request(self.app.world_mut(), request)
     }
 
+    /// Sends the server `message`, one of the engine's client messages, with the next update.
+    pub fn send<M: Message>(&mut self, message: M) {
+        self.app.world_mut().write_message(message);
+    }
+
     /// What the client sees around its character, if it knows the game.
     pub fn sight(&mut self) -> Option<ProbeSight> {
         let world = self.app.world_mut();

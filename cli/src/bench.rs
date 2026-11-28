@@ -20,8 +20,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use engine::core::content::Content;
-use engine::core::math::Size;
-use engine::core::units::WindowPx;
+use engine::core::math::{Pos, Size};
+use engine::core::units::{Meters, Millis, WindowPx};
 use engine::systems::area::{self, AreaModule};
 use engine::systems::{GameSettings, TICK_HZ};
 
@@ -31,7 +31,9 @@ use crate::search::{Search, budget_ms, verdict};
 use driver::Driver;
 use frames::{Class, Criteria, Fps, Window};
 use hands::Failure;
-use report::{BenchReport, Resolution, ScenarioResult, Verdict};
+use report::{
+    BenchReport, Resolution, RoleCount, ScenarioResult, Screen, ServerRun, TickStats, Verdict,
+};
 use scenario::{Scenario, Target};
 use scenarios::ScenarioSlots;
 use scenarios::client::OPENING;
@@ -60,8 +62,10 @@ pub enum BenchPart {
 pub struct BenchArgs {
     pub game: Option<PathBuf>,
     pub spread: bool,
-    /// The areas the server is measured at, rather than finding the most it sustains.
+    /// The areas the server is measured at, rather than [`AREAS`].
     pub areas: Option<usize>,
+    /// Finds the most areas the server ticks within its budget, rather than measuring one load.
+    pub capacity: bool,
     pub only: Vec<BenchPart>,
     /// Only the scenarios whose names match, `*` standing for anything.
     pub scenario: Option<String>,
@@ -96,15 +100,23 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
         }
         let folder = tempfile::tempdir().expect("a folder to write the crowd into");
         testkit::crowd().write_to(folder.path());
-        server(&load(folder.path()), layout, args);
-        return Ok(0);
+        let server = server(&load(folder.path()), layout, args);
+        let report = server.map(|server| BenchReport {
+            server: Some(server),
+            ..BenchReport::new(None)
+        });
+        return finish(report, args);
     };
     let content = load(game);
-    if runs(BenchPart::Server) {
-        server(&content, layout, args);
+    let mut report: Option<BenchReport> = None;
+    if runs(BenchPart::Server)
+        && let Some(server) = server(&content, layout, args)
+    {
+        report
+            .get_or_insert_with(|| BenchReport::new(Some(game)))
+            .server = Some(server);
     }
     let videos = args.video.presets();
-    let mut report: Option<BenchReport> = None;
     let steps = args.report.with_extension(STEPS_LOG);
     if runs(BenchPart::Client) {
         client(game, &content, args, &videos, &mut report)?;
@@ -113,31 +125,37 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
         let slots = ScenarioSlots::of(&slots_file(game, args), &content)?;
         editor::run(game, &content, &slots, args, &videos, &steps, &mut report)?;
     }
-    let mut exit = 0;
     if runs(BenchPart::Memory) {
         memory::run(game, &content)?;
     }
-    if let Some(report) = &report {
-        report.write(&args.report)?;
-        println!("[bench] report written to {}", args.report.display());
-        exit = exit.max(report.overall.exit_code());
-        if let Some(before) = &args.compare {
-            let before = BenchReport::read(before)?;
-            let comparison = report.compare(&before);
-            for row in &comparison.rows {
-                println!("[bench] {row}");
+    finish(report, args)
+}
+
+/// Writes `report` where `args` asks, and holds it against the earlier report `args` names: the
+/// exit code the run ends with.
+fn finish(report: Option<BenchReport>, args: &BenchArgs) -> Result<i32, String> {
+    let Some(report) = report else {
+        return Ok(0);
+    };
+    report.write(&args.report)?;
+    println!("[bench] report written to {}", args.report.display());
+    let mut exit = report.overall.exit_code();
+    if let Some(before) = &args.compare {
+        let before = BenchReport::read(before)?;
+        let comparison = report.compare(&before);
+        for row in &comparison.rows {
+            println!("[bench] {row}");
+        }
+        if comparison.worse.is_empty() {
+            println!(
+                "[bench] nothing got worse against build {}",
+                before.engine_build
+            );
+        } else {
+            for worse in &comparison.worse {
+                println!("[bench] WORSE {worse}");
             }
-            if comparison.worse.is_empty() {
-                println!(
-                    "[bench] nothing got worse against build {}",
-                    before.engine_build
-                );
-            } else {
-                for worse in &comparison.worse {
-                    println!("[bench] WORSE {worse}");
-                }
-                exit = exit.max(1);
-            }
+            exit = exit.max(1);
         }
     }
     Ok(exit)
@@ -314,8 +332,9 @@ const DESKTOP_TEMPLATE: &str = "new_game";
 /// as letting the client draw as fast as it can.
 const DESKTOP_FLOOR: Fps = Fps(300.0);
 
-/// The report, opened on the adapter and screen the first app the bench drives draws on when it
-/// isn't yet; refused when an app draws on another adapter than the bench was asked for.
+/// The report, opened when it isn't yet and holding the adapter and screen the first app the
+/// bench drives draws on; refused when an app draws on another adapter than the bench was asked
+/// for.
 fn report_of<'a>(
     report: &'a mut Option<BenchReport>,
     adapter: String,
@@ -330,16 +349,15 @@ fn report_of<'a>(
             "the bench draws on {adapter}, not the {wanted} it was asked for"
         ));
     }
-    Ok(report.get_or_insert_with(|| {
-        BenchReport::new(
-            adapter,
-            Resolution {
-                width: screen.width as u32,
-                height: screen.height as u32,
-            },
-            game,
-        )
-    }))
+    let report = report.get_or_insert_with(|| BenchReport::new(Some(game)));
+    report.screen.get_or_insert(Screen {
+        adapter,
+        resolution: Resolution {
+            width: screen.width as u32,
+            height: screen.height as u32,
+        },
+    });
+    Ok(report)
 }
 
 /// The report, opened on the adapter and screen `driver`'s client draws on.
@@ -386,8 +404,9 @@ struct Crowd {
 }
 
 impl Crowd {
-    /// `count` players joined to the server at `http_url`; refused when fewer got in.
-    fn join(http_url: String, count: u32) -> Result<Crowd, Failure> {
+    /// `count` players joined to the server at `http_url`, walking about `around`; refused when
+    /// fewer got in.
+    fn join(http_url: String, count: u32, around: Pos<Meters>) -> Result<Crowd, Failure> {
         let stop = Arc::new(AtomicBool::new(false));
         let (joined, report) = mpsc::channel();
         let thread = std::thread::spawn({
@@ -396,7 +415,7 @@ impl Crowd {
                 let mut pool = Pool::open(&http_url, count as usize);
                 while !stop.load(Ordering::Relaxed) {
                     let _ = joined.send(pool.connected());
-                    pool.hold(CROWD_SLICE);
+                    pool.walk_about(around, CROWD_SLICE);
                 }
             }
         });
@@ -461,7 +480,11 @@ fn measure(
         let started = Instant::now();
         let outcome = match scenario.players {
             0 => driver.run(scenario),
-            players => Crowd::join(driver.server_url(), players).and_then(|crowd| {
+            players => {
+                let spawn = restart.content.built::<GameSettings>().initial_spawn;
+                Crowd::join(driver.server_url(), players, spawn.at)
+            }
+            .and_then(|crowd| {
                 let measured = driver.run(scenario);
                 drop(crowd);
                 measured
@@ -644,9 +667,12 @@ fn failure_text(failure: &Failure) -> String {
 
 /// The highest count of the game's spawn area, each with its players, the server sustains within
 /// the tick budget; or how it runs at the areas asked for.
-fn server(content: &Content, layout: sim::Layout, args: &BenchArgs) {
-    if let Some(areas) = args.areas {
-        return server_at(content, layout, areas, args.repeat.max(1));
+/// The server part: the server's ticks at a fixed load, `--areas` or [`AREAS`], or with
+/// `--capacity` the most areas it ticks within its budget, which reports nothing to compare by.
+fn server(content: &Content, layout: sim::Layout, args: &BenchArgs) -> Option<ServerRun> {
+    if !args.capacity {
+        let areas = args.areas.unwrap_or(AREAS);
+        return Some(server_at(content, layout, areas, args.repeat.max(1)));
     }
     println!(
         "[bench] finding the highest A sustained within the {:.1}ms budget ({} players)...",
@@ -676,12 +702,11 @@ fn server(content: &Content, layout: sim::Layout, args: &BenchArgs) {
     let (areas, r) = best.unwrap_or_else(|| (1, point(1, layout, content)));
     let npcs = npcs_per_area(content) * areas;
     let players = sim::PLAYERS_PER_AREA * areas;
-    println!("\n[bench] areas,npcs,players,clients,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms");
+    println!("\n[bench] areas,npcs,players,mean_ms,p50_ms,p99_ms,max_ms,sim_ms,repl_ms");
     println!(
-        "[bench] RESULT {},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}",
+        "[bench] RESULT {},{},{},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}",
         areas,
         npcs,
-        players,
         players,
         r.full.mean,
         r.full.p50,
@@ -699,14 +724,36 @@ fn server(content: &Content, layout: sim::Layout, args: &BenchArgs) {
         r.full.mean,
         budget_ms(),
     );
+    None
 }
+
+/// The areas the server part measures unless asked for another load: a busy server's players,
+/// every role among them, measured in a few seconds.
+const AREAS: usize = 100;
 
 /// The server at `areas`, measured `repeat` times from a fresh start each, and the run with the
 /// median mean tick.
-fn server_at(content: &Content, layout: sim::Layout, areas: usize, repeat: u32) {
+fn server_at(content: &Content, layout: sim::Layout, areas: usize, repeat: u32) -> ServerRun {
+    let players = sim::PLAYERS_PER_AREA * areas;
+    let npcs = npcs_per_area(content) * areas;
+    let roles: Vec<RoleCount> = play::Role::ALL
+        .iter()
+        .map(|&role| RoleCount {
+            role: role.name().to_owned(),
+            players: (0..sim::PLAYERS_PER_AREA)
+                .filter(|&index| play::Role::of(index) == role)
+                .count()
+                * areas,
+        })
+        .collect();
+    let mix: Vec<String> = roles
+        .iter()
+        .map(|count| format!("{} {}", count.players, count.role))
+        .collect();
     println!(
-        "[bench] measuring {areas} areas {repeat} times ({} players)...",
-        layout.as_ref()
+        "[bench] measuring {areas} areas {repeat} times: {players} {} players ({}) and {npcs} NPCs...",
+        layout.as_ref(),
+        mix.join(", "),
     );
     let mut runs: Vec<Point> = (0..repeat)
         .map(|run| {
@@ -735,12 +782,36 @@ fn server_at(content: &Content, layout: sim::Layout, areas: usize, repeat: u32) 
         median.repl(),
     );
     median.market.print();
+    println!(
+        "[bench] as the run ended: {} players walking, {} in a conversation",
+        median.walking, median.talking
+    );
+    let ms = |value: f64| Millis(value as f32);
+    ServerRun {
+        areas,
+        players,
+        npcs,
+        roles,
+        tick: TickStats {
+            mean: ms(median.full.mean),
+            p50: ms(median.full.p50),
+            p99: ms(median.full.p99),
+            max: ms(median.full.max),
+        },
+        simulation: ms(median.sim),
+        replication: ms(median.repl()),
+        runs: repeat,
+        spread: ms(spread),
+    }
 }
 
 struct Point {
     full: Timings,
     sim: f64,
     market: Market,
+    /// How many players were walking, and how many talking, as the run ended.
+    walking: usize,
+    talking: usize,
 }
 
 /// The market over a run: how many listings it held at the end, and what its traders asked of
@@ -791,10 +862,13 @@ fn point(areas: usize, layout: sim::Layout, content: &Content) -> Point {
     let sim = measure_ticks(&mut bench).mean;
     bench.connect();
     let full = measure_ticks(&mut bench);
+    let (walking, talking) = bench.playing();
     Point {
         full,
         sim,
         market: Market::of(&bench),
+        walking,
+        talking,
     }
 }
 

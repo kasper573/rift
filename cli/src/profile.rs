@@ -8,7 +8,7 @@ use engine::systems::player::SpawnPolicy;
 
 use crate::binaries::{self, GAME_SERVER_PROFILING};
 use crate::loadtest;
-use crate::server::{GameServer, bench_config};
+use crate::server::{Freeing, GameServer, bench_config};
 
 const SAMPLED: Duration = Duration::from_secs(20);
 const SAMPLE_HZ: &str = "999";
@@ -27,14 +27,16 @@ pub fn run(game: Option<&Path>, out: &Path) {
         }
     };
     fs::create_dir_all(out).expect("a folder for the profile");
-    let server = GameServer::start(&binaries::beside(GAME_SERVER_PROFILING), |run| {
-        ServerConfig {
+    let server = GameServer::start(
+        &binaries::beside(GAME_SERVER_PROFILING),
+        Freeing::AsShipped,
+        |run| ServerConfig {
             max_clients: MAX_CLIENTS,
             character_spawn_policy: SpawnPolicy::Dist,
             test_characters: false,
             ..bench_config(&game, run)
-        }
-    });
+        },
+    );
     let mut load = loadtest::run_dyn(&server.http_url()).unwrap_or_else(|failure| {
         eprintln!("{failure}");
         std::process::exit(1);

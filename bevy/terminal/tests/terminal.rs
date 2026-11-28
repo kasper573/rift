@@ -67,25 +67,85 @@ fn replies(world: &mut World) -> Vec<(Entity, TerminalLine)> {
 }
 
 #[test]
-fn a_line_starting_with_the_prefix_is_a_command_to_run_rather_than_said() {
-    let mut app = server();
-    let world = app.world_mut();
-    let conn = connect(world);
+fn a_typed_line_is_said_trimmed_on_its_channel_or_run_as_a_command_and_answered_where_it_was_typed()
+{
+    {
+        let mut app = server();
+        let world = app.world_mut();
+        let conn = connect(world);
 
-    send(world, conn, " /wave at everyone ");
+        send(world, conn, "  hello there  ");
+        send(world, conn, "   ");
 
-    assert!(said(world).is_empty());
-    let commanded: Vec<TerminalCommanded> = world
-        .resource_mut::<Messages<TerminalCommanded>>()
-        .drain()
-        .collect();
-    assert_eq!(
-        commanded,
-        vec![TerminalCommanded {
-            conn,
-            line: "wave at everyone".to_owned()
-        }]
-    );
+        assert_eq!(
+            said(world),
+            vec![TerminalSaid {
+                conn,
+                channel: TerminalChannel::default(),
+                text: "hello there".to_owned(),
+                embeds: Vec::new(),
+            }]
+        );
+        assert!(replies(world).is_empty());
+    }
+    {
+        let mut app = server();
+        let world = app.world_mut();
+        let conn = connect(world);
+
+        send(world, conn, " /wave at everyone ");
+
+        assert!(said(world).is_empty());
+        let commanded: Vec<TerminalCommanded> = world
+            .resource_mut::<Messages<TerminalCommanded>>()
+            .drain()
+            .collect();
+        assert_eq!(
+            commanded,
+            vec![TerminalCommanded {
+                conn,
+                line: "wave at everyone".to_owned()
+            }]
+        );
+    }
+    {
+        let mut app = server();
+        let world = app.world_mut();
+        let (conn, other) = (connect(world), connect(world));
+        let party = TerminalChannel(1);
+
+        send_on(world, conn, party, "on my way");
+        send_on(world, conn, party, "/wave");
+        reply(world, conn, "You wave.");
+        reply(world, other, "Nothing typed yet.");
+
+        assert_eq!(
+            said(world),
+            vec![TerminalSaid {
+                conn,
+                channel: party,
+                text: "on my way".to_owned(),
+                embeds: Vec::new(),
+            }]
+        );
+        let line = |text: &str, channel| TerminalLine {
+            text: text.to_owned(),
+            kind: LineKind::Notice,
+            channel,
+            embeds: Vec::new(),
+        };
+        assert_eq!(
+            replies(world),
+            vec![
+                (conn, line("You wave.", party)),
+                (
+                    other,
+                    line("Nothing typed yet.", TerminalChannel::default())
+                ),
+            ],
+            "an answer lands where its question was typed, and on the first channel before any was"
+        );
+    }
 }
 
 #[test]
@@ -108,67 +168,6 @@ fn what_is_typed_matches_the_labels_it_runs_through_best_first_and_no_more_than_
     assert_eq!(best("PICK", 5), ["Copper Pickaxe"]);
     assert_eq!(best("p", 1).len(), 1);
     assert!(best("xyz", 5).is_empty());
-}
-
-#[test]
-fn chat_line_is_said_trimmed_and_not_replied_to_and_a_blank_one_is_not_said() {
-    let mut app = server();
-    let world = app.world_mut();
-    let conn = connect(world);
-
-    send(world, conn, "  hello there  ");
-    send(world, conn, "   ");
-
-    assert_eq!(
-        said(world),
-        vec![TerminalSaid {
-            conn,
-            channel: TerminalChannel::default(),
-            text: "hello there".to_owned(),
-            embeds: Vec::new(),
-        }]
-    );
-    assert!(replies(world).is_empty());
-}
-
-#[test]
-fn a_line_is_said_on_the_channel_it_was_typed_on_and_answered_there() {
-    let mut app = server();
-    let world = app.world_mut();
-    let (conn, other) = (connect(world), connect(world));
-    let party = TerminalChannel(1);
-
-    send_on(world, conn, party, "on my way");
-    send_on(world, conn, party, "/wave");
-    reply(world, conn, "You wave.");
-    reply(world, other, "Nothing typed yet.");
-
-    assert_eq!(
-        said(world),
-        vec![TerminalSaid {
-            conn,
-            channel: party,
-            text: "on my way".to_owned(),
-            embeds: Vec::new(),
-        }]
-    );
-    let line = |text: &str, channel| TerminalLine {
-        text: text.to_owned(),
-        kind: LineKind::Notice,
-        channel,
-        embeds: Vec::new(),
-    };
-    assert_eq!(
-        replies(world),
-        vec![
-            (conn, line("You wave.", party)),
-            (
-                other,
-                line("Nothing typed yet.", TerminalChannel::default())
-            ),
-        ],
-        "an answer lands where its question was typed, and on the first channel before any was"
-    );
 }
 
 #[test]

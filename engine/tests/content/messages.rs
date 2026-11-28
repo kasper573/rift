@@ -75,77 +75,77 @@ fn the_catalog_holds_each_message_to_icu_and_to_the_arguments_it_takes() {
 }
 
 #[test]
-fn a_message_counts_and_formats_numbers_the_way_its_locale_does() {
-    let said = |locale: &str, count: u64| {
+fn a_message_counts_formats_numbers_and_lists_the_way_its_locale_does() {
+    {
+        let said = |locale: &str, count: u64| {
+            let content = game()
+                .edit_messages(|catalog| {
+                    catalog["locale"] = json!(locale);
+                    catalog["time"]["seconds"] =
+                        json!("{count, plural, one {# second} other {# seconds}}");
+                })
+                .load();
+            messages::of(&content).time.seconds(count)
+        };
+        assert_eq!(
+            [
+                said("en-US", 1),
+                said("en-US", 0),
+                said("en-US", 1500),
+                said("fr", 0),
+                said("de", 1500),
+            ],
+            [
+                "1 second",
+                "0 seconds",
+                "1,500 seconds",
+                "0 second",
+                "1.500 seconds"
+            ],
+            "plurals and digits follow the catalog's locale: French counts zero as one, German groups with dots"
+        );
         let content = game()
             .edit_messages(|catalog| {
-                catalog["locale"] = json!(locale);
-                catalog["time"]["seconds"] =
-                    json!("{count, plural, one {# second} other {# seconds}}");
+                catalog["time"]["seconds"] = json!("{count, number} s");
             })
             .load();
-        messages::of(&content).time.seconds(count)
-    };
-    assert_eq!(
-        [
-            said("en-US", 1),
-            said("en-US", 0),
-            said("en-US", 1500),
-            said("fr", 0),
-            said("de", 1500),
-        ],
-        [
-            "1 second",
-            "0 seconds",
-            "1,500 seconds",
-            "0 second",
-            "1.500 seconds"
-        ],
-        "plurals and digits follow the catalog's locale: French counts zero as one, German groups with dots"
-    );
-    let content = game()
-        .edit_messages(|catalog| {
-            catalog["time"]["seconds"] = json!("{count, number} s");
-        })
-        .load();
-    assert_eq!(
-        messages::of(&content).time.rough(Seconds(30.0)),
-        "30 s",
-        "a span is said in its largest unit"
-    );
-}
-
-#[test]
-fn a_list_reads_the_way_its_language_lists_and_keeps_what_styles_its_items() {
-    let content = game()
-        .edit_messages(|catalog| {
-            catalog["interface"]["list_pair"] = json!("{first} y {second}");
-            catalog["interface"]["list_start"] = json!("{first}, {rest}");
-            catalog["interface"]["list_middle"] = json!("{first}, {rest}");
-            catalog["interface"]["list_end"] = json!("{first} y {last}");
-        })
-        .load();
-    let interface = &messages::of(&content).interface;
-    let words = |items: &[&str]| {
-        interface.listed_words(items.iter().map(|item| item.to_string()).collect())
-    };
-    assert_eq!(
-        [
-            words(&[]),
-            words(&["pan"]),
-            words(&["pan", "vino"]),
-            words(&["pan", "vino", "queso", "miel"]),
-        ],
-        ["", "pan", "pan y vino", "pan, vino, queso y miel"]
-    );
-    let key = interface.listed(vec![
-        LineText::plain("pan"),
-        SpanText::from(InputAction::Interact).into(),
-    ]);
-    assert!(
-        key.0.contains(&SpanText::from(InputAction::Interact)),
-        "a key listed stays a key: {key:?}"
-    );
+        assert_eq!(
+            messages::of(&content).time.rough(Seconds(30.0)),
+            "30 s",
+            "a span is said in its largest unit"
+        );
+    }
+    {
+        let content = game()
+            .edit_messages(|catalog| {
+                catalog["interface"]["list_pair"] = json!("{first} y {second}");
+                catalog["interface"]["list_start"] = json!("{first}, {rest}");
+                catalog["interface"]["list_middle"] = json!("{first}, {rest}");
+                catalog["interface"]["list_end"] = json!("{first} y {last}");
+            })
+            .load();
+        let interface = &messages::of(&content).interface;
+        let words = |items: &[&str]| {
+            interface.listed_words(items.iter().map(|item| item.to_string()).collect())
+        };
+        assert_eq!(
+            [
+                words(&[]),
+                words(&["pan"]),
+                words(&["pan", "vino"]),
+                words(&["pan", "vino", "queso", "miel"]),
+            ],
+            ["", "pan", "pan y vino", "pan, vino, queso y miel"]
+        );
+        let key = interface.listed(vec![
+            LineText::plain("pan"),
+            SpanText::from(InputAction::Interact).into(),
+        ]);
+        assert!(
+            key.0.contains(&SpanText::from(InputAction::Interact)),
+            "a key listed stays a key: {key:?}"
+        );
+    }
 }
 
 fn refused(report: &LoadReport) -> Vec<(String, &'static str)> {

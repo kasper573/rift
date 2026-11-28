@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 description = "The website of a game: its pages, sign-in, and the game client's downloads"
 
+[lib]
+test = false
+doctest = false
+bench = false
+
 [dependencies]
 askama.workspace = true
 axum.workspace = true
@@ -25,6 +30,7 @@ zip.workspace = true
 tar.workspace = true
 flate2.workspace = true
 zip.workspace = true
+tempfile.workspace = true
 oauth2-test-server.workspace = true
 tower = { version = "0.5", features = ["util"] }
 

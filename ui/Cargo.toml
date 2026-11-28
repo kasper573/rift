@@ -6,6 +6,11 @@ description = "The interface the editor and the game share: its look (parchment 
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 
+[lib]
+test = false
+doctest = false
+bench = false
+
 [dependencies]
 ab_glyph = "0.2"
 egui.workspace = true

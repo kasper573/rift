@@ -646,6 +646,11 @@ mod values {
         fn blank(scale: Self::Scale) -> Self;
         fn decode(bytes: Vec<u8>) -> Vec<Self>;
         fn encode(values: &[Self]) -> Vec<u8>;
+        /// Which indices `values` name, for values that are indices: worked out where a tile is
+        /// read, off the frame, so no frame that first asks waits on every one of its values.
+        fn names(_values: &[Self]) -> Option<super::PaintNames> {
+            None
+        }
     }
 
     impl Value for u16 {
@@ -687,6 +692,10 @@ mod values {
 
         fn encode(values: &[u8]) -> Vec<u8> {
             values.to_vec()
+        }
+
+        fn names(values: &[u8]) -> Option<super::PaintNames> {
+            Some(super::PaintNames::of(values))
         }
     }
 
@@ -808,7 +817,13 @@ impl ShareMap {
     }
 
     pub fn encode(&self) -> Vec<u8> {
-        encode_png(&self.shares, self.columns, self.rows, Channels::Grey8)
+        encode_png(
+            &self.shares,
+            self.columns,
+            self.rows,
+            Channels::Grey8,
+            png::Compression::Balanced,
+        )
     }
 }
 use values::{Channels, Value};
@@ -1224,11 +1239,15 @@ impl<T: Value> GroundGrid<T> {
         {
             return Some(bytes.to_vec());
         }
+        // An overview is the whole area's ground, written again with every edit to any of it:
+        // compressed as tightly as a tile, a large area's took the editor most of a second, for
+        // about a seventh fewer bytes than it takes now.
         Some(encode_png(
             &T::encode(&overview.values),
             overview.columns,
             overview.rows,
             T::CHANNELS,
+            png::Compression::Fast,
         ))
     }
 
@@ -1472,6 +1491,7 @@ impl<T: Value> Tile<T> {
                 self.columns,
                 self.rows,
                 T::CHANNELS,
+                png::Compression::Balanced,
             )),
         }
     }
@@ -1549,13 +1569,13 @@ impl TileGrid {
 
     fn decode_tile<T: Value>(&self, at: TileAt, bytes: &[u8]) -> Result<Tile<T>, ContentProblem> {
         let (columns, rows) = self.tile_dims(at);
-        let pixels = decode_png(bytes, columns, rows, T::CHANNELS)?;
+        let values = T::decode(decode_png(bytes, columns, rows, T::CHANNELS)?);
         Ok(Tile {
             columns,
             rows,
-            values: T::decode(pixels),
+            names: T::names(&values).map_or_else(OnceLock::new, OnceLock::from),
+            values,
             peaks: OnceLock::new(),
-            names: OnceLock::new(),
             revision: next_revision(),
             encoded: Some(Arc::from(bytes)),
         })
@@ -1707,12 +1727,20 @@ fn read_png(
     Ok((found, pixels))
 }
 
-/// Raw pixel `bytes` of `channels` as a `columns` × `rows` greyscale PNG.
-fn encode_png(bytes: &[u8], columns: u32, rows: u32, channels: Channels) -> Vec<u8> {
+/// Raw pixel `bytes` of `channels` as a `columns` × `rows` greyscale PNG, compressed as
+/// `compression` asks.
+fn encode_png(
+    bytes: &[u8],
+    columns: u32,
+    rows: u32,
+    channels: Channels,
+    compression: png::Compression,
+) -> Vec<u8> {
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(&mut out, columns, rows);
     encoder.set_color(png::ColorType::Grayscale);
     encoder.set_depth(png_depth(channels).0);
+    encoder.set_compression(compression);
     let mut writer = encoder
         .write_header()
         .expect("a png header writes to memory");

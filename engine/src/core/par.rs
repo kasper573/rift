@@ -2,7 +2,7 @@
 //! jobs leave cores idle behind the one slow item (a route to plan, a crowd to scan); too many cost
 //! more to hand out than to run. A few jobs per core balances the two.
 
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 /// Starts the pool every parallel pass runs on, with a worker per physical core: hyperthreads
 /// share a core's execution units, and waking twice the workers costs a pass more than they
@@ -16,6 +16,20 @@ pub fn start() {
         }
         let _ = pool.build_global();
     });
+}
+
+/// Runs `work`, and every parallel pass within it, on a pool of its own beside the one the tick
+/// runs on: work as long as a tick or longer, such as holding ground, so the tick's passes never
+/// queue behind its jobs.
+pub fn beside<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    static BESIDE: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+        rayon::ThreadPoolBuilder::new()
+            .thread_name(|index| format!("beside-{index}"))
+            .num_threads(num_cpus::get_physical())
+            .build()
+            .expect("the pool beside the tick")
+    });
+    BESIDE.install(work)
 }
 
 /// Whether a pass over `len` items is too small to hand to the pool: handing it out would cost

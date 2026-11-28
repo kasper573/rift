@@ -14,29 +14,23 @@ use serde_json::json;
 use testkit::{Declared, Game, Map, Sim};
 
 #[test]
-fn a_pickup_walks_into_reach_and_then_collects() {
+fn an_order_walks_into_reach_and_acts_unless_a_new_order_replaces_it() {
     let mut sim = yard();
     let player = sim.join(1);
     sim.equip(player, "sword");
+    let conn = sim.conn(1);
     let start = position(&sim.world, player).expect("position");
+
     let bone = drop_bone(&mut sim, start + Offset::new(4.0, 0.0));
-
-    let conn = sim.conn(1);
     sim.send(conn, PickupRequest { target: bone });
-
-    assert!(sim.run_until(10.0, |world| bones(world, player) == 2));
+    assert!(
+        sim.run_until(10.0, |world| bones(world, player) == 2),
+        "a pickup walks into reach and collects"
+    );
     assert!(sim.world.get_entity(bone).is_err());
-}
 
-#[test]
-fn walking_away_cancels_the_intent() {
-    let mut sim = yard();
-    let player = sim.join(1);
-    sim.equip(player, "sword");
-    let start = position(&sim.world, player).expect("position");
-    let bone = drop_bone(&mut sim, start + Offset::new(5.0, 0.0));
-
-    let conn = sim.conn(1);
+    let at = position(&sim.world, player).expect("position");
+    let bone = drop_bone(&mut sim, at + Offset::new(5.0, 0.0));
     sim.send(conn, PickupRequest { target: bone });
     sim.tick();
     sim.send(
@@ -46,31 +40,30 @@ fn walking_away_cancels_the_intent() {
             seq: MoveSeq(1),
         },
     );
-
-    assert!(!sim.run_until(10.0, |world| bones(world, player) > 0));
+    assert!(
+        !sim.run_until(10.0, |world| bones(world, player) > 2),
+        "walking away cancels the pickup"
+    );
     assert!(sim.world.get_entity(bone).is_ok());
-}
 
-#[test]
-fn a_new_order_replaces_the_one_in_progress() {
-    let mut sim = yard();
-    let player = sim.join(1);
-    sim.equip(player, "sword");
     let at = position(&sim.world, player).expect("position");
     let brute = brute(&mut sim, at + Offset::new(6.0, 0.0));
     let full = stat::effective(&sim.world, brute, StatKind::Health);
     let bone = drop_bone(&mut sim, at + Offset::new(-1.0, 0.0));
-
-    let conn = sim.conn(1);
     sim.send(conn, AttackRequest { target: brute });
     sim.run(0.3);
     assert_eq!(reach::attacking(&sim.world, player), Some(brute));
     sim.send(conn, PickupRequest { target: bone });
-
-    assert!(sim.run_until(10.0, |world| bones(world, player) == 2));
+    assert!(sim.run_until(10.0, |world| bones(world, player) == 4));
     sim.run(3.0);
-    assert_eq!(reach::attacking(&sim.world, player), None);
-    assert_eq!(stat::effective(&sim.world, brute, StatKind::Health), full);
+    assert_eq!(
+        (
+            reach::attacking(&sim.world, player),
+            stat::effective(&sim.world, brute, StatKind::Health)
+        ),
+        (None, full),
+        "a pickup replaces the attack in progress"
+    );
 }
 
 #[test]

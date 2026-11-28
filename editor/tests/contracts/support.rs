@@ -77,7 +77,7 @@ pub fn open_as_is(game: Game, scratch: &tempfile::TempDir) -> Editor {
 
 /// The project in `folder`, opened without settling.
 pub fn open_project(folder: &Path) -> Project {
-    Project::open(folder, Arc::new(SchemaShapes::load()), &Progress::default()).expect("opens")
+    Project::open(folder, SchemaShapes::load(), &Progress::default()).expect("opens")
 }
 
 /// Deletes what `dialog` picked as it decided, waiting for the editor; the reason the dialog came

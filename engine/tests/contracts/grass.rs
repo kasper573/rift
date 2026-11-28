@@ -1,7 +1,6 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::{BufferDescriptor, BufferUsages};
-use bevy::render::renderer::{RenderDevice, RenderQueue, initialize_renderer};
-use bevy::render::settings::{Backends, RenderResources, WgpuSettings};
+use bevy::render::renderer::{RenderDevice, RenderQueue};
 use engine::core::ground::{GroundSize, Heightfield, PaintMap, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::world::gpu::grass::{
@@ -26,13 +25,9 @@ const SIZES: (f32, f32) = (0.7, 1.3);
 /// lays out, a cell running off the ground's edge too.
 #[test]
 fn a_covers_blades_grow_on_the_gpu_where_its_terrain_paints_rooted_on_the_ground() {
-    let _gpu = crate::gpu::exclusive();
     let seed = testkit::drawn_seed();
-    let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
-        Backends::all(),
-        None,
-        &WgpuSettings::default(),
-    ));
+    let gpu = crate::gpu::exclusive();
+    let (device, queue) = gpu.device();
     let heights = Heightfield::from_fn(SIZE, HEIGHTS, |column, row| {
         let (x, y) = (
             column as f32 / SAMPLES_PER_METER as f32,

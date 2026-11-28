@@ -89,187 +89,185 @@ fn a_client_is_welcomed_by_the_clock_of_the_tick_that_greets_it() {
 }
 
 #[test]
-fn a_warp_taken_mid_stride_leaves_you_standing_where_it_put_you() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    let start = position(&sim.world, player).expect("placed");
-    let away = Pos::new(start.x, start.y + 5.0);
-    let there = Pos::new(start.x - 2.0, start.y);
-
-    walk(&mut sim, away);
-    assert!(
-        sim.run_until(5.0, |world| { position(world, player) != Some(start) }),
-        "you never set off"
-    );
-    let to = Place {
-        area: sim.id::<AreaDef>("harbour"),
-        at: there,
-    };
-    warp(&mut sim.world, player, to).expect("a warp within the area");
-    sim.later(2.0);
-    assert_eq!(position(&sim.world, player), Some(there));
-    assert!(!moving(&sim.world, player));
-}
-
-#[test]
-fn a_warp_counts_as_a_jump_where_a_walk_does_not() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    let start = position(&sim.world, player).expect("placed");
-    let away = Pos::new(start.x - 2.0, start.y);
-    let jumps = |sim: &Sim| sim.world.get::<Position>(player).expect("placed").jumps;
-    let before = jumps(&sim);
-
-    walk(&mut sim, away);
-    assert!(
-        sim.run_until(5.0, |world| position(world, player) == Some(away)),
-        "you never got there"
-    );
-    assert_eq!(jumps(&sim), before, "the walk counted as a jump");
-    let back = Place {
-        area: sim.id::<AreaDef>("harbour"),
-        at: start,
-    };
-    warp(&mut sim.world, player, back).expect("a warp within the area");
-    assert_ne!(jumps(&sim), before, "the warp went uncounted");
-}
-
-#[test]
-fn without_a_pass_the_road_is_ground_and_the_warden_halts_you_each_time_you_step_on_it() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    let warden = sim.npc("warden");
-
-    walk(&mut sim, ROAD);
-    assert!(halted(&mut sim, player), "the warden never stopped you");
-    let halt = sim.conversation(1).expect("halted");
-    assert_eq!(halt.with, Some(warden));
-    assert!(position(&sim.world, player).is_some_and(|at| at.distance(ROAD) < Meters(0.5)));
-    assert!(commands_locked(&sim.world, player));
-    assert!(!sim.labels(&halt).contains(&"I have a pass.".to_owned()));
-    assert!(sim.locked(&halt, "I'm ready for the road."));
-    sim.pick(1, "I'm ready for the road.");
-    assert_eq!(sim.errors(1), vec!["Needs Level 3".to_owned()]);
-
-    sim.leave(1);
-    walk(&mut sim, ROAD);
-    assert!(
-        !crossed(&mut sim, player, 3.0),
-        "the warp took you without a pass"
-    );
-    assert!(sim.conversation(1).is_none());
-
-    let off = Pos::new(ROAD.x - 2.0, ROAD.y);
-    walk(&mut sim, off);
-    assert!(arrived(&mut sim, player, off));
-    walk(&mut sim, ROAD);
-    assert!(halted(&mut sim, player), "the warden let you try twice");
-
-    sim.world.get_mut::<Xp>(player).expect("xp").gain(100_000);
-    sim.tick();
-    sim.pick(1, "I'm ready for the road.");
-    assert_eq!(sim.count(player, "pass"), 1);
-}
-
-#[test]
-fn a_pass_opens_the_road_without_a_word_from_the_warden() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    sim.give(player, "pass", 1);
-
-    walk(&mut sim, ROAD);
-    assert!(crossed(&mut sim, player, 15.0), "the warp never took you");
-    let crossing = *sim.world.get::<Crossing>(player).expect("crossing");
-    assert_eq!(crossing.dest_area, sim.id::<AreaDef>("forest"));
-    assert!(sim.conversation(1).is_none());
-}
-
-#[test]
-fn walking_past_or_across_the_road_on_the_way_elsewhere_is_no_business_of_the_wardens() {
-    let across = (
-        Some(Pos::new(ROAD.x, ROAD.y + 3.0)),
-        Pos::new(ROAD.x, ROAD.y - 2.0),
-    );
-    let past = (None, Pos::new(ROAD.x - 2.0, ROAD.y - 1.0));
-    for (from, to) in [across, past] {
+fn a_warp_leaves_you_standing_where_it_put_you_counted_as_a_jump_where_a_walk_is_not() {
+    {
         let mut sim = harbour();
         let player = sim.join(1);
-        if let Some(from) = from {
-            movement::relocate(&mut sim.world, player, from);
-        }
+        let start = position(&sim.world, player).expect("placed");
+        let away = Pos::new(start.x - 2.0, start.y);
+        let jumps = |sim: &Sim| sim.world.get::<Position>(player).expect("placed").jumps;
+        let before = jumps(&sim);
 
-        walk(&mut sim, to);
-        assert!(arrived(&mut sim, player, to), "the road stopped you");
-        assert!(sim.world.get::<Crossing>(player).is_none());
+        walk(&mut sim, away);
+        assert!(
+            sim.run_until(5.0, |world| position(world, player) == Some(away)),
+            "you never got there"
+        );
+        assert_eq!(jumps(&sim), before, "the walk counted as a jump");
+        let back = Place {
+            area: sim.id::<AreaDef>("harbour"),
+            at: start,
+        };
+        warp(&mut sim.world, player, back).expect("a warp within the area");
+        assert_ne!(jumps(&sim), before, "the warp went uncounted");
+    }
+    {
+        let mut sim = harbour();
+        let player = sim.join(1);
+        let start = position(&sim.world, player).expect("placed");
+        let away = Pos::new(start.x, start.y + 5.0);
+        let there = Pos::new(start.x - 2.0, start.y);
+
+        walk(&mut sim, away);
+        assert!(
+            sim.run_until(5.0, |world| { position(world, player) != Some(start) }),
+            "you never set off"
+        );
+        let to = Place {
+            area: sim.id::<AreaDef>("harbour"),
+            at: there,
+        };
+        warp(&mut sim.world, player, to).expect("a warp within the area");
+        sim.later(2.0);
+        assert_eq!(position(&sim.world, player), Some(there));
+        assert!(!moving(&sim.world, player));
+    }
+}
+
+#[test]
+fn the_road_halts_you_without_a_pass_opens_with_one_and_is_no_business_of_the_wardens_on_the_way_elsewhere()
+ {
+    {
+        let across = (
+            Some(Pos::new(ROAD.x, ROAD.y + 3.0)),
+            Pos::new(ROAD.x, ROAD.y - 2.0),
+        );
+        let past = (None, Pos::new(ROAD.x - 2.0, ROAD.y - 1.0));
+        for (from, to) in [across, past] {
+            let mut sim = harbour();
+            let player = sim.join(1);
+            if let Some(from) = from {
+                movement::relocate(&mut sim.world, player, from);
+            }
+
+            walk(&mut sim, to);
+            assert!(arrived(&mut sim, player, to), "the road stopped you");
+            assert!(sim.world.get::<Crossing>(player).is_none());
+            assert!(sim.conversation(1).is_none());
+        }
+    }
+    {
+        let mut sim = harbour();
+        let player = sim.join(1);
+        let warden = sim.npc("warden");
+
+        walk(&mut sim, ROAD);
+        assert!(halted(&mut sim, player), "the warden never stopped you");
+        let halt = sim.conversation(1).expect("halted");
+        assert_eq!(halt.with, Some(warden));
+        assert!(position(&sim.world, player).is_some_and(|at| at.distance(ROAD) < Meters(0.5)));
+        assert!(commands_locked(&sim.world, player));
+        assert!(!sim.labels(&halt).contains(&"I have a pass.".to_owned()));
+        assert!(sim.locked(&halt, "I'm ready for the road."));
+        sim.pick(1, "I'm ready for the road.");
+        assert_eq!(sim.errors(1), vec!["Needs Level 3".to_owned()]);
+
+        sim.leave(1);
+        walk(&mut sim, ROAD);
+        assert!(
+            !crossed(&mut sim, player, 3.0),
+            "the warp took you without a pass"
+        );
+        assert!(sim.conversation(1).is_none());
+
+        let off = Pos::new(ROAD.x - 2.0, ROAD.y);
+        walk(&mut sim, off);
+        assert!(arrived(&mut sim, player, off));
+        walk(&mut sim, ROAD);
+        assert!(halted(&mut sim, player), "the warden let you try twice");
+
+        sim.world.get_mut::<Xp>(player).expect("xp").gain(100_000);
+        sim.tick();
+        sim.pick(1, "I'm ready for the road.");
+        assert_eq!(sim.count(player, "pass"), 1);
+    }
+    {
+        let mut sim = harbour();
+        let player = sim.join(1);
+        sim.give(player, "pass", 1);
+
+        walk(&mut sim, ROAD);
+        assert!(crossed(&mut sim, player, 15.0), "the warp never took you");
+        let crossing = *sim.world.get::<Crossing>(player).expect("crossing");
+        assert_eq!(crossing.dest_area, sim.id::<AreaDef>("forest"));
         assert!(sim.conversation(1).is_none());
     }
 }
 
 #[test]
-fn the_warden_trades_a_pass_for_a_fish_and_the_ferryman_only_looks_at_it() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    sim.give(player, "fish", 1);
+fn the_warden_gives_a_pass_for_a_fish_or_to_friends_of_the_clan_and_the_ferryman_sails_on_it_or_for_gold()
+ {
+    {
+        let mut sim = harbour();
+        let player = sim.join(1);
+        sim.give(player, "fish", 1);
 
-    let greeting = sim.talk(1, "warden");
-    assert!(
-        !sim.labels(&greeting)
-            .contains(&"The clan walks with me.".to_owned())
-    );
-    let traded = sim
-        .pick(1, "Would a fish change your mind?")
-        .expect("talking");
-    assert_eq!(sim.lines(&traded), vec!["Fine. Take the pass.".to_owned()]);
-    assert_eq!(sim.count(player, "pass"), 1);
-    assert_eq!(sim.count(player, "fish"), 0);
-    sim.leave(1);
+        let greeting = sim.talk(1, "warden");
+        assert!(
+            !sim.labels(&greeting)
+                .contains(&"The clan walks with me.".to_owned())
+        );
+        let traded = sim
+            .pick(1, "Would a fish change your mind?")
+            .expect("talking");
+        assert_eq!(sim.lines(&traded), vec!["Fine. Take the pass.".to_owned()]);
+        assert_eq!(sim.count(player, "pass"), 1);
+        assert_eq!(sim.count(player, "fish"), 0);
+        sim.leave(1);
 
-    let ferry = sim.talk(1, "ferryman");
-    assert!(!sim.locked(&ferry, "The warden gave me this pass."));
-    sim.pick(1, "The warden gave me this pass.");
-    let crossing = *sim
-        .world
-        .get::<Crossing>(player)
-        .expect("sailing for the forest");
-    assert_eq!(crossing.dest_area, sim.id::<AreaDef>("forest"));
-    assert_eq!(sim.count(player, "pass"), 1);
-}
+        let ferry = sim.talk(1, "ferryman");
+        assert!(!sim.locked(&ferry, "The warden gave me this pass."));
+        sim.pick(1, "The warden gave me this pass.");
+        let crossing = *sim
+            .world
+            .get::<Crossing>(player)
+            .expect("sailing for the forest");
+        assert_eq!(crossing.dest_area, sim.id::<AreaDef>("forest"));
+        assert_eq!(sim.count(player, "pass"), 1);
+    }
+    {
+        let mut sim = harbour();
+        let player = sim.join(1);
+        let sided = sim.id::<MemoryDef>("sided");
+        memory::set(
+            &mut sim.world,
+            player,
+            sided,
+            engine::core::script::Value::Bool(true),
+        );
 
-#[test]
-fn the_ferryman_sails_for_twenty_gold_and_the_crossing_is_narrated() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    sim.give(player, "gold", 25);
+        sim.talk(1, "warden");
+        let passed = sim.pick(1, "The clan walks with me.").expect("talking");
+        assert_eq!(sim.lines(&passed), vec!["Then go.".to_owned()]);
+        assert_eq!(sim.count(player, "pass"), 1);
+    }
+    {
+        let mut sim = harbour();
+        let player = sim.join(1);
+        sim.give(player, "gold", 25);
 
-    let ferry = sim.talk(1, "ferryman");
-    assert!(
-        !sim.labels(&ferry)
-            .contains(&"The warden gave me this pass.".to_owned())
-    );
-    sim.pick(1, "Sail to the forest.");
+        let ferry = sim.talk(1, "ferryman");
+        assert!(
+            !sim.labels(&ferry)
+                .contains(&"The warden gave me this pass.".to_owned())
+        );
+        sim.pick(1, "Sail to the forest.");
 
-    assert_eq!(sim.count(player, "gold"), 5);
-    assert!(sim.world.get::<Crossing>(player).is_some());
-    let sails = sim.spoken("sails");
-    assert!(sim.told(1).contains(&sails));
-}
-
-#[test]
-fn the_warden_has_a_word_only_for_friends_of_the_clan() {
-    let mut sim = harbour();
-    let player = sim.join(1);
-    let sided = sim.id::<MemoryDef>("sided");
-    memory::set(
-        &mut sim.world,
-        player,
-        sided,
-        engine::core::script::Value::Bool(true),
-    );
-
-    sim.talk(1, "warden");
-    let passed = sim.pick(1, "The clan walks with me.").expect("talking");
-    assert_eq!(sim.lines(&passed), vec!["Then go.".to_owned()]);
-    assert_eq!(sim.count(player, "pass"), 1);
+        assert_eq!(sim.count(player, "gold"), 5);
+        assert!(sim.world.get::<Crossing>(player).is_some());
+        let sails = sim.spoken("sails");
+        assert!(sim.told(1).contains(&sails));
+    }
 }
 
 fn harbour() -> Sim {

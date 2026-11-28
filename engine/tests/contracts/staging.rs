@@ -18,7 +18,7 @@ use testkit::{Game, Map, Sim, hunting, path};
 const SPAWN: Pos<Meters> = Pos::new(10.0, 4.0);
 
 #[test]
-fn a_bench_stages_what_a_test_character_does_through_its_own_requests() {
+fn a_bench_stages_what_a_test_character_does_through_its_own_requests_or_is_told_it_cannot() {
     let mut sim = sim();
     let player = sim.join(1);
     sim.equip(player, "sword");
@@ -62,23 +62,17 @@ fn a_bench_stages_what_a_test_character_does_through_its_own_requests() {
     .expect("a notification");
     let notice = sim.spoken("notice");
     assert!(sim.told(1).contains(&notice));
-}
 
-#[test]
-fn a_bench_is_told_when_there_is_nothing_to_stage() {
-    let mut sim = Sim::new(
-        Game::new()
-            .area("yard", &Map::open(20, 9), json!([]))
-            .hero("yard", SPAWN.x, SPAWN.y)
-            .load(),
-    );
-    sim.serve("yard");
-    sim.join(1);
-    let conn = sim.conn(1);
-
-    assert!(stage(&mut sim.world, conn, Staging::Fight).is_err());
     let off_the_ground = Pos::new(100.0, 100.0);
-    assert!(stage(&mut sim.world, conn, Staging::Walk { to: off_the_ground }).is_err());
+    assert!(
+        stage(&mut sim.world, conn, Staging::Walk { to: off_the_ground }).is_err(),
+        "a bench is told there is no walk off the ground"
+    );
+    engine::systems::npc::despawn(&mut sim.world, raider);
+    assert!(
+        stage(&mut sim.world, conn, Staging::Fight).is_err(),
+        "nor a fight with no foe about"
+    );
 }
 
 #[test]

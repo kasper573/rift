@@ -1,6 +1,6 @@
 use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{LazyLock, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
 
 use engine::core::content::SchemaMark;
 use engine::core::content::fixture::FixtureLock;
@@ -32,14 +32,16 @@ pub struct SchemaShapes {
     pub scene_module: Value,
 }
 
-fn schema_settings() -> schemars::generate::SchemaSettings {
-    schemars::generate::SchemaSettings::draft2020_12()
-        .with(|settings| settings.inline_subschemas = true)
-}
-
 impl SchemaShapes {
-    pub fn load() -> SchemaShapes {
-        let shapes = registry().shapes(&schema_settings());
+    /// The shapes of this build's content, worked out once: they change only with the build.
+    pub fn load() -> Arc<SchemaShapes> {
+        static SHAPES: LazyLock<Arc<SchemaShapes>> =
+            LazyLock::new(|| Arc::new(SchemaShapes::of_build()));
+        SHAPES.clone()
+    }
+
+    fn of_build() -> SchemaShapes {
+        let shapes = registry().shapes().clone();
         SchemaShapes {
             order: shapes
                 .tables
@@ -52,7 +54,7 @@ impl SchemaShapes {
                 .map(|table| (table.table.clone(), table))
                 .collect(),
             settings: shapes.settings.unwrap_or_default(),
-            scene_module: schema_settings()
+            scene_module: engine::core::content::load::shape_settings()
                 .into_generator()
                 .into_root_schema_for::<AreaModule>()
                 .to_value(),

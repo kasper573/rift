@@ -5,12 +5,15 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replication::ClientLink;
 use engine::core::content::Content;
+use engine::core::math::Size;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
-use engine::core::units::{MeterPos, Seconds};
+use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::area;
 use engine::systems::area::Place;
+use engine::systems::dialogue::Conversation;
 use engine::systems::launch::{ServerDay, ServerWeather};
+use engine::systems::movement::MoveTarget;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
 use engine::systems::region;
@@ -91,6 +94,8 @@ pub struct Bench {
     rosters: Vec<Vec<Entity>>,
     above: AboveWorlds,
     content: Content,
+    /// The ground of the area every world holds.
+    size: Size<Meters>,
     ticks: usize,
     asks: MarketAsks,
 }
@@ -114,7 +119,8 @@ impl Bench {
         share: f32,
     ) -> Bench {
         let spawn = content.built::<GameSettings>().initial_spawn;
-        let peopled = area::load(content, spawn.area).size.height * share;
+        let size = area::load(content, spawn.area).size;
+        let peopled = size.height * share;
         let characters: Vec<Option<(CharacterSnapshot, Place)>> = {
             let mut all = play::characters_in(content, spawn.area);
             if layout == Layout::Congested {
@@ -160,6 +166,7 @@ impl Bench {
             rosters,
             above,
             content: content.clone(),
+            size,
             ticks: 0,
             asks: MarketAsks::default(),
         }
@@ -173,6 +180,24 @@ impl Bench {
             self.asks,
             self.ticks,
         )
+    }
+
+    /// How many players are walking somewhere now, and how many are in a conversation: proof
+    /// that the roles play as they should, and not only that the ticks are fast.
+    pub fn playing(&mut self) -> (usize, usize) {
+        let mut walking = 0;
+        let mut talking = 0;
+        for (app, roster) in self.worlds.iter_mut().zip(&self.rosters) {
+            let world = app.world_mut();
+            for &conn in roster {
+                let Some(player) = play::player_of(world, conn) else {
+                    continue;
+                };
+                walking += usize::from(world.get::<MoveTarget>(player).is_some());
+                talking += usize::from(world.get::<Conversation>(player).is_some());
+            }
+        }
+        (walking, talking)
     }
 
     /// Whether every world holds the ground within reach of its players, with no hold under way.
@@ -210,7 +235,8 @@ impl Bench {
         self.ticks += 1;
         for (ordinal, (app, roster)) in self.worlds.iter_mut().zip(&self.rosters).enumerate() {
             let world = app.world_mut();
-            play::act(world, &self.content, roster, self.ticks);
+            let first = ordinal * roster.len();
+            play::act(world, &self.content, roster, first, self.ticks, self.size);
             for (index, &conn) in roster.iter().enumerate().step_by(market::TRADER_EVERY) {
                 if let Some(player) = play::player_of(world, conn) {
                     let trader = market::Trader {

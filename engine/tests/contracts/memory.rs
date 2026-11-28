@@ -33,7 +33,7 @@ fn a_memory_reads_its_default_until_set_and_again_once_forgotten() {
 }
 
 #[test]
-fn a_memory_keeps_the_time_it_was_last_set() {
+fn a_memory_keeps_the_time_it_was_last_set_and_a_daily_one_ends_at_the_reset_hour() {
     let content = memories().load();
     let grudge = id(&content, "grudge");
     let start = at(100 * HOUR);
@@ -42,14 +42,9 @@ fn a_memory_keeps_the_time_it_was_last_set() {
     assert!(memory.set_within(&content, grudge, Seconds(1_800.0), later(start, 1_799.0)));
     assert!(!memory.set_within(&content, grudge, Seconds(1_800.0), later(start, 1_800.0)));
     assert!(memory.is_set(&content, grudge, later(start, 1_800.0)));
-}
 
-#[test]
-fn daily_memories_end_at_the_reset_hour() {
-    let content = memories().load();
     let looted = id(&content, "looted");
     let before_reset = at(100 * 24 * HOUR + 3 * HOUR);
-    let mut memory = Memory::default();
     memory.set(&content, looted, Value::Bool(true), before_reset);
     assert!(memory.is_set(&content, looted, later(before_reset, 3_599.0)));
     assert!(!memory.is_set(&content, looted, later(before_reset, 3_600.0)));

@@ -1,11 +1,13 @@
-//! What a bench run reports: the build and the machine it ran on, and every scenario's frames
-//! against its criteria, written as `bench-report.json` for `rift schema bench` to describe and
-//! for a later run to compare against.
+//! What a bench run reports: the build and the machine it ran on, the server's ticks at its
+//! load, and every scenario's frames against its criteria, written as `bench-report.json` for
+//! `rift schema bench` to describe and for a later run to compare against.
 
 use std::path::Path;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use engine::core::units::Millis;
 
 use super::frames::{Class, Fps, FrameStats};
 use super::scenario::Target;
@@ -20,21 +22,24 @@ pub struct BenchReport {
     /// The machine's load average over the minute before the run, as its kernel reports it:
     /// a loaded machine measures nothing of the engine.
     pub load_average: f64,
-    pub adapter: String,
-    pub resolution: Resolution,
+    /// The server's ticks at the load it was measured at, where the server part ran at one.
+    pub server: Option<ServerRun>,
+    /// What the client and the editor drew on, where either ran.
+    pub screen: Option<Screen>,
     pub scenarios: Vec<ScenarioResult>,
     pub overall: Verdict,
 }
 
 impl BenchReport {
-    pub fn new(adapter: String, resolution: Resolution, game: &Path) -> BenchReport {
+    /// A report of a run on `game`, or on the server bench's own game.
+    pub fn new(game: Option<&Path>) -> BenchReport {
         BenchReport {
             engine_build: engine::core::content::version::build().to_owned(),
-            game_revision: revision_of(game),
+            game_revision: game.and_then(revision_of),
             machine: Machine::this(),
             load_average: sysinfo::System::load_average().map_or(0.0, |load| load.one),
-            adapter,
-            resolution,
+            server: None,
+            screen: None,
             scenarios: Vec::new(),
             overall: Verdict::Passed,
         }
@@ -64,6 +69,9 @@ impl BenchReport {
     pub fn compare(&self, before: &BenchReport) -> Comparison {
         let mut rows = Vec::new();
         let mut worse = Vec::new();
+        if let (Some(was), Some(now)) = (&before.server, &self.server) {
+            compare_servers(was, now, &mut rows, &mut worse);
+        }
         for now in &self.scenarios {
             let was = before
                 .scenarios
@@ -118,9 +126,52 @@ impl BenchReport {
     }
 }
 
-/// How much worse a scenario may measure than before without failing the comparison.
+/// How much worse a scenario, or the server's tick, may measure than before without failing the
+/// comparison.
 const MEAN_TOLERANCE: f64 = 0.10;
 const P99_TOLERANCE: f64 = 0.20;
+
+/// The server's ticks now beside before, and whether they got worse: a mean tick longer by more
+/// than a tenth, or a p99 by more than a fifth. A run at another load is told, not compared.
+fn compare_servers(
+    was: &ServerRun,
+    now: &ServerRun,
+    rows: &mut Vec<String>,
+    worse: &mut Vec<String>,
+) {
+    if (was.areas, was.players, was.npcs) != (now.areas, now.players, now.npcs) {
+        rows.push(format!(
+            "{:<40} measured at {} areas, before at {}: not compared",
+            "server", now.areas, was.areas
+        ));
+        return;
+    }
+    let mean = change(f64::from(was.tick.mean.0), f64::from(now.tick.mean.0));
+    let p99 = change(f64::from(was.tick.p99.0), f64::from(now.tick.p99.0));
+    rows.push(format!(
+        "{:<40} {:<8} mean {:>6.2} → {:>6.2} ms ({:+.0}%)  p99 {:>6.2} → {:>6.2} ms ({:+.0}%)",
+        "server",
+        format!("{}", now.areas),
+        was.tick.mean.0,
+        now.tick.mean.0,
+        mean * 100.0,
+        was.tick.p99.0,
+        now.tick.p99.0,
+        p99 * 100.0
+    ));
+    if mean > MEAN_TOLERANCE {
+        worse.push(format!(
+            "server: the mean tick rose from {:.2} to {:.2} ms",
+            was.tick.mean.0, now.tick.mean.0
+        ));
+    }
+    if p99 > P99_TOLERANCE {
+        worse.push(format!(
+            "server: p99 rose from {:.2} to {:.2} ms",
+            was.tick.p99.0, now.tick.p99.0
+        ));
+    }
+}
 
 fn change(was: f64, now: f64) -> f64 {
     if was.abs() < f64::EPSILON {
@@ -160,6 +211,46 @@ impl Machine {
             memory_gb: system.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0),
         }
     }
+}
+
+/// The server's ticks at one load, the median of the runs measured.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ServerRun {
+    /// The copies of the game's spawn area the server ticked, each a world of its own.
+    pub areas: usize,
+    pub players: usize,
+    pub npcs: usize,
+    /// How many of the players played each role.
+    pub roles: Vec<RoleCount>,
+    /// A whole tick, the players' clients sent what changed.
+    pub tick: TickStats,
+    /// The mean tick before the clients connected: the simulation alone.
+    pub simulation: Millis,
+    /// What the clients add to the mean tick: replicating the world to them.
+    pub replication: Millis,
+    pub runs: u32,
+    /// Over the runs, how far apart the slowest and fastest mean ticks lay.
+    pub spread: Millis,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct RoleCount {
+    pub role: String,
+    pub players: usize,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
+pub struct TickStats {
+    pub mean: Millis,
+    pub p50: Millis,
+    pub p99: Millis,
+    pub max: Millis,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct Screen {
+    pub adapter: String,
+    pub resolution: Resolution,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]

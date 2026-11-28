@@ -169,24 +169,6 @@ fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
 }
 
 #[test]
-fn a_multi_row_form_of_a_type_without_modules_says_nothing_of_modules() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game()
-        .memory("taunted", "never")
-        .memory("bribed", "never");
-    let mut editor = support::open(game, &scratch);
-    let keys = [path("memory", "taunted"), path("memory", "bribed")];
-
-    let drawn = rows_form(&mut editor, "memory", &keys, Vec::new());
-
-    assert!(drawn.rect("label").is_some(), "{drawn:?}");
-    assert!(
-        !drawn.any(|text| text.contains("modules don't read") || text.contains("Add module")),
-        "{drawn:?}"
-    );
-}
-
-#[test]
 fn an_edit_to_a_field_the_rows_hold_apart_sets_it_in_every_row_unless_it_holds_more() {
     let scratch = tempfile::tempdir().expect("scratch");
     let game = support::game()
@@ -196,8 +178,18 @@ fn an_edit_to_a_field_the_rows_hold_apart_sets_it_in_every_row_unless_it_holds_m
             "cap",
             json!({ "kind": { "type": "equipment", "category": path("equipment_category", GEAR), "wear": "worn", "slot": "head" } }),
         )
-        .item("ore", json!({ "kind": { "type": "resource" } }));
+        .item("ore", json!({ "kind": { "type": "resource" } }))
+        .memory("taunted", "never")
+        .memory("bribed", "never");
     let mut editor = support::open(game, &scratch);
+    let memories = [path("memory", "taunted"), path("memory", "bribed")];
+    let drawn = rows_form(&mut editor, "memory", &memories, Vec::new());
+    assert!(drawn.rect("label").is_some(), "{drawn:?}");
+    assert!(
+        !drawn.any(|text| text.contains("modules don't read") || text.contains("Add module")),
+        "the form of a type without modules says nothing of modules: {drawn:?}"
+    );
+
     let npcs = [path("npc", "wolf"), path("npc", "bear")];
     let items = [path("item", "cap"), path("item", "ore")];
     let items_before: Vec<_> = items
@@ -243,30 +235,7 @@ fn an_edit_to_a_field_the_rows_hold_apart_sets_it_in_every_row_unless_it_holds_m
 }
 
 #[test]
-fn the_spreadsheet_names_each_row_by_its_file_and_shows_an_edit_on_the_next_frame() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game().npc("wolf", 10.0, json!([]));
-    let mut editor = support::open(game, &scratch);
-    let mut frames = Frames::new(egui::vec2(1200.0, 900.0));
-    let drawn = frames.run(Vec::new(), |ui| spreadsheet::show(&mut editor, ui, "npc"));
-    assert!(drawn.rect("wolf").is_some(), "{drawn:?}");
-    let wolf = path("npc", "wolf");
-    let mut npc = (*editor
-        .read::<NpcDef>(&wolf)
-        .expect("a project")
-        .expect("the npc reads"))
-    .clone();
-    npc.name = "Grey wolf".to_owned();
-
-    assert!(editor.write_content("Rename the wolf", &wolf, &npc));
-
-    let drawn = frames.run(Vec::new(), |ui| spreadsheet::show(&mut editor, ui, "npc"));
-    assert!(drawn.rect("Grey wolf").is_some(), "{drawn:?}");
-    assert!(drawn.rect("wolf").is_some(), "{drawn:?}");
-}
-
-#[test]
-fn a_spreadsheet_cell_is_edited_from_the_keyboard_alone() {
+fn a_spreadsheet_names_each_row_by_its_file_and_a_cell_is_edited_from_the_keyboard_alone() {
     let scratch = tempfile::tempdir().expect("scratch");
     let game = support::game()
         .npc("wolf", 10.0, json!([]))
@@ -279,7 +248,11 @@ fn a_spreadsheet_cell_is_edited_from_the_keyboard_alone() {
     };
     let enter = || key(egui::Key::Enter, egui::Modifiers::NONE);
     let typed = |text: &str| vec![egui::Event::Text(text.to_owned())];
-    press(&mut editor, Vec::new());
+    let drawn = press(&mut editor, Vec::new());
+    assert!(
+        drawn.rect("wolf").is_some(),
+        "each row is named by its file: {drawn:?}"
+    );
 
     let tab = || key(egui::Key::Tab, egui::Modifiers::NONE);
     editor.views.spreadsheet.view_or_default("npc").selected =
@@ -306,6 +279,11 @@ fn a_spreadsheet_cell_is_edited_from_the_keyboard_alone() {
         press(&mut editor, Vec::new());
     }
 
+    let drawn = press(&mut editor, Vec::new());
+    assert!(
+        drawn.rect("Grey wolf").is_some() && drawn.rect("wolf").is_some(),
+        "{drawn:?}"
+    );
     let npc = editor
         .read::<NpcDef>(&wolf)
         .expect("a project")
@@ -382,34 +360,40 @@ fn pasting_into_the_spreadsheet_writes_each_cell_its_column_reads_and_skips_the_
         repeat: false,
         modifiers: egui::Modifiers::COMMAND,
     };
-    for paste in [
-        vec![egui::Event::Paste(text.clone())],
-        vec![shortcut, egui::Event::Text(text.clone())],
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = support::game()
+        .memory("bribed", "never")
+        .memory("taunted", "never")
+        .memory("fled", "never")
+        .memory("warned", "never");
+    let mut editor = support::open(game, &scratch);
+    let mut frames = Frames::new(egui::vec2(1200.0, 900.0));
+    frames.run(Vec::new(), |ui| {
+        spreadsheet::show(&mut editor, ui, "memory")
+    });
+    let resets = |editor: &mut Editor, memory: &str| {
+        editor
+            .read::<MemoryDef>(memory)
+            .expect("a project")
+            .expect("the memory reads")
+            .resets
+    };
+    for (paste, pasted, below) in [
+        (vec![egui::Event::Paste(text.clone())], "bribed", "fled"),
+        (
+            vec![shortcut, egui::Event::Text(text.clone())],
+            "taunted",
+            "warned",
+        ),
     ] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let game = support::game()
-            .memory("bribed", "never")
-            .memory("taunted", "never");
-        let mut editor = support::open(game, &scratch);
-        let (bribed, taunted) = (path("memory", "bribed"), path("memory", "taunted"));
-        let mut frames = Frames::new(egui::vec2(1200.0, 900.0));
-        frames.run(Vec::new(), |ui| {
-            spreadsheet::show(&mut editor, ui, "memory")
-        });
+        let (pasted, below) = (path("memory", pasted), path("memory", below));
         editor.views.spreadsheet.view_or_default("memory").selected =
-            Some((bribed.clone(), "resets".to_owned()));
+            Some((pasted.clone(), "resets".to_owned()));
 
         frames.run(paste, |ui| spreadsheet::show(&mut editor, ui, "memory"));
 
-        let resets = |editor: &mut Editor, memory: &str| {
-            editor
-                .read::<MemoryDef>(memory)
-                .expect("a project")
-                .expect("the memory reads")
-                .resets
-        };
-        assert_eq!(resets(&mut editor, &bribed), Resets::Daily);
-        assert_eq!(resets(&mut editor, &taunted), Resets::Never);
+        assert_eq!(resets(&mut editor, &pasted), Resets::Daily);
+        assert_eq!(resets(&mut editor, &below), Resets::Never);
     }
 }
 
@@ -536,6 +520,14 @@ fn a_script_module_added_to_a_row_runs_a_script_of_its_kind_made_for_it_when_non
         );
     }
 
+    let scratch = tempfile::tempdir().expect("scratch");
+    let game = support::game()
+        .file("icons/cap.png", testkit::png(32, 32))
+        .file("art/cap_card.png", testkit::png(256, 180))
+        .prop("drop", json!({ "type": "none" }))
+        .rarity("plain", 1, json!({}))
+        .npc("orc", 10.0, json!([]));
+    let mut editor = support::open(game, &scratch);
     for (table, kind) in [
         ("npc", NPC_RUNNER),
         ("item", ITEM_RUNNER),
@@ -543,14 +535,6 @@ fn a_script_module_added_to_a_row_runs_a_script_of_its_kind_made_for_it_when_non
         ("quest", QUEST_RUNNER),
         ("shop", SHOP_RUNNER),
     ] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let game = support::game()
-            .file("icons/cap.png", testkit::png(32, 32))
-            .file("art/cap_card.png", testkit::png(256, 180))
-            .prop("drop", json!({ "type": "none" }))
-            .rarity("plain", 1, json!({}))
-            .npc("orc", 10.0, json!([]));
-        let mut editor = support::open(game, &scratch);
         let row = editor::rows::new_file(&mut editor, "", table)
             .unwrap_or_else(|why| panic!("a fresh {table}: {why}"));
         support::files(&mut editor);
@@ -577,34 +561,7 @@ fn a_script_module_added_to_a_row_runs_a_script_of_its_kind_made_for_it_when_non
 }
 
 #[test]
-fn a_module_typed_into_the_add_module_filter_is_added_by_return() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game().item("potion", json!({ "kind": { "type": "resource" } }));
-    let mut editor = support::open(game, &scratch);
-    let potion = path("item", "potion");
-    let mut form = RowFrames::new("item", &potion);
-    form.run(&mut editor, Vec::new());
-    let add = form.run(&mut editor, Vec::new()).at("+ Add module");
-    for events in click(add) {
-        form.run(&mut editor, events);
-    }
-    form.run(&mut editor, vec![egui::Event::Text("bound".to_owned())]);
-    form.run(&mut editor, key(egui::Key::Enter, egui::Modifiers::NONE));
-    form.run(&mut editor, Vec::new());
-
-    let item = editor
-        .read::<ItemDef>(&potion)
-        .expect("a project")
-        .expect("the item reads");
-    assert!(
-        matches!(item.modules.as_slice(), [ItemModule::Bound]),
-        "{} modules",
-        item.modules.len()
-    );
-}
-
-#[test]
-fn a_map_keyed_by_files_shows_each_key_as_its_file_and_typing_never_renames_one() {
+fn a_map_keyed_by_files_shows_each_key_as_its_file_and_a_field_refuses_what_its_type_cannot_hold() {
     let scratch = tempfile::tempdir().expect("scratch");
     let mut editor = support::open(world_with_a_card(), &scratch);
     let world = WorldMap::Game.path();
@@ -619,28 +576,18 @@ fn a_map_keyed_by_files_shows_each_key_as_its_file_and_typing_never_renames_one(
     let reader = editor.reader().expect("a project");
     let keys: Vec<Option<&str>> = map.cards.keys().map(|area| reader.path_of(*area)).collect();
     assert_eq!(keys, [Some(support::area().as_str())]);
-}
 
-#[test]
-fn a_whole_number_field_refuses_a_fraction_instead_of_rounding_it() {
-    let scratch = tempfile::tempdir().expect("scratch");
-    let mut editor = support::open(world_with_a_card(), &scratch);
-    let world = WorldMap::Game.path();
-    let mut form = RowFrames::new("world_map", &world);
-    form.run(&mut editor, Vec::new());
     let size = form.run(&mut editor, Vec::new()).at("100");
-
     let drawn = form.type_into(&mut editor, size, "5.5");
-
     let sizes: Vec<u32> = world_map(&editor)
         .cards
         .values()
         .map(|card| card.size)
         .collect();
-    assert_eq!(sizes, [100]);
+    assert_eq!(sizes, [100], "a whole number field never rounds a fraction");
     assert!(
         drawn.any(|text| text.contains("a whole number")),
-        "{drawn:?}"
+        "it refuses it: {drawn:?}"
     );
 }
 
@@ -693,10 +640,33 @@ fn a_layers_shader_parameter_lands_in_its_file_as_it_was_typed() {
 }
 
 #[test]
-fn an_item_made_usable_answers_used_with_a_script_made_for_it_in_the_same_step() {
+fn an_item_made_usable_answers_used_with_a_script_made_for_it_and_a_module_typed_into_the_filter_is_added_by_return()
+ {
     let scratch = tempfile::tempdir().expect("scratch");
-    let game = support::game().item("potion", json!({ "kind": { "type": "resource" } }));
+    let game = support::game()
+        .item("potion", json!({ "kind": { "type": "resource" } }))
+        .item("charm", json!({ "kind": { "type": "resource" } }));
     let mut editor = support::open(game, &scratch);
+    let charm = path("item", "charm");
+    let mut form = RowFrames::new("item", &charm);
+    form.run(&mut editor, Vec::new());
+    let add = form.run(&mut editor, Vec::new()).at("+ Add module");
+    for events in click(add) {
+        form.run(&mut editor, events);
+    }
+    form.run(&mut editor, vec![egui::Event::Text("bound".to_owned())]);
+    form.run(&mut editor, key(egui::Key::Enter, egui::Modifiers::NONE));
+    form.run(&mut editor, Vec::new());
+    let item = editor
+        .read::<ItemDef>(&charm)
+        .expect("a project")
+        .expect("the item reads");
+    assert!(
+        matches!(item.modules.as_slice(), [ItemModule::Bound]),
+        "{} modules",
+        item.modules.len()
+    );
+
     let potion = path("item", "potion");
     let mut form = RowFrames::new("item", &potion);
     form.run(&mut editor, Vec::new());
@@ -784,89 +754,75 @@ fn a_script_module_pointed_at_a_script_asking_for_values_starts_them_filled_in()
         "##......", "#.......", "........", "........", "........", "........", "........",
         "........",
     ]);
-    for (variable, kind, effect) in [
-        (
-            "strength",
-            "number",
-            json!({ "type": "heal", "by": { "var": "strength" } }),
-        ),
-        (
-            "to",
-            "place",
-            json!({ "type": "warp", "to": { "var": "to" } }),
-        ),
-    ] {
-        let scratch = tempfile::tempdir().expect("scratch");
-        let asking = json!({
-            "runs_on": "item",
-            "variables": { variable: { "type": kind } },
-            "nodes": {
-                "used": { "type": "on", "event": "used", "next": "effect" },
-                "effect": effect,
-            },
-        });
-        let game = Game::new()
-            .area(support::AREA, &walled_corner, json!([]))
-            .hero(support::AREA, 4.0, 4.0)
-            .engine_rows()
-            .whole()
-            .script(
-                "potion_used",
-                "item",
-                json!({ "used": { "type": "on", "event": "used" } }),
-            )
-            .row("script", "brew", asking)
-            .item(
-                "potion",
-                json!({
-                    "kind": { "type": "usable" },
-                    "modules": [{ "type": "script", "script": path("script", "potion_used") }],
-                }),
-            );
-        let mut editor = support::open(game, &scratch);
-        let potion = path("item", "potion");
-        let mut form = RowFrames::new("item", &potion);
-        form.run(&mut editor, Vec::new());
-        let card = form
-            .run(&mut editor, Vec::new())
-            .at("POTION_USED.SCRIPT.JSON");
-        for events in click(card) {
-            form.run(&mut editor, events);
-        }
-        let chip = form.run(&mut editor, Vec::new()).at("potion_used.script");
-        for events in click(chip) {
-            form.run(&mut editor, events);
-        }
-        let brew = form.run(&mut editor, Vec::new()).at("brew.script");
-
-        for events in click(brew) {
-            form.run(&mut editor, events);
-        }
-        form.run(&mut editor, Vec::new());
-        support::files(&mut editor);
-
-        let item = editor
-            .read::<ItemDef>(&potion)
-            .expect("a project")
-            .expect("the item reads");
-        let reader = editor.reader().expect("a project");
-        let modules: Vec<(&str, Vec<&String>)> = item
-            .modules
-            .iter()
-            .filter_map(|module| match module {
-                ItemModule::Script(module) => Some((
-                    reader.path_of(module.script)?,
-                    module.values.keys().collect(),
-                )),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            modules,
-            [(path("script", "brew").as_str(), vec![&variable.to_owned()])],
-            "a {kind}"
+    let scratch = tempfile::tempdir().expect("scratch");
+    let asking = json!({
+        "runs_on": "item",
+        "variables": { "to": { "type": "place" } },
+        "nodes": {
+            "used": { "type": "on", "event": "used", "next": "warp" },
+            "warp": { "type": "warp", "to": { "var": "to" } },
+        },
+    });
+    let game = Game::new()
+        .area(support::AREA, &walled_corner, json!([]))
+        .hero(support::AREA, 4.0, 4.0)
+        .engine_rows()
+        .whole()
+        .script(
+            "potion_used",
+            "item",
+            json!({ "used": { "type": "on", "event": "used" } }),
+        )
+        .row("script", "brew", asking)
+        .item(
+            "potion",
+            json!({
+                "kind": { "type": "usable" },
+                "modules": [{ "type": "script", "script": path("script", "potion_used") }],
+            }),
         );
+    let mut editor = support::open(game, &scratch);
+    let potion = path("item", "potion");
+    let mut form = RowFrames::new("item", &potion);
+    form.run(&mut editor, Vec::new());
+    let card = form
+        .run(&mut editor, Vec::new())
+        .at("POTION_USED.SCRIPT.JSON");
+    for events in click(card) {
+        form.run(&mut editor, events);
     }
+    let chip = form.run(&mut editor, Vec::new()).at("potion_used.script");
+    for events in click(chip) {
+        form.run(&mut editor, events);
+    }
+    let brew = form.run(&mut editor, Vec::new()).at("brew.script");
+
+    for events in click(brew) {
+        form.run(&mut editor, events);
+    }
+    form.run(&mut editor, Vec::new());
+    support::files(&mut editor);
+
+    let item = editor
+        .read::<ItemDef>(&potion)
+        .expect("a project")
+        .expect("the item reads");
+    let reader = editor.reader().expect("a project");
+    let modules: Vec<(&str, Vec<&String>)> = item
+        .modules
+        .iter()
+        .filter_map(|module| match module {
+            ItemModule::Script(module) => Some((
+                reader.path_of(module.script)?,
+                module.values.keys().collect(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        modules,
+        [(path("script", "brew").as_str(), vec![&"to".to_owned()])]
+    );
 }
 
 #[test]

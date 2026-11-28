@@ -31,6 +31,8 @@ use engine::systems::area::{self, AreaDef};
 use serde_json::json;
 use testkit::{Game, Map, box_glb, path};
 
+use crate::gpu::Gpu;
+
 const FIELD: f32 = 32.0;
 const SIDE: u32 = 256;
 const FOV: Degrees = Degrees(50.0);
@@ -53,6 +55,8 @@ const NEAR_WINDOW: u32 = 100;
 /// one.
 const PLAIN: Pos<Meters> = Pos::new(11.0, 16.0);
 const PLAIN_SIZE: Vec3 = Vec3::new(2.0, 4.0, 2.0);
+/// The field's models, the painted block's and the plain one's, each kept as an atlas of its own.
+const MODELS: usize = 2;
 /// How far an impostor's brightness may stray from its mesh's, seen from the same side.
 const ALIKE: f32 = 0.3;
 /// A texel in the upper and in the lower half of the block as a horizon cell frames it, on the
@@ -74,28 +78,20 @@ const LOWER: UVec2 = UVec2::new(CELL_PIXELS / 2, 5 * CELL_PIXELS / 8);
 /// from there instead of baking them again.
 #[test]
 fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
-    let _gpu = crate::gpu::exclusive();
+    let gpu = crate::gpu::exclusive();
     let folder = tempfile::tempdir().expect("a scratch folder");
     let profile = tempfile::tempdir().expect("a scratch profile");
     field().write_to(folder.path());
 
-    let (mut baked, image) = stand(field(), folder.path(), profile.path(), FAR);
-    let atlases = atlases_under(profile.path());
-    assert_eq!(
-        atlases.len(),
-        2,
-        "an atlas kept for each of the two models: {atlases:?}"
-    );
-    let written = std::fs::metadata(&atlases[0])
+    let (mut baked, image) = stand(&gpu, field(), folder.path(), profile.path(), FAR);
+    let atlases = kept_atlases(profile.path());
+    let written = std::fs::metadata(&atlases[0].0)
         .and_then(|meta| meta.modified())
         .expect("the atlas file's time");
     let from_above = cell_of(Vec3::Y).floor().as_uvec2();
     let texels = atlases
-        .iter()
-        .map(|atlas| {
-            ImpostorTexels::from_file(&std::fs::read(atlas).expect("the atlas file"))
-                .expect("the atlas file holds an atlas of this build")
-        })
+        .into_iter()
+        .map(|(_, texels)| texels)
         .find(|texels| {
             let middle = middle_of(texels, from_above);
             middle[0] > middle[2]
@@ -147,9 +143,8 @@ fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
         rows(&blue)
     );
 
-    let (mut again, image) = stand(field(), folder.path(), profile.path(), NEAR);
-    let atlases = atlases_under(profile.path());
-    assert_eq!(atlases.len(), 2, "the same atlases: {atlases:?}");
+    let (mut again, image) = stand(&gpu, field(), folder.path(), profile.path(), NEAR);
+    let atlases = kept_atlases(profile.path());
     let near = picture(&mut again, &image);
     for (what, wanted) in [
         ("the painted block", is_painted as fn([u8; 3]) -> bool),
@@ -170,7 +165,7 @@ fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
              against {close} near"
         );
     }
-    let kept = std::fs::metadata(&atlases[0])
+    let kept = std::fs::metadata(&atlases[0].0)
         .and_then(|meta| meta.modified())
         .expect("the atlas file's time");
     assert_eq!(
@@ -187,7 +182,7 @@ fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
 /// A field with the two blocks on it, standing before a camera `eye` off the field's middle
 /// through the whole render app on `profile` until nothing is readying: the app, kept so what it
 /// holds can be asked, and the camera's picture.
-fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<Image>) {
+fn stand(gpu: &Gpu, game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<Image>) {
     let content = game.load();
     let id = content
         .by_path::<AreaDef>(&path("area", "field"))
@@ -204,7 +199,8 @@ fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<I
                 exit_condition: ExitCondition::DontExit,
                 ..default()
             })
-            .disable::<bevy::winit::WinitPlugin>(),
+            .disable::<bevy::winit::WinitPlugin>()
+            .set(gpu.renderer()),
     )
     .insert_resource(Rng::new(testkit::drawn_seed()))
     .insert_resource(Handoff::NextFrame)
@@ -268,9 +264,9 @@ fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<I
     );
     assert!(
         settle(&mut app, Duration::from_secs(60), |app| {
-            !atlases_under(app.world().resource::<Profile>().0.as_path()).is_empty()
+            kept_atlases(app.world().resource::<Profile>().0.as_path()).len() == MODELS
         }),
-        "the atlas is kept under the profile"
+        "an atlas kept under the profile for each of the field's models"
     );
     (app, image)
 }
@@ -399,10 +395,21 @@ fn field() -> Game {
 }
 
 /// Every atlas file kept under `profile`.
-fn atlases_under(profile: &Path) -> Vec<std::path::PathBuf> {
-    std::fs::read_dir(profile.join("impostors"))
-        .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
-        .unwrap_or_default()
+/// The atlas files under `profile` that read whole, sorted by path, each with its texels.
+fn kept_atlases(profile: &Path) -> Vec<(std::path::PathBuf, ImpostorTexels)> {
+    let mut kept: Vec<_> = std::fs::read_dir(profile.join("impostors"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|entry| {
+                    let texels = ImpostorTexels::from_file(&std::fs::read(entry.path()).ok()?)?;
+                    Some((entry.path(), texels))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    kept.sort_by(|(a, _), (b, _)| a.cmp(b));
+    kept
 }
 
 /// The albedo and coverage at the middle of `cell`.

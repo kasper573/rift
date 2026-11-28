@@ -12,7 +12,7 @@ use strum::VariantArray;
 use testkit::path;
 
 #[test]
-fn a_table_of_fixtures_alone_takes_no_rows_of_its_own_and_a_mixed_one_does() {
+fn a_fixture_stays_where_the_engine_reads_it_and_a_table_of_fixtures_alone_takes_no_rows() {
     let shapes = SchemaShapes::load();
 
     assert!(shapes.is_closed("input"));
@@ -28,6 +28,18 @@ fn a_table_of_fixtures_alone_takes_no_rows_of_its_own_and_a_mixed_one_does() {
     assert_eq!(
         crate::support::files(&mut editor).paths().count(),
         files_before
+    );
+
+    let fixture = InputFixture::Game.path();
+    let moved = rows::move_into(&mut editor, std::slice::from_ref(&fixture), "");
+    assert!(
+        moved.is_err_and(|refusal| refusal.contains("stays")),
+        "a fixture never moves"
+    );
+    assert!(
+        crate::support::files(&mut editor)
+            .index()
+            .is_content(&fixture)
     );
 }
 

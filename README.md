@@ -53,7 +53,7 @@ instead.
 
 Archives extracted into one folder make a **binaries folder**: `editor` and `rift` find `game-server`,
 `game-client` and `game-server-profiling` beside themselves. `just dist` builds this machine's
-binaries into such a folder, `target/dist/`, so an unreleased build runs exactly as a release would.
+binaries into such a folder, `target/dist/`, so an unreleased build runs as a release would.
 
 ## The rift tool
 
@@ -69,7 +69,7 @@ folder, and starts the other binaries from its own binaries folder when a comman
 | [`rift ask <game>`](#asking-about-a-game) | Answers the probe's questions about the game, without a client. |
 | [`rift render area <game> <shot> <out>`](#rendering-an-area) | Draws a picture of an area off screen. |
 | [`rift render dialogue <game> <out>`](#rendering-the-dialogue) | Draws the dialogue in every style it sets, over many grounds. |
-| [`rift bench [game]`](#benching) | Measures the server's capacity, and on a game also the client's and the editor's frame rates and memory. |
+| [`rift bench [game]`](#benching) | Measures the server's ticks under a load of players playing, and on a game also the client's and the editor's frame rates and memory. |
 | [`rift loadtest --http <url> [count]`](#load-testing-a-server) | Connects simulated players to a running game server. |
 | [`rift play <game> --http <url>`](#playing-without-a-window) | Plays characters on a running game server with no window, doing what it is told on stdin. |
 | [`rift profile --out <dir> [game]`](#profiling-the-server) | Samples the game server under load. |
@@ -160,7 +160,7 @@ in one go.
 ### Benching
 
 ```sh
-rift bench                  # the server's capacity, on a large game generated in code
+rift bench                  # the server's ticks, on a large game generated in code
 rift bench <game>           # the whole bench on a game
 ```
 
@@ -169,7 +169,7 @@ those `--only` names:
 
 | Part | What it measures | Needs |
 | --- | --- | --- |
-| `server` | How many copies of the game's spawn area, each full of players, the server ticks within its budget. | |
+| `server` | How long the server takes to tick copies of the game's spawn area, each full of players playing. | |
 | `client` | The game client's frame rate through a catalogue of scenarios. | Linux |
 | `editor` | The editor's frame rate through scenarios of its own. | Linux |
 | `memory` | Whether the server and the client hold their memory level as a player plays. | Linux |
@@ -179,6 +179,33 @@ The server part runs inside `rift` itself. The other three start `game-server`, 
 screen drawn on through `Xwayland`, the window seated there by `xdotool`, and a silent sink on a
 PulseAudio-compatible sound server (`pactl`). The frame rate is then the program's alone, and
 nothing reaches the machine's display or speakers.
+
+#### The server part
+
+The server part ticks 100 copies of the game's spawn area, each a world of its own as the
+server keeps one, with 25 players in each and the game's own NPCs about them, the clients
+connected and sent everything that changes. The players join as the game's test characters
+and play through the game's own requests, each in a role:
+
+| Role | Share | What it does |
+| --- | --- | --- |
+| fighters | two in five | Cast the skills on their bars at the nearest foe, and use what their bags hold to be used. |
+| walkers | two in five | Click a stride ahead across the area every second and a half, never standing long. |
+| talkers | one in five | Walk up to the nearest one who talks, and pick their way through the conversation. |
+
+One player in twenty also stands at the market, searching it, listing goods and buying, and the
+market starts holding ten listings for every player, as a server's does once its players have
+traded a while. Without a
+game the bench plays the crowd, a game generated in code to load a server: a wide area of raiders
+that hunt whoever comes near and townsfolk who roam and stop to talk, and test characters who
+carry swords, potions, gold and goods.
+
+It measures the simulation alone first, then with the clients connected, each over 200 ticks
+once the players' ground is held and the warmup is past, and reports the mean, p50, p99 and
+worst tick, what replication adds, the market's traffic, and how many players were walking and
+talking as the run ended. `--areas` measures another load, and `--capacity` searches for the
+most areas the server ticks within its budget instead, which takes minutes and reports nothing
+to compare by.
 
 #### Scenarios
 
@@ -196,7 +223,7 @@ would, through the program's own bindings, confirming each input through the pro
 | `crossings` | A warp out of the home area crossed, and back. |
 | `combat` | Fights staged at the game's crowd place. |
 | `ui-storm` | Every tab of the menu opened and swept, then the interface dragged, scrolled and typed into. |
-| `players` | Fifty other players in view at the game's spawn. |
+| `players` | Fifty other players walking about the game's spawn, in view. |
 | `editor-open` | The editor's opening, until the area the game starts in stands in view. |
 | `editor-camera` | The stage of that area turned, panned, and flicked in and out. |
 | `editor-brush` | Its terrain sculpted. |
@@ -212,7 +239,9 @@ These flags choose what runs:
 | `--only <part>` | Runs only the parts named: `server`, `client`, `editor`, `memory`. Repeat it to name several. |
 | `--scenario <pattern>` | Runs only the scenarios whose names match, `*` standing for anything: `--scenario 'editor-*'`. |
 | `--video <preset>` | The video presets the scenarios play at: `highest` (the default), `lowest` or `both`. |
-| `--repeat <n>` | Runs each scenario `n` times. The report keeps the median run, and how far the others strayed from it. |
+| `--repeat <n>` | Runs each scenario, and the server part, `n` times. The report keeps the median run, and how far the others strayed from it. |
+| `--areas <n>` | Measures the server part at `n` areas rather than 100. |
+| `--capacity` | Finds the most areas the server ticks within its budget, rather than measuring one load. |
 | `--spread` | Spreads the server part's players over the area, rather than crowding them on its spawn. |
 | `--adapter <name>` | Refuses to run unless the client draws on this graphics adapter. |
 | `--smoke` | Plays one short scenario per program, held to no criteria, to prove the harness alone. |
@@ -259,8 +288,9 @@ A run writes its report to `bench-report.json`, or wherever `--report` says, in 
 it.
 
 `--compare <report>` holds the run against an earlier run's report, and fails when a scenario that
-passed now fails, a mean frame rate fell by more than a tenth, or a p99 frame time rose by more than
-a fifth:
+passed now fails, a mean frame rate fell by more than a tenth, a p99 frame time rose by more than
+a fifth, or, measured at the same load, the server's mean tick rose by more than a tenth or its p99
+by more than a fifth:
 
 ```sh
 rift bench <game> --report before.json    # before a change
@@ -492,11 +522,16 @@ just editor           # build editor, game-server and game-client, and open the 
 just editor ~/my-game # …on a game folder
 just dist             # this machine's binaries, as a release lays them out, in target/dist
 just dist target/dist profiling # …and game-server-profiling, on Linux
-just bench            # the server bench on the generated game
+just bench            # the server bench on the generated game, in a few seconds
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests
 just smoke            # download the game client from the website, start it, and see it draw the game
 ```
+
+Every recipe builds on the `dev` profile, made for iterating, and every recipe shares one build, so
+switching between them rebuilds nothing. The binaries that ship are built on `release`: CI builds
+them with `just archives`, the one way to a release asset. `just profile=release <recipe>` runs any
+recipe on release, for an issue only the shipped build shows.
 
 ## Tests
 

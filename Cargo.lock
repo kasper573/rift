@@ -6240,7 +6240,9 @@ version = "0.1.0"
 dependencies = [
  "cargo_metadata",
  "proc-macro2",
+ "serde",
  "syn 3.0.9",
+ "toml 1.1.8+spec-1.1.0",
  "walkdir",
 ]
 
@@ -9825,6 +9827,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "suite"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+]
+
+[[package]]
 name = "swash"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11216,6 +11225,7 @@ dependencies = [
  "serde_urlencoded",
  "service",
  "tar",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http 0.7.1",

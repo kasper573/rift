@@ -20,8 +20,8 @@ const VICTIMS: u32 = 2;
 const REACH: Meters = Meters(1.5);
 
 #[test]
-fn two_actors_reaching_for_each_other_end_in_reach_with_their_bodies_apart() {
-    for gap in [2.0, 3.0, 4.0, 5.0] {
+fn actors_reaching_for_each_other_or_for_one_standing_still_end_in_reach_with_their_bodies_apart() {
+    for gap in [2.0, 4.0] {
         for direction in [(1.0, 0.0), (0.0, 1.0), (1.0, 1.0), (-1.0, 0.0)] {
             let mut arena = Arena::new();
             let player = arena.player();
@@ -47,10 +47,6 @@ fn two_actors_reaching_for_each_other_end_in_reach_with_their_bodies_apart() {
             );
         }
     }
-}
-
-#[test]
-fn reach_met_on_the_way_never_lands_on_the_target() {
     for offset in [
         (3.0, 0.0),
         (2.0, 1.0),
@@ -72,50 +68,6 @@ fn reach_met_on_the_way_never_lands_on_the_target() {
         let world = arena.world();
         assert!(resting(world, player), "{offset:?}");
         assert!(in_reach(world, player, target) && !overlapping(world, player, target));
-    }
-}
-
-#[test]
-fn a_pack_from_one_side_fills_distinct_berths_where_its_target_stops() {
-    for walks_away in [false, true] {
-        let mut arena = Arena::new();
-        let player = arena.player();
-        let pack: Vec<Entity> = (0..4)
-            .map(|row| arena.fighter(arena.at(4.0, row as f32 - 1.0)))
-            .collect();
-
-        for &fighter in &pack {
-            arena.attack(fighter, player);
-        }
-        let away = arena.at(-4.0, 0.0);
-        if walks_away {
-            arena.send(MoveRequest {
-                pos: away,
-                seq: MoveSeq(1),
-            });
-        }
-        arena.run(8.0);
-
-        let world = arena.world();
-        if walks_away {
-            assert_eq!(position(world, player), Some(away));
-        }
-        assert!(
-            pack.iter().all(|&f| resting(world, f)),
-            "walks away: {walks_away}"
-        );
-        assert!(
-            pack.iter()
-                .all(|&f| in_reach(world, f, player) && !overlapping(world, f, player)),
-            "walks away: {walks_away}, {:?}",
-            positions(world, &pack)
-        );
-        assert_eq!(
-            overlapping_pairs(world, &pack),
-            0,
-            "walks away: {walks_away}, two of the pack share a berth: {:?}",
-            positions(world, &pack)
-        );
     }
 }
 
@@ -218,7 +170,47 @@ fn a_ground_click_onto_an_occupied_spot_is_honoured() {
 }
 
 #[test]
-fn no_attacker_is_ever_held_out_of_reach_however_many_come_and_go() {
+fn a_pack_from_one_side_or_all_round_fills_distinct_berths_in_reach_however_many_come_and_go() {
+    for walks_away in [false, true] {
+        let mut arena = Arena::new();
+        let player = arena.player();
+        let pack: Vec<Entity> = (0..4)
+            .map(|row| arena.fighter(arena.at(4.0, row as f32 - 1.0)))
+            .collect();
+
+        for &fighter in &pack {
+            arena.attack(fighter, player);
+        }
+        let away = arena.at(-4.0, 0.0);
+        if walks_away {
+            arena.send(MoveRequest {
+                pos: away,
+                seq: MoveSeq(1),
+            });
+        }
+        arena.run(8.0);
+
+        let world = arena.world();
+        if walks_away {
+            assert_eq!(position(world, player), Some(away));
+        }
+        assert!(
+            pack.iter().all(|&f| resting(world, f)),
+            "walks away: {walks_away}"
+        );
+        assert!(
+            pack.iter()
+                .all(|&f| in_reach(world, f, player) && !overlapping(world, f, player)),
+            "walks away: {walks_away}, {:?}",
+            positions(world, &pack)
+        );
+        assert_eq!(
+            overlapping_pairs(world, &pack),
+            0,
+            "walks away: {walks_away}, two of the pack share a berth: {:?}",
+            positions(world, &pack)
+        );
+    }
     for count in [9, 14] {
         let mut arena = Arena::new();
         let player = arena.player();

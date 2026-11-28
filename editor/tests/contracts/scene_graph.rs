@@ -34,136 +34,168 @@ fn flagged(node: SceneNode, flag: NodeFlag) -> SceneNode {
 }
 
 #[test]
-fn grouping_puts_the_rows_in_order_into_a_new_folder_where_the_first_was() {
-    let mut scene = vec![object("a"), object("b"), object("c"), object("d")];
+fn restructuring_a_scene_lands_each_row_where_asked() {
+    {
+        let mut scene = vec![object("a"), object("b"), object("c"), object("d")];
 
-    let made = support::restructured(&mut scene, |tree| {
-        tree.group(&["/2".to_owned(), "/1".to_owned()], "Storage")
-    });
+        let made = support::restructured(&mut scene, |tree| {
+            tree.group(&["/2".to_owned(), "/1".to_owned()], "Storage")
+        });
 
-    assert_eq!(made.as_deref(), Some("/1"));
-    assert_eq!(names(&scene), ["a", "Storage", "b", "c", "d"]);
-    assert_eq!(nodes::children_of(&scene[1]).len(), 2);
+        assert_eq!(made.as_deref(), Some("/1"));
+        assert_eq!(names(&scene), ["a", "Storage", "b", "c", "d"]);
+        assert_eq!(nodes::children_of(&scene[1]).len(), 2);
 
-    let mut scene = vec![
-        folder("Hall", vec![object("a"), object("b")]),
-        folder("Altar", vec![object("c")]),
-        object("d"),
-    ];
-    let made = support::restructured(&mut scene, |tree| {
-        tree.group(
-            &["/0/children/1".to_owned(), "/1/children/0".to_owned()],
-            "Picked",
-        )
-    });
-    assert_eq!(
-        made.as_deref(),
-        Some("/0"),
-        "rows of several folders group in the one holding them all"
-    );
-    assert_eq!(scene[0].label(), Some("Picked"));
-    assert_eq!(names(nodes::children_of(&scene[0])), ["b", "c"]);
-    assert_eq!(names(nodes::children_of(&scene[1])), ["a"]);
-}
+        let mut scene = vec![
+            folder("Hall", vec![object("a"), object("b")]),
+            folder("Altar", vec![object("c")]),
+            object("d"),
+        ];
+        let made = support::restructured(&mut scene, |tree| {
+            tree.group(
+                &["/0/children/1".to_owned(), "/1/children/0".to_owned()],
+                "Picked",
+            )
+        });
+        assert_eq!(
+            made.as_deref(),
+            Some("/0"),
+            "rows of several folders group in the one holding them all"
+        );
+        assert_eq!(scene[0].label(), Some("Picked"));
+        assert_eq!(names(nodes::children_of(&scene[0])), ["b", "c"]);
+        assert_eq!(names(nodes::children_of(&scene[1])), ["a"]);
+    }
+    {
+        let mut scene = vec![
+            object("a"),
+            folder("Hall", vec![object("b"), object("c")]),
+            object("d"),
+        ];
 
-#[test]
-fn ungrouping_puts_what_a_folder_held_in_its_place_in_order() {
-    let mut scene = vec![
-        object("a"),
-        folder("Hall", vec![object("b"), object("c")]),
-        object("d"),
-    ];
+        support::restructured(&mut scene, |tree| tree.ungroup(&["/1".to_owned()]));
 
-    support::restructured(&mut scene, |tree| tree.ungroup(&["/1".to_owned()]));
+        assert_eq!(names(&scene), ["a", "b", "c", "d"]);
+    }
+    {
+        let mut scene = vec![object("a"), object("b"), folder("Hall", vec![object("c")])];
 
-    assert_eq!(names(&scene), ["a", "b", "c", "d"]);
-}
+        let landed = support::restructured(&mut scene, |tree| {
+            tree.move_nodes(&["/0".to_owned()], "/2", &Landing::First)
+        })
+        .expect("the move");
 
-#[test]
-fn moving_rows_into_a_folder_lands_them_where_asked() {
-    let mut scene = vec![object("a"), object("b"), folder("Hall", vec![object("c")])];
+        assert_eq!(landed, ["/1/children/0"]);
+        assert_eq!(names(&scene), ["b", "Hall", "a", "c"]);
 
-    let landed = support::restructured(&mut scene, |tree| {
-        tree.move_nodes(&["/0".to_owned()], "/2", &Landing::First)
-    })
-    .expect("the move");
+        support::restructured(&mut scene, |tree| tree.reorder(&["/1".to_owned()], -1));
+        assert_eq!(names(&scene), ["Hall", "a", "c", "b"]);
+    }
+    {
+        let mut scene = vec![folder("Hall", vec![folder("Nave", vec![])])];
+        let before = scene::write_nodes(&scene).expect("written");
 
-    assert_eq!(landed, ["/1/children/0"]);
-    assert_eq!(names(&scene), ["b", "Hall", "a", "c"]);
+        let moved = support::restructured(&mut scene, |tree| {
+            tree.move_nodes(&["/0".to_owned()], "/0/children/0", &Landing::End)
+        });
 
-    support::restructured(&mut scene, |tree| tree.reorder(&["/1".to_owned()], -1));
-    assert_eq!(names(&scene), ["Hall", "a", "c", "b"]);
-}
+        assert!(moved.is_none());
+        assert_eq!(scene::write_nodes(&scene).expect("written"), before);
+    }
+    {
+        let mut scene = vec![
+            object("a"),
+            folder("Hall", vec![object("b"), object("c")]),
+            object("d"),
+        ];
 
-#[test]
-fn a_folder_never_moves_into_itself() {
-    let mut scene = vec![folder("Hall", vec![folder("Nave", vec![])])];
-    let before = scene::write_nodes(&scene).expect("written");
+        support::restructured(&mut scene, |tree| {
+            tree.remove(&["/1/children/0".to_owned(), "/2".to_owned(), "/0".to_owned()])
+        });
 
-    let moved = support::restructured(&mut scene, |tree| {
-        tree.move_nodes(&["/0".to_owned()], "/0/children/0", &Landing::End)
-    });
+        assert_eq!(names(&scene), ["Hall", "c"]);
+    }
+    {
+        let mut scene = vec![
+            folder(
+                "Pews",
+                vec![folder("Pew", Vec::new()), folder("Pew (1)", Vec::new())],
+            ),
+            object("door"),
+        ];
 
-    assert!(moved.is_none());
-    assert_eq!(scene::write_nodes(&scene).expect("written"), before);
+        let made = support::restructured(&mut scene, |tree| {
+            tree.duplicate(
+                &["/0/children/0".to_owned(), "/1".to_owned()],
+                SceneNode::clone,
+            )
+        });
+
+        assert_eq!(made, ["/0/children/1", "/2"]);
+        assert_eq!(
+            names(nodes::children_of(&scene[0])),
+            ["Pew", "Pew (2)", "Pew (1)"]
+        );
+        assert_eq!(names(&scene[2..]), ["door"]);
+    }
 }
 
 #[test]
 fn a_folders_hide_and_lock_reach_what_it_holds_and_each_row_keeps_its_own() {
-    let mut scene = vec![
-        flagged(
-            folder(
-                "Pews",
-                vec![flagged(object("a"), NodeFlag::Hidden), object("b")],
+    {
+        let mut scene = vec![
+            flagged(
+                folder(
+                    "Pews",
+                    vec![flagged(object("a"), NodeFlag::Hidden), object("b")],
+                ),
+                NodeFlag::Hidden,
             ),
-            NodeFlag::Hidden,
-        ),
-        flagged(folder("Guards", vec![object("c")]), NodeFlag::Locked),
-        object("d"),
-    ];
-    let flags_of = |scene: &[SceneNode]| {
-        SceneFlags::of(
+            flagged(folder("Guards", vec![object("c")]), NodeFlag::Locked),
+            object("d"),
+        ];
+        let flags_of = |scene: &[SceneNode]| {
+            SceneFlags::of(
+                &[SceneLevel {
+                    under: String::new(),
+                    scene,
+                }],
+                None,
+            )
+        };
+
+        let flags = flags_of(&scene);
+        assert!(flags.hidden("/0/children/0") && flags.hidden("/0/children/1"));
+        assert!(flags.locked("/1/children/0"));
+        assert!(!flags.hidden("/2") && !flags.locked("/2"));
+        assert!(!flags.keep(&["/0/children/1"]));
+        assert!(flags.keep(&["/2"]));
+
+        support::restructured(&mut scene, |tree| {
+            tree.set_flag(&["/0".to_owned()], NodeFlag::Hidden, false);
+        });
+        let flags = flags_of(&scene);
+        assert!(
+            flags.hidden("/0/children/0"),
+            "a row hidden of its own stays hidden"
+        );
+        assert!(!flags.hidden("/0/children/1"));
+    }
+    {
+        let scene = vec![folder("Pews", vec![object("a")]), object("b")];
+
+        let flags = SceneFlags::of(
             &[SceneLevel {
                 under: String::new(),
-                scene,
+                scene: &scene,
             }],
-            None,
-        )
-    };
+            Some("/0"),
+        );
 
-    let flags = flags_of(&scene);
-    assert!(flags.hidden("/0/children/0") && flags.hidden("/0/children/1"));
-    assert!(flags.locked("/1/children/0"));
-    assert!(!flags.hidden("/2") && !flags.locked("/2"));
-    assert!(!flags.keep(&["/0/children/1"]));
-    assert!(flags.keep(&["/2"]));
-
-    support::restructured(&mut scene, |tree| {
-        tree.set_flag(&["/0".to_owned()], NodeFlag::Hidden, false);
-    });
-    let flags = flags_of(&scene);
-    assert!(
-        flags.hidden("/0/children/0"),
-        "a row hidden of its own stays hidden"
-    );
-    assert!(!flags.hidden("/0/children/1"));
-}
-
-#[test]
-fn showing_only_a_row_hides_everything_else_for_the_moment() {
-    let scene = vec![folder("Pews", vec![object("a")]), object("b")];
-
-    let flags = SceneFlags::of(
-        &[SceneLevel {
-            under: String::new(),
-            scene: &scene,
-        }],
-        Some("/0"),
-    );
-
-    assert!(!flags.hidden("/0"));
-    assert!(!flags.hidden("/0/children/0"));
-    assert!(flags.hidden("/1"));
+        assert!(!flags.hidden("/0"));
+        assert!(!flags.hidden("/0/children/0"));
+        assert!(flags.hidden("/1"));
+    }
 }
 
 #[test]
@@ -195,21 +227,51 @@ fn hiding_a_row_shows_in_the_open_view_before_the_folder_loads_again() {
 }
 
 #[test]
-fn grouping_and_naming_the_folder_is_one_undo_step() {
+fn grouping_naming_deleting_and_making_folders_are_each_one_undo_step() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = open(objects_game(), &scratch);
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     let rows = ["/0".to_owned(), "/1".to_owned()];
+    let scene = |editor: &Editor| support::scene(editor, &area());
 
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     let (id, step) = scene_tree::group(&mut editor, &snapshot, &rows).expect("grouped");
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     scene_tree::rename_grouped(&mut editor, &snapshot, &id, "Storage", &step);
-
-    let scene = support::scene(&editor, &area());
-    assert_eq!(scene[0].label(), Some("Storage"));
-    assert_eq!(names(nodes::children_of(&scene[0])), ["a", "b"]);
+    assert_eq!(scene(&editor)[0].label(), Some("Storage"));
+    assert_eq!(names(nodes::children_of(&scene(&editor)[0])), ["a", "b"]);
     editor.undo();
-    assert_eq!(names(&support::scene(&editor, &area())), ["a", "b", "c"]);
+    assert_eq!(names(&scene(&editor)), ["a", "b", "c"]);
+
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    let (id, _) = scene_tree::group(&mut editor, &snapshot, &rows).expect("grouped");
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    scene_tree::delete_rows(&mut editor, &snapshot, &[id]);
+    assert_eq!(
+        names(&scene(&editor)),
+        ["c"],
+        "a folder goes with all it holds"
+    );
+    editor.undo();
+    assert_eq!(names(&scene(&editor)), ["New folder", "a", "b", "c"]);
+    editor.undo();
+
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    let first = scene_tree::new_folder(&mut editor, &snapshot, "").expect("a folder");
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    let inside = scene_tree::new_folder(&mut editor, &snapshot, &first).expect("a folder");
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    let beside = scene_tree::new_folder(&mut editor, &snapshot, "").expect("a folder");
+    assert!(
+        inside.starts_with(&format!("{first}/children/")),
+        "a new folder lands in the insertion folder: {inside}"
+    );
+    let made = scene(&editor);
+    let label = |id: &str| nodes::node(&made, id).and_then(SceneNode::label);
+    assert_ne!(
+        label(&first),
+        label(&beside),
+        "a new folder never shares a label"
+    );
 }
 
 #[test]
@@ -232,46 +294,6 @@ fn a_scene_the_editor_saves_reads_as_the_engine_writes_it() {
     let file = scene_file(&area());
     let read = |root: &std::path::Path| std::fs::read_to_string(root.join(&file)).expect("a scene");
     assert_eq!(read(&scratch.path().join("game")), read(&written));
-}
-
-#[test]
-fn a_new_folder_lands_in_the_insertion_folder_and_never_shares_a_label() {
-    let scratch = tempfile::tempdir().expect("a scratch folder");
-    let mut editor = open(objects_game(), &scratch);
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-
-    let first = scene_tree::new_folder(&mut editor, &snapshot, "").expect("a folder");
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    let inside = scene_tree::new_folder(&mut editor, &snapshot, &first).expect("a folder");
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    let beside = scene_tree::new_folder(&mut editor, &snapshot, "").expect("a folder");
-
-    assert!(
-        inside.starts_with(&format!("{first}/children/")),
-        "{inside}"
-    );
-    let scene = support::scene(&editor, &area());
-    let label = |id: &str| nodes::node(&scene, id).and_then(SceneNode::label);
-    assert_ne!(label(&first), label(&beside));
-}
-
-#[test]
-fn deleting_a_folder_takes_all_it_holds_in_one_step() {
-    let scratch = tempfile::tempdir().expect("a scratch folder");
-    let mut editor = open(objects_game(), &scratch);
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    let (id, _) = scene_tree::group(&mut editor, &snapshot, &["/0".to_owned(), "/1".to_owned()])
-        .expect("grouped");
-    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-
-    scene_tree::delete_rows(&mut editor, &snapshot, &[id]);
-
-    assert_eq!(names(&support::scene(&editor, &area())), ["c"]);
-    editor.undo();
-    assert_eq!(
-        names(&support::scene(&editor, &area())),
-        ["New folder", "a", "b", "c"]
-    );
 }
 
 #[test]

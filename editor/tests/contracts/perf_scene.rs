@@ -17,8 +17,8 @@ use crate::support::{self, Frames, area};
 
 #[test]
 fn selecting_or_hovering_in_a_large_scene_costs_a_frame_no_more_than_in_a_small_one() {
-    let small = costs(5);
-    let large = costs(1850);
+    let small = costs(SMALL);
+    let large = costs(LARGE);
     for (what, small, large) in [
         ("selecting a module", small.selected, large.selected),
         (
@@ -31,8 +31,8 @@ fn selecting_or_hovering_in_a_large_scene_costs_a_frame_no_more_than_in_a_small_
             large <= small + 1000,
             "{what} adds {large} allocations to a frame of a scene of {} nodes against {small} in \
              one of {}",
-            nodes(1850),
-            nodes(5),
+            nodes(LARGE),
+            nodes(SMALL),
         );
     }
 }
@@ -100,6 +100,10 @@ fn costs(per_folder: usize) -> Costs {
 /// The top-level folders of every scene, each holding objects and soundscapes among its props, and
 /// the first a resident; the well, an object, follows them.
 const FOLDERS: usize = 20;
+/// How many modules each folder of the small scene and of the large one holds: the large one
+/// enough that a frame walking or copying it would allocate past the margin allowed.
+const SMALL: usize = 5;
+const LARGE: usize = 250;
 /// The side of the area, in metres.
 const SIDE: usize = 1280;
 

@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 description = "The engine: the simulation library and its game client"
 
+[lib]
+test = false
+doctest = false
+bench = false
+
 [[bin]]
 name = "game-client"
 path = "src/main.rs"

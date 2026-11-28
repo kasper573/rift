@@ -1123,8 +1123,8 @@ pub fn placeholder_rig(clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_mesh(clips, 1)
 }
 
-/// A glTF binary of `triangles` triangles stacked within a centimetre of the origin, animated by
-/// `clips`: a model of any weight in triangles and nothing to look at.
+/// A glTF binary of `triangles` triangles side by side within a centimetre of the origin, animated
+/// by `clips`: a model of any weight in triangles and nothing to look at.
 pub fn placeholder_mesh(clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> {
     placeholder_body(&NodeTree::default(), clips, triangles)
 }
@@ -1132,11 +1132,11 @@ pub fn placeholder_mesh(clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> 
 /// How far a placeholder clip holds the joint it moves above where it rests.
 pub const PLACEHOLDER_LIFT: Meters = Meters(0.25);
 
-/// A glTF binary of the joints of `tree` at rest, `triangles` triangles stacked within a centimetre
-/// of the origin beside them, skinned to the joints when there are any, and `clips` holding the
-/// first joint below the top one (the top one when there is none below it, the mesh when there are
-/// no joints) [`PLACEHOLDER_LIFT`] above its rest: a rig, a library of clips or a skin on it, of any
-/// weight and nothing to look at.
+/// A glTF binary of the joints of `tree` at rest, `triangles` triangles side by side within a
+/// centimetre of the origin beside them, skinned to the joints when there are any, and `clips`
+/// holding the first joint below the top one (the top one when there is none below it, the mesh
+/// when there are no joints) [`PLACEHOLDER_LIFT`] above its rest: a rig, a library of clips or a
+/// skin on it, of any weight and nothing to look at.
 pub fn placeholder_body(tree: &NodeTree, clips: &[(&str, Seconds)], triangles: usize) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut root = json::Root::default();
@@ -1413,10 +1413,20 @@ fn push_mesh(
     triangles: usize,
     skinned: bool,
 ) -> json::Index<json::Mesh> {
-    let corners: [[f32; 3]; 3] = [[-0.01, 0.0, -0.01], [0.01, 0.0, -0.01], [0.0, 0.0, 0.01]];
+    let side = (triangles as f32).sqrt().ceil() as usize;
+    let half = 0.01 / side as f32;
     let positions: Vec<u8> = (0..triangles)
-        .flat_map(|_| corners.iter().flatten())
-        .flat_map(|value| value.to_le_bytes())
+        .flat_map(|index| {
+            let x = -0.01 + (2 * (index % side) + 1) as f32 * half;
+            let z = -0.01 + (2 * (index / side) + 1) as f32 * half;
+            [
+                [x - half, 0.0, z - half],
+                [x + half, 0.0, z - half],
+                [x, 0.0, z + half],
+            ]
+        })
+        .flatten()
+        .flat_map(|value: f32| value.to_le_bytes())
         .collect();
     let position_accessor = push_accessor(
         root,

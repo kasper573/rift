@@ -26,23 +26,16 @@ fn a_lowered_maximum_pulls_health_and_mana_down_to_it() {
 }
 
 #[test]
-fn healing_does_not_bring_the_dead_back() {
-    let (mut sim, player) = wardrobe();
-    set_vitals(&mut sim, player, 0.0, 30.0);
-
-    stat::heal(&mut sim.world, player, 10.0);
-    stat::refill(&mut sim.world, player, Vital::Health);
-
-    assert!(stat::is_dead(&sim.world, player));
-}
-
-#[test]
-fn the_dead_cannot_take_off_what_they_wear() {
+fn the_dead_are_not_healed_back_and_cannot_take_off_what_they_wear() {
     let (mut sim, player) = wardrobe();
     sim.give(player, "rock", 1);
     let rock = sim.id::<ItemDef>("rock");
     equipment::equip_from_bag(&mut sim.world, player, rock).expect("the rock is worn");
     set_vitals(&mut sim, player, 0.0, 30.0);
+
+    stat::heal(&mut sim.world, player, 10.0);
+    stat::refill(&mut sim.world, player, Vital::Health);
+    assert!(stat::is_dead(&sim.world, player));
 
     let conn = sim.conn(1);
     sim.send(
@@ -59,24 +52,18 @@ fn the_dead_cannot_take_off_what_they_wear() {
 }
 
 #[test]
-fn wearing_one_of_a_stack_leaves_the_rest_in_the_bag() {
+fn equipping_from_the_bag_wears_one_of_a_stack_and_leaves_what_the_body_cannot_wear_unused() {
     let (mut sim, player) = wardrobe();
     sim.give(player, "rock", 2);
     let rock = sim.id::<ItemDef>("rock");
-
     equipment::equip_from_bag(&mut sim.world, player, rock).expect("the rock is worn");
-
     assert_eq!(worn(&sim, player, head()), Some(rock));
-    assert_eq!(sim.count(player, "rock"), 1);
-}
+    assert_eq!(sim.count(player, "rock"), 1, "the rest stays in the bag");
 
-#[test]
-fn an_item_the_body_cannot_wear_stays_in_the_bag_unused() {
     for (name, refusal) in [
         ("boots", "boots can't be worn by this body"),
         ("potion", "potion can't be worn"),
     ] {
-        let (mut sim, player) = wardrobe();
         sim.give(player, name, 1);
         let item = sim.id::<ItemDef>(name);
 

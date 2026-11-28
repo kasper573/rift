@@ -12,6 +12,7 @@ use crate::core::content::Content;
 use crate::core::geometry::corners;
 use crate::core::ground::{TILE_SIDE, TileAt};
 use crate::core::math::{Pos, Rect, Size};
+use crate::core::par;
 use crate::core::units::{CellPos, GridSize, GroundCell, MeterSize, Meters};
 use crate::systems::movement::{NavMesh, SEAM_SNAP, TileLayer};
 use crate::systems::spawner::SpawnSurface;
@@ -143,10 +144,12 @@ pub(super) fn hold(
             .copied()
             .collect()
     };
-    let laid: BTreeMap<TileAt, Arc<[TileLayer]>> = missing
-        .into_par_iter()
-        .map(|at| (at, triangulate(area, at)))
-        .collect();
+    let laid: BTreeMap<TileAt, Arc<[TileLayer]>> = par::beside(|| {
+        missing
+            .into_par_iter()
+            .map(|at| (at, triangulate(area, at)))
+            .collect()
+    });
     let mut changed = false;
     {
         let mut held = area.meshes.held.write().expect("the held lock");
@@ -734,15 +737,17 @@ fn join(meshes: &Meshes) {
         if *joined == changes {
             return;
         }
-        let laid: Vec<Arc<NavMesh>> = (0..meshes.meshes.len())
-            .into_par_iter()
-            .map(|kind| {
-                Arc::new(NavMesh::join(
-                    meshes.bounds,
-                    tiles.iter().map(|tile| &tile[kind]),
-                ))
-            })
-            .collect();
+        let laid: Vec<Arc<NavMesh>> = par::beside(|| {
+            (0..meshes.meshes.len())
+                .into_par_iter()
+                .map(|kind| {
+                    Arc::new(NavMesh::join(
+                        meshes.bounds,
+                        tiles.iter().map(|tile| &tile[kind]),
+                    ))
+                })
+                .collect()
+        });
         for (kind, mesh) in laid.into_iter().enumerate() {
             meshes.meshes[kind].store(mesh);
         }

@@ -9,7 +9,8 @@ const BACKOFF: Backoff = Backoff {
 };
 
 #[test]
-fn each_failure_doubles_the_wait_up_to_the_longest_give_or_take_half() {
+fn each_failure_doubles_the_wait_up_to_the_longest_give_or_take_half_so_clients_failing_together_spread_out()
+ {
     let mut rng = Rng::new(drawn_seed());
     for (failures, base) in [
         (1, 1.0),
@@ -28,11 +29,7 @@ fn each_failure_doubles_the_wait_up_to_the_longest_give_or_take_half() {
             );
         }
     }
-}
 
-#[test]
-fn clients_that_fail_together_spread_out_their_next_tries() {
-    let mut rng = Rng::new(drawn_seed());
     let waits: Vec<f32> = (0..20).map(|_| BACKOFF.after(3, &mut rng).0).collect();
     let soonest = waits.iter().copied().fold(f32::INFINITY, f32::min);
     let latest = waits.iter().copied().fold(0.0, f32::max);

@@ -8,7 +8,7 @@ description = "The game server: plays a game's world for its clients and serves 
 name = "game-server"
 path = "src/main.rs"
 
-# Built with `--profile profiling --features profiling`, it is game-server-profiling.
+# Built with `--features profiling`, it is game-server-profiling.
 [features]
 profiling = ["bevy/debug", "bevy/trace_chrome"]
 

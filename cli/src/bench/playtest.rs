@@ -22,7 +22,7 @@ use tempfile::TempDir;
 
 use super::desktop::BenchDesktop;
 use crate::binaries::{self, GAME_CLIENT, GAME_SERVER};
-use crate::server::{GameServer, LOCALHOST, bench_config, resident};
+use crate::server::{Freeing, GameServer, LOCALHOST, bench_config, resident};
 
 const ACCOUNT: &str = "bench";
 const CLIENT_LOG: &str = "client.log";
@@ -41,18 +41,19 @@ impl Playtest {
     /// The test character `character`, else the game's first, at the game's initial spawn, or a
     /// fresh character where the game has none, in a client on a desktop of the bench's own,
     /// shown as `video` asks, keeping its profile under `profile`: a folder no client has run on
-    /// starts cold, and one an earlier client kept its caches under starts warm. Refused when the
-    /// server or the client doesn't come up.
+    /// starts cold, and one an earlier client kept its caches under starts warm, both processes
+    /// freeing memory as `freeing` asks. Refused when the server or the client doesn't come up.
     pub fn start(
         game: &Path,
         content: &Content,
         character: Option<ContentId<CharacterSnapshot>>,
         video: VideoPreferences,
         profile: &Path,
+        freeing: Freeing,
     ) -> Result<Playtest, String> {
         let folder = tempfile::tempdir().expect("a folder for the client's desktop and log");
         settings::save_video(&Profile(profile.to_path_buf()), video);
-        let server = GameServer::start(&binaries::beside(GAME_SERVER), |run| {
+        let server = GameServer::start(&binaries::beside(GAME_SERVER), freeing, |run| {
             bench_config(game, run)
         });
         if let Some(character) = character.or_else(|| content.ids::<CharacterSnapshot>().next()) {
@@ -81,6 +82,7 @@ impl Playtest {
         let mut client = Command::new(binaries::beside(GAME_CLIENT))
             .envs(launch::env_of(CLIENT_ENV_PREFIX, &config))
             .envs(desktop.env())
+            .envs(freeing.env())
             .stdin(Stdio::piped())
             .stdout(log.try_clone().expect("a second handle on the client log"))
             .stderr(log)

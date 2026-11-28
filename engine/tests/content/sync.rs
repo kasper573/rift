@@ -30,8 +30,13 @@ use crate::support::game;
 /// The assets are read from the store as they are asked for, so one the store loses after the
 /// sync reads as missing, and reads again once it is back.
 #[test]
-fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_manifest() {
-    let server = FakeServer::new(served(sounding()));
+fn a_first_visit_fetches_everything_content_names_keeping_only_it_and_a_later_visit_only_the_manifest()
+ {
+    let server = FakeServer::new(served(
+        sounding()
+            .file("downloads/Unused Clip.glb", testkit::glb(&[]))
+            .file("downloads/manual.pdf", "a manual"),
+    ));
     let store = TestStore::default();
     let stale = "0".repeat(64);
     store.put(&stale, b"left over from another game");
@@ -42,6 +47,17 @@ fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_m
     let requested: HashSet<String> = server.requested_hashes().into_iter().collect();
     assert_eq!(requested, every_file);
     assert_eq!(synced.assets.len(), synced.index.files.len());
+    let fetched: HashSet<&str> = synced
+        .index
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
+    assert!(fetched.contains(slash_clip().as_str()), "{fetched:?}");
+    assert!(
+        fetched.iter().all(|path| !path.starts_with("downloads/")),
+        "media nothing names is never fetched: {fetched:?}"
+    );
     assert!(!synced.rows.is_empty());
     assert!(!synced.memory_only);
     let kept: HashSet<String> = store.hashes().into_iter().collect();
@@ -65,98 +81,76 @@ fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_m
 }
 
 #[test]
-fn a_player_fetches_only_the_media_content_names() {
-    let server = FakeServer::new(served(
-        sounding()
-            .file("downloads/Unused Clip.glb", testkit::glb(&[]))
-            .file("downloads/manual.pdf", "a manual"),
-    ));
-    let synced = run(&server, &TestStore::default()).expect("it syncs");
+fn a_store_lacking_files_or_holding_rotten_ones_is_made_whole_by_fetching_exactly_those() {
+    {
+        let server = FakeServer::new(served(sounding()));
+        let complete = TestStore::default();
+        run(&server, &complete).expect("a full sync");
+        let every_file = complete.hashes();
+        let (kept, lacked) = every_file.split_at(every_file.len() / 2);
+        let partial = TestStore::default();
+        for hash in kept {
+            let bytes = complete.read(hash).expect("a kept file");
+            partial.put(hash, &bytes);
+        }
+        server.forget_requests();
 
-    let fetched: HashSet<&str> = synced
-        .index
-        .files
-        .iter()
-        .map(|file| file.path.as_str())
-        .collect();
-    assert!(fetched.contains(slash_clip().as_str()), "{fetched:?}");
-    assert!(
-        fetched.iter().all(|path| !path.starts_with("downloads/")),
-        "nothing names the downloads: {fetched:?}"
-    );
-}
+        run(&server, &partial).expect("the sync resumes");
 
-#[test]
-fn an_interrupted_sync_fetches_exactly_the_files_the_store_lacks() {
-    let server = FakeServer::new(served(sounding()));
-    let complete = TestStore::default();
-    run(&server, &complete).expect("a full sync");
-    let every_file = complete.hashes();
-    let (kept, lacked) = every_file.split_at(every_file.len() / 2);
-    let partial = TestStore::default();
-    for hash in kept {
-        let bytes = complete.read(hash).expect("a kept file");
-        partial.put(hash, &bytes);
+        let requested: HashSet<String> = server.requested_hashes().into_iter().collect();
+        let lacked: HashSet<String> = lacked.iter().cloned().collect();
+        assert_eq!(requested, lacked);
+        assert_eq!(partial.hashes(), every_file);
     }
-    server.forget_requests();
+    {
+        let server = FakeServer::new(served(sounding()));
+        let store = TestStore::default();
+        let first = run(&server, &store).expect("a full sync");
+        let file = first
+            .index
+            .files
+            .iter()
+            .find(|file| file.path == slash_clip())
+            .expect("the sound is indexed")
+            .clone();
 
-    run(&server, &partial).expect("the sync resumes");
+        server
+            .corrupt_once
+            .lock()
+            .unwrap()
+            .insert(file.held.hash.clone());
+        let fresh = TestStore::default();
+        server.forget_requests();
+        let synced = run(&server, &fresh).expect("a corrupt download is retried");
+        let fetched_twice = server
+            .requested_hashes()
+            .iter()
+            .filter(|hash| **hash == file.held.hash)
+            .count();
+        assert_eq!(fetched_twice, 2);
+        assert_eq!(
+            blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
+                .to_hex()
+                .as_str(),
+            file.held.hash
+        );
 
-    let requested: HashSet<String> = server.requested_hashes().into_iter().collect();
-    let lacked: HashSet<String> = lacked.iter().cloned().collect();
-    assert_eq!(requested, lacked);
-    assert_eq!(partial.hashes(), every_file);
-}
-
-#[test]
-fn a_bad_hash_is_fetched_again() {
-    let server = FakeServer::new(served(sounding()));
-    let store = TestStore::default();
-    let first = run(&server, &store).expect("a full sync");
-    let file = first
-        .index
-        .files
-        .iter()
-        .find(|file| file.path == slash_clip())
-        .expect("the sound is indexed")
-        .clone();
-
-    server
-        .corrupt_once
-        .lock()
-        .unwrap()
-        .insert(file.held.hash.clone());
-    let fresh = TestStore::default();
-    server.forget_requests();
-    let synced = run(&server, &fresh).expect("a corrupt download is retried");
-    let fetched_twice = server
-        .requested_hashes()
-        .iter()
-        .filter(|hash| **hash == file.held.hash)
-        .count();
-    assert_eq!(fetched_twice, 2);
-    assert_eq!(
-        blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
-            .to_hex()
-            .as_str(),
-        file.held.hash
-    );
-
-    store.put(&file.held.hash, b"rotten on the device");
-    server.forget_requests();
-    let synced = run(&server, &store).expect("a corrupt stored file is refetched");
-    assert_eq!(
-        server.requested_hashes(),
-        std::slice::from_ref(&file.held.hash)
-    );
-    assert_eq!(
-        blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
-            .to_hex()
-            .as_str(),
-        file.held.hash
-    );
-    let repaired = store.read(&file.held.hash).expect("stored again");
-    assert_eq!(blake3::hash(&repaired).to_hex().as_str(), file.held.hash);
+        store.put(&file.held.hash, b"rotten on the device");
+        server.forget_requests();
+        let synced = run(&server, &store).expect("a corrupt stored file is refetched");
+        assert_eq!(
+            server.requested_hashes(),
+            std::slice::from_ref(&file.held.hash)
+        );
+        assert_eq!(
+            blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
+                .to_hex()
+                .as_str(),
+            file.held.hash
+        );
+        let repaired = store.read(&file.held.hash).expect("stored again");
+        assert_eq!(blake3::hash(&repaired).to_hex().as_str(), file.held.hash);
+    }
 }
 
 #[test]

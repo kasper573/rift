@@ -3,7 +3,9 @@
 //! to, and then stands still: an area's footprint must go when the player leaves it, so once a few
 //! crossings have grown the caches and pools that are sized to the busiest moment, each visit to an
 //! area holds what the first did, and standing still costs nothing. Standing still may still grow
-//! the GPU's mesh buffers once, to fit a mesh first seen there.
+//! the GPU's mesh buffers once, to fit a mesh first seen there. Both processes hand what they free
+//! back to the system at once, so each reading is what they hold rather than what an allocator is
+//! still on its way to handing back, which differs from visit to visit by more than a leak would.
 
 use std::path::Path;
 use std::time::Duration;
@@ -16,6 +18,7 @@ use engine::systems::staging::Staging;
 
 use super::places::{arrived, away_from, settled_in_world, staged};
 use super::playtest::Playtest;
+use crate::server::Freeing;
 
 // The caches and pools sized to the busiest moment fill over a varying number of crossings, the
 // graphics driver's command memory slowest of all, so the visits are measured once a few round
@@ -24,10 +27,8 @@ use super::playtest::Playtest;
 const MOST_WARM_UPS: usize = 12;
 const QUIET_ROUND_TRIPS: usize = 2;
 const ROUND_TRIPS: usize = 2;
-// Long enough for an arrival's loading to pass, and for the allocator to hand back what the loading
-// churned through, which it does over the ten seconds after it was freed: read any sooner, what is
-// still on its way back counts as held, and differs from visit to visit by more than a leak would.
-const SETTLE: Duration = Duration::from_secs(12);
+// Long enough, once an arrival's scenery stands, for what its loading dropped to be freed.
+const SETTLE: Duration = Duration::from_secs(1);
 const STILL: Duration = Duration::from_secs(10);
 // What the process may keep beyond what the game holds: what its allocator holds on to, and the
 // command memory the graphics driver keeps for each of wgpu's pooled command encoders at the most
@@ -53,6 +54,7 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
         None,
         VideoPreferences::default(),
         profile.path(),
+        Freeing::AtOnce,
     )?;
     let home = settled_in_world(&mut me);
     let Some(away) = away_from(content, home) else {
@@ -170,6 +172,9 @@ fn cross_into(me: &mut Playtest, place: Place) {
 }
 
 fn settle(me: &mut Playtest) -> Reading {
+    me.wait_until("the scenery to stand", |snapshot| {
+        !snapshot.scenery_standing && !snapshot.on_its_way.any()
+    });
     me.linger(SETTLE);
     read(me)
 }

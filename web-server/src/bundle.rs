@@ -26,12 +26,19 @@ pub(crate) fn bundle(
             for entry in release.entries().map_err(|error| failed(&error))? {
                 let mut entry = entry.map_err(|error| failed(&error))?;
                 let path = entry.path().map_err(|error| failed(&error))?.into_owned();
-                let mut header = entry.header().clone();
-                written_at = written_at.max(header.mtime().unwrap_or(0));
+                let mode = entry.header().mode().map_err(|error| failed(&error))?;
+                let mtime = entry.header().mtime().unwrap_or(0);
+                written_at = written_at.max(mtime);
                 let mut bytes = Vec::new();
                 entry
                     .read_to_end(&mut bytes)
                     .map_err(|error| failed(&error))?;
+                // A header of its own rather than the release's: reading a sparse entry fills in
+                // its holes, so the release's header would describe less than is written.
+                let mut header = tar::Header::new_gnu();
+                header.set_size(bytes.len() as u64);
+                header.set_mode(mode & 0o7777);
+                header.set_mtime(mtime);
                 bundle
                     .append_data(&mut header, format!("{folder}/{}", path.display()), &*bytes)
                     .map_err(|error| failed(&error))?;

@@ -31,6 +31,28 @@ pub fn bench_config(game: &Path, run: &Path) -> ServerConfig {
     }
 }
 
+/// How a process a bench starts hands what it frees back to the system.
+#[derive(Clone, Copy)]
+pub enum Freeing {
+    /// As the binaries ship.
+    AsShipped,
+    /// At once, so that what the system sees it hold is what it holds.
+    AtOnce,
+}
+
+impl Freeing {
+    /// The environment that has a process free memory this way.
+    pub fn env(self) -> Option<(String, String)> {
+        match self {
+            Freeing::AsShipped => None,
+            Freeing::AtOnce => {
+                let (name, value) = service::FREEING_AT_ONCE;
+                Some((name.to_owned(), value.to_owned()))
+            }
+        }
+    }
+}
+
 /// A game server process, stopped when dropped.
 pub struct GameServer {
     process: Child,
@@ -40,12 +62,19 @@ pub struct GameServer {
 }
 
 impl GameServer {
-    /// The server `config` describes, given the folder that goes with its run.
-    pub fn start(binary: &Path, config: impl FnOnce(&Path) -> ServerConfig) -> GameServer {
+    /// The server `config` describes, given the folder that goes with its run, freeing memory as
+    /// `freeing` asks.
+    pub fn start(
+        binary: &Path,
+        freeing: Freeing,
+        config: impl FnOnce(&Path) -> ServerConfig,
+    ) -> GameServer {
         let run = tempfile::tempdir().expect("a folder for what the server saves");
         let (process, ready) = launch::start_game_server(
             binary,
-            launch::env_of(SERVER_ENV_PREFIX, &config(run.path())),
+            launch::env_of(SERVER_ENV_PREFIX, &config(run.path()))
+                .into_iter()
+                .chain(freeing.env()),
             READY_WITHIN,
         )
         .unwrap_or_else(|problem| panic!("{problem}"));

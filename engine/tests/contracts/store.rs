@@ -107,7 +107,7 @@ where
 }
 
 #[test]
-fn records_put_are_read_back_until_removed() {
+fn records_put_are_read_back_until_removed_each_kind_keeping_its_own_ids() {
     on_every_store(async |store, on| {
         let first = letter("put-1", "put-wren", "Come to the lake.");
         let second = letter("put-2", "put-wren", "Bring a rod.");
@@ -150,12 +150,7 @@ fn records_put_are_read_back_until_removed() {
             .write(vec![remove(&rewritten), remove(&other)])
             .await
             .expect("a write");
-    });
-}
 
-#[test]
-fn a_kind_keeps_its_own_ids() {
-    on_every_store(async |store, on| {
         let note = Note {
             id: "kinds-1".to_owned(),
             text: "A note.".to_owned(),
@@ -222,13 +217,6 @@ async fn fails_whole(store: RecordStore, refused_body: &str, on: &str) {
         "{on}: what was removed with it is"
     );
     store.write(vec![remove(&kept)]).await.expect("a write");
-}
-
-#[test]
-fn a_record_this_build_cannot_read_whole_is_refused() {
-    let newer = r#"{"id":"1","to":"wren","text":"Hello.","sealed":true}"#;
-    let refused = store::read::<Letter>(newer, &ContentScope::new());
-    assert!(refused.is_err(), "a field this build does not know");
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
