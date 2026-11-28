@@ -1,0 +1,12 @@
+[package]
+name = "suite"
+version.workspace = true
+edition.workspace = true
+description = "The workspace's test binaries, built by cargo and run at once"
+publish = false
+
+[dependencies]
+cargo_metadata = "0.23"
+
+[lints]
+workspace = true

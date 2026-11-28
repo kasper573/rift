@@ -25,9 +25,10 @@ bake-templates:
     {{out_dir}}/rift bake maps editor/templates/new_game
 
 # Every test lives in a tests/ folder; the libs' and bins' own test harnesses would build for nothing.
-[doc("The unit and integration tests.")]
+[doc("The unit and integration tests, every test binary at once.")]
 test:
-    cargo test {{shared}} --test '*'
+    cargo build {{shared}} --quiet --bin suite
+    {{out_dir}}/suite {{shared}} --test '*'
 
 [doc("Builds the editor and the two game binaries it plays with, then opens it, on FOLDER if given.")]
 editor *folder:
